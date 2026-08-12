@@ -14,6 +14,7 @@ import (
 
 type libraryPageData struct {
 	Username, CSRFToken, Section, Query, Genre, Sort, Notice, ReturnTo string
+	ArtistRole, ArtistRoleLabel, ClearPath                             string
 	Year                                                               int
 	ArtistID, AlbumID                                                  int64
 	Artists                                                            []storage.Artist
@@ -36,7 +37,7 @@ type pageLink struct {
 
 func filters(r *http.Request) storage.Filters {
 	q := r.URL.Query()
-	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset")))}
+	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset")))}
 }
 
 func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error) {
@@ -50,12 +51,32 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 	if err != nil {
 		return libraryPageData{}, err
 	}
-	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI()}, nil
+	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: "/admin/" + section}, nil
 }
 
 func (a *App) handleArtistsPage(w http.ResponseWriter, r *http.Request) {
+	target := "/admin/artists/album"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func (a *App) handleAlbumArtistsPage(w http.ResponseWriter, r *http.Request) {
+	a.handleArtistsByRole(w, r, "album", "专辑歌手")
+}
+
+func (a *App) handleTrackArtistsPage(w http.ResponseWriter, r *http.Request) {
+	a.handleArtistsByRole(w, r, "track", "单曲歌手")
+}
+
+func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, label string) {
 	data, err := a.pageBase(r, "artists")
 	f := filters(r)
+	f.ArtistRole = role
+	data.ArtistRole = role
+	data.ArtistRoleLabel = label
+	data.ClearPath = "/admin/artists/" + role
 	applyPage(r, &f, 60)
 	if err == nil {
 		data.Artists, err = a.store.ListArtists(r.Context(), f)
@@ -77,7 +98,7 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 		data.Total, err = a.store.CountAlbums(r.Context(), f)
 	}
 	if err == nil {
-		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{Limit: 500})
+		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{ArtistRole: "album", Limit: 500})
 	}
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
@@ -93,7 +114,7 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 		data.Total, err = a.store.CountTracks(r.Context(), f)
 	}
 	if err == nil {
-		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{Limit: 500})
+		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{ArtistRole: "track", Limit: 500})
 		data.Albums, _ = a.store.ListAlbums(r.Context(), storage.Filters{Limit: 500})
 	}
 	setPagination(r, &data, f)
@@ -179,7 +200,7 @@ func (a *App) handleUpdateArtist(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/admin/artists?notice=已保存", 303)
+	http.Redirect(w, r, "/admin/artists/album?notice=已保存", 303)
 }
 func (a *App) handleUpdateAlbum(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {

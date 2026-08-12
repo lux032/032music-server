@@ -157,7 +157,7 @@ Authorization: Bearer <API_TOKEN>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/v1/artists` | 歌手列表 |
+| `GET` | `/api/v1/artists` | 歌手列表；可用 `role=album` 或 `role=track` 按关系分类 |
 | `GET` | `/api/v1/albums` | 专辑列表 |
 | `GET` | `/api/v1/albums/{id}` | 专辑和曲目详情 |
 | `GET` | `/api/v1/tracks` | 歌曲列表 |
@@ -180,6 +180,8 @@ Authorization: Bearer <API_TOKEN>
 ```
 
 单页最多返回 500 条记录。专辑和歌曲还会返回 `addedAt`、`updatedAt`、`isFavorite`、`lastPlayedAt`；歌曲额外返回 `durationMillis`、`streamUrl`、`positionMillis` 和 `playCount`。`sort=added` 按最近入库排序，`sort=recentlyPlayed` 按最近播放排序。
+
+歌手实体在资料、图片和外部身份层保持唯一，但浏览时可按标签关系区分：`role=album` 只返回出现在专辑歌手标签中的艺人，`role=track` 只返回出现在单曲歌手标签中的艺人，不传或使用 `role=all` 则保持兼容并返回全部艺人。同一位艺人可以同时属于两个分类。
 
 ### 客户端能力
 

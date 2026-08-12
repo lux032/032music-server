@@ -122,9 +122,9 @@ type Track struct {
 }
 
 type Filters struct {
-	Query, Genre, Sort  string
-	ArtistID, AlbumID   int64
-	Year, Limit, Offset int
+	Query, Genre, Sort, ArtistRole string
+	ArtistID, AlbumID              int64
+	Year, Limit, Offset            int
 }
 
 func (s *Store) LibraryByRoot(ctx context.Context, root string) (Library, error) {
@@ -347,11 +347,14 @@ func (s *Store) CleanupOrphans(ctx context.Context) error {
 
 func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	limit, offset := page(f)
+	role := normalizeArtistRole(f.ArtistRole)
 	order := "name COLLATE NOCASE"
 	if f.Sort == "albums" {
 		order = "album_count DESC, name COLLATE NOCASE"
+	} else if f.Sort == "tracks" {
+		order = "track_count DESC, name COLLATE NOCASE"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(*) FROM (SELECT album_id FROM album_artists WHERE artist_id=ar.id UNION SELECT t.album_id FROM tracks t JOIN track_artists txa ON txa.track_id=t.id WHERE txa.artist_id=ar.id)) album_count,COUNT(DISTINCT ta.track_id) track_count FROM artists ar LEFT JOIN track_artists ta ON ta.artist_id=ar.id WHERE ar.merged_into_artist_id IS NULL AND (?='' OR name LIKE '%'||?||'%') GROUP BY ar.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id) track_count FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (?='' OR COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%') AND (?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id))) ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, role, role, role, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -398,8 +401,20 @@ func (s *Store) ListAlbums(ctx context.Context, f Filters) ([]Album, error) {
 
 func (s *Store) CountArtists(ctx context.Context, f Filters) (int64, error) {
 	var total int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (?='' OR COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')`, f.Query, f.Query).Scan(&total)
+	role := normalizeArtistRole(f.ArtistRole)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (?='' OR COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%') AND (?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id)))`, f.Query, f.Query, role, role, role).Scan(&total)
 	return total, err
+}
+
+func normalizeArtistRole(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "album":
+		return "album"
+	case "track":
+		return "track"
+	default:
+		return "all"
+	}
 }
 
 func (s *Store) CountAlbums(ctx context.Context, f Filters) (int64, error) {
