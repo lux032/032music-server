@@ -16,24 +16,25 @@ import (
 )
 
 type AudioMetadata struct {
-	Title        string
-	Album        string
-	Artists      []string
-	AlbumArtists []string
-	Composer     string
-	Genres       []string
-	Lyrics       string
-	Year         int
-	TrackNumber  int
-	TrackTotal   int
-	DiscNumber   int
-	DiscTotal    int
-	Container    string
-	MIMEType     string
-	Raw          map[string][]string
-	Artwork      []byte
-	ArtworkMIME  string
-	ArtworkExt   string
+	Title          string
+	Album          string
+	Artists        []string
+	AlbumArtists   []string
+	Composer       string
+	Genres         []string
+	Lyrics         string
+	Year           int
+	TrackNumber    int
+	TrackTotal     int
+	DiscNumber     int
+	DiscTotal      int
+	DurationMillis int64
+	Container      string
+	MIMEType       string
+	Raw            map[string][]string
+	Artwork        []byte
+	ArtworkMIME    string
+	ArtworkExt     string
 }
 
 var supportedExtensions = map[string]struct{}{
@@ -85,6 +86,7 @@ func Read(path string) (AudioMetadata, error) {
 		result.ArtworkMIME = strings.TrimSpace(picture.MIMEType)
 		result.ArtworkExt = extensionForMIME(result.ArtworkMIME)
 	}
+	result.DurationMillis = probeDuration(path, result.Container)
 
 	return applyFallbacks(result, path), nil
 }
@@ -108,6 +110,8 @@ func readFLAC(file *os.File) (AudioMetadata, error) {
 			return AudioMetadata{}, err
 		}
 		switch blockType {
+		case 0:
+			result.DurationMillis = flacStreamInfoDuration(block)
 		case 4:
 			if err := parseVorbisComments(block, &result); err != nil {
 				return AudioMetadata{}, err

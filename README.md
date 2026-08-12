@@ -18,6 +18,9 @@
 - 支持 HTTP Range 的原文件音频串流和封面接口
 - 公共健康检查接口
 - Bearer Token 保护的音乐库 JSON API
+- 面向 Sonos 等无 Header 播放器的独立只读媒体 Token
+- 专辑与歌曲收藏、歌单管理、播放进度、断点续播和播放历史 API
+- FLAC、MP3、M4A/MP4、AAC、Ogg/Opus 时长采集
 - 带登录、会话和 CSRF 防护的管理面板
 - Docker 与 Compose 配置
 
@@ -75,6 +78,7 @@ Copy-Item .env.example .env
 - `MUSIC_SERVER_MUSIC_PATH`：宿主机音乐目录
 - `MUSIC_SERVER_ADMIN_PASSWORD`：生产环境不少于 12 个字符；本地开发配置使用 `admin`
 - `MUSIC_SERVER_API_TOKEN`：不少于 24 个字符的随机 Token
+- `MUSIC_SERVER_MEDIA_TOKEN`：另一个不少于 24 个字符的随机 Token，只允许读取音频和图片
 
 随后启动：
 
@@ -106,6 +110,17 @@ Invoke-RestMethod `
 
 音乐文件不会被服务修改、移动或删除。
 
+## Web 管理端
+
+登录 `/admin` 后，除扫描和元数据维护外，还可以直接管理客户端数据：
+
+- 在专辑浏览器、歌曲列表和专辑详情中收藏或取消收藏，并在“收藏”页面集中查看
+- 创建、编辑和删除歌单；按曲名、歌手或专辑搜索歌曲，添加、移除并上下调整歌曲顺序
+- 分页查看客户端同步的播放状态、断点位置和播放次数
+- 清空播放历史与断点位置；此操作不会删除歌曲、专辑、歌单或收藏
+
+所有修改操作都要求管理员会话和 CSRF Token，并采用 POST 后重定向，刷新页面不会重复提交。管理端通过当前登录会话访问音频和图片，不会把 API Token 或媒体 Token 写入页面。
+
 ## 配置
 
 | 环境变量 | 默认值 | 说明 |
@@ -118,6 +133,7 @@ Invoke-RestMethod `
 | `MUSIC_SERVER_ADMIN_USERNAME` | `admin` | 管理员用户名 |
 | `MUSIC_SERVER_ADMIN_PASSWORD` | 无 | 管理员密码，生产环境至少 12 个字符；`admin` 仅用于本地开发 |
 | `MUSIC_SERVER_API_TOKEN` | 无 | 客户端 Token，至少 24 个字符 |
+| `MUSIC_SERVER_MEDIA_TOKEN` | 回退到 API Token | Sonos、图片加载器等媒体客户端使用的只读 Token，生产环境应单独设置 |
 | `MUSIC_SERVER_COOKIE_SECURE` | `false` | HTTPS 部署时应设为 `true` |
 | `MUSIC_SERVER_LOG_LEVEL` | `info` | `debug`、`info`、`warn` 或 `error` |
 
@@ -143,12 +159,105 @@ Authorization: Bearer <API_TOKEN>
 |---|---|---|
 | `GET` | `/api/v1/artists` | 歌手列表 |
 | `GET` | `/api/v1/albums` | 专辑列表 |
+| `GET` | `/api/v1/albums/{id}` | 专辑和曲目详情 |
 | `GET` | `/api/v1/tracks` | 歌曲列表 |
+| `GET` | `/api/v1/tracks/{id}` | 单曲详情 |
 | `PATCH` | `/api/v1/artists/{id}` | 编辑歌手显示名称 |
 | `PATCH` | `/api/v1/albums/{id}` | 编辑专辑标题和年份 |
 | `PATCH` | `/api/v1/tracks/{id}` | 编辑歌曲元数据 |
 | `GET` | `/api/v1/tracks/{id}/stream` | 原文件串流，支持 Range |
 | `GET` | `/api/v1/artwork/{id}` | 封面图片 |
+
+所有列表响应均使用统一分页结构：
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 100,
+  "offset": 0
+}
+```
+
+单页最多返回 500 条记录。专辑和歌曲还会返回 `addedAt`、`updatedAt`、`isFavorite`、`lastPlayedAt`；歌曲额外返回 `durationMillis`、`streamUrl`、`positionMillis` 和 `playCount`。`sort=added` 按最近入库排序，`sort=recentlyPlayed` 按最近播放排序。
+
+### 客户端能力
+
+`GET /api/v1/capabilities` 返回服务端支持的客户端能力、媒体认证方式和分页上限。需要 Bearer Token。
+
+### 媒体访问
+
+音频、封面和歌手图片同时接受以下两种认证方式：
+
+```http
+Authorization: Bearer <API_TOKEN>
+```
+
+或在 URL 中使用只读媒体 Token：
+
+```text
+http://server:4533/api/v1/tracks/123/stream?mediaToken=<MEDIA_TOKEN>
+```
+
+查询参数方式用于 Sonos 等无法自行添加 HTTP Header 的设备。不要把管理密码或主 API Token 拼进媒体 URL；生产环境应配置独立的 `MUSIC_SERVER_MEDIA_TOKEN`。服务自身的请求日志只记录路径，不记录查询参数。
+
+### 收藏
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `PUT` / `DELETE` | `/api/v1/albums/{id}/favorite` | 收藏或取消收藏专辑 |
+| `PUT` / `DELETE` | `/api/v1/tracks/{id}/favorite` | 收藏或取消收藏歌曲 |
+| `GET` | `/api/v1/favorites/albums` | 收藏专辑列表 |
+| `GET` | `/api/v1/favorites/tracks` | 收藏歌曲列表 |
+
+### 歌单
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` / `POST` | `/api/v1/playlists` | 列出或创建歌单 |
+| `GET` / `PATCH` / `DELETE` | `/api/v1/playlists/{id}` | 读取、编辑或删除歌单 |
+| `PUT` | `/api/v1/playlists/{id}/items` | 使用有序 `trackIds` 数组替换歌单内容 |
+
+创建或编辑歌单的请求体：
+
+```json
+{"name":"晚间播放","description":"客厅 Sonos"}
+```
+
+替换歌单内容的请求体：
+
+```json
+{"trackIds":[12,34,56]}
+```
+
+单个歌单最多保存 5000 首歌；重复 ID 会保留第一次出现的位置。
+
+### 播放进度与历史
+
+客户端可以每隔一段时间上报播放状态：
+
+```http
+POST /api/v1/playback/timeline
+Content-Type: application/json
+
+{"trackId":12,"state":"playing","positionMillis":30000,"durationMillis":240000,"continuing":false}
+```
+
+`state` 允许 `playing`、`paused`、`buffering` 和 `stopped`。播放达到客户端判定阈值后可记为一次完整播放：
+
+```http
+POST /api/v1/playback/scrobble
+Content-Type: application/json
+
+{"trackId":12,"positionMillis":216000,"durationMillis":240000}
+```
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/v1/playback/history` | 分页读取播放历史和断点位置 |
+| `DELETE` | `/api/v1/playback/history` | 清空播放历史和断点位置 |
+
+收藏、歌单和播放记录独立于文件扫描保存；重新扫描不会覆盖这些客户端数据。升级到包含迁移 `008_client_features.sql` 的版本后会自动建表。旧曲目的时长会在下一次增量扫描中自动回填。
 
 列表接口支持 `q`、`artist`、`album`、`year`、`genre`、`sort`、`limit` 和 `offset`；不适用于该资源的参数会被忽略。
 

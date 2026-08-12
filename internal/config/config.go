@@ -17,12 +17,15 @@ type Config struct {
 	AdminUsername  string
 	AdminPassword  string
 	APIToken       string
+	MediaToken     string
 	CookieSecure   bool
 	LogLevel       string
 }
 
 func Load() (Config, error) {
 	dataDirectory := envOrDefault("MUSIC_SERVER_DATA_DIR", "/data")
+	apiToken := os.Getenv("MUSIC_SERVER_API_TOKEN")
+	mediaToken := envOrDefault("MUSIC_SERVER_MEDIA_TOKEN", apiToken)
 
 	cfg := Config{
 		ListenAddress:  envOrDefault("MUSIC_SERVER_ADDRESS", ":4533"),
@@ -32,7 +35,8 @@ func Load() (Config, error) {
 		LibraryName:    envOrDefault("MUSIC_SERVER_LIBRARY_NAME", "Music"),
 		AdminUsername:  envOrDefault("MUSIC_SERVER_ADMIN_USERNAME", "admin"),
 		AdminPassword:  os.Getenv("MUSIC_SERVER_ADMIN_PASSWORD"),
-		APIToken:       os.Getenv("MUSIC_SERVER_API_TOKEN"),
+		APIToken:       apiToken,
+		MediaToken:     mediaToken,
 		CookieSecure:   parseBool(os.Getenv("MUSIC_SERVER_COOKIE_SECURE")),
 		LogLevel:       strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
 	}
@@ -75,6 +79,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.APIToken) < 24 {
 		problems = append(problems, "MUSIC_SERVER_API_TOKEN must contain at least 24 characters")
+	}
+	if len(c.MediaToken) < 24 {
+		problems = append(problems, "MUSIC_SERVER_MEDIA_TOKEN must contain at least 24 characters")
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

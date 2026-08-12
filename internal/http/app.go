@@ -62,7 +62,11 @@ type dashboardPageData struct {
 }
 
 func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Manager, enrichmentManager *enrichment.Manager, logger *slog.Logger, version string) (*App, error) {
-	templates, err := template.ParseFS(webFiles, "templates/*.html")
+	templates, err := template.New("admin").Funcs(template.FuncMap{
+		"formatDurationMillis": formatDurationMillis,
+		"formatAdminTime":      formatAdminTime,
+		"playbackStateLabel":   playbackStateLabel,
+	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse admin templates: %w", err)
 	}
@@ -90,16 +94,34 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", a.handleHealth)
 	mux.Handle("GET /api/v1/status", a.requireAPIToken(http.HandlerFunc(a.handleStatus)))
+	mux.Handle("GET /api/v1/capabilities", a.requireAPIToken(http.HandlerFunc(a.handleCapabilities)))
 	mux.Handle("GET /api/v1/artists", a.requireAPIToken(http.HandlerFunc(a.handleAPIArtists)))
 	mux.Handle("GET /api/v1/albums", a.requireAPIToken(http.HandlerFunc(a.handleAPIAlbums)))
 	mux.Handle("GET /api/v1/albums/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIAlbum)))
 	mux.Handle("GET /api/v1/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPITracks)))
+	mux.Handle("GET /api/v1/tracks/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPITrack)))
 	mux.Handle("PATCH /api/v1/artists/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateArtist)))
 	mux.Handle("PATCH /api/v1/albums/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateAlbum)))
 	mux.Handle("PATCH /api/v1/tracks/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateTrack)))
-	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireAPIOrAdmin(http.HandlerFunc(a.handleStream)))
-	mux.Handle("GET /api/v1/artwork/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleArtwork)))
-	mux.Handle("GET /api/v1/artists/{id}/image", a.requireAPIOrAdmin(http.HandlerFunc(a.handleArtistImage)))
+	mux.Handle("PUT /api/v1/albums/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleSetAlbumFavorite)))
+	mux.Handle("DELETE /api/v1/albums/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleUnsetAlbumFavorite)))
+	mux.Handle("PUT /api/v1/tracks/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleSetTrackFavorite)))
+	mux.Handle("DELETE /api/v1/tracks/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleUnsetTrackFavorite)))
+	mux.Handle("GET /api/v1/favorites/albums", a.requireAPIToken(http.HandlerFunc(a.handleFavoriteAlbums)))
+	mux.Handle("GET /api/v1/favorites/tracks", a.requireAPIToken(http.HandlerFunc(a.handleFavoriteTracks)))
+	mux.Handle("GET /api/v1/playlists", a.requireAPIToken(http.HandlerFunc(a.handlePlaylists)))
+	mux.Handle("POST /api/v1/playlists", a.requireAPIToken(http.HandlerFunc(a.handleCreatePlaylist)))
+	mux.Handle("GET /api/v1/playlists/{id}", a.requireAPIToken(http.HandlerFunc(a.handlePlaylist)))
+	mux.Handle("PATCH /api/v1/playlists/{id}", a.requireAPIToken(http.HandlerFunc(a.handleUpdatePlaylist)))
+	mux.Handle("DELETE /api/v1/playlists/{id}", a.requireAPIToken(http.HandlerFunc(a.handleDeletePlaylist)))
+	mux.Handle("PUT /api/v1/playlists/{id}/items", a.requireAPIToken(http.HandlerFunc(a.handleReplacePlaylistItems)))
+	mux.Handle("POST /api/v1/playback/timeline", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackTimeline)))
+	mux.Handle("POST /api/v1/playback/scrobble", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackScrobble)))
+	mux.Handle("GET /api/v1/playback/history", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackHistory)))
+	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIToken(http.HandlerFunc(a.handleClearPlaybackHistory)))
+	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireMediaAccess(http.HandlerFunc(a.handleStream)))
+	mux.Handle("GET /api/v1/artwork/{id}", a.requireMediaAccess(http.HandlerFunc(a.handleArtwork)))
+	mux.Handle("GET /api/v1/artists/{id}/image", a.requireMediaAccess(http.HandlerFunc(a.handleArtistImage)))
 
 	mux.Handle("GET /admin/assets/", a.assets)
 	mux.HandleFunc("GET /admin/login", a.handleLoginPage)
@@ -128,6 +150,19 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateAlbum)))
 	mux.Handle("GET /admin/tracks", a.requireAdmin(http.HandlerFunc(a.handleTracksPage)))
 	mux.Handle("POST /admin/tracks/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateTrack)))
+	mux.Handle("GET /admin/favorites", a.requireAdmin(http.HandlerFunc(a.handleAdminFavorites)))
+	mux.Handle("POST /admin/favorites/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminAlbumFavorite)))
+	mux.Handle("POST /admin/favorites/tracks/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminTrackFavorite)))
+	mux.Handle("GET /admin/playlists", a.requireAdmin(http.HandlerFunc(a.handleAdminPlaylists)))
+	mux.Handle("POST /admin/playlists", a.requireAdmin(http.HandlerFunc(a.handleAdminCreatePlaylist)))
+	mux.Handle("GET /admin/playlists/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminPlaylist)))
+	mux.Handle("POST /admin/playlists/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminUpdatePlaylist)))
+	mux.Handle("POST /admin/playlists/{id}/delete", a.requireAdmin(http.HandlerFunc(a.handleAdminDeletePlaylist)))
+	mux.Handle("POST /admin/playlists/{id}/tracks", a.requireAdmin(http.HandlerFunc(a.handleAdminAddPlaylistTrack)))
+	mux.Handle("POST /admin/playlists/{id}/tracks/{track}/remove", a.requireAdmin(http.HandlerFunc(a.handleAdminRemovePlaylistTrack)))
+	mux.Handle("POST /admin/playlists/{id}/tracks/{track}/move", a.requireAdmin(http.HandlerFunc(a.handleAdminMovePlaylistTrack)))
+	mux.Handle("GET /admin/playback", a.requireAdmin(http.HandlerFunc(a.handleAdminPlayback)))
+	mux.Handle("POST /admin/playback/clear", a.requireAdmin(http.HandlerFunc(a.handleAdminClearPlayback)))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	})
@@ -239,6 +274,26 @@ func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 			return
 		}
 		a.requireAPIToken(next).ServeHTTP(w, r)
+	})
+}
+
+func (a *App) requireMediaAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := a.sessions.get(r); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if secureEqual(r.URL.Query().Get("mediaToken"), a.config.MediaToken) && r.URL.Query().Get("mediaToken") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if ok && strings.EqualFold(scheme, "Bearer") && secureEqual(token, a.config.APIToken) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "A valid API token or media token is required.")
 	})
 }
 

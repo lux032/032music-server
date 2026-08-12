@@ -24,12 +24,15 @@ type Store struct {
 }
 
 type Statistics struct {
-	Libraries  int64 `json:"libraries"`
-	Artists    int64 `json:"artists"`
-	Albums     int64 `json:"albums"`
-	Tracks     int64 `json:"tracks"`
-	AudioFiles int64 `json:"audioFiles"`
-	ScanJobs   int64 `json:"scanJobs"`
+	Libraries      int64 `json:"libraries"`
+	Artists        int64 `json:"artists"`
+	Albums         int64 `json:"albums"`
+	Tracks         int64 `json:"tracks"`
+	AudioFiles     int64 `json:"audioFiles"`
+	ScanJobs       int64 `json:"scanJobs"`
+	Playlists      int64 `json:"playlists"`
+	FavoriteAlbums int64 `json:"favoriteAlbums"`
+	FavoriteTracks int64 `json:"favoriteTracks"`
 }
 
 func Open(databasePath string) (*Store, error) {
@@ -165,8 +168,11 @@ func (s *Store) Statistics(ctx context.Context) (Statistics, error) {
 			(SELECT COUNT(*) FROM albums),
 			(SELECT COUNT(*) FROM tracks),
 			(SELECT COUNT(*) FROM audio_files),
-			(SELECT COUNT(*) FROM scan_jobs)
-	`).Scan(&stats.Libraries, &stats.Artists, &stats.Albums, &stats.Tracks, &stats.AudioFiles, &stats.ScanJobs)
+			(SELECT COUNT(*) FROM scan_jobs),
+			(SELECT COUNT(*) FROM playlists),
+			(SELECT COUNT(*) FROM albums WHERE is_favorite=1),
+			(SELECT COUNT(*) FROM tracks WHERE is_favorite=1)
+	`).Scan(&stats.Libraries, &stats.Artists, &stats.Albums, &stats.Tracks, &stats.AudioFiles, &stats.ScanJobs, &stats.Playlists, &stats.FavoriteAlbums, &stats.FavoriteTracks)
 	if err != nil {
 		return Statistics{}, fmt.Errorf("query library statistics: %w", err)
 	}

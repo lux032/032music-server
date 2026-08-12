@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>我的收藏 · 032</title><link rel="stylesheet" href="/admin/assets/admin.css"></head>
+<body class="roon-shell">
+<aside class="sidebar"><a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a><nav>
+  <p>我的音乐库</p><a href="/admin/albums"><i>▦</i> 专辑</a><a href="/admin/artists"><i>●</i> 歌手</a><a href="/admin/tracks"><i>≡</i> 歌曲</a><a class="active" href="/admin/favorites"><i>♥</i> 收藏</a><a href="/admin/playlists"><i>♫</i> 歌单</a><a href="/admin/playback"><i>↺</i> 播放记录</a>
+  <p>元数据</p><a href="/admin/matches"><i>◎</i> 匹配审核</a><a href="/admin/merges"><i>⇄</i> 合并历史</a><a href="/admin/settings/metadata"><i>⚙</i> 数据来源</a><p>管理</p><a href="/admin"><i>⌁</i> 控制台</a>
+</nav><div class="sidebar-user"><span>{{.Username}}</span><form method="post" action="/admin/logout"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button class="icon-button" title="退出">↪</button></form></div></aside>
+<main class="browser-main feature-main">
+  <header class="browser-header"><div><p class="kicker">FAVORITES</p><h1>我的收藏</h1><p class="result-count">{{.AlbumTotal}} 张专辑 · {{.TrackTotal}} 首歌曲</p></div></header>
+  {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+  <section class="feature-section"><div class="section-title"><div><p class="kicker">ALBUMS</p><h2>收藏专辑</h2></div><span>{{.AlbumTotal}} 张</span></div>
+    <div class="album-browser favorite-albums">{{range .Albums}}<article class="favorite-album"><a class="album-tile" href="/admin/albums/{{.ID}}"><div class="cover-wrap">{{if .ArtworkURL}}<img src="{{.ArtworkURL}}" alt="{{.Title}}" loading="lazy">{{else}}<div class="cover-placeholder">032</div>{{end}}</div><h2>{{.Title}}</h2><p>{{if .PerformedBy}}{{.PerformedBy}}{{else}}{{.Artist}}{{end}}</p><small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small></a><form method="post" action="/admin/favorites/albums/{{.ID}}"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="favorite" value="0"><input type="hidden" name="returnTo" value="/admin/favorites"><button class="icon-action" title="取消收藏 {{.Title}}" aria-label="取消收藏 {{.Title}}">♥</button></form></article>{{else}}<div class="zero-state"><strong>还没有收藏专辑</strong><span>在专辑浏览器或专辑详情中点击收藏。</span></div>{{end}}</div>
+  </section>
+  <section class="feature-section"><div class="section-title"><div><p class="kicker">TRACKS</p><h2>收藏歌曲</h2></div><span>{{.TrackTotal}} 首</span></div>
+    <div class="feature-track-list">{{range .Tracks}}<article><a class="feature-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img src="{{.ArtworkURL}}" alt="" loading="lazy">{{else}}<span class="cover-placeholder">032</span>{{end}}</a><div class="feature-track-copy"><strong>{{.Title}}</strong><small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small></div><span class="format-pill">{{.Container}}</span><audio controls preload="none" src="/api/v1/tracks/{{.ID}}/stream"></audio><form method="post" action="/admin/favorites/tracks/{{.ID}}"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="favorite" value="0"><input type="hidden" name="returnTo" value="/admin/favorites"><button class="icon-action" title="取消收藏 {{.Title}}" aria-label="取消收藏 {{.Title}}">♥</button></form></article>{{else}}<div class="zero-state"><strong>还没有收藏歌曲</strong><span>在歌曲列表或专辑详情中点击收藏。</span></div>{{end}}</div>
+  </section>
+</main></body></html>

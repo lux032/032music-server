@@ -13,19 +13,19 @@ import (
 )
 
 type libraryPageData struct {
-	Username, CSRFToken, Section, Query, Genre, Sort, Notice string
-	Year                                                     int
-	ArtistID, AlbumID                                        int64
-	Artists                                                  []storage.Artist
-	Albums                                                   []storage.Album
-	Tracks                                                   []storage.Track
-	Genres                                                   []string
-	Years                                                    []int
-	AlbumDetail                                              *storage.Album
-	Total                                                    int64
-	Page, PageCount, PageSize                                int
-	PrevURL, NextURL                                         string
-	Pages                                                    []pageLink
+	Username, CSRFToken, Section, Query, Genre, Sort, Notice, ReturnTo string
+	Year                                                               int
+	ArtistID, AlbumID                                                  int64
+	Artists                                                            []storage.Artist
+	Albums                                                             []storage.Album
+	Tracks                                                             []storage.Track
+	Genres                                                             []string
+	Years                                                              []int
+	AlbumDetail                                                        *storage.Album
+	Total                                                              int64
+	Page, PageCount, PageSize                                          int
+	PrevURL, NextURL                                                   string
+	Pages                                                              []pageLink
 }
 
 type pageLink struct {
@@ -50,7 +50,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 	if err != nil {
 		return libraryPageData{}, err
 	}
-	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice")}, nil
+	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI()}, nil
 }
 
 func (a *App) handleArtistsPage(w http.ResponseWriter, r *http.Request) {
@@ -214,13 +214,31 @@ func (a *App) validCSRF(r *http.Request) bool {
 }
 
 func (a *App) handleAPIArtists(w http.ResponseWriter, r *http.Request) {
-	values, err := a.store.ListArtists(r.Context(), filters(r))
-	apiResult(w, values, err)
+	f := filters(r)
+	limit, offset := pageValues(r)
+	f.Limit, f.Offset = limit, offset
+	values, err := a.store.ListArtists(r.Context(), f)
+	if err != nil {
+		apiResult(w, values, err)
+		return
+	}
+	total, err := a.store.CountArtists(r.Context(), f)
+	if err != nil {
+		apiResult(w, values, err)
+		return
+	}
+	writePage(w, values, total, limit, offset)
 }
 func (a *App) handleAPIAlbums(w http.ResponseWriter, r *http.Request) {
 	f := filters(r)
 	if f.Limit <= 0 {
 		f.Limit = 48
+	}
+	if f.Limit > 500 {
+		f.Limit = 500
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
 	}
 	values, err := a.store.ListAlbums(r.Context(), f)
 	if err != nil {
@@ -252,8 +270,20 @@ func (a *App) handleAPIAlbum(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"album": value, "tracks": tracks})
 }
 func (a *App) handleAPITracks(w http.ResponseWriter, r *http.Request) {
-	values, err := a.store.ListTracks(r.Context(), filters(r))
-	apiResult(w, values, err)
+	f := filters(r)
+	limit, offset := pageValues(r)
+	f.Limit, f.Offset = limit, offset
+	values, err := a.store.ListTracks(r.Context(), f)
+	if err != nil {
+		apiResult(w, values, err)
+		return
+	}
+	total, err := a.store.CountTracks(r.Context(), f)
+	if err != nil {
+		apiResult(w, values, err)
+		return
+	}
+	writePage(w, values, total, limit, offset)
 }
 func apiResult(w http.ResponseWriter, value any, err error) {
 	if err != nil {
