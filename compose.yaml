@@ -1,0 +1,24 @@
+services:
+  music-server:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    container_name: 032music-server
+    restart: unless-stopped
+    ports:
+      - "${MUSIC_SERVER_PORT:-4533}:4533"
+    environment:
+      MUSIC_SERVER_ADMIN_USERNAME: "${MUSIC_SERVER_ADMIN_USERNAME:-admin}"
+      MUSIC_SERVER_ADMIN_PASSWORD: "${MUSIC_SERVER_ADMIN_PASSWORD:?set MUSIC_SERVER_ADMIN_PASSWORD in .env}"
+      MUSIC_SERVER_API_TOKEN: "${MUSIC_SERVER_API_TOKEN:?set MUSIC_SERVER_API_TOKEN in .env}"
+      MUSIC_SERVER_LIBRARY_NAME: "${MUSIC_SERVER_LIBRARY_NAME:-Music}"
+      MUSIC_SERVER_LOG_LEVEL: "${MUSIC_SERVER_LOG_LEVEL:-info}"
+      MUSIC_SERVER_COOKIE_SECURE: "${MUSIC_SERVER_COOKIE_SECURE:-false}"
+    volumes:
+      - "${MUSIC_SERVER_DATA_PATH:-./data}:/data"
+      - "${MUSIC_SERVER_MUSIC_PATH:?set MUSIC_SERVER_MUSIC_PATH in .env}:/music:ro"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
