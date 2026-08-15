@@ -16,6 +16,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"albums": true, "artists": true, "tracks": true, "search": true,
 			"favorites": true, "playlists": true, "playbackProgress": true,
 			"playbackHistory": true, "scrobble": true, "rangeStreaming": true,
+			"syncAlbums": true, "syncTracks": true,
 		},
 		"media": map[string]any{
 			"streaming": "original", "supportsRange": true,
