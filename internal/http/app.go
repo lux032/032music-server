@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -20,16 +21,17 @@ import (
 )
 
 type App struct {
-	config     config.Config
-	store      *storage.Store
-	logger     *slog.Logger
-	version    string
-	startedAt  time.Time
-	templates  *template.Template
-	sessions   *sessionManager
-	scanner    *scanner.Manager
-	enrichment *enrichment.Manager
-	assets     http.Handler
+	config          config.Config
+	store           *storage.Store
+	logger          *slog.Logger
+	version         string
+	startedAt       time.Time
+	templates       *template.Template
+	sessions        *sessionManager
+	scanner         *scanner.Manager
+	enrichment      *enrichment.Manager
+	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
+	assets          http.Handler
 }
 
 type healthResponse struct {
@@ -63,9 +65,14 @@ type dashboardPageData struct {
 
 func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Manager, enrichmentManager *enrichment.Manager, logger *slog.Logger, version string) (*App, error) {
 	templates, err := template.New("admin").Funcs(template.FuncMap{
-		"formatDurationMillis": formatDurationMillis,
-		"formatAdminTime":      formatAdminTime,
-		"playbackStateLabel":   playbackStateLabel,
+		"formatDurationMillis":  formatDurationMillis,
+		"formatAdminTime":       formatAdminTime,
+		"playbackStateLabel":    playbackStateLabel,
+		"enrichmentRunProgress": enrichmentRunProgress,
+		"enrichmentTargetLabel": enrichmentTargetLabel,
+		"indexValues": func() []string {
+			return []string{"あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"}
+		},
 	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse admin templates: %w", err)
@@ -96,6 +103,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/status", a.requireAPIToken(http.HandlerFunc(a.handleStatus)))
 	mux.Handle("GET /api/v1/capabilities", a.requireAPIToken(http.HandlerFunc(a.handleCapabilities)))
 	mux.Handle("GET /api/v1/artists", a.requireAPIToken(http.HandlerFunc(a.handleAPIArtists)))
+	mux.Handle("GET /api/v1/works", a.requireAPIToken(http.HandlerFunc(a.handleAPIWorks)))
+	mux.Handle("POST /api/v1/works", a.requireAPIToken(http.HandlerFunc(a.handleAPICreateWork)))
+	mux.Handle("GET /api/v1/works/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIWork)))
+	mux.Handle("PATCH /api/v1/works/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateWork)))
+	mux.Handle("DELETE /api/v1/works/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIDeleteWork)))
+	mux.Handle("GET /api/v1/works/{id}/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPIWorkTracks)))
+	mux.Handle("POST /api/v1/works/{id}/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPIAddWorkTrack)))
+	mux.Handle("DELETE /api/v1/works/{id}/tracks/{trackId}", a.requireAPIToken(http.HandlerFunc(a.handleAPIRemoveWorkTrack)))
 	mux.Handle("GET /api/v1/albums", a.requireAPIToken(http.HandlerFunc(a.handleAPIAlbums)))
 	mux.Handle("GET /api/v1/albums/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIAlbum)))
 	mux.Handle("GET /api/v1/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPITracks)))
@@ -126,6 +141,15 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireMediaAccess(http.HandlerFunc(a.handleStream)))
 	mux.Handle("GET /api/v1/artwork/{id}", a.requireMediaAccess(http.HandlerFunc(a.handleArtwork)))
 	mux.Handle("GET /api/v1/artists/{id}/image", a.requireMediaAccess(http.HandlerFunc(a.handleArtistImage)))
+	mux.Handle("POST /api/v1/enrichment/run", a.requireAPIToken(http.HandlerFunc(a.handleAPIStartEnrichment)))
+	mux.Handle("GET /api/v1/enrichment/jobs", a.requireAPIToken(http.HandlerFunc(a.handleAPIEnrichmentRuns)))
+	mux.Handle("GET /api/v1/enrichment/jobs/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIEnrichmentRun)))
+	mux.Handle("GET /api/v1/enrichment/works/{workId}/candidates", a.requireAPIToken(http.HandlerFunc(a.handleAPIWorkEnrichmentCandidates)))
+	mux.Handle("POST /api/v1/enrichment/works/{workId}/candidates/{candidateId}/accept", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIWorkCandidateDecision(w, r, "confirmed") })))
+	mux.Handle("POST /api/v1/enrichment/works/{workId}/candidates/{candidateId}/reject", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIWorkCandidateDecision(w, r, "rejected") })))
+	mux.Handle("GET /api/v1/enrichment/artists/{artistId}/relations", a.requireAPIToken(http.HandlerFunc(a.handleAPIArtistRelationCandidates)))
+	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/accept", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "confirmed") })))
+	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/reject", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "rejected") })))
 
 	mux.Handle("GET /admin/assets/", a.assets)
 	mux.HandleFunc("GET /admin/login", a.handleLoginPage)
@@ -149,8 +173,21 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleSaveMetadataSettings)))
 	mux.Handle("POST /admin/matches/run", a.requireAdmin(http.HandlerFunc(a.handleRunArtistMatching)))
 	mux.Handle("GET /admin/matches", a.requireAdmin(http.HandlerFunc(a.handleMatchReview)))
+	mux.Handle("GET /admin/enrichment", a.requireAdmin(http.HandlerFunc(a.handleAdminEnrichment)))
+	mux.Handle("POST /admin/enrichment/run", a.requireAdmin(http.HandlerFunc(a.handleAdminStartEnrichment)))
+	mux.Handle("POST /admin/enrichment/works/{workId}/candidates/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminWorkCandidateDecision(w, r, "confirmed") })))
+	mux.Handle("POST /admin/enrichment/works/{workId}/candidates/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminWorkCandidateDecision(w, r, "rejected") })))
+	mux.Handle("POST /admin/enrichment/artists/{artistId}/relations/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminArtistRelationDecision(w, r, "confirmed") })))
+	mux.Handle("POST /admin/enrichment/artists/{artistId}/relations/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminArtistRelationDecision(w, r, "rejected") })))
 	mux.Handle("GET /admin/merges", a.requireAdmin(http.HandlerFunc(a.handleMergeHistory)))
 	mux.Handle("POST /admin/merges/{id}/rollback", a.requireAdmin(http.HandlerFunc(a.handleRollbackMerge)))
+	mux.Handle("GET /admin/works", a.requireAdmin(http.HandlerFunc(a.handleWorksPage)))
+	mux.Handle("POST /admin/works", a.requireAdmin(http.HandlerFunc(a.handleCreateWork)))
+	mux.Handle("GET /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleWorkPage)))
+	mux.Handle("POST /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateWork)))
+	mux.Handle("POST /admin/works/{id}/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteWork)))
+	mux.Handle("POST /admin/works/{id}/tracks", a.requireAdmin(http.HandlerFunc(a.handleAddWorkTrack)))
+	mux.Handle("POST /admin/works/{id}/tracks/{trackId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveWorkTrack)))
 	mux.Handle("GET /admin/albums", a.requireAdmin(http.HandlerFunc(a.handleAlbumsPage)))
 	mux.Handle("GET /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleAlbumPage)))
 	mux.Handle("POST /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateAlbum)))

@@ -11,9 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/dhowden/tag"
 )
+
+type InvolvedPerson struct {
+	Role string
+	Name string
+}
 
 type AudioMetadata struct {
 	Title          string
@@ -24,6 +31,7 @@ type AudioMetadata struct {
 	Lyricist       string
 	Arranger       string
 	Producer       string
+	InvolvedPeople []InvolvedPerson
 	Genres         []string
 	Lyrics         string
 	Year           int
@@ -75,6 +83,7 @@ func Read(path string) (AudioMetadata, error) {
 	if err != nil {
 		return AudioMetadata{}, fmt.Errorf("read embedded metadata: %w", err)
 	}
+	raw := parsed.Raw()
 
 	result := AudioMetadata{
 		Title:        strings.TrimSpace(parsed.Title()),
@@ -84,7 +93,7 @@ func Read(path string) (AudioMetadata, error) {
 		Year:         parsed.Year(),
 		Container:    strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
 		MIMEType:     mime.TypeByExtension(strings.ToLower(filepath.Ext(path))),
-		Raw:          flattenRaw(parsed.Raw()),
+		Raw:          flattenRaw(raw),
 		Artists:      splitPeople(parsed.Artist()),
 		AlbumArtists: splitPeople(parsed.AlbumArtist()),
 		Genres:       splitValues(parsed.Genre()),
@@ -104,6 +113,17 @@ func Read(path string) (AudioMetadata, error) {
 	result.Lyricist = rawFirst("LYRICIST", "TEXT")
 	result.Arranger = rawFirst("ARRANGER")
 	result.Producer = rawFirst("PRODUCER")
+	if strings.EqualFold(filepath.Ext(path), ".mp3") {
+		// dhowden/tag flattens text frames and loses the NUL separators which
+		// define TIPL/TMCL/IPLS role/name pairs, so MP3 credits must come from
+		// the original ID3v2 frame bytes rather than parsed.Raw().
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr == nil {
+			result.InvolvedPeople = parseID3v2InvolvedPeople(file)
+		}
+	} else {
+		result.InvolvedPeople = parseInvolvedPeopleRaw(raw)
+	}
+	applyInvolvedPeople(&result)
 	result.ArtistSort = rawFirst("ARTISTSORT", "SOAR", "TSOP")
 	result.AlbumArtistSort = rawFirst("ALBUMARTISTSORT", "SOAA", "TSO2")
 	result.TitleSort = rawFirst("TITLESORT", "SONM", "TSOT")
@@ -264,6 +284,368 @@ func parseFLACPicture(block []byte, result *AudioMetadata) {
 	}
 }
 
+func parseInvolvedPeopleRaw(raw map[string]interface{}) []InvolvedPerson {
+	var people []InvolvedPerson
+	for key, value := range raw {
+		base, role, keyed := splitInvolvedKey(strings.TrimSpace(key))
+		if base != "TIPL" && base != "TMCL" && base != "IPLS" {
+			continue
+		}
+		if keyed {
+			for _, name := range rawStringValues(value) {
+				people = appendInvolved(people, role, name)
+			}
+			continue
+		}
+		people = append(people, parseInvolvedValue(value)...)
+	}
+	return dedupeInvolved(people)
+}
+
+func splitInvolvedKey(key string) (base, role string, keyed bool) {
+	for _, separator := range []string{":", ".", "/", "_"} {
+		if head, tail, ok := strings.Cut(key, separator); ok {
+			upperHead := strings.ToUpper(strings.TrimSpace(head))
+			if upperHead == "TIPL" || upperHead == "TMCL" || upperHead == "IPLS" {
+				return upperHead, strings.TrimSpace(tail), strings.TrimSpace(tail) != ""
+			}
+		}
+	}
+	return strings.ToUpper(strings.TrimSpace(key)), "", false
+}
+
+func rawStringValues(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []string:
+		return typed
+	case []any:
+		var values []string
+		for _, item := range typed {
+			values = append(values, rawStringValues(item)...)
+		}
+		return values
+	default:
+		return SplitRawValue(value)
+	}
+}
+
+func parseInvolvedValue(value any) []InvolvedPerson {
+	// Some tag readers expose keyed role/name maps rather than the ID3 text list.
+	switch typed := value.(type) {
+	case map[string]string:
+		var people []InvolvedPerson
+		for role, name := range typed {
+			people = appendInvolved(people, role, name)
+		}
+		return people
+	case map[string][]string:
+		var people []InvolvedPerson
+		for role, names := range typed {
+			for _, name := range names {
+				people = appendInvolved(people, role, name)
+			}
+		}
+		return people
+	case map[string]interface{}:
+		var people []InvolvedPerson
+		for role, names := range typed {
+			for _, name := range rawStringValues(names) {
+				people = appendInvolved(people, role, name)
+			}
+		}
+		return people
+	}
+
+	values := rawStringValues(value)
+	var fields []string
+	for _, value := range values {
+		fields = append(fields, splitInvolvedFields(value)...)
+	}
+	var people []InvolvedPerson
+	for i := 0; i+1 < len(fields); i += 2 {
+		people = appendInvolved(people, fields[i], fields[i+1])
+	}
+	return people
+}
+
+func splitInvolvedFields(value string) []string {
+	value = strings.Trim(value, "\x00 \t\r\n")
+	if value == "" {
+		return nil
+	}
+	for _, separator := range []string{"\x00", "\x00\x00", "\t", "\n"} {
+		if strings.Contains(value, separator) {
+			parts := strings.Split(value, separator)
+			return compactStrings(parts)
+		}
+	}
+	// Human-readable Raw implementations commonly render TIPL/TMCL as role/name pairs.
+	if strings.Count(value, "/")%2 == 1 {
+		return compactStrings(strings.Split(value, "/"))
+	}
+	return []string{value}
+}
+
+func compactStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(strings.Trim(value, "\x00")); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func appendInvolved(people []InvolvedPerson, role, name string) []InvolvedPerson {
+	role = strings.TrimSpace(strings.Trim(role, "\x00"))
+	name = strings.TrimSpace(strings.Trim(name, "\x00"))
+	if role == "" || name == "" {
+		return people
+	}
+	return append(people, InvolvedPerson{Role: role, Name: name})
+}
+
+func dedupeInvolved(people []InvolvedPerson) []InvolvedPerson {
+	seen := make(map[string]struct{}, len(people))
+	result := make([]InvolvedPerson, 0, len(people))
+	for _, person := range people {
+		key := Normalize(person.Role) + "\x00" + Normalize(person.Name)
+		if person.Role == "" || person.Name == "" || key == "\x00" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, person)
+	}
+	return result
+}
+
+func applyInvolvedPeople(result *AudioMetadata) {
+	firstForRoles := func(roles ...string) string {
+		for _, person := range result.InvolvedPeople {
+			role := Normalize(person.Role)
+			for _, candidate := range roles {
+				if role == candidate {
+					return person.Name
+				}
+			}
+		}
+		return ""
+	}
+	if result.Lyricist == "" {
+		result.Lyricist = firstForRoles("lyricist", "lyrics", "words", "text")
+	}
+	if result.Composer == "" {
+		result.Composer = firstForRoles("composer", "composed by", "music")
+	}
+	if result.Arranger == "" {
+		result.Arranger = firstForRoles("arranger", "arranged by", "orchestrator")
+	}
+	if result.Producer == "" {
+		result.Producer = firstForRoles("producer", "produced by")
+	}
+}
+
+func parseID3v2InvolvedPeople(r io.Reader) []InvolvedPerson {
+	header := make([]byte, 10)
+	if _, err := io.ReadFull(r, header); err != nil || string(header[:3]) != "ID3" {
+		return nil
+	}
+	version := header[3]
+	if version != 3 && version != 4 {
+		return nil
+	}
+	tagSize, ok := synchsafeSize(header[6:10])
+	if !ok || tagSize <= 0 || tagSize > 32<<20 {
+		return nil
+	}
+	body := make([]byte, tagSize)
+	if _, err := io.ReadFull(r, body); err != nil {
+		return nil
+	}
+	tagUnsynchronised := header[5]&0x80 != 0
+	offset := 0
+	if header[5]&0x40 != 0 {
+		if len(body) < 4 {
+			return nil
+		}
+		if version == 3 {
+			extended := int(binary.BigEndian.Uint32(body[:4]))
+			if extended < 0 || extended > len(body)-4 {
+				return nil
+			}
+			offset = 4 + extended
+		} else {
+			extended, valid := synchsafeSize(body[:4])
+			if !valid || extended < 4 || extended > len(body) {
+				return nil
+			}
+			offset = extended
+		}
+	}
+
+	var people []InvolvedPerson
+	for offset+10 <= len(body) {
+		frameHeader := body[offset : offset+10]
+		if bytes.Equal(frameHeader[:4], []byte{0, 0, 0, 0}) {
+			break
+		}
+		frameID := string(frameHeader[:4])
+		if !validID3FrameID(frameID) {
+			break
+		}
+		var frameSize int
+		if version == 4 {
+			var valid bool
+			frameSize, valid = synchsafeSize(frameHeader[4:8])
+			if !valid {
+				break
+			}
+		} else {
+			frameSize = int(binary.BigEndian.Uint32(frameHeader[4:8]))
+		}
+		offset += 10
+		if frameSize <= 0 || frameSize > len(body)-offset {
+			break
+		}
+		payload := body[offset : offset+frameSize]
+		offset += frameSize
+		if tagUnsynchronised {
+			payload = removeID3Unsynchronisation(payload)
+		}
+		if !isInvolvedPeopleFrame(version, frameID) {
+			continue
+		}
+		flags := frameHeader[9]
+		if (version == 3 && flags&0xc0 != 0) || (version == 4 && flags&0x0c != 0) {
+			continue // compressed/encrypted data is deliberately unsupported
+		}
+		if version == 3 && flags&0x20 != 0 {
+			if len(payload) < 1 {
+				continue
+			}
+			payload = payload[1:]
+		}
+		if version == 4 {
+			if flags&0x40 != 0 {
+				if len(payload) < 1 {
+					continue
+				}
+				payload = payload[1:]
+			}
+			if flags&0x01 != 0 {
+				if len(payload) < 4 {
+					continue
+				}
+				payload = payload[4:]
+			}
+			if flags&0x02 != 0 && !tagUnsynchronised {
+				payload = removeID3Unsynchronisation(payload)
+			}
+		}
+		fields, valid := decodeID3TextFields(payload)
+		if !valid {
+			continue
+		}
+		for i := 0; i+1 < len(fields); i += 2 {
+			people = appendInvolved(people, fields[i], fields[i+1])
+		}
+	}
+	return dedupeInvolved(people)
+}
+
+func isInvolvedPeopleFrame(version byte, frameID string) bool {
+	if version == 3 {
+		return frameID == "IPLS"
+	}
+	return version == 4 && (frameID == "TIPL" || frameID == "TMCL")
+}
+
+func synchsafeSize(value []byte) (int, bool) {
+	if len(value) != 4 || value[0]&0x80 != 0 || value[1]&0x80 != 0 || value[2]&0x80 != 0 || value[3]&0x80 != 0 {
+		return 0, false
+	}
+	return int(value[0])<<21 | int(value[1])<<14 | int(value[2])<<7 | int(value[3]), true
+}
+
+func validID3FrameID(id string) bool {
+	if len(id) != 4 {
+		return false
+	}
+	for _, char := range []byte(id) {
+		if (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func removeID3Unsynchronisation(value []byte) []byte {
+	result := make([]byte, 0, len(value))
+	for i := 0; i < len(value); i++ {
+		result = append(result, value[i])
+		if value[i] == 0xff && i+1 < len(value) && value[i+1] == 0x00 {
+			i++
+		}
+	}
+	return result
+}
+
+func decodeID3TextFields(payload []byte) ([]string, bool) {
+	if len(payload) == 0 || payload[0] > 3 {
+		return nil, false
+	}
+	encoding := payload[0]
+	data := payload[1:]
+	var text string
+	switch encoding {
+	case 0:
+		runes := make([]rune, len(data))
+		for i, value := range data {
+			runes[i] = rune(value)
+		}
+		text = string(runes)
+	case 3:
+		if !utf8.Valid(data) {
+			return nil, false
+		}
+		text = string(data)
+	case 1, 2:
+		littleEndian := false
+		if encoding == 1 {
+			if len(data) < 2 {
+				return nil, false
+			}
+			switch {
+			case data[0] == 0xff && data[1] == 0xfe:
+				littleEndian = true
+			case data[0] == 0xfe && data[1] == 0xff:
+			default:
+				return nil, false
+			}
+			data = data[2:]
+		}
+		if len(data)%2 != 0 {
+			return nil, false
+		}
+		units := make([]uint16, 0, len(data)/2)
+		for len(data) >= 2 {
+			if littleEndian {
+				units = append(units, binary.LittleEndian.Uint16(data[:2]))
+			} else {
+				units = append(units, binary.BigEndian.Uint16(data[:2]))
+			}
+			data = data[2:]
+		}
+		text = string(utf16.Decode(units))
+	}
+	return compactStrings(strings.Split(strings.Trim(text, "\x00"), "\x00")), true
+}
+
 func parseNumberPair(number, total string) (int, int) {
 	parse := func(value string) int {
 		value, _, _ = strings.Cut(value, "/")
@@ -401,7 +783,7 @@ func InferTrackType(title, path string, raw map[string][]string) string {
 		"off vocal":     "off_vocal",
 		"off-vocal":     "off_vocal",
 		"offvocal":      "off_vocal",
-		"カラオケ":         "off_vocal",
+		"カラオケ":          "off_vocal",
 		"backing track": "off_vocal",
 	}
 	for pattern, trackType := range folderPatterns {

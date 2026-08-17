@@ -13,20 +13,20 @@ import (
 )
 
 type libraryPageData struct {
-	Username, CSRFToken, Section, Query, Genre, Sort, Notice, ReturnTo string
-	ArtistRole, ArtistRoleLabel, ClearPath                             string
-	Year                                                               int
-	ArtistID, AlbumID                                                  int64
-	Artists                                                            []storage.Artist
-	Albums                                                             []storage.Album
-	Tracks                                                             []storage.Track
-	Genres                                                             []string
-	Years                                                              []int
-	AlbumDetail                                                        *storage.Album
-	Total                                                              int64
-	Page, PageCount, PageSize                                          int
-	PrevURL, NextURL                                                   string
-	Pages                                                              []pageLink
+	Username, CSRFToken, Section, Query, Genre, Sort, Index, Notice, ReturnTo string
+	ArtistRole, ArtistRoleLabel, ClearPath                                    string
+	Year                                                                      int
+	ArtistID, AlbumID                                                         int64
+	Artists                                                                   []storage.Artist
+	Albums                                                                    []storage.Album
+	Tracks                                                                    []storage.Track
+	Genres                                                                    []string
+	Years                                                                     []int
+	AlbumDetail                                                               *storage.Album
+	Total                                                                     int64
+	Page, PageCount, PageSize                                                 int
+	PrevURL, NextURL                                                          string
+	Pages                                                                     []pageLink
 }
 
 type pageLink struct {
@@ -37,7 +37,7 @@ type pageLink struct {
 
 func filters(r *http.Request) storage.Filters {
 	q := r.URL.Query()
-	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset"))), HideInstrumental: q.Get("hideInstrumental") == "true"}
+	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), Index: strings.TrimSpace(q.Get("index")), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset"))), HideInstrumental: q.Get("hideInstrumental") == "true"}
 }
 
 func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error) {
@@ -51,7 +51,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 	if err != nil {
 		return libraryPageData{}, err
 	}
-	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: "/admin/" + section}, nil
+	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: "/admin/" + section}, nil
 }
 
 func (a *App) handleArtistsPage(w http.ResponseWriter, r *http.Request) {

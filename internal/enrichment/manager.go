@@ -29,6 +29,9 @@ type Manager struct {
 	running        bool
 	mbMu           sync.Mutex
 	mbLast         time.Time
+	phaseMu        sync.Mutex
+	phaseRunning   bool
+	phaseEndpoints phase4Endpoints
 	imageDirectory string
 }
 type MatchResult struct {
@@ -37,7 +40,13 @@ type MatchResult struct {
 }
 
 func New(store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	return &Manager{store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, imageDirectory: filepath.Join(dataDirectory, "artist-images")}
+	manager := &Manager{store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), imageDirectory: filepath.Join(dataDirectory, "artist-images")}
+	if recovered, err := store.FailRunningEnrichmentRuns(context.Background(), "server restarted before the enrichment run completed"); err != nil {
+		logger.Warn("recover interrupted enrichment runs", "error", err)
+	} else if recovered > 0 {
+		logger.Info("recovered interrupted enrichment runs", "count", recovered)
+	}
+	return manager
 }
 
 func (m *Manager) StartAuto(ctx context.Context) {
@@ -46,12 +55,27 @@ func (m *Manager) StartAuto(ctx context.Context) {
 		m.logger.Warn("load automatic metadata settings", "error", err)
 		return
 	}
+	phaseEnabled := false
+	identityEnabled := false
 	for _, setting := range settings {
-		if setting.Enabled && setting.AutoMatch {
-			if _, err = m.StartAll(ctx); err != nil {
-				m.logger.Warn("automatic artist matching was not started", "error", err)
-			}
-			return
+		if !setting.Enabled || !setting.AutoMatch {
+			continue
+		}
+		switch setting.Source {
+		case "vgmdb", "bangumi":
+			phaseEnabled = true
+		case "musicbrainz", "lastfm":
+			identityEnabled = true
+		}
+	}
+	if phaseEnabled {
+		if _, err = m.StartRun(ctx, RunRequest{Scope: "all"}); err != nil {
+			m.logger.Warn("automatic metadata enrichment was not started", "error", err)
+		}
+	}
+	if identityEnabled {
+		if _, err = m.StartAll(ctx); err != nil {
+			m.logger.Warn("automatic artist matching was not started", "error", err)
 		}
 	}
 }

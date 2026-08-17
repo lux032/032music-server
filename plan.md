@@ -116,14 +116,14 @@
 
 ---
 
-### Phase 3: Tie-up 作品关联体系与多语言检索（组织与索引层）
+### Phase 3: Tie-up 作品关联体系与多语言检索（组织与索引层）✅ 已完成
 > **目标**：让音乐不再只按"歌手/专辑"分类，而是能按"动画/影视/游戏"一站式探索。
 
-* [ ] **3.1 Tie-up 数据模型设计**：
+* [x] **3.1 Tie-up 数据模型设计**：
   * 建立 `works`（作品表：如《葬送的芙莉莲》、《Unnatural》）与 `work_tracks`（曲目关联与角色：OP / ED / 插入歌 / OST）。
-* [ ] **3.2 标签与文件夹命名规则智能推导**：
+* [x] **3.2 标签与文件夹命名规则智能推导**：
   * 解析 ID3/Vorbis 的 `CONTENTGROUP`, `SUBTITLE`, `ALBUM` 中的影视动画标签，自动聚合成作品合辑。
-* [ ] **3.3 多语言与假名首字母检索索引**：
+* [x] **3.3 多语言与假名首字母检索索引**：
   * 基于 Phase 1 的 `reading_name` / `reading_title` 字段，构建日文平假名（あ/か/さ/た/な/は/ま/や/ら/わ）及英文字母（A-Z）的多级索引视图。
   * 搜索 API 支持日文汉字、平假名、片假名与罗马音跨形态模糊搜索。
 
@@ -139,15 +139,15 @@
 
 ---
 
-### Phase 4: 日系专属数据源自动刮削（Enrichment & Scraping）
+### Phase 4: 日系专属数据源自动刮削（Enrichment & Scraping）✅ 已完成
 > **目标**：大幅降低手动修元数据的成本，自动从最专业的日系数据库补全信息。
 
-* [ ] **4.1 VGMdb 刮削插件开发**：
+* [x] **4.1 VGMdb 刮削插件开发**：
   * 针对 ACG 唱片编号（如 `SVWC-xxxxx`, `KICA-xxxxx`）精准抓取完整发售日、作词/作曲/编曲名单与特典信息。
-* [ ] **4.2 MusicBrainz 日音增强适配**：
+* [x] **4.2 MusicBrainz 日音增强适配**：
   * 针对日系艺术家别名、组合分身（SawanoHiroyuki[nZk]、YOASOBI/Ayase、米津玄师/ハチ）建立主从关联。
   * 解析 TIPL / TMCL 帧或 MusicBrainz 关系补全 Phase 1 未覆盖的 involved people 信息。
-* [ ] **4.3 Bangumi (番组计划) 作品元数据对齐**：
+* [x] **4.3 Bangumi (番组计划) 作品元数据对齐**：
   * 自动关联动画番剧海报、原作信息与播出年份。
 
 #### Phase 4 验收标准
@@ -155,7 +155,7 @@
 | # | 验收项 | 预期结果 | 验证方法 |
 |---|--------|----------|----------|
 | AC-4.1 | VGMdb 编号匹配 | `catalog_number='SVWC-70658'` 的专辑能自动从 VGMdb 拉取完整 credits | 触发 enrichment → 检查 `track_artists` 新增记录 |
-| AC-4.2 | MusicBrainz 别名 | "ハチ" 与 "米津玄師" 自动建立 `merged_into_artist_id` 主从关联 | 检查 artists 表合并关系 |
+| AC-4.2 | MusicBrainz 别名/分身 | “ハチ”与“米津玄師”等关系生成高置信审核候选，不自动执行破坏性合并；管理员确认后复用可回滚合并流程 | 检查 `artist_relation_candidates` 与管理后台审核 |
 | AC-4.3 | Bangumi 作品对齐 | 关联的动画作品自动获取海报图和播出年份 | 检查 `works` 表 `poster_url` 和 `year` 字段 |
 | AC-4.4 | 增量刮削 | 已获取过的元数据在缓存期内不重复请求 | 二次刮削时无新 HTTP 请求（日志验证） |
 | AC-4.5 | 手动触发 | `POST /api/v1/enrichment/run` 可手动启动刮削任务 | HTTP 202 + 后台任务完成 |
@@ -238,3 +238,69 @@
 | 歌词源优先级 | 外部 `.lrc` 文件 > 内嵌歌词 | 外部 LRC 文件通常有时间戳且更精确；内嵌歌词作为兜底 |
 | 伴奏过滤作用域 | 仅影响 `ListTracks`/`CountTracks` | 专辑详情页需要完整展示所有曲目（含伴奏），符合 AC-2.6 |
 | 过滤实现方式 | SQL WHERE 条件 + `boolInt` 参数化 | 复用现有 Filters 模式，零改动数据库 schema |
+
+---
+
+### Phase 3 实施记录 (已完成)
+
+**变更文件清单**：
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `internal/storage/migrations/011_works_tieups.sql` | 新增 | `works` / `work_tracks` STRICT 表、约束、级联与索引 |
+| `internal/metadata/tieup.go` | 新增 | CONTENTGROUP/SUBTITLE/ALBUM/目录积极推导，识别作品类型、OP/ED/插曲/OST、季数与序号 |
+| `internal/storage/works.go` | 新增 | Works CRUD、作品曲目关联、分页筛选与扫描幂等入库 |
+| `internal/storage/search.go` | 新增 | 平假名/片假名搜索变体与五十音行、A-Z、# 索引条件 |
+| `internal/storage/library.go` | 修改 | 扫描写入自动作品关联；艺术家/专辑 reading 搜索与索引筛选 |
+| `internal/http/works.go` | 新增 | 完整 Works REST API 与管理端处理器 |
+| `internal/http/templates/works.html` | 新增 | 作品搜索、筛选、索引、列表与创建页面 |
+| `internal/http/templates/work.html` | 新增 | 作品详情、编辑、删除与曲目关联管理页面 |
+| `internal/http/assets/admin.css` | 修改 | 作品列表/详情、索引条及响应式样式 |
+| `internal/metadata/tieup_test.go` | 新增 | Tie-up 推导规则测试 |
+| `internal/storage/works_test.go` | 新增 | CRUD、搜索、索引、自动/手工关联及重扫幂等测试 |
+| `internal/http/works_test.go` | 新增 | Works API 创建、检索和 404 测试 |
+
+**技术决策**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 作品模型 | 可扩展基础模型 | 预留译名、reading、海报及外部 ID，便于 Phase 4 Bangumi 对齐 |
+| 自动推导策略 | 积极推导 + 通用词过滤 | 同时分析显式标签、专辑和目录，在提高自动化率的同时抑制明显垃圾条目 |
+| 手工关联保护 | `work_tracks.source=manual/auto` | 重扫仅重建 auto 关联，不删除或覆盖管理员手工关联 |
+| 跨形态搜索 | reading 字段 + 平片假名双变体 | 无大型依赖；罗马音依赖已有 reading 数据，保持纯 Go 和轻量部署 |
+| Web 技术 | 现有 Go SSR 模板 | 项目没有 Node 前端构建链，沿用嵌入式模板、PRG、CSRF 与现有 Roon 风格 |
+
+**验证结果**：`go test ./...` 与 `go build ./...` 全部通过。
+
+---
+
+### Phase 4 实施记录 (已完成)
+
+**变更文件清单**：
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `internal/storage/migrations/012_phase4_enrichment.sql` | 新增 | 来源设置安全升级、统一任务、HTTP 缓存、外部资料、候选审核、provenance 与 credit 来源表 |
+| `internal/storage/enrichment.go` | 新增 | 任务/缓存/候选/保守补全、来源化 credits、重扫恢复及中断任务恢复 |
+| `internal/enrichment/phase4.go` | 新增 | VGMdb、Bangumi、MusicBrainz 关系 provider 与统一后台 `StartRun` |
+| `internal/enrichment/manager.go` | 修改 | 自动 enrichment、重启任务恢复及 Phase 4 并发控制 |
+| `internal/metadata/reader.go` | 修改 | 原始 ID3v2.3 IPLS / ID3v2.4 TIPL/TMCL 安全解析和结构化 involved people |
+| `internal/storage/library.go` | 修改 | 扫描写入 file-tag involved people 并恢复远程 credits |
+| `internal/http/enrichment.go` | 新增 | HTTP 202 任务 API、任务查询、作品/艺术家关系审核及管理端处理器 |
+| `internal/http/templates/enrichment-jobs.html` | 新增 | Enrichment 任务进度、结果和候选审核页面 |
+| `internal/http/templates/metadata-settings.html` | 修改 | VGMdb、Bangumi 来源设置 |
+| `internal/metadata/involved_people_test.go` | 新增 | ID3 involved people 编码、版本、边界和容错测试 |
+| `internal/storage/enrichment_test.go` | 新增 | migration 升级、缓存、幂等、人工保护、重扫恢复和候选测试 |
+| `internal/enrichment/phase4_test.go` | 新增 | 编号规范化、VGMdb 精确匹配、Bangumi 评分/自动确认和任务测试 |
+| `internal/http/enrichment_http_test.go` | 新增 | 鉴权、HTTP 202、任务查询和候选决策测试 |
+
+**技术决策**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| VGMdb 匹配 | 规范化 catalog number 后精确匹配 | 不采用标题模糊写入，避免错误 credits 污染曲库 |
+| 写入策略 | 仅补空字段，`user_*` 与本地已有值优先 | 遵守本地标签/人工编辑优先原则 |
+| 艺术家关系 | 自动生成候选、人工确认 | 禁止远程关系直接写 `merged_into_artist_id`，避免破坏性误合并 |
+| Bangumi 对齐 | 标题、类型、年份评分；≥90 自动确认 | 高置信自动化，冲突结果进入审核 |
+| TIPL/TMCL | 直接读取原始 ID3 帧 | `dhowden/tag` 的通用文本解析会丢失 NUL pair 边界 |
+| Credits 来源 | `track_artist_sources` + provenance | file-tag 可替换，远程来源可追溯且重扫后自动恢复 |
+| 缓存 | 状态码与响应体一并缓存 | 正常结果和 404 均在缓存期内避免重复 HTTP 请求 |
+| 任务执行 | 单 Phase 4 后台任务 + 持久化进度 | 防并发重复执行，重启后将遗留 running 标记失败 |
+
+**验证结果**：`go test ./...` 与 `go build ./...` 全部通过。

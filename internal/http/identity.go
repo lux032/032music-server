@@ -58,7 +58,7 @@ func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	existingLastFM, _ := a.store.MetadataSourceSetting(r.Context(), "lastfm")
-	for _, source := range []string{"musicbrainz", "lastfm"} {
+	for _, source := range []string{"musicbrainz", "lastfm", "vgmdb", "bangumi"} {
 		setting := storage.MetadataSourceSetting{Source: source, Enabled: r.FormValue(source+"_enabled") != "", AutoMatch: r.FormValue(source+"_auto") != "", Priority: int(parseInt64(r.FormValue(source + "_priority"))), CacheDays: int(parseInt64(r.FormValue(source + "_cache_days"))), Language: r.FormValue(source + "_language"), APIKey: strings.TrimSpace(r.FormValue(source + "_api_key")), ApplicationName: r.FormValue(source + "_application_name"), ApplicationVersion: r.FormValue(source + "_application_version"), Contact: r.FormValue(source + "_contact")}
 		if source == "musicbrainz" && setting.Enabled && strings.TrimSpace(setting.Contact) == "" {
 			redirectWithNotice(w, r, "/admin/settings/metadata", "启用 MusicBrainz 时必须填写联系邮箱或项目地址")
