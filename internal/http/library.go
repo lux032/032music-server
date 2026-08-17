@@ -222,7 +222,7 @@ func (a *App) handleUpdateTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = r.ParseForm()
-	if err := a.store.UpdateTrack(r.Context(), parseInt64(r.PathValue("id")), r.FormValue("title"), int(parseInt64(r.FormValue("disc"))), int(parseInt64(r.FormValue("number"))), r.FormValue("composer"), splitCSV(r.FormValue("genres"))); err != nil {
+	if err := a.store.UpdateTrack(r.Context(), parseInt64(r.PathValue("id")), r.FormValue("title"), int(parseInt64(r.FormValue("disc"))), int(parseInt64(r.FormValue("number"))), r.FormValue("composer"), r.FormValue("trackType"), splitCSV(r.FormValue("genres"))); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -332,14 +332,14 @@ func (a *App) handleAPIUpdateAlbum(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) handleAPIUpdateTrack(w http.ResponseWriter, r *http.Request) {
 	var v struct {
-		Title, Composer         string
-		DiscNumber, TrackNumber int
-		Genres                  []string
+		Title, Composer, TrackType string
+		DiscNumber, TrackNumber    int
+		Genres                     []string
 	}
 	if !decode(w, r, &v) {
 		return
 	}
-	apiNoContent(w, a.store.UpdateTrack(r.Context(), parseInt64(r.PathValue("id")), v.Title, v.DiscNumber, v.TrackNumber, v.Composer, v.Genres))
+	apiNoContent(w, a.store.UpdateTrack(r.Context(), parseInt64(r.PathValue("id")), v.Title, v.DiscNumber, v.TrackNumber, v.Composer, v.TrackType, v.Genres))
 }
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))

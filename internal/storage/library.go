@@ -102,6 +102,9 @@ type Track struct {
 	Artist         string   `json:"artist"`
 	Genres         string   `json:"genres"`
 	Composer       string   `json:"composer"`
+	Lyricist       string   `json:"lyricist"`
+	Arranger       string   `json:"arranger"`
+	TrackType      string   `json:"trackType"`
 	Container      string   `json:"container"`
 	MIMEType       string   `json:"mimeType"`
 	RelativePath   string   `json:"relativePath"`
@@ -236,10 +239,30 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 		}
 	}
 
+	// Set artist reading_name from sort tags (only when single artist to avoid misattribution)
+	if m.AlbumArtistSort != "" && len(albumArtistIDs) == 1 {
+		if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.AlbumArtistSort, albumArtistIDs[0]); err != nil {
+			return err
+		}
+	}
+	if m.ArtistSort != "" && len(m.Artists) == 1 {
+		trackArtistIDs, taErr := ensureArtists(ctx, tx, m.Artists)
+		if taErr == nil && len(trackArtistIDs) == 1 {
+			if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.ArtistSort, trackArtistIDs[0]); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Derive sort/reading keys
+	trackSortTitle := metadata.Normalize(m.Title)
+	trackReadingTitle := m.TitleSort // from TITLESORT tag (furigana/romaji)
+	albumReadingTitle := m.AlbumSort // from ALBUMSORT tag
+
 	var trackID int64
 	err = tx.QueryRowContext(ctx, `SELECT track_id FROM audio_files WHERE library_id=? AND relative_path=?`, input.LibraryID, input.RelativePath).Scan(&trackID)
 	if err == sql.ErrNoRows || trackID == 0 {
-		result, e := tx.ExecContext(ctx, `INSERT INTO tracks(album_id,title,sort_title,disc_number,track_number,duration_ms,release_date,composer,lyrics) VALUES(?,?,?,?,?,?,NULLIF(?,''),?,?)`, albumID, m.Title, metadata.Normalize(m.Title), m.DiscNumber, m.TrackNumber, m.DurationMillis, yearDate(m.Year), m.Composer, m.Lyrics)
+		result, e := tx.ExecContext(ctx, `INSERT INTO tracks(album_id,title,sort_title,reading_title,disc_number,track_number,duration_ms,release_date,composer,lyricist,arranger,track_type,lyrics) VALUES(?,?,?,NULLIF(?,''),?,?,?,NULLIF(?,''),?,?,?,?,?)`, albumID, m.Title, trackSortTitle, trackReadingTitle, m.DiscNumber, m.TrackNumber, m.DurationMillis, yearDate(m.Year), m.Composer, m.Lyricist, m.Arranger, m.TrackType, m.Lyrics)
 		if e != nil {
 			return e
 		}
@@ -247,8 +270,15 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 	} else if err != nil {
 		return err
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id=?,title=?,sort_title=?,disc_number=?,track_number=?,duration_ms=?,release_date=NULLIF(?,''),composer=?,lyrics=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, albumID, m.Title, metadata.Normalize(m.Title), m.DiscNumber, m.TrackNumber, m.DurationMillis, yearDate(m.Year), m.Composer, m.Lyrics, trackID)
+		_, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id=?,title=?,sort_title=?,reading_title=NULLIF(?,''),disc_number=?,track_number=?,duration_ms=?,release_date=NULLIF(?,''),composer=?,lyricist=?,arranger=?,track_type=?,lyrics=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, albumID, m.Title, trackSortTitle, trackReadingTitle, m.DiscNumber, m.TrackNumber, m.DurationMillis, yearDate(m.Year), m.Composer, m.Lyricist, m.Arranger, m.TrackType, m.Lyrics, trackID)
 		if err != nil {
+			return err
+		}
+	}
+
+	// Update album reading_title from sort tags
+	if albumReadingTitle != "" {
+		if _, err = tx.ExecContext(ctx, `UPDATE albums SET reading_title=? WHERE id=? AND reading_title IS NULL`, albumReadingTitle, albumID); err != nil {
 			return err
 		}
 	}
@@ -266,13 +296,41 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 	if _, err = tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id=?`, trackID); err != nil {
 		return err
 	}
+	// Primary performing artists
 	artistIDs, err := ensureArtists(ctx, tx, m.Artists)
 	if err != nil {
 		return err
 	}
 	for i, id := range artistIDs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position) VALUES(?,?,?)`, trackID, id, i); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, "primary"); err != nil {
 			return err
+		}
+	}
+	// Credits: lyricist, composer, arranger, producer (each as separate roles)
+	type creditEntry struct {
+		role  string
+		names string
+	}
+	credits := []creditEntry{
+		{"composer", m.Composer},
+		{"lyricist", m.Lyricist},
+		{"arranger", m.Arranger},
+		{"producer", m.Producer},
+	}
+	for _, credit := range credits {
+		if credit.names == "" {
+			continue
+		}
+		creditNames := metadata.SplitPeople(credit.names)
+		creditIDs, cErr := ensureArtists(ctx, tx, creditNames)
+		if cErr != nil {
+			return cErr
+		}
+		for i, id := range creditIDs {
+			// Use INSERT OR IGNORE to handle same artist appearing in multiple credit roles
+			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, credit.role); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM track_genres WHERE track_id=?`, trackID); err != nil {
@@ -501,7 +559,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	} else if f.Sort == "recentlyPlayed" {
 		order = "COALESCE(pp.last_played_at,'') DESC," + order
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),COALESCE(GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),COALESCE(GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +568,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	for rows.Next() {
 		var v Track
 		var favorite int
-		if err = rows.Scan(&v.ID, &v.AlbumID, &v.Title, &v.Album, &v.Artist, &v.Year, &v.DiscNumber, &v.TrackNumber, &v.Composer, &v.Genres, &v.Container, &v.MIMEType, &v.RelativePath, &v.FileSize, &v.ArtworkURL, &v.DurationMillis, &v.StreamURL, &v.AddedAt, &v.UpdatedAt, &favorite, &v.LastPlayedAt, &v.PositionMillis, &v.PlayCount); err != nil {
+		if err = rows.Scan(&v.ID, &v.AlbumID, &v.Title, &v.Album, &v.Artist, &v.Year, &v.DiscNumber, &v.TrackNumber, &v.Composer, &v.Lyricist, &v.Arranger, &v.TrackType, &v.Genres, &v.Container, &v.MIMEType, &v.RelativePath, &v.FileSize, &v.ArtworkURL, &v.DurationMillis, &v.StreamURL, &v.AddedAt, &v.UpdatedAt, &favorite, &v.LastPlayedAt, &v.PositionMillis, &v.PlayCount); err != nil {
 			return nil, err
 		}
 		v.IsFavorite = favorite != 0
@@ -582,7 +640,7 @@ func (s *Store) UpdateAlbum(ctx context.Context, id int64, edit AlbumEdit) error
 	}
 	return tx.Commit()
 }
-func (s *Store) UpdateTrack(ctx context.Context, id int64, title string, disc, number int, composer string, genres []string) error {
+func (s *Store) UpdateTrack(ctx context.Context, id int64, title string, disc, number int, composer, trackType string, genres []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -594,7 +652,7 @@ func (s *Store) UpdateTrack(ctx context.Context, id int64, title string, disc, n
 	if number < 0 {
 		number = 0
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tracks SET user_title=NULLIF(?,''),disc_number=?,track_number=?,user_composer=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, strings.TrimSpace(title), disc, number, strings.TrimSpace(composer), id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tracks SET user_title=NULLIF(?,''),disc_number=?,track_number=?,user_composer=NULLIF(?,''),user_track_type=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, strings.TrimSpace(title), disc, number, strings.TrimSpace(composer), strings.TrimSpace(trackType), id); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM track_genre_overrides WHERE track_id=?`, id); err != nil {

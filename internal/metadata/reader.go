@@ -21,6 +21,9 @@ type AudioMetadata struct {
 	Artists        []string
 	AlbumArtists   []string
 	Composer       string
+	Lyricist       string
+	Arranger       string
+	Producer       string
 	Genres         []string
 	Lyrics         string
 	Year           int
@@ -31,10 +34,17 @@ type AudioMetadata struct {
 	DurationMillis int64
 	Container      string
 	MIMEType       string
+	TrackType      string // regular, instrumental, off_vocal, tv_size, drama_track, remix
 	Raw            map[string][]string
 	Artwork        []byte
 	ArtworkMIME    string
 	ArtworkExt     string
+
+	// Sort/reading keys for Japanese ordering
+	ArtistSort      string
+	AlbumArtistSort string
+	TitleSort       string
+	AlbumSort       string
 }
 
 var supportedExtensions = map[string]struct{}{
@@ -81,6 +91,24 @@ func Read(path string) (AudioMetadata, error) {
 	}
 	result.TrackNumber, result.TrackTotal = parsed.Track()
 	result.DiscNumber, result.DiscTotal = parsed.Disc()
+
+	// Extract credits and sort keys from raw tags (ID3v2 / MP4)
+	rawFirst := func(keys ...string) string {
+		for _, key := range keys {
+			if vals := result.Raw[key]; len(vals) > 0 && strings.TrimSpace(vals[0]) != "" {
+				return strings.TrimSpace(vals[0])
+			}
+		}
+		return ""
+	}
+	result.Lyricist = rawFirst("LYRICIST", "TEXT")
+	result.Arranger = rawFirst("ARRANGER")
+	result.Producer = rawFirst("PRODUCER")
+	result.ArtistSort = rawFirst("ARTISTSORT", "SOAR", "TSOP")
+	result.AlbumArtistSort = rawFirst("ALBUMARTISTSORT", "SOAA", "TSO2")
+	result.TitleSort = rawFirst("TITLESORT", "SONM", "TSOT")
+	result.AlbumSort = rawFirst("ALBUMSORT", "SOAL", "TSOA")
+
 	if picture := parsed.Picture(); picture != nil && len(picture.Data) > 0 {
 		result.Artwork = picture.Data
 		result.ArtworkMIME = strings.TrimSpace(picture.MIMEType)
@@ -136,6 +164,9 @@ func readFLAC(file *os.File) (AudioMetadata, error) {
 	result.Artists = splitPeople(values("ARTIST"))
 	result.AlbumArtists = splitPeople(values("ALBUMARTIST", "ALBUM ARTIST"))
 	result.Composer = values("COMPOSER")
+	result.Lyricist = values("LYRICIST")
+	result.Arranger = values("ARRANGER")
+	result.Producer = values("PRODUCER")
 	result.Genres = splitValues(values("GENRE"))
 	result.Lyrics = values("LYRICS", "UNSYNCEDLYRICS")
 	date := values("DATE", "YEAR")
@@ -144,6 +175,13 @@ func readFLAC(file *os.File) (AudioMetadata, error) {
 	}
 	result.TrackNumber, result.TrackTotal = parseNumberPair(values("TRACKNUMBER"), values("TRACKTOTAL", "TOTALTRACKS"))
 	result.DiscNumber, result.DiscTotal = parseNumberPair(values("DISCNUMBER"), values("DISCTOTAL", "TOTALDISCS"))
+
+	// Sort/reading keys for Japanese ordering
+	result.ArtistSort = values("ARTISTSORT")
+	result.AlbumArtistSort = values("ALBUMARTISTSORT")
+	result.TitleSort = values("TITLESORT")
+	result.AlbumSort = values("ALBUMSORT")
+
 	return result, nil
 }
 
@@ -271,7 +309,108 @@ func applyFallbacks(result AudioMetadata, path string) AudioMetadata {
 	if len(result.AlbumArtists) == 0 {
 		result.AlbumArtists = append([]string(nil), result.Artists...)
 	}
+	// Infer track type from title, folder name, and tags
+	if result.TrackType == "" {
+		result.TrackType = InferTrackType(result.Title, path, result.Raw)
+	}
 	return result
+}
+
+// InferTrackType determines the track type from the title, file path, and raw tags.
+// Returns one of: regular, instrumental, off_vocal, tv_size, drama_track, remix.
+func InferTrackType(title, path string, raw map[string][]string) string {
+	lower := strings.ToLower(title)
+	folderName := strings.ToLower(filepath.Base(filepath.Dir(path)))
+
+	// Check raw tags for content type hints
+	for _, key := range []string{"CONTENTTYPE", "CONTENT TYPE"} {
+		if vals, ok := raw[key]; ok {
+			for _, v := range vals {
+				vl := strings.ToLower(v)
+				if strings.Contains(vl, "instrumental") {
+					return "instrumental"
+				}
+				if strings.Contains(vl, "drama") {
+					return "drama_track"
+				}
+				if strings.Contains(vl, "remix") {
+					return "remix"
+				}
+			}
+		}
+	}
+
+	// Title-based patterns (order matters: more specific first)
+	titlePatterns := []struct {
+		trackType string
+		patterns  []string
+	}{
+		{"off_vocal", []string{
+			"(off vocal)", "(off-vocal)", "(offvocal)",
+			"[off vocal]", "[off-vocal]", "[offvocal]",
+			"(backing track)", "[backing track]",
+			"(minus one)", "[minus one]",
+			"(カラオケ)", "[カラオケ]", "(からおけ)",
+			"(off vo)", "[off vo]",
+		}},
+		{"instrumental", []string{
+			"(instrumental)", "[instrumental]",
+			"(inst)", "[inst]",
+			"(inst.)", "[inst.]",
+			" instrumental", // trailing
+		}},
+		{"tv_size", []string{
+			"(tv size)", "[tv size]",
+			"(tv ver.)", "[tv ver.]",
+			"(tv ver)", "[tv ver]",
+			"(tv version)", "[tv version]",
+			"(tv edit)", "[tv edit]",
+			"(anime ver.)", "[anime ver.]",
+			"(anime ver)", "[anime ver]",
+			"(anime version)", "[anime version]",
+			"(short ver.)", "[short ver.]",
+			"(short ver)", "[short ver]",
+			"(short version)", "[short version]",
+			"(tvサイズ)", "[tvサイズ]",
+		}},
+		{"drama_track", []string{
+			"(drama)", "[drama]",
+			"(ドラマ)", "[ドラマ]",
+			"(skit)", "[skit]",
+			"(寸劇)", "[寸劇]",
+		}},
+		{"remix", []string{
+			"(remix)", "[remix]",
+			"(remixed)", "[remixed]",
+			" remix",
+		}},
+	}
+
+	for _, group := range titlePatterns {
+		for _, pattern := range group.patterns {
+			if strings.Contains(lower, pattern) {
+				return group.trackType
+			}
+		}
+	}
+
+	// Folder-based detection
+	folderPatterns := map[string]string{
+		"instrumental":  "instrumental",
+		"instrumentals": "instrumental",
+		"off vocal":     "off_vocal",
+		"off-vocal":     "off_vocal",
+		"offvocal":      "off_vocal",
+		"カラオケ":         "off_vocal",
+		"backing track": "off_vocal",
+	}
+	for pattern, trackType := range folderPatterns {
+		if folderName == pattern || strings.Contains(folderName, pattern) {
+			return trackType
+		}
+	}
+
+	return "regular"
 }
 
 func Normalize(value string) string {
@@ -312,8 +451,13 @@ func flattenRaw(raw map[string]interface{}) map[string][]string {
 	return result
 }
 
-func splitPeople(value string) []string {
+// SplitPeople splits a multi-person string on semicolons, slashes, and Japanese commas.
+func SplitPeople(value string) []string {
 	return splitOnSeparators(value, []string{";", " / ", "、"})
+}
+
+func splitPeople(value string) []string {
+	return SplitPeople(value)
 }
 
 func splitValues(value string) []string {
