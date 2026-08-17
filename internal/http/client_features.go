@@ -175,9 +175,10 @@ func (a *App) handlePlaybackTimeline(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handlePlaybackScrobble(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		TrackID        int64 `json:"trackId"`
-		PositionMillis int64 `json:"positionMillis"`
-		DurationMillis int64 `json:"durationMillis"`
+		TrackID        int64  `json:"trackId"`
+		PositionMillis int64  `json:"positionMillis"`
+		DurationMillis int64  `json:"durationMillis"`
+		Timestamp      string `json:"timestamp"`
 	}
 	if !decode(w, r, &input) {
 		return

@@ -2,10 +2,13 @@ package httpapi
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -359,13 +362,153 @@ func apiNoContent(w http.ResponseWriter, err error) {
 }
 
 func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
-	path, mimeType, err := a.store.AudioPath(r.Context(), parseInt64(r.PathValue("id")))
+	trackID := parseInt64(r.PathValue("id"))
+	path, mimeType, err := a.store.AudioPath(r.Context(), trackID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
+	file, err := os.Open(path)
+	if err != nil {
+		a.logger.Error("open audio file for streaming", "trackID", trackID, "path", path, "error", err)
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".flac":
+		mimeType = "audio/flac"
+	case ".mp3":
+		mimeType = "audio/mpeg"
+	case ".m4a", ".mp4":
+		mimeType = "audio/mp4"
+	case ".aac":
+		mimeType = "audio/aac"
+	case ".ogg", ".oga":
+		mimeType = "audio/ogg"
+	case ".opus":
+		mimeType = "audio/opus"
+	case ".wav":
+		mimeType = "audio/wav"
+	case ".webm":
+		mimeType = "audio/webm"
+	default:
+		if mimeType == "" || mimeType == "application/octet-stream" {
+			mimeType = "audio/flac"
+		}
+	}
+
 	w.Header().Set("Content-Type", mimeType)
-	http.ServeFile(w, r, path)
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Authorization, Content-Type, Accept")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
+	// Remove CSP header for media streams: it is only meaningful for HTML
+	// documents and can confuse certain browser media pipelines.
+	w.Header().Del("Content-Security-Policy")
+
+	var content io.ReadSeeker = file
+	if ext == ".flac" {
+		if patches := flacMetadataPatches(file); len(patches) > 0 {
+			content = &patchedReadSeeker{source: file, size: info.Size(), patches: patches}
+		}
+	}
+	http.ServeContent(w, r, "stream"+filepath.Ext(path), info.ModTime(), content)
+}
+
+// flacMetadataPatches walks the FLAC metadata section and returns byte
+// patches that replace invalid PICTURE block picture types with "front
+// cover" (3). Chromium's demuxer hard-fails on picture types outside the
+// spec range 0-20 and reports the whole file as unplayable, while most
+// desktop players merely warn, so files like this look fine everywhere
+// except the browser.
+func flacMetadataPatches(file *os.File) map[int64][4]byte {
+	var magic [4]byte
+	if _, err := file.ReadAt(magic[:], 0); err != nil || string(magic[:]) != "fLaC" {
+		return nil
+	}
+	var patches map[int64][4]byte
+	offset := int64(4)
+	for range 128 { // generous upper bound on metadata block count
+		var header [4]byte
+		if _, err := file.ReadAt(header[:], offset); err != nil {
+			break
+		}
+		isLast := header[0]&0x80 != 0
+		blockType := header[0] & 0x7f
+		length := int64(header[1])<<16 | int64(header[2])<<8 | int64(header[3])
+		if blockType == 6 && length >= 4 {
+			var picType [4]byte
+			if _, err := file.ReadAt(picType[:], offset+4); err == nil && binary.BigEndian.Uint32(picType[:]) > 20 {
+				if patches == nil {
+					patches = make(map[int64][4]byte)
+				}
+				patches[offset+4] = [4]byte{0, 0, 0, 3}
+			}
+		}
+		offset += 4 + length
+		if isLast {
+			break
+		}
+	}
+	return patches
+}
+
+// patchedReadSeeker serves the underlying file with a few byte ranges
+// replaced in flight. Sizes and offsets are unchanged, so range requests
+// and http.ServeContent keep working as if the file itself were fixed.
+type patchedReadSeeker struct {
+	source  io.ReaderAt
+	size    int64
+	offset  int64
+	patches map[int64][4]byte
+}
+
+func (p *patchedReadSeeker) Read(buf []byte) (int, error) {
+	if p.offset >= p.size {
+		return 0, io.EOF
+	}
+	n, err := p.source.ReadAt(buf, p.offset)
+	for patchOffset, replacement := range p.patches {
+		for i := range int64(len(replacement)) {
+			bufIndex := patchOffset + i - p.offset
+			if bufIndex >= 0 && bufIndex < int64(n) {
+				buf[bufIndex] = replacement[i]
+			}
+		}
+	}
+	p.offset += int64(n)
+	if err == io.EOF && n > 0 {
+		err = nil
+	}
+	return n, err
+}
+
+func (p *patchedReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		p.offset = offset
+	case io.SeekCurrent:
+		p.offset += offset
+	case io.SeekEnd:
+		p.offset = p.size + offset
+	default:
+		return 0, errors.New("invalid whence")
+	}
+	if p.offset < 0 {
+		return 0, errors.New("negative seek position")
+	}
+	return p.offset, nil
 }
 func (a *App) handleArtwork(w http.ResponseWriter, r *http.Request) {
 	path, mimeType, err := a.store.ArtworkPath(r.Context(), parseInt64(r.PathValue("id")))
@@ -386,6 +529,7 @@ func (a *App) handleArtwork(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 func (a *App) handleArtistImage(w http.ResponseWriter, r *http.Request) {
@@ -405,8 +549,12 @@ func (a *App) handleArtistImage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 

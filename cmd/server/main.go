@@ -69,8 +69,12 @@ func run() error {
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       2 * time.Minute,
+		// WriteTimeout is intentionally omitted: a global write timeout
+		// kills long-running audio streams for large FLAC files. The
+		// streaming handler uses http.ServeContent which handles range
+		// requests; per-request context deadlines protect non-stream
+		// endpoints instead.
+		IdleTimeout: 2 * time.Minute,
 	}
 
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

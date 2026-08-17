@@ -59,7 +59,7 @@ func (m *sessionManager) create(w http.ResponseWriter, username string) (adminSe
 		MaxAge:   int(m.lifetime.Seconds()),
 		HttpOnly: true,
 		Secure:   m.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	return session, nil

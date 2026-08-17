@@ -100,56 +100,56 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", a.handleHealth)
-	mux.Handle("GET /api/v1/status", a.requireAPIToken(http.HandlerFunc(a.handleStatus)))
-	mux.Handle("GET /api/v1/capabilities", a.requireAPIToken(http.HandlerFunc(a.handleCapabilities)))
-	mux.Handle("GET /api/v1/artists", a.requireAPIToken(http.HandlerFunc(a.handleAPIArtists)))
-	mux.Handle("GET /api/v1/works", a.requireAPIToken(http.HandlerFunc(a.handleAPIWorks)))
-	mux.Handle("POST /api/v1/works", a.requireAPIToken(http.HandlerFunc(a.handleAPICreateWork)))
-	mux.Handle("GET /api/v1/works/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIWork)))
-	mux.Handle("PATCH /api/v1/works/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateWork)))
-	mux.Handle("DELETE /api/v1/works/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIDeleteWork)))
-	mux.Handle("GET /api/v1/works/{id}/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPIWorkTracks)))
-	mux.Handle("POST /api/v1/works/{id}/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPIAddWorkTrack)))
-	mux.Handle("DELETE /api/v1/works/{id}/tracks/{trackId}", a.requireAPIToken(http.HandlerFunc(a.handleAPIRemoveWorkTrack)))
-	mux.Handle("GET /api/v1/albums", a.requireAPIToken(http.HandlerFunc(a.handleAPIAlbums)))
-	mux.Handle("GET /api/v1/albums/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIAlbum)))
-	mux.Handle("GET /api/v1/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPITracks)))
-	mux.Handle("GET /api/v1/tracks/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPITrack)))
-	mux.Handle("GET /api/v1/sync/albums", a.requireAPIToken(http.HandlerFunc(a.handleAPISyncAlbums)))
-	mux.Handle("GET /api/v1/sync/tracks", a.requireAPIToken(http.HandlerFunc(a.handleAPISyncTracks)))
-	mux.Handle("GET /api/v1/tracks/sync", a.requireAPIToken(http.HandlerFunc(a.handleAPISyncTracks)))
-	mux.Handle("PATCH /api/v1/artists/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateArtist)))
-	mux.Handle("PATCH /api/v1/albums/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateAlbum)))
-	mux.Handle("PATCH /api/v1/tracks/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIUpdateTrack)))
-	mux.Handle("PUT /api/v1/albums/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleSetAlbumFavorite)))
-	mux.Handle("DELETE /api/v1/albums/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleUnsetAlbumFavorite)))
-	mux.Handle("PUT /api/v1/tracks/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleSetTrackFavorite)))
-	mux.Handle("DELETE /api/v1/tracks/{id}/favorite", a.requireAPIToken(http.HandlerFunc(a.handleUnsetTrackFavorite)))
-	mux.Handle("GET /api/v1/favorites/albums", a.requireAPIToken(http.HandlerFunc(a.handleFavoriteAlbums)))
-	mux.Handle("GET /api/v1/favorites/tracks", a.requireAPIToken(http.HandlerFunc(a.handleFavoriteTracks)))
-	mux.Handle("GET /api/v1/playlists", a.requireAPIToken(http.HandlerFunc(a.handlePlaylists)))
-	mux.Handle("POST /api/v1/playlists", a.requireAPIToken(http.HandlerFunc(a.handleCreatePlaylist)))
-	mux.Handle("GET /api/v1/playlists/{id}", a.requireAPIToken(http.HandlerFunc(a.handlePlaylist)))
-	mux.Handle("PATCH /api/v1/playlists/{id}", a.requireAPIToken(http.HandlerFunc(a.handleUpdatePlaylist)))
-	mux.Handle("DELETE /api/v1/playlists/{id}", a.requireAPIToken(http.HandlerFunc(a.handleDeletePlaylist)))
-	mux.Handle("PUT /api/v1/playlists/{id}/items", a.requireAPIToken(http.HandlerFunc(a.handleReplacePlaylistItems)))
-	mux.Handle("POST /api/v1/playback/timeline", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackTimeline)))
-	mux.Handle("POST /api/v1/playback/scrobble", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackScrobble)))
-	mux.Handle("GET /api/v1/playback/history", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackHistory)))
-	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIToken(http.HandlerFunc(a.handleClearPlaybackHistory)))
-	mux.Handle("GET /api/v1/tracks/{id}/lyrics", a.requireAPIToken(http.HandlerFunc(a.handleAPITrackLyrics)))
+	mux.Handle("GET /api/v1/status", a.requireAPIOrAdmin(http.HandlerFunc(a.handleStatus)))
+	mux.Handle("GET /api/v1/capabilities", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCapabilities)))
+	mux.Handle("GET /api/v1/artists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIArtists)))
+	mux.Handle("GET /api/v1/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorks)))
+	mux.Handle("POST /api/v1/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPICreateWork)))
+	mux.Handle("GET /api/v1/works/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWork)))
+	mux.Handle("PATCH /api/v1/works/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateWork)))
+	mux.Handle("DELETE /api/v1/works/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDeleteWork)))
+	mux.Handle("GET /api/v1/works/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorkTracks)))
+	mux.Handle("POST /api/v1/works/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAddWorkTrack)))
+	mux.Handle("DELETE /api/v1/works/{id}/tracks/{trackId}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRemoveWorkTrack)))
+	mux.Handle("GET /api/v1/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbums)))
+	mux.Handle("GET /api/v1/albums/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbum)))
+	mux.Handle("GET /api/v1/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITracks)))
+	mux.Handle("GET /api/v1/tracks/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrack)))
+	mux.Handle("GET /api/v1/sync/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncAlbums)))
+	mux.Handle("GET /api/v1/sync/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncTracks)))
+	mux.Handle("GET /api/v1/tracks/sync", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncTracks)))
+	mux.Handle("PATCH /api/v1/artists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateArtist)))
+	mux.Handle("PATCH /api/v1/albums/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateAlbum)))
+	mux.Handle("PATCH /api/v1/tracks/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateTrack)))
+	mux.Handle("PUT /api/v1/albums/{id}/favorite", a.requireAPIOrAdmin(http.HandlerFunc(a.handleSetAlbumFavorite)))
+	mux.Handle("DELETE /api/v1/albums/{id}/favorite", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUnsetAlbumFavorite)))
+	mux.Handle("PUT /api/v1/tracks/{id}/favorite", a.requireAPIOrAdmin(http.HandlerFunc(a.handleSetTrackFavorite)))
+	mux.Handle("DELETE /api/v1/tracks/{id}/favorite", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUnsetTrackFavorite)))
+	mux.Handle("GET /api/v1/favorites/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleFavoriteAlbums)))
+	mux.Handle("GET /api/v1/favorites/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleFavoriteTracks)))
+	mux.Handle("GET /api/v1/playlists", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaylists)))
+	mux.Handle("POST /api/v1/playlists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCreatePlaylist)))
+	mux.Handle("GET /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaylist)))
+	mux.Handle("PATCH /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUpdatePlaylist)))
+	mux.Handle("DELETE /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleDeletePlaylist)))
+	mux.Handle("PUT /api/v1/playlists/{id}/items", a.requireAPIOrAdmin(http.HandlerFunc(a.handleReplacePlaylistItems)))
+	mux.Handle("POST /api/v1/playback/timeline", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaybackTimeline)))
+	mux.Handle("POST /api/v1/playback/scrobble", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaybackScrobble)))
+	mux.Handle("GET /api/v1/playback/history", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaybackHistory)))
+	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIOrAdmin(http.HandlerFunc(a.handleClearPlaybackHistory)))
+	mux.Handle("GET /api/v1/tracks/{id}/lyrics", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackLyrics)))
 	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireMediaAccess(http.HandlerFunc(a.handleStream)))
 	mux.Handle("GET /api/v1/artwork/{id}", a.requireMediaAccess(http.HandlerFunc(a.handleArtwork)))
 	mux.Handle("GET /api/v1/artists/{id}/image", a.requireMediaAccess(http.HandlerFunc(a.handleArtistImage)))
-	mux.Handle("POST /api/v1/enrichment/run", a.requireAPIToken(http.HandlerFunc(a.handleAPIStartEnrichment)))
-	mux.Handle("GET /api/v1/enrichment/jobs", a.requireAPIToken(http.HandlerFunc(a.handleAPIEnrichmentRuns)))
-	mux.Handle("GET /api/v1/enrichment/jobs/{id}", a.requireAPIToken(http.HandlerFunc(a.handleAPIEnrichmentRun)))
-	mux.Handle("GET /api/v1/enrichment/works/{workId}/candidates", a.requireAPIToken(http.HandlerFunc(a.handleAPIWorkEnrichmentCandidates)))
-	mux.Handle("POST /api/v1/enrichment/works/{workId}/candidates/{candidateId}/accept", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIWorkCandidateDecision(w, r, "confirmed") })))
-	mux.Handle("POST /api/v1/enrichment/works/{workId}/candidates/{candidateId}/reject", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIWorkCandidateDecision(w, r, "rejected") })))
-	mux.Handle("GET /api/v1/enrichment/artists/{artistId}/relations", a.requireAPIToken(http.HandlerFunc(a.handleAPIArtistRelationCandidates)))
-	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/accept", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "confirmed") })))
-	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/reject", a.requireAPIToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "rejected") })))
+	mux.Handle("POST /api/v1/enrichment/run", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIStartEnrichment)))
+	mux.Handle("GET /api/v1/enrichment/jobs", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIEnrichmentRuns)))
+	mux.Handle("GET /api/v1/enrichment/jobs/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIEnrichmentRun)))
+	mux.Handle("GET /api/v1/enrichment/works/{workId}/candidates", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorkEnrichmentCandidates)))
+	mux.Handle("POST /api/v1/enrichment/works/{workId}/candidates/{candidateId}/accept", a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIWorkCandidateDecision(w, r, "confirmed") })))
+	mux.Handle("POST /api/v1/enrichment/works/{workId}/candidates/{candidateId}/reject", a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIWorkCandidateDecision(w, r, "rejected") })))
+	mux.Handle("GET /api/v1/enrichment/artists/{artistId}/relations", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIArtistRelationCandidates)))
+	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/accept", a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "confirmed") })))
+	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/reject", a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "rejected") })))
 
 	mux.Handle("GET /admin/assets/", a.assets)
 	mux.HandleFunc("GET /admin/login", a.handleLoginPage)
@@ -312,6 +312,13 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if _, ok := a.sessions.get(r); ok {
 			next.ServeHTTP(w, r)
 			return
@@ -322,16 +329,31 @@ func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 
 func (a *App) requireMediaAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Range, Content-Type, Accept")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if _, ok := a.sessions.get(r); ok {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if secureEqual(r.URL.Query().Get("mediaToken"), a.config.MediaToken) && r.URL.Query().Get("mediaToken") != "" {
+		tokenQuery := r.URL.Query().Get("mediaToken")
+		if tokenQuery == "" {
+			tokenQuery = r.URL.Query().Get("apiToken")
+		}
+		if tokenQuery == "" {
+			tokenQuery = r.URL.Query().Get("token")
+		}
+		if tokenQuery != "" && (secureEqual(tokenQuery, a.config.MediaToken) || secureEqual(tokenQuery, a.config.APIToken)) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-		if ok && strings.EqualFold(scheme, "Bearer") && secureEqual(token, a.config.APIToken) {
+		if ok && strings.EqualFold(scheme, "Bearer") && (secureEqual(token, a.config.APIToken) || secureEqual(token, a.config.MediaToken)) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -387,7 +409,7 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
