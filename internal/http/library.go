@@ -37,7 +37,7 @@ type pageLink struct {
 
 func filters(r *http.Request) storage.Filters {
 	q := r.URL.Query()
-	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset")))}
+	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset"))), HideInstrumental: q.Get("hideInstrumental") == "true"}
 }
 
 func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error) {

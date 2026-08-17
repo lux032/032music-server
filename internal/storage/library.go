@@ -128,6 +128,7 @@ type Filters struct {
 	Query, Genre, Sort, ArtistRole string
 	ArtistID, AlbumID              int64
 	Year, Limit, Offset            int
+	HideInstrumental               bool
 }
 
 func (s *Store) LibraryByRoot(ctx context.Context, root string) (Library, error) {
@@ -483,7 +484,7 @@ func (s *Store) CountAlbums(ctx context.Context, f Filters) (int64, error) {
 
 func (s *Store) CountTracks(ctx context.Context, f Filters) (int64, error) {
 	var total int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR EXISTS(SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')) AND (?=0 OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?)) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM track_genres tg JOIN genres g ON g.id=tg.genre_id WHERE tg.track_id=t.id AND g.name=? COLLATE NOCASE))`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre).Scan(&total)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR EXISTS(SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')) AND (?=0 OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?)) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM track_genres tg JOIN genres g ON g.id=tg.genre_id WHERE tg.track_id=t.id AND g.name=? COLLATE NOCASE)) AND (?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal'))`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental)).Scan(&total)
 	return total, err
 }
 
@@ -559,7 +560,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	} else if f.Sort == "recentlyPlayed" {
 		order = "COALESCE(pp.last_played_at,'') DESC," + order
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),COALESCE(GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),COALESCE(GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) AND (?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal')) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental), limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -680,6 +681,26 @@ func (s *Store) AudioPath(ctx context.Context, trackID int64) (string, string, e
 	var root, rel, mime string
 	err := s.db.QueryRowContext(ctx, `SELECT l.root_path,af.relative_path,COALESCE(af.mime_type,'application/octet-stream') FROM audio_files af JOIN libraries l ON l.id=af.library_id WHERE af.track_id=? AND af.status='available' ORDER BY af.id LIMIT 1`, trackID).Scan(&root, &rel, &mime)
 	return filepath.Join(root, filepath.FromSlash(rel)), mime, err
+}
+
+// AudioFilePath returns the full filesystem path of the audio file for a track.
+func (s *Store) AudioFilePath(ctx context.Context, trackID int64) (string, error) {
+	var root, rel string
+	err := s.db.QueryRowContext(ctx, `SELECT l.root_path,af.relative_path FROM audio_files af JOIN libraries l ON l.id=af.library_id WHERE af.track_id=? AND af.status='available' ORDER BY af.id LIMIT 1`, trackID).Scan(&root, &rel)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, filepath.FromSlash(rel)), nil
+}
+
+// TrackLyrics returns the embedded lyrics text stored in the tracks table.
+func (s *Store) TrackLyrics(ctx context.Context, trackID int64) (string, error) {
+	var lyrics sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT lyrics FROM tracks WHERE id=?`, trackID).Scan(&lyrics)
+	if err != nil {
+		return "", err
+	}
+	return lyrics.String, nil
 }
 func (s *Store) ArtworkPath(ctx context.Context, id int64) (string, string, error) {
 	var path, mime string

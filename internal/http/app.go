@@ -122,6 +122,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /api/v1/playback/scrobble", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackScrobble)))
 	mux.Handle("GET /api/v1/playback/history", a.requireAPIToken(http.HandlerFunc(a.handlePlaybackHistory)))
 	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIToken(http.HandlerFunc(a.handleClearPlaybackHistory)))
+	mux.Handle("GET /api/v1/tracks/{id}/lyrics", a.requireAPIToken(http.HandlerFunc(a.handleAPITrackLyrics)))
 	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireMediaAccess(http.HandlerFunc(a.handleStream)))
 	mux.Handle("GET /api/v1/artwork/{id}", a.requireMediaAccess(http.HandlerFunc(a.handleArtwork)))
 	mux.Handle("GET /api/v1/artists/{id}/image", a.requireMediaAccess(http.HandlerFunc(a.handleArtistImage)))

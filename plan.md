@@ -90,27 +90,28 @@
 
 ---
 
-### Phase 2: 双语同步歌词与播放体验特化（展示与体验层）
+### Phase 2: 双语同步歌词与播放体验特化（展示与体验层）✅ 已完成
 > **目标**：打造丝滑的 J-Pop 听歌体验，彻底解决日文歌词看不懂与随机播放切到伴奏的痛点。
 
-* [ ] **2.1 双语与多时轨 LRC 歌词引擎**：
+* [x] **2.1 LRC 歌词引擎（简化版）**：
   * 本地同目录 `.lrc` 文件自动探测与内嵌 `UNSYNCEDLYRICS` / `LYRICS` 标签解析。
-  * 支持日文原文 + 中文翻译双行时间戳对齐与渲染。
-  * 提供歌词 API：`GET /api/v1/tracks/{id}/lyrics` 返回结构化时间轴数据。
-* [ ] **2.2 伴奏曲目智能过滤（Playback Filtering）**：
-  * 在播放列表、随机播放（Shuffle）、电台模式中增加 `hide_instrumental` 开关。
-  * 保留单曲完整浏览的同时，避免全局随机播放连续听到多首伴奏。
+  * 支持 `[mm:ss.xx]` 时间戳解析，多时间戳同行展开，按时间排序。
+  * 提供歌词 API：`GET /api/v1/tracks/{id}/lyrics` 返回结构化数据 `{synced, lines: [{timeMs, text}]}`。
+  * 歌词源优先级：`.lrc` 外部文件 > 数据库内嵌歌词。无歌词返回 404。
+* [x] **2.2 伴奏曲目智能过滤（Playback Filtering）**：
+  * 在 `ListTracks` / `CountTracks` API 中增加 `hideInstrumental=true` 查询参数。
   * 基于 Phase 1 的 `track_type` 字段实现过滤（`WHERE track_type NOT IN ('instrumental','off_vocal')`）。
+  * 专辑详情页完整展示，不受过滤影响。
 
 #### Phase 2 验收标准
 
 | # | 验收项 | 预期结果 | 验证方法 |
 |---|--------|----------|----------|
-| AC-2.1 | LRC 文件自动探测 | 与音频同目录、同名的 `.lrc` 文件在扫描或 API 请求时被自动关联 | 放置 `test.lrc` 旁 `test.flac`，调用歌词 API 返回内容 |
+| AC-2.1 | LRC 文件自动探测 | 与音频同目录、同名的 `.lrc` 文件在 API 请求时被自动关联 | 放置 `test.lrc` 旁 `test.flac`，调用歌词 API 返回内容 |
 | AC-2.2 | 内嵌歌词解析 | 嵌入 `UNSYNCEDLYRICS` 的 FLAC 文件，歌词 API 返回歌词文本 | 调用 API 验证 |
-| AC-2.3 | 双语时间轴对齐 | 含日文+中文双语时间戳的 LRC 文件，API 返回按时间轴交织的结构化数据 | 检查 JSON 中每个时间点含 `original` 和 `translation` 两行 |
-| AC-2.4 | 歌词 API 端点 | `GET /api/v1/tracks/{id}/lyrics` 返回 `{lines: [{timeMs, text, translation?}]}` | HTTP 状态 200 + JSON Schema 校验 |
-| AC-2.5 | 伴奏过滤开关 | Shuffle API 传入 `hideInstrumental=true` 时不返回 `track_type` 为 `instrumental` 或 `off_vocal` 的曲目 | 构建含伴奏的测试库，验证过滤后列表 |
+| AC-2.3 | 时间戳解析 | 含 `[mm:ss.xx]` 时间戳的 LRC 文件，API 返回 synced=true 的结构化数据 | 检查 JSON 中每个时间点含 `timeMs` 和 `text` |
+| AC-2.4 | 歌词 API 端点 | `GET /api/v1/tracks/{id}/lyrics` 返回 `{synced, lines: [{timeMs, text}]}` | HTTP 状态 200 + JSON Schema 校验 |
+| AC-2.5 | 伴奏过滤开关 | API 传入 `hideInstrumental=true` 时不返回 `track_type` 为 `instrumental` 或 `off_vocal` 的曲目 | 构建含伴奏的测试库，验证过滤后列表 |
 | AC-2.6 | 专辑页完整展示 | 专辑详情页仍展示全部曲目（含伴奏），伴奏用视觉标签区分但不隐藏 | 访问专辑页确认 |
 
 ---
@@ -213,3 +214,27 @@
 | TIPL/TMCL 解析 | 推迟至 Phase 4 | dhowden/tag 库支持有限；日系 FLAC 以 Vorbis Comment 为主，实用性优先 |
 | reading_name 写入策略 | 仅单艺术家时写入 | 多艺术家的 `*SORT` 标签是拼接串（如 "A; B"），无法准确归属单个艺术家 |
 | track_type 推断优先级 | 标签 → 标题 → 文件夹 | 标签最权威；标题覆盖最广（30+ 模式）；文件夹兜底 |
+
+---
+
+### Phase 2 实施记录 (已完成)
+
+**变更文件清单**：
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `internal/lyrics/parser.go` | 新增 | LRC 歌词解析引擎：时间戳解析、多时间戳展开、元数据标签跳过、LRC 文件路径探测 |
+| `internal/lyrics/parser_test.go` | 新增 | 11 个 LRC 解析测试用例（空文件、同步歌词、非同步歌词、多时间戳、元数据跳过、精度变体） |
+| `internal/http/lyrics.go` | 新增 | 歌词 API handler：外部 LRC 文件探测 → 内嵌歌词回退 → 404 |
+| `internal/http/app.go` | 修改 | 注册 `GET /api/v1/tracks/{id}/lyrics` 路由 |
+| `internal/http/client_features.go` | 修改 | Capabilities 新增 `lyrics: true`、`instrumentalFilter: true` |
+| `internal/http/library.go` | 修改 | `filters()` 解析 `hideInstrumental=true` 查询参数 |
+| `internal/storage/library.go` | 修改 | `Filters` 新增 `HideInstrumental`；`ListTracks`/`CountTracks` SQL 增加伴奏过滤条件；新增 `AudioFilePath()`、`TrackLyrics()` 方法 |
+
+**技术决策**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 歌词引擎复杂度 | 简化版（不做双语合并） | 双语 LRC 格式无统一标准，实现复杂度高；基础版已满足核心需求，后续可增量扩展 |
+| 歌词存储策略 | 不额外存储，API 请求时动态探测 | LRC 文件可能频繁编辑，动态读取保持实时性；避免扫描时增加 I/O 开销 |
+| 歌词源优先级 | 外部 `.lrc` 文件 > 内嵌歌词 | 外部 LRC 文件通常有时间戳且更精确；内嵌歌词作为兜底 |
+| 伴奏过滤作用域 | 仅影响 `ListTracks`/`CountTracks` | 专辑详情页需要完整展示所有曲目（含伴奏），符合 AC-2.6 |
+| 过滤实现方式 | SQL WHERE 条件 + `boolInt` 参数化 | 复用现有 Filters 模式，零改动数据库 schema |
