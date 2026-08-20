@@ -666,6 +666,50 @@ func (s *Store) ArtistRelationCandidates(ctx context.Context, artistID int64) ([
 	return values, rows.Err()
 }
 
+// PendingWorkMatchCandidates returns all status='candidate' work matches in
+// a single query (N+1 fix for the enrichment review page).
+func (s *Store) PendingWorkMatchCandidates(ctx context.Context) (map[int64][]WorkMatchCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,work_id,source,external_id,title,COALESCE(original_title,''),COALESCE(translated_title,''),COALESCE(type,''),COALESCE(year,0),COALESCE(page_url,''),COALESCE(poster_url,''),score,evidence_json,payload_json,status FROM work_match_candidates WHERE status='candidate' ORDER BY score DESC,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[int64][]WorkMatchCandidate{}
+	for rows.Next() {
+		var v WorkMatchCandidate
+		var evidence, payload string
+		if err = rows.Scan(&v.ID, &v.WorkID, &v.Source, &v.ExternalID, &v.Title, &v.OriginalTitle, &v.TranslatedTitle, &v.Type, &v.Year, &v.PageURL, &v.PosterURL, &v.Score, &evidence, &payload, &v.Status); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(evidence), &v.Evidence)
+		v.Payload = json.RawMessage(payload)
+		result[v.WorkID] = append(result[v.WorkID], v)
+	}
+	return result, rows.Err()
+}
+
+// PendingArtistRelationCandidates returns all status='candidate' artist
+// relations in a single query (N+1 fix for the enrichment review page).
+func (s *Store) PendingArtistRelationCandidates(ctx context.Context) (map[int64][]ArtistRelationCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,related_external_id,related_name,relation_type,direction,COALESCE(target_artist_id,0),score,evidence_json,payload_json,status FROM artist_relation_candidates WHERE status='candidate' ORDER BY score DESC,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[int64][]ArtistRelationCandidate{}
+	for rows.Next() {
+		var v ArtistRelationCandidate
+		var evidence, payload string
+		if err = rows.Scan(&v.ID, &v.ArtistID, &v.Source, &v.ExternalID, &v.RelatedExternalID, &v.RelatedName, &v.RelationType, &v.Direction, &v.TargetArtistID, &v.Score, &evidence, &payload, &v.Status); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(evidence), &v.Evidence)
+		v.Payload = json.RawMessage(payload)
+		result[v.ArtistID] = append(result[v.ArtistID], v)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) SetArtistRelationCandidateStatus(ctx context.Context, artistID, candidateID int64, status string) error {
 	if status != "confirmed" && status != "rejected" {
 		return fmt.Errorf("invalid artist relation status %q", status)

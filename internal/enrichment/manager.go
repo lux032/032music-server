@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 )
 
 type Manager struct {
+	baseCtx        context.Context
 	store          *storage.Store
 	logger         *slog.Logger
 	client         *http.Client
@@ -33,20 +36,41 @@ type Manager struct {
 	phaseRunning   bool
 	phaseEndpoints phase4Endpoints
 	imageDirectory string
+	wg             sync.WaitGroup
 }
 type MatchResult struct {
 	AutoMatched    bool
 	CandidateCount int
 }
 
-func New(store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), imageDirectory: filepath.Join(dataDirectory, "artist-images")}
+func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
+	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), imageDirectory: filepath.Join(dataDirectory, "artist-images")}
 	if recovered, err := store.FailRunningEnrichmentRuns(context.Background(), "server restarted before the enrichment run completed"); err != nil {
 		logger.Warn("recover interrupted enrichment runs", "error", err)
 	} else if recovered > 0 {
 		logger.Info("recovered interrupted enrichment runs", "count", recovered)
 	}
 	return manager
+}
+
+// Wait blocks until all background enrichment work has finished. Call after
+// cancelling the base context during shutdown.
+func (m *Manager) Wait() { m.wg.Wait() }
+
+// goBackground runs fn as a tracked background worker: panics are recovered
+// and logged instead of crashing the process, and Wait() blocks until it
+// returns.
+func (m *Manager) goBackground(name string, fn func()) {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				m.logger.Error("panic in background enrichment worker", "worker", name, "panic", recovered, "stack", string(debug.Stack()))
+			}
+		}()
+		fn()
+	}()
 }
 
 func (m *Manager) StartAuto(ctx context.Context) {
@@ -109,11 +133,16 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	m.running = true
-	go func() {
+	m.goBackground("artist-matching", func() {
 		defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
+		ctx := m.baseCtx
 		var matched, review, failed int
 		for index, artist := range artists {
-			result, matchErr := m.matchArtist(context.Background(), artist.ID, true)
+			if ctx.Err() != nil {
+				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", "cancelled by shutdown")
+				return
+			}
+			result, matchErr := m.matchArtist(ctx, artist.ID, true)
 			if matchErr != nil {
 				failed++
 				m.logger.Warn("artist match failed", "artist", artist.Name, "error", matchErr)
@@ -125,7 +154,7 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 			_ = m.store.UpdateArtistMatchRun(context.Background(), runID, index+1, matched, review, failed, artist.Name)
 		}
 		_ = m.store.FinishArtistMatchRun(context.Background(), runID, "completed", "")
-	}()
+	})
 	return runID, nil
 }
 
@@ -374,21 +403,29 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 	return storage.ArtistCandidate{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, Disambiguation: value.Disambiguation, Country: value.Country, ArtistType: value.Type, MBID: value.ID, Payload: payload}, profile, nil
 }
 
-func (m *Manager) mbRequest(ctx context.Context, endpoint string, setting storage.MetadataSourceSetting, target any) error {
+// waitMBRateLimit enforces the MusicBrainz 1 request/second policy. Every
+// request to musicbrainz.org — direct or cache-backed — must go through this.
+func (m *Manager) waitMBRateLimit(ctx context.Context) error {
 	m.mbMu.Lock()
+	defer m.mbMu.Unlock()
 	wait := time.Until(m.mbLast.Add(time.Second))
 	if wait > 0 {
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			m.mbMu.Unlock()
 			return ctx.Err()
 		case <-timer.C:
 		}
 	}
 	m.mbLast = time.Now()
-	m.mbMu.Unlock()
+	return nil
+}
+
+func (m *Manager) mbRequest(ctx context.Context, endpoint string, setting storage.MetadataSourceSetting, target any) error {
+	if err := m.waitMBRateLimit(ctx); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
@@ -467,6 +504,37 @@ func (m *Manager) lastFMInfoLanguage(ctx context.Context, artist storage.ArtistM
 	return candidate, profile, nil
 }
 
+// validatePublicImageURL ensures an image URL is http(s) and does not point
+// at loopback, private (RFC1918), link-local (incl. 169.254.169.254) or
+// otherwise non-public address space.
+func validatePublicImageURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return errors.New("artist image source returned an invalid URL")
+	}
+	hostname := parsed.Hostname()
+	if ip := net.ParseIP(hostname); ip != nil {
+		return rejectPrivateIP(ip)
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(context.Background(), hostname)
+	if err != nil {
+		return fmt.Errorf("resolve artist image host: %w", err)
+	}
+	for _, address := range addresses {
+		if err = rejectPrivateIP(address.IP); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rejectPrivateIP(ip net.IP) error {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return fmt.Errorf("artist image URL resolves to a non-public address %s", ip)
+	}
+	return nil
+}
+
 func doJSON(client *http.Client, req *http.Request, target any) error {
 	response, err := client.Do(req)
 	if err != nil {
@@ -489,16 +557,27 @@ func (m *Manager) CacheArtistImage(ctx context.Context, artistID int64) error {
 	if err != nil {
 		return err
 	}
-	parsed, err := url.Parse(remoteURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		return errors.New("artist image source returned an invalid URL")
+	// The URL originates from upstream metadata (Last.fm, Spotify oEmbed,
+	// community-editable MusicBrainz relations), so it is untrusted input:
+	// refuse private/loopback/link-local targets to prevent SSRF against the
+	// host network or cloud metadata endpoints.
+	if err = validatePublicImageURL(remoteURL); err != nil {
+		return err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist image cache)")
-	response, err := m.client.Do(request)
+	client := *m.client
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		// Redirects must not escape the public-address validation either.
+		return validatePublicImageURL(req.URL.String())
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}

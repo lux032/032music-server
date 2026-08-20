@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -20,25 +22,47 @@ type Config struct {
 	MediaToken     string
 	CookieSecure   bool
 	LogLevel       string
+	DevMode        bool
+	// MediaTokenGenerated is true when no MEDIA_TOKEN was configured and a
+	// random one was generated for this process. Media URLs change on every
+	// restart in that state; main should log a loud warning.
+	MediaTokenGenerated bool
 }
 
 func Load() (Config, error) {
 	dataDirectory := envOrDefault("MUSIC_SERVER_DATA_DIR", "/data")
 	apiToken := os.Getenv("MUSIC_SERVER_API_TOKEN")
-	mediaToken := envOrDefault("MUSIC_SERVER_MEDIA_TOKEN", apiToken)
+	devMode := parseBool(os.Getenv("MUSIC_SERVER_DEV_MODE"))
+
+	mediaToken := strings.TrimSpace(os.Getenv("MUSIC_SERVER_MEDIA_TOKEN"))
+	mediaTokenGenerated := false
+	if mediaToken == "" {
+		if devMode {
+			// Local development convenience: fall back to the API token.
+			mediaToken = apiToken
+		} else {
+			// Never silently equate the shareable read-only media token with
+			// the full-access API token. Generate a per-boot random token so
+			// a leaked media URL can never escalate to full API access.
+			mediaToken = randomToken()
+			mediaTokenGenerated = true
+		}
+	}
 
 	cfg := Config{
-		ListenAddress:  envOrDefault("MUSIC_SERVER_ADDRESS", ":4533"),
-		DataDirectory:  dataDirectory,
-		DatabasePath:   envOrDefault("MUSIC_SERVER_DATABASE_PATH", filepath.Join(dataDirectory, "music.db")),
-		MusicDirectory: envOrDefault("MUSIC_SERVER_MUSIC_DIR", "/music"),
-		LibraryName:    envOrDefault("MUSIC_SERVER_LIBRARY_NAME", "Music"),
-		AdminUsername:  envOrDefault("MUSIC_SERVER_ADMIN_USERNAME", "admin"),
-		AdminPassword:  os.Getenv("MUSIC_SERVER_ADMIN_PASSWORD"),
-		APIToken:       apiToken,
-		MediaToken:     mediaToken,
-		CookieSecure:   parseBool(os.Getenv("MUSIC_SERVER_COOKIE_SECURE")),
-		LogLevel:       strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
+		ListenAddress:       envOrDefault("MUSIC_SERVER_ADDRESS", ":4533"),
+		DataDirectory:       dataDirectory,
+		DatabasePath:        envOrDefault("MUSIC_SERVER_DATABASE_PATH", filepath.Join(dataDirectory, "music.db")),
+		MusicDirectory:      envOrDefault("MUSIC_SERVER_MUSIC_DIR", "/music"),
+		LibraryName:         envOrDefault("MUSIC_SERVER_LIBRARY_NAME", "Music"),
+		AdminUsername:       envOrDefault("MUSIC_SERVER_ADMIN_USERNAME", "admin"),
+		AdminPassword:       os.Getenv("MUSIC_SERVER_ADMIN_PASSWORD"),
+		APIToken:            apiToken,
+		MediaToken:          mediaToken,
+		CookieSecure:        parseBool(os.Getenv("MUSIC_SERVER_COOKIE_SECURE")),
+		LogLevel:            strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
+		DevMode:             devMode,
+		MediaTokenGenerated: mediaTokenGenerated,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -74,8 +98,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.AdminUsername) == "" {
 		problems = append(problems, "MUSIC_SERVER_ADMIN_USERNAME must not be empty")
 	}
-	if len(c.AdminPassword) < 12 && c.AdminPassword != "admin" {
-		problems = append(problems, "MUSIC_SERVER_ADMIN_PASSWORD must contain at least 12 characters (or use admin for local development)")
+	if len(c.AdminPassword) < 12 && !(c.DevMode && c.AdminPassword != "") {
+		problems = append(problems, "MUSIC_SERVER_ADMIN_PASSWORD must contain at least 12 characters (shorter passwords require MUSIC_SERVER_DEV_MODE=1)")
 	}
 	if len(c.APIToken) < 24 {
 		problems = append(problems, "MUSIC_SERVER_API_TOKEN must contain at least 24 characters")
@@ -93,6 +117,16 @@ func (c Config) Validate() error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func randomToken() string {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand failure is a fatal environment problem; there is no
+		// safe fallback for a token.
+		panic(fmt.Sprintf("generate random media token: %v", err))
+	}
+	return hex.EncodeToString(buf)
 }
 
 func envOrDefault(name, fallback string) string {

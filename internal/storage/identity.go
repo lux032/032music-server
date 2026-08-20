@@ -165,16 +165,9 @@ func (s *Store) ArtistsForMatching(ctx context.Context) ([]ArtistMatchInput, err
 }
 
 func (s *Store) ArtistForMatching(ctx context.Context, id int64) (ArtistMatchInput, error) {
-	items, err := s.ArtistsForMatching(ctx)
-	if err != nil {
-		return ArtistMatchInput{}, err
-	}
-	for _, v := range items {
-		if v.ID == id {
-			return v, nil
-		}
-	}
-	return ArtistMatchInput{}, sql.ErrNoRows
+	var v ArtistMatchInput
+	err := s.db.QueryRowContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),COALESCE((SELECT aft.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags aft ON aft.audio_file_id=af.id WHERE ta.artist_id=ar.id AND aft.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') LIMIT 1),'') FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND ar.id=?`, id).Scan(&v.ID, &v.Name, &v.TaggedMBID)
+	return v, err
 }
 
 func (s *Store) ReplaceArtistCandidates(ctx context.Context, artistID int64, candidates []ArtistCandidate) error {
@@ -216,6 +209,28 @@ func (s *Store) ArtistCandidates(ctx context.Context, artistID int64) ([]ArtistC
 		list = append(list, v)
 	}
 	return list, rows.Err()
+}
+
+// PendingArtistCandidates returns all status='candidate' matches for every
+// artist in a single query (N+1 fix for the match-review page).
+func (s *Store) PendingArtistCandidates(ctx context.Context) (map[int64][]ArtistCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,payload_json,status FROM artist_match_candidates WHERE status='candidate' ORDER BY score DESC,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[int64][]ArtistCandidate{}
+	for rows.Next() {
+		var v ArtistCandidate
+		var evidence, payload string
+		if err = rows.Scan(&v.ID, &v.ArtistID, &v.Source, &v.ExternalID, &v.DisplayName, &v.SortName, &v.Disambiguation, &v.Country, &v.ArtistType, &v.MBID, &v.Score, &evidence, &payload, &v.Status); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(evidence), &v.Evidence)
+		v.Payload = json.RawMessage(payload)
+		result[v.ArtistID] = append(result[v.ArtistID], v)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) UpsertExternalArtistProfile(ctx context.Context, artistID int64, p ExternalArtistProfile) error {

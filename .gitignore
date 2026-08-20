@@ -28,3 +28,7 @@
 .vscode/
 Thumbs.db
 .DS_Store
+
+# Captured debug artifacts (may contain session credentials)
+rc.txt
+track*.bin

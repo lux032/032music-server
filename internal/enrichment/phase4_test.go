@@ -41,7 +41,7 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := New(store, logger, t.TempDir())
+	manager := New(ctx, store, logger, t.TempDir())
 	manager.phaseEndpoints = phase4Endpoints{VGMdbSearch: server.URL + "/vgmdb/search/%s", VGMdbAlbum: server.URL + "/vgmdb/album/%s", Bangumi: server.URL + "/bangumi", MusicBrainz: server.URL + "/mb"}
 	manager.client = server.Client()
 	for _, source := range []string{"vgmdb", "bangumi"} {

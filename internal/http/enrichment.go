@@ -146,44 +146,22 @@ func writeDecisionResult(w http.ResponseWriter, err error) {
 
 func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []enrichmentArtistReview) {
 	works, _ := a.store.ListWorks(ctx, storage.WorkFilters{Limit: 100})
+	pendingWorks, _ := a.store.PendingWorkMatchCandidates(ctx)
 	workReviews := make([]enrichmentWorkReview, 0)
 	for _, work := range works {
-		values, _ := a.store.WorkMatchCandidates(ctx, work.ID)
-		pending := pendingWorkCandidates(values)
-		if len(pending) > 0 {
+		if pending := pendingWorks[work.ID]; len(pending) > 0 {
 			workReviews = append(workReviews, enrichmentWorkReview{Work: work, Candidates: pending})
 		}
 	}
 	artists, _ := a.store.ListArtists(ctx, storage.Filters{Limit: 100})
+	pendingRelations, _ := a.store.PendingArtistRelationCandidates(ctx)
 	artistReviews := make([]enrichmentArtistReview, 0)
 	for _, artist := range artists {
-		values, _ := a.store.ArtistRelationCandidates(ctx, artist.ID)
-		pending := pendingArtistRelations(values)
-		if len(pending) > 0 {
+		if pending := pendingRelations[artist.ID]; len(pending) > 0 {
 			artistReviews = append(artistReviews, enrichmentArtistReview{Artist: artist, Candidates: pending})
 		}
 	}
 	return workReviews, artistReviews
-}
-
-func pendingWorkCandidates(values []storage.WorkMatchCandidate) []storage.WorkMatchCandidate {
-	result := make([]storage.WorkMatchCandidate, 0, len(values))
-	for _, value := range values {
-		if value.Status == "candidate" {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
-func pendingArtistRelations(values []storage.ArtistRelationCandidate) []storage.ArtistRelationCandidate {
-	result := make([]storage.ArtistRelationCandidate, 0, len(values))
-	for _, value := range values {
-		if value.Status == "candidate" {
-			result = append(result, value)
-		}
-	}
-	return result
 }
 
 func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {

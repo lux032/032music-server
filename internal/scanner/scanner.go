@@ -10,14 +10,29 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
+// scanProgressFlushInterval bounds how often per-file progress is written to
+// the scan_jobs table; one UPDATE per file is far too chatty on large
+// libraries.
+const scanProgressFlushInterval = time.Second
+const scanProgressFlushEvery = 100
+
+// missingGuardRatio is the safety threshold for S1: if a scan would mark more
+// than this fraction of previously available files as missing, the library
+// root is almost certainly empty/unmounted (forgotten volume, dead SMB/NFS
+// mount) and destructive reconciliation is refused.
+const missingGuardRatio = 0.5
+
 type Manager struct {
+	baseCtx          context.Context
 	store            *storage.Store
 	logger           *slog.Logger
 	library          storage.Library
@@ -25,13 +40,18 @@ type Manager struct {
 	mu               sync.Mutex
 	running          bool
 	onComplete       func()
+	wg               sync.WaitGroup
 }
 
 func (m *Manager) SetOnComplete(callback func()) { m.mu.Lock(); m.onComplete = callback; m.mu.Unlock() }
 
-func New(store *storage.Store, logger *slog.Logger, library storage.Library, dataDirectory string) *Manager {
-	return &Manager{store: store, logger: logger, library: library, artworkDirectory: filepath.Join(dataDirectory, "artwork")}
+func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, library storage.Library, dataDirectory string) *Manager {
+	return &Manager{baseCtx: baseCtx, store: store, logger: logger, library: library, artworkDirectory: filepath.Join(dataDirectory, "artwork")}
 }
+
+// Wait blocks until the currently running scan (if any) has finished. Call
+// after cancelling the base context during shutdown.
+func (m *Manager) Wait() { m.wg.Wait() }
 
 func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
 	if scanType != "full" {
@@ -47,9 +67,17 @@ func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
 		return 0, err
 	}
 	m.running = true
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				m.logger.Error("panic in library scan", "jobId", jobID, "panic", recovered, "stack", string(debug.Stack()))
+				m.fail(context.Background(), jobID, fmt.Errorf("internal panic: %v", recovered))
+			}
+		}()
 		defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
-		m.run(context.Background(), jobID, scanType)
+		m.run(m.baseCtx, jobID, scanType)
 	}()
 	return jobID, nil
 }
@@ -61,12 +89,35 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 		m.fail(ctx, jobID, err)
 		return
 	}
+	// S1 guard: never reconcile against an empty discovery. A scan that found
+	// zero files while the library previously had available files means the
+	// volume is unmounted or misconfigured — not that the user deleted their
+	// entire collection.
+	if len(paths) == 0 {
+		available, countErr := m.store.CountAvailableAudioFiles(ctx, m.library.ID)
+		if countErr != nil {
+			m.fail(ctx, jobID, countErr)
+			return
+		}
+		if available > 0 {
+			m.fail(ctx, jobID, fmt.Errorf("scan discovered 0 files but the library has %d available files; refusing to mark the library missing (is %s mounted?)", available, m.library.RootPath))
+			return
+		}
+	}
 	if err = m.store.StartScanJob(ctx, jobID, int64(len(paths))); err != nil {
 		m.fail(ctx, jobID, err)
 		return
 	}
 	var processed, skipped, failed int64
+	lastFlush := time.Now()
+	sinceFlush := 0
+	folderArtwork := map[string]*storage.ArtworkInput{}
+	cancelled := false
 	for _, path := range paths {
+		if ctx.Err() != nil {
+			cancelled = true
+			break
+		}
 		rel, relErr := filepath.Rel(m.library.RootPath, path)
 		if relErr != nil {
 			failed++
@@ -89,7 +140,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 				failed++
 				m.recordError(ctx, jobID, rel, "metadata_failed", readErr)
 			} else {
-				art, artErr := m.cacheArtwork(path, meta)
+				art, artErr := m.cacheArtwork(path, meta, folderArtwork)
 				if artErr != nil {
 					m.logger.Warn("cache artwork failed", "path", rel, "error", artErr)
 				}
@@ -101,8 +152,33 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 				}
 			}
 		}
-		_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, rel)
+		sinceFlush++
+		if sinceFlush >= scanProgressFlushEvery || time.Since(lastFlush) >= scanProgressFlushInterval {
+			_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, rel)
+			sinceFlush = 0
+			lastFlush = time.Now()
+		}
 	}
+	_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, "")
+	if cancelled {
+		// A partial scan must never feed MarkMissing/CleanupOrphans: every
+		// file not yet visited would be wrongly marked missing.
+		m.fail(context.Background(), jobID, errors.New("scan cancelled by shutdown"))
+		return
+	}
+
+	// S1 guard: refuse destructive reconciliation when an implausible share
+	// of the library would go missing (mount dropped mid-scan, path changed).
+	available, err := m.store.CountAvailableAudioFiles(ctx, m.library.ID)
+	if err != nil {
+		m.fail(ctx, jobID, err)
+		return
+	}
+	if available > 0 && float64(len(paths)) < float64(available)*(1-missingGuardRatio) {
+		m.fail(ctx, jobID, fmt.Errorf("scan discovered %d files but the library has %d available files (>%d%% would be marked missing); refusing reconciliation (is %s fully mounted?)", len(paths), available, int(missingGuardRatio*100), m.library.RootPath))
+		return
+	}
+
 	missing, err := m.store.MarkMissing(ctx, m.library.ID, started)
 	if err != nil {
 		m.fail(ctx, jobID, err)
@@ -120,7 +196,16 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 	callback := m.onComplete
 	m.mu.Unlock()
 	if callback != nil {
-		go callback()
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					m.logger.Error("panic in scan completion callback", "panic", recovered, "stack", string(debug.Stack()))
+				}
+			}()
+			callback()
+		}()
 	}
 }
 
@@ -128,7 +213,13 @@ func (m *Manager) discover() ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(m.library.RootPath, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// A single unreadable entry (permissions, dangling mount) must
+			// not abort the whole scan; skip it and keep walking.
+			m.logger.Warn("scan skipped unreadable path", "path", path, "error", err)
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			if path != m.library.RootPath && strings.HasPrefix(entry.Name(), ".") {
@@ -150,11 +241,23 @@ func (m *Manager) discover() ([]string, error) {
 	return paths, nil
 }
 
-func (m *Manager) cacheArtwork(audioPath string, meta metadata.AudioMetadata) (*storage.ArtworkInput, error) {
+// cacheArtwork resolves the artwork for one audio file. folderArtwork caches
+// folder-level covers (cover.jpg etc.) per directory so an album folder with
+// N tracks reads and hashes its cover once instead of N times. Entries are
+// only cached for successful folder lookups; embedded artwork is always
+// per-file.
+func (m *Manager) cacheArtwork(audioPath string, meta metadata.AudioMetadata, folderArtwork map[string]*storage.ArtworkInput) (*storage.ArtworkInput, error) {
 	data, mimeType, sourceType, sourcePath := meta.Artwork, meta.ArtworkMIME, "embedded", audioPath
 	if len(data) == 0 {
+		directory := filepath.Dir(audioPath)
+		if cached, ok := folderArtwork[directory]; ok {
+			if cached == nil {
+				return nil, nil
+			}
+			return cached, nil
+		}
 		for _, name := range []string{"cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.png", "front.jpg", "front.png"} {
-			candidate := filepath.Join(filepath.Dir(audioPath), name)
+			candidate := filepath.Join(directory, name)
 			content, err := os.ReadFile(candidate)
 			if err == nil {
 				data = content
@@ -164,10 +267,21 @@ func (m *Manager) cacheArtwork(audioPath string, meta metadata.AudioMetadata) (*
 				break
 			}
 		}
+		if len(data) == 0 {
+			folderArtwork[directory] = nil
+			return nil, nil
+		}
+		artwork, err := m.writeArtwork(data, mimeType, sourceType, sourcePath)
+		if err != nil {
+			return nil, err
+		}
+		folderArtwork[directory] = artwork
+		return artwork, nil
 	}
-	if len(data) == 0 {
-		return nil, nil
-	}
+	return m.writeArtwork(data, mimeType, sourceType, sourcePath)
+}
+
+func (m *Manager) writeArtwork(data []byte, mimeType, sourceType, sourcePath string) (*storage.ArtworkInput, error) {
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}

@@ -1,17 +1,33 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/lux032/032music-server/internal/config"
+	"github.com/lux032/032music-server/internal/storage"
 )
+
+func testSessionManager(t *testing.T) *sessionManager {
+	t.Helper()
+	store, err := storage.Open(filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return newSessionManager(false, store)
+}
 
 func TestMediaAccessAcceptsQueryToken(t *testing.T) {
 	app := &App{
 		config:   config.Config{APIToken: "api-token-at-least-24-characters", MediaToken: "media-token-at-least-24-characters"},
-		sessions: newSessionManager(false),
+		sessions: testSessionManager(t),
 	}
 	handler := app.requireMediaAccess(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	request := httptest.NewRequest(http.MethodGet, "/stream?mediaToken=media-token-at-least-24-characters", nil)
@@ -25,7 +41,7 @@ func TestMediaAccessAcceptsQueryToken(t *testing.T) {
 func TestMediaAccessRejectsInvalidToken(t *testing.T) {
 	app := &App{
 		config:   config.Config{APIToken: "api-token-at-least-24-characters", MediaToken: "media-token-at-least-24-characters"},
-		sessions: newSessionManager(false),
+		sessions: testSessionManager(t),
 	}
 	handler := app.requireMediaAccess(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	request := httptest.NewRequest(http.MethodGet, "/stream?mediaToken=wrong", nil)
@@ -39,7 +55,7 @@ func TestMediaAccessRejectsInvalidToken(t *testing.T) {
 func TestMediaAccessAllowsOptionsAndCORSHeaders(t *testing.T) {
 	app := &App{
 		config:   config.Config{APIToken: "api-token-at-least-24-characters", MediaToken: "media-token-at-least-24-characters"},
-		sessions: newSessionManager(false),
+		sessions: testSessionManager(t),
 	}
 	handler := app.requireMediaAccess(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	request := httptest.NewRequest(http.MethodOptions, "/api/v1/tracks/1/stream", nil)
@@ -56,7 +72,7 @@ func TestMediaAccessAllowsOptionsAndCORSHeaders(t *testing.T) {
 func TestRequireAPIOrAdminAllowsSessionAndToken(t *testing.T) {
 	app := &App{
 		config:   config.Config{APIToken: "api-token-at-least-24-characters"},
-		sessions: newSessionManager(false),
+		sessions: testSessionManager(t),
 	}
 	loginRec := httptest.NewRecorder()
 	_, _ = app.sessions.create(loginRec, "admin")

@@ -35,6 +35,13 @@ func run() error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
+	if cfg.DevMode {
+		logger.Warn("MUSIC_SERVER_DEV_MODE is enabled: weak admin passwords are allowed and the media token may fall back to the API token; do not use in production")
+	}
+	if cfg.MediaTokenGenerated {
+		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value")
+	}
+
 	db, err := storage.Open(cfg.DatabasePath)
 	if err != nil {
 		return err
@@ -52,15 +59,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	scannerManager := scanner.New(db, logger, library, cfg.DataDirectory)
-	enrichmentManager := enrichment.New(db, logger, cfg.DataDirectory)
-	scannerManager.SetOnComplete(func() { enrichmentManager.StartAuto(context.Background()) })
+	// rootCtx governs all background work (scans, enrichment). It is
+	// cancelled on shutdown so workers stop before the database is closed.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
+
+	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
+	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
+	scannerManager.SetOnComplete(func() { enrichmentManager.StartAuto(rootCtx) })
 
 	app, err := webhttp.NewApp(cfg, db, scannerManager, enrichmentManager, logger, version)
 	if err != nil {
 		return err
 	}
-	if _, err := scannerManager.Start(context.Background(), "incremental"); err != nil {
+	if _, err := scannerManager.Start(rootCtx, "incremental"); err != nil {
 		logger.Warn("automatic startup scan was not started", "error", err)
 	}
 
@@ -100,6 +112,22 @@ func run() error {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		return err
+	}
+
+	// Stop background workers and wait for them to finish writing before
+	// run() returns and the deferred db.Close() executes.
+	rootCancel()
+	workersDone := make(chan struct{})
+	go func() {
+		scannerManager.Wait()
+		enrichmentManager.Wait()
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+		logger.Info("background workers stopped")
+	case <-time.After(30 * time.Second):
+		logger.Warn("timed out waiting for background workers; closing database anyway")
 	}
 
 	return nil

@@ -280,15 +280,13 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	pendingByArtist, err := a.store.PendingArtistCandidates(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	for _, artist := range artists {
-		candidates, _ := a.store.ArtistCandidates(r.Context(), artist.ID)
-		pending := candidates[:0]
-		for _, candidate := range candidates {
-			if candidate.Status == "candidate" {
-				pending = append(pending, candidate)
-			}
-		}
-		if len(pending) > 0 {
+		if pending := pendingByArtist[artist.ID]; len(pending) > 0 {
 			data.Review = append(data.Review, matchReviewItem{Artist: artist, Candidates: pending})
 		}
 	}

@@ -88,7 +88,7 @@ func (m *Manager) StartRun(ctx context.Context, request RunRequest) (storage.Enr
 		return storage.EnrichmentRun{}, err
 	}
 	m.phaseRunning = true
-	go m.executePhase4Run(run.ID, request, items)
+	m.goBackground("metadata-enrichment", func() { m.executePhase4Run(run.ID, request, items) })
 	return run, nil
 }
 
@@ -153,9 +153,13 @@ func (m *Manager) phase4Items(ctx context.Context, request RunRequest) ([]phase4
 
 func (m *Manager) executePhase4Run(runID int64, request RunRequest, items []phase4Item) {
 	defer func() { m.phaseMu.Lock(); m.phaseRunning = false; m.phaseMu.Unlock() }()
-	ctx := context.Background()
+	ctx := m.baseCtx
 	counts := storage.EnrichmentRunUpdate{Total: len(items)}
 	for _, item := range items {
+		if ctx.Err() != nil {
+			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", "cancelled by shutdown")
+			return
+		}
 		var outcome string
 		var err error
 		switch item.kind {
@@ -231,6 +235,14 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 		contact = "self-hosted"
 	}
 	req.Header.Set("User-Agent", fmt.Sprintf("%s/%s (%s)", setting.ApplicationName, setting.ApplicationVersion, contact))
+	// MusicBrainz enforces 1 req/s; cached responses don't hit the network
+	// but every live request must respect the limiter regardless of which
+	// code path issues it.
+	if req.URL != nil && strings.EqualFold(req.URL.Hostname(), "musicbrainz.org") {
+		if err = m.waitMBRateLimit(ctx); err != nil {
+			return 0, err
+		}
+	}
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return 0, err
@@ -240,12 +252,17 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 	if err != nil {
 		return resp.StatusCode, err
 	}
-	now := time.Now().UTC()
-	ttl := setting.CacheDays
-	if ttl < 1 {
-		ttl = 30
+	// Only successful responses and definitive 404s are cached. Transient
+	// failures (429, 5xx, gateway flaps) must never be frozen into a 30-day
+	// cache entry.
+	if (resp.StatusCode >= 200 && resp.StatusCode < 300) || resp.StatusCode == http.StatusNotFound {
+		now := time.Now().UTC()
+		ttl := setting.CacheDays
+		if ttl < 1 {
+			ttl = 30
+		}
+		_ = m.store.PutHTTPResponseCache(ctx, storage.HTTPResponseCacheEntry{Source: source, Key: key, Status: resp.StatusCode, Body: raw, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), FetchedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Duration(ttl) * 24 * time.Hour).Format(time.RFC3339Nano)})
 	}
-	_ = m.store.PutHTTPResponseCache(ctx, storage.HTTPResponseCacheEntry{Source: source, Key: key, Status: resp.StatusCode, Body: raw, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), FetchedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Duration(ttl) * 24 * time.Hour).Format(time.RFC3339Nano)})
 	if resp.StatusCode == http.StatusNotFound {
 		return resp.StatusCode, sql.ErrNoRows
 	}

@@ -26,3 +26,5 @@ bin
 *.jks
 *.keystore
 README.md
+rc.txt
+track*.bin

@@ -28,6 +28,7 @@ type App struct {
 	startedAt       time.Time
 	templates       *template.Template
 	sessions        *sessionManager
+	loginLimiter    *loginLimiter
 	scanner         *scanner.Manager
 	enrichment      *enrichment.Manager
 	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
@@ -84,16 +85,17 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	}
 
 	return &App{
-		config:     cfg,
-		store:      store,
-		logger:     logger,
-		version:    version,
-		startedAt:  time.Now(),
-		templates:  templates,
-		sessions:   newSessionManager(cfg.CookieSecure),
-		scanner:    scannerManager,
-		enrichment: enrichmentManager,
-		assets:     http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
+		config:       cfg,
+		store:        store,
+		logger:       logger,
+		version:      version,
+		startedAt:    time.Now(),
+		templates:    templates,
+		sessions:     newSessionManager(cfg.CookieSecure, store),
+		loginLimiter: newLoginLimiter(),
+		scanner:      scannerManager,
+		enrichment:   enrichmentManager,
+		assets:       http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
 	}, nil
 }
 
@@ -262,13 +264,23 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usernameOK := secureEqual(r.FormValue("username"), a.config.AdminUsername)
+	username := r.FormValue("username")
+	key := loginKey(r, username)
+	if locked, remaining := a.loginLimiter.locked(key); locked {
+		a.logger.Warn("login attempt while locked out", "username", username, "remoteAddr", r.RemoteAddr)
+		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %d 分钟后再试。", int(remaining.Minutes())+1)})
+		return
+	}
+
+	usernameOK := secureEqual(username, a.config.AdminUsername)
 	passwordOK := secureEqual(r.FormValue("password"), a.config.AdminPassword)
 	if !usernameOK || !passwordOK {
+		a.loginLimiter.recordFailure(key)
 		time.Sleep(250 * time.Millisecond)
 		a.render(w, http.StatusUnauthorized, "login.html", loginPageData{Error: "用户名或密码不正确。"})
 		return
 	}
+	a.loginLimiter.recordSuccess(key)
 
 	if _, err := a.sessions.create(w, a.config.AdminUsername); err != nil {
 		a.logger.Error("create admin session", "error", err)
@@ -343,22 +355,23 @@ func (a *App) requireMediaAccess(next http.Handler) http.Handler {
 		}
 		tokenQuery := r.URL.Query().Get("mediaToken")
 		if tokenQuery == "" {
-			tokenQuery = r.URL.Query().Get("apiToken")
-		}
-		if tokenQuery == "" {
 			tokenQuery = r.URL.Query().Get("token")
 		}
-		if tokenQuery != "" && (secureEqual(tokenQuery, a.config.MediaToken) || secureEqual(tokenQuery, a.config.APIToken)) {
+		// Only the dedicated media token is accepted here. The full-access
+		// API token must never be usable on media endpoints: media URLs are
+		// routinely shared and leak into browser history, proxy logs and
+		// Referer headers.
+		if tokenQuery != "" && secureEqual(tokenQuery, a.config.MediaToken) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-		if ok && strings.EqualFold(scheme, "Bearer") && (secureEqual(token, a.config.APIToken) || secureEqual(token, a.config.MediaToken)) {
+		if ok && strings.EqualFold(scheme, "Bearer") && secureEqual(token, a.config.MediaToken) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		w.Header().Set("WWW-Authenticate", "Bearer")
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "A valid API token or media token is required.")
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "A valid media token is required.")
 	})
 }
 

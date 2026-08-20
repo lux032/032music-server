@@ -269,13 +269,30 @@ func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID int64, a
 		role = "other"
 	}
 	key := metadata.Normalize(association.Title)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO works(title,normalized_title,type) VALUES(?,?,?) ON CONFLICT(normalized_title) DO UPDATE SET type=CASE WHEN works.type='other' THEN excluded.type ELSE works.type END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, association.Title, key, workType); err != nil {
-		return err
-	}
+	// Work identity is (normalized_title, type, year). Auto-inference has no
+	// year, so it attaches to an existing work of the same title+type when
+	// one exists (preferring an exact NULL year, then the oldest row), and
+	// only creates a new work otherwise. Same-titled works of a different
+	// type or year are deliberately NOT merged (M4).
 	var workID int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM works WHERE normalized_title=?`, key).Scan(&workID); err != nil {
+	var existingType string
+	err := tx.QueryRowContext(ctx, `SELECT id,type FROM works WHERE normalized_title=? AND (type=? OR type='other') ORDER BY CASE WHEN type=? THEN 0 ELSE 1 END,CASE WHEN year IS NULL THEN 0 ELSE 1 END,id LIMIT 1`, key, workType, workType).Scan(&workID, &existingType)
+	if errors.Is(err, sql.ErrNoRows) {
+		result, insertErr := tx.ExecContext(ctx, `INSERT INTO works(title,normalized_title,type) VALUES(?,?,?)`, association.Title, key, workType)
+		if insertErr != nil {
+			return insertErr
+		}
+		workID, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
+	} else if existingType == "other" && workType != "other" {
+		if _, err = tx.ExecContext(ctx, `UPDATE works SET type=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, workType, workID); err != nil {
+			return err
+		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO work_tracks(work_id,track_id,role,season,sequence,source) VALUES(?,?,?,?,?,'auto') ON CONFLICT(work_id,track_id,role,season,sequence) DO NOTHING`, workID, trackID, role, association.Season, association.Sequence)
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_tracks(work_id,track_id,role,season,sequence,source) VALUES(?,?,?,?,?,'auto') ON CONFLICT(work_id,track_id,role,season,sequence) DO NOTHING`, workID, trackID, role, association.Season, association.Sequence)
 	return err
 }

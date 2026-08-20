@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 var migrationFiles embed.FS
 
 type Store struct {
-	db *sql.DB
+	db retryDB
 }
 
 type Statistics struct {
@@ -69,7 +70,7 @@ func Open(databasePath string) (*Store, error) {
 		return nil, fmt.Errorf("ping sqlite database: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return &Store{db: retryDB{db}}, nil
 }
 
 func (s *Store) Close() error {
@@ -124,26 +125,97 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read migration %d: %w", version, err)
 		}
-		transaction, err := s.db.BeginTx(ctx, nil)
+		conn, err := s.db.Conn(ctx)
 		if err != nil {
-			return fmt.Errorf("begin migration %d: %w", version, err)
+			return fmt.Errorf("acquire migration connection %d: %w", version, err)
 		}
-		if _, err := transaction.ExecContext(ctx, string(script)); err != nil {
-			transaction.Rollback()
-			return fmt.Errorf("apply migration %d: %w", version, err)
+		// Foreign keys are disabled for the duration of each migration so
+		// table-rebuild migrations (drop + rename) can run safely. The
+		// pragma is a no-op inside a transaction, so it must be set on the
+		// dedicated connection before BeginTx.
+		if _, err = conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			conn.Close()
+			return fmt.Errorf("disable foreign keys for migration %d: %w", version, err)
 		}
-		if _, err := transaction.ExecContext(ctx,
-			"INSERT INTO schema_migrations(version, name) VALUES (?, ?)", version, entry.Name(),
-		); err != nil {
-			transaction.Rollback()
-			return fmt.Errorf("record migration %d: %w", version, err)
-		}
-		if err := transaction.Commit(); err != nil {
-			return fmt.Errorf("commit migration %d: %w", version, err)
+		err = s.applyMigration(ctx, conn, version, entry.Name(), string(script))
+		_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys=ON")
+		conn.Close()
+		if err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+var addColumnPattern = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)`)
+
+var createObjectPattern = regexp.MustCompile(`(?i)^(\s*)CREATE\s+(TABLE|UNIQUE\s+INDEX|INDEX|TRIGGER)\s+`)
+
+func (s *Store) applyMigration(ctx context.Context, conn *sql.Conn, version int, name, script string) error {
+	transaction, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migration %d: %w", version, err)
+	}
+	// M12: make migrations idempotent against databases where objects were
+	// already created by hand or by an older build. ADD COLUMN statements
+	// whose column already exists are filtered out line-by-line (trigger
+	// bodies never start with ALTER TABLE, so multi-line statements are
+	// unaffected); CREATE TABLE/INDEX/TRIGGER gain IF NOT EXISTS.
+	lines := strings.Split(script, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if match := addColumnPattern.FindStringSubmatch(line); match != nil {
+			exists, probeErr := columnExists(ctx, transaction, match[1], match[2])
+			if probeErr != nil {
+				transaction.Rollback()
+				return fmt.Errorf("probe column for migration %d: %w", version, probeErr)
+			}
+			if exists {
+				continue
+			}
+		}
+		if match := createObjectPattern.FindStringSubmatch(line); match != nil && !strings.Contains(strings.ToUpper(line), "IF NOT EXISTS") {
+			line = createObjectPattern.ReplaceAllString(line, "${1}CREATE ${2} IF NOT EXISTS ")
+		}
+		kept = append(kept, line)
+	}
+	if _, err := transaction.ExecContext(ctx, strings.Join(kept, "\n")); err != nil {
+		transaction.Rollback()
+		return fmt.Errorf("apply migration %d: %w", version, err)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO schema_migrations(version, name) VALUES (?, ?)", version, name,
+	); err != nil {
+		transaction.Rollback()
+		return fmt.Errorf("record migration %d: %w", version, err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit migration %d: %w", version, err)
+	}
+	return nil
+}
+
+func columnExists(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) EnsureLibrary(ctx context.Context, name, rootPath string) error {

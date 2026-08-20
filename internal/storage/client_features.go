@@ -51,7 +51,7 @@ func (s *Store) SetTrackFavorite(ctx context.Context, id int64, favorite bool) e
 	return updateFavorite(ctx, s.db, "tracks", id, favorite)
 }
 
-func updateFavorite(ctx context.Context, db *sql.DB, table string, id int64, favorite bool) error {
+func updateFavorite(ctx context.Context, db retryDB, table string, id int64, favorite bool) error {
 	value := 0
 	if favorite {
 		value = 1
@@ -81,19 +81,22 @@ func (s *Store) FavoriteAlbums(ctx context.Context, limit, offset int) ([]Album,
 		return nil, 0, err
 	}
 	defer rows.Close()
-	result := make([]Album, 0)
+	ids := make([]int64, 0)
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, 0, err
 		}
-		album, err := s.AlbumByID(ctx, id)
-		if err != nil {
-			return nil, 0, err
-		}
-		result = append(result, album)
+		ids = append(ids, id)
 	}
-	return result, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	result, err := s.albumsByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, total, nil
 }
 
 func (s *Store) FavoriteTracks(ctx context.Context, limit, offset int) ([]Track, int64, error) {
@@ -107,43 +110,86 @@ func (s *Store) FavoriteTracks(ctx context.Context, limit, offset int) ([]Track,
 		return nil, 0, err
 	}
 	defer rows.Close()
-	result := make([]Track, 0)
+	ids := make([]int64, 0)
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, 0, err
 		}
-		track, err := s.TrackByID(ctx, id)
-		if err != nil {
-			return nil, 0, err
-		}
-		result = append(result, track)
+		ids = append(ids, id)
 	}
-	return result, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	result, err := s.tracksByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, total, nil
 }
 
-func (s *Store) TrackByID(ctx context.Context, id int64) (Track, error) {
+const trackByIDSelect = `SELECT
+	t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),
+	COALESCE((SELECT GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id),'Unknown Artist'),
+	COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),
+	COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),
+	COALESCE((SELECT af.container FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
+	COALESCE((SELECT af.mime_type FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
+	COALESCE((SELECT af.relative_path FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
+	COALESCE((SELECT af.file_size FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),0),
+	COALESCE((SELECT '/api/v1/artwork/'||aw.id FROM artworks aw WHERE aw.album_id=a.id ORDER BY aw.is_primary DESC,aw.id LIMIT 1),''),
+	COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,
+	COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0)
+	FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id`
+
+func scanTrack(row interface{ Scan(...any) error }) (Track, error) {
 	var value Track
 	var favorite int
-	err := s.db.QueryRowContext(ctx, `SELECT
-		t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),
-		COALESCE((SELECT GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id),'Unknown Artist'),
-		COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),
-		COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),
-		COALESCE((SELECT af.container FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
-		COALESCE((SELECT af.mime_type FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
-		COALESCE((SELECT af.relative_path FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
-		COALESCE((SELECT af.file_size FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),0),
-		COALESCE((SELECT '/api/v1/artwork/'||aw.id FROM artworks aw WHERE aw.album_id=a.id ORDER BY aw.is_primary DESC,aw.id LIMIT 1),''),
-		COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,
-		COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0)
-		FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id=?`, id).Scan(
+	err := row.Scan(
 		&value.ID, &value.AlbumID, &value.Title, &value.Album, &value.Artist, &value.Year, &value.DiscNumber, &value.TrackNumber,
 		&value.Composer, &value.Genres, &value.Container, &value.MIMEType, &value.RelativePath, &value.FileSize, &value.ArtworkURL,
 		&value.DurationMillis, &value.StreamURL, &value.AddedAt, &value.UpdatedAt, &favorite, &value.LastPlayedAt, &value.PositionMillis, &value.PlayCount,
 	)
 	value.IsFavorite = favorite != 0
 	return value, err
+}
+
+func (s *Store) TrackByID(ctx context.Context, id int64) (Track, error) {
+	return scanTrack(s.db.QueryRowContext(ctx, trackByIDSelect+` WHERE t.id=?`, id))
+}
+
+// tracksByIDs loads many tracks in a single query (N+1 fix) and returns them
+// in the order of the given ids. A missing id yields sql.ErrNoRows.
+func (s *Store) tracksByIDs(ctx context.Context, ids []int64) ([]Track, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders, args := inClause(ids)
+	rows, err := s.db.QueryContext(ctx, trackByIDSelect+` WHERE t.id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := map[int64]Track{}
+	for rows.Next() {
+		track, err := scanTrack(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[track.ID] = track
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]Track, 0, len(ids))
+	for _, id := range ids {
+		track, ok := byID[id]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+		result = append(result, track)
+	}
+	return result, nil
 }
 
 func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlist, int64, error) {
@@ -274,19 +320,31 @@ func (s *Store) PlaylistDetail(ctx context.Context, id int64) (PlaylistDetail, e
 		return PlaylistDetail{}, err
 	}
 	defer rows.Close()
-	tracks := make([]Track, 0)
+	ids := make([]int64, 0)
 	for rows.Next() {
 		var trackID int64
 		if err := rows.Scan(&trackID); err != nil {
 			return PlaylistDetail{}, err
 		}
-		track, err := s.TrackByID(ctx, trackID)
-		if err != nil {
-			return PlaylistDetail{}, err
-		}
-		tracks = append(tracks, track)
+		ids = append(ids, trackID)
 	}
-	return PlaylistDetail{Playlist: playlist, Tracks: tracks}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return PlaylistDetail{}, err
+	}
+	tracks, err := s.tracksByIDs(ctx, ids)
+	if err != nil {
+		return PlaylistDetail{}, err
+	}
+	return PlaylistDetail{Playlist: playlist, Tracks: tracks}, nil
+}
+
+// maxClientDurationMillis bounds client-reported track durations. The probed
+// scanner value is the source of truth; a client value is only ever used to
+// backfill a missing probe, and only when it is physically plausible (M10).
+const maxClientDurationMillis = 6 * 60 * 60 * 1000 // 6 hours
+
+func plausibleClientDuration(durationMillis int64) bool {
+	return durationMillis > 0 && durationMillis <= maxClientDurationMillis
 }
 
 func (s *Store) UpdatePlayback(ctx context.Context, update PlaybackUpdate) error {
@@ -310,7 +368,7 @@ func (s *Store) UpdatePlayback(ctx context.Context, update PlaybackUpdate) error
 	if _, err := s.db.ExecContext(ctx, query, update.TrackID, update.State, update.PositionMillis, update.DurationMillis); err != nil {
 		return err
 	}
-	if update.DurationMillis > 0 {
+	if plausibleClientDuration(update.DurationMillis) {
 		_, _ = s.db.ExecContext(ctx, `UPDATE tracks SET duration_ms=? WHERE id=? AND COALESCE(duration_ms,0)=0`, update.DurationMillis, update.TrackID)
 	}
 	return nil
@@ -321,7 +379,7 @@ func (s *Store) Scrobble(ctx context.Context, trackID int64, positionMillis, dur
 		return errors.New("invalid scrobble payload")
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO playback_progress(track_id,state,position_ms,duration_ms,play_count,last_played_at,last_completed_at) VALUES(?,'stopped',?,?,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(track_id) DO UPDATE SET state='stopped',position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),play_count=playback_progress.play_count+1,last_played_at=excluded.last_played_at,last_completed_at=excluded.last_completed_at,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, trackID, positionMillis, durationMillis)
-	if err == nil && durationMillis > 0 {
+	if err == nil && plausibleClientDuration(durationMillis) {
 		_, _ = s.db.ExecContext(ctx, `UPDATE tracks SET duration_ms=? WHERE id=? AND COALESCE(duration_ms,0)=0`, durationMillis, trackID)
 	}
 	return err
@@ -339,19 +397,26 @@ func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]Playb
 	}
 	defer rows.Close()
 	result := make([]PlaybackRecord, 0)
+	ids := make([]int64, 0)
 	for rows.Next() {
 		var value PlaybackRecord
 		if err := rows.Scan(&value.TrackID, &value.State, &value.PositionMillis, &value.DurationMillis, &value.PlayCount, &value.LastPlayedAt, &value.LastCompletedAt, &value.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
-		track, err := s.TrackByID(ctx, value.TrackID)
-		if err != nil {
-			return nil, 0, err
-		}
-		value.Track = track
+		ids = append(ids, value.TrackID)
 		result = append(result, value)
 	}
-	return result, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	tracks, err := s.tracksByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range result {
+		result[i].Track = tracks[i]
+	}
+	return result, total, nil
 }
 
 func (s *Store) ClearPlaybackHistory(ctx context.Context) error {
