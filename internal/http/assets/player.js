@@ -37,134 +37,170 @@
   // browser autoplay policy blocks resuming without a user gesture, so
   // in-app navigation swaps <main> via fetch and keeps playback alive.
   // ---------------------------------------------------------------------
-  let pjaxAbortController = null;
+  let navigationAbortController = null;
+  let currentDocUrl = window.location.href;
+  const pendingForms = new Map();
+  const draftStorageKey = '032_form_draft';
 
   function setupPjaxNavigation() {
     if (!window.fetch || !window.history || !window.DOMParser) return;
-
+    ensureCurrentHistoryState();
+    restoreSafeDraft();
     document.addEventListener('click', (e) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
-      if (!link) return;
-      if (link.target && link.target !== '_self') return;
-      if (link.hasAttribute('download')) return;
+      if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download')) return;
       let url;
       try { url = new URL(link.href, window.location.href); } catch (_) { return; }
-      if (url.origin !== window.location.origin) return;
-      if (!url.pathname.startsWith('/admin')) return;
-      if (url.pathname.startsWith('/admin/assets/')) return;
+      if (url.origin !== window.location.origin || !url.pathname.startsWith('/admin') || url.pathname.startsWith('/admin/assets/')) return;
+      const current = new URL(window.location.href);
+      if (url.pathname === current.pathname && url.search === current.search && url.hash) return;
+      if (pendingForms.size && !window.confirm('更改仍在保存中。现在离开可能无法确认保存结果。是否仍要离开？')) { e.preventDefault(); return; }
       e.preventDefault();
       pjaxNavigate(url.href, true);
     });
-
+    document.addEventListener('click', (e) => {
+      const cancel = e.target instanceof Element ? e.target.closest('[data-cancel-confirm]') : null;
+      if (cancel) cancel.closest('details')?.removeAttribute('open');
+    });
     document.addEventListener('submit', (e) => {
       const form = e.target;
       if (!(form instanceof HTMLFormElement) || e.defaultPrevented) return;
       const method = (form.getAttribute('method') || 'get').toLowerCase();
       let action;
       try { action = new URL(form.getAttribute('action') || window.location.href, window.location.href); } catch (_) { return; }
-      if (action.origin !== window.location.origin || !action.pathname.startsWith('/admin')) return;
-      if (action.pathname === '/admin/logout') return;
-      if (form.querySelector('input[type="file"]')) return;
-
-      const formData = new FormData(form);
+      if (action.origin !== window.location.origin || !action.pathname.startsWith('/admin') || action.pathname === '/admin/logout' || form.querySelector('input[type="file"]')) return;
       const submitter = e.submitter;
-      if (submitter && submitter.name) formData.append(submitter.name, submitter.value);
-      const params = new URLSearchParams(formData);
-
+      const data = new FormData(form);
+      if (submitter && submitter.name) data.append(submitter.name, submitter.value);
+      const params = new URLSearchParams(data);
+      e.preventDefault();
       if (method === 'post') {
-        e.preventDefault();
-        pjaxPost(action.href, params);
+        if (!pendingForms.has(form)) pjaxPost(action.href, params, form, submitter);
       } else {
-        e.preventDefault();
         action.search = params.toString();
         pjaxNavigate(action.href, true);
       }
     });
-
-    window.addEventListener('popstate', () => {
-      pjaxNavigate(window.location.href, false);
+    window.addEventListener('popstate', (e) => {
+      // Chromium fires popstate for same-document fragment changes when history.state
+      // is non-null; those must not trigger a PJAX fetch of the same page.
+      const prev = new URL(currentDocUrl);
+      const next = new URL(window.location.href);
+      currentDocUrl = window.location.href;
+      if (prev.pathname === next.pathname && prev.search === next.search) return;
+      pjaxNavigate(window.location.href, false, e.state);
     });
   }
 
-  async function pjaxNavigate(url, push) {
+  function pageState() {
+    const active = document.activeElement;
+    let focus = '';
+    if (active instanceof Element && active.id) focus = '#' + CSS.escape(active.id);
+    else if (active instanceof Element && active.closest('[data-track-id]')) focus = `[data-track-id="${CSS.escape(active.closest('[data-track-id]').dataset.trackId || '')}"] .row-play-btn`;
+    return { app: '032', url: window.location.href, scrollX: window.scrollX, scrollY: window.scrollY, focus };
+  }
+  function ensureCurrentHistoryState() { history.replaceState({ ...(history.state || {}), ...pageState() }, '', window.location.href); }
+  function saveCurrentHistoryState() { history.replaceState({ ...(history.state || {}), ...pageState() }, '', window.location.href); }
+
+  async function pjaxNavigate(url, push, restoreState) {
     try {
-      if (pjaxAbortController) pjaxAbortController.abort();
-      pjaxAbortController = new AbortController();
-      const res = await fetch(url, {
-        credentials: 'same-origin',
-        headers: { Accept: 'text/html' },
-        signal: pjaxAbortController.signal
-      });
+      saveCurrentHistoryState();
+      if (navigationAbortController) navigationAbortController.abort();
+      navigationAbortController = new AbortController();
+      const res = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html' }, signal: navigationAbortController.signal });
       const html = await res.text();
-      if (!res.ok || !applyPage(html, res.url || url, push)) {
-        window.location.href = url;
-      }
+      if (!res.ok || !applyPage(html, res.url || url, push, restoreState)) window.location.href = url;
     } catch (err) {
       if (err && err.name === 'AbortError') return;
       window.location.href = url;
     }
   }
 
-  async function pjaxPost(url, params) {
-    try {
-      if (pjaxAbortController) pjaxAbortController.abort();
-      pjaxAbortController = new AbortController();
-      const res = await fetch(url, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'text/html'
-        },
-        body: params.toString(),
-        signal: pjaxAbortController.signal
-      });
-      const html = await res.text();
-      if (!res.ok || !applyPage(html, res.url || url, true)) {
-        window.location.href = res.url || url;
-      }
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
-      window.location.href = url;
+  function setFormPending(form, submitter, pending) {
+    form.classList.toggle('is-pending', pending);
+    form.setAttribute('aria-busy', String(pending));
+    form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]').forEach((button) => {
+      if (pending) { button.dataset.wasDisabled = button.disabled ? '1' : '0'; button.disabled = true; }
+      else if (button.dataset.wasDisabled !== '1') button.disabled = false;
+    });
+    if (submitter instanceof HTMLButtonElement) {
+      if (pending) { submitter.dataset.originalText = submitter.textContent; submitter.textContent = '保存中…'; }
+      else if (submitter.dataset.originalText) { submitter.textContent = submitter.dataset.originalText; delete submitter.dataset.originalText; }
     }
   }
 
-  function applyPage(html, url, push) {
+  async function pjaxPost(url, params, form, submitter) {
+    setFormPending(form, submitter, true);
+    pendingForms.set(form, true);
+    try {
+      const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/html' }, body: params.toString() });
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      if (doc.body && doc.body.classList.contains('login-page')) {
+        storeSafeDraft(form);
+        // res.url can still equal the POST target when the redirect is mocked or
+        // not followed; never navigate back to the form action in that case.
+        const target = res.url && res.url !== url ? res.url : '/admin/login';
+        window.location.href = target;
+        return;
+      }
+      if (!res.ok) {
+        showFormError(form, res.status === 403 ? '操作被拒绝，请刷新页面后重试。输入内容已保留。' : `保存失败（${res.status}），输入内容已保留。`);
+        return;
+      }
+      sessionStorage.removeItem(draftStorageKey);
+      if (!applyPage(html, res.url || window.location.href, true)) showFormError(form, '服务器已响应，但页面无法更新。请刷新核对保存结果。');
+    } catch (_) {
+      showFormError(form, '无法确认保存结果。输入内容已保留；请核对后再决定是否重试。');
+    } finally {
+      pendingForms.delete(form);
+      if (document.contains(form)) setFormPending(form, submitter, false);
+    }
+  }
+
+  function showFormError(form, message) {
+    let error = form.querySelector('.form-error');
+    if (!error) { error = document.createElement('div'); error.className = 'form-error'; error.setAttribute('role', 'alert'); form.prepend(error); }
+    error.textContent = message; error.tabIndex = -1; error.focus(); showToast(message, true);
+  }
+  function safeDraftFields(form) {
+    return Array.from(new FormData(form).entries()).filter(([name]) => !/password|token|secret|key|csrf/i.test(name)).map(([name, value]) => [name, String(value)]);
+  }
+  function storeSafeDraft(form) {
+    try { sessionStorage.setItem(draftStorageKey, JSON.stringify({ page: window.location.pathname + window.location.search, action: form.action, fields: safeDraftFields(form) })); } catch (_) {}
+  }
+  function restoreSafeDraft() {
+    try {
+      const raw = sessionStorage.getItem(draftStorageKey); if (!raw) return;
+      const draft = JSON.parse(raw); if (draft.page !== window.location.pathname + window.location.search) return;
+      const form = Array.from(document.forms).find((candidate) => candidate.action === draft.action); if (!form) return;
+      draft.fields.forEach(([name, value]) => { const field = form.elements.namedItem(name); if (field && !/password|token|secret|key|csrf/i.test(name)) field.value = value; });
+      showToast('已恢复登录前的非敏感输入，请核对后手动保存。', true); sessionStorage.removeItem(draftStorageKey);
+    } catch (_) { sessionStorage.removeItem(draftStorageKey); }
+  }
+
+  function applyPage(html, url, push, restoreState) {
+    currentDocUrl = url;
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (!doc.body || doc.body.classList.contains('login-page')) return false;
-    const newMain = doc.querySelector('main');
-    const curMain = document.querySelector('main');
+    const newMain = doc.querySelector('main'), curMain = document.querySelector('main');
     if (!newMain || !curMain) return false;
-
     doc.querySelectorAll('[autofocus]').forEach((el) => el.removeAttribute('autofocus'));
-
-    document.title = doc.title || document.title;
-    document.body.className = doc.body.className;
-    document.body.classList.add('has-global-player');
+    document.title = doc.title || document.title; document.body.className = doc.body.className; document.body.classList.add('has-global-player');
     curMain.replaceWith(document.adoptNode(newMain));
-
-    const newSidebar = doc.querySelector('aside.sidebar');
-    const curSidebar = document.querySelector('aside.sidebar');
+    const newSidebar = doc.querySelector('aside.sidebar'), curSidebar = document.querySelector('aside.sidebar');
     if (newSidebar && curSidebar) curSidebar.replaceWith(document.adoptNode(newSidebar));
-
-    // Load page-specific scripts (e.g. dashboard polling) that are not present yet.
-    doc.querySelectorAll('script[src]').forEach((script) => {
-      const src = script.getAttribute('src');
-      if (!src || document.querySelector(`script[src="${src}"]`)) return;
-      const el = document.createElement('script');
-      el.src = src;
-      document.head.appendChild(el);
-    });
-
-    if (push && url !== window.location.href) {
-      history.pushState({ pjax: true }, '', url);
-    }
-    window.scrollTo(0, 0);
-
-    bindTrackListEvents();
-    updateTrackRowsUI();
-    return true;
+    doc.querySelectorAll('script[src]').forEach((script) => { const src = script.getAttribute('src'); if (!src || document.querySelector(`script[src="${src}"]`)) return; const el = document.createElement('script'); el.src = src; document.head.appendChild(el); });
+    const destination = new URL(url, window.location.href);
+    if (push && destination.href !== window.location.href) history.pushState({ app: '032', url: destination.href, previousURL: window.location.href, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
+    const state = !push && restoreState && restoreState.app === '032' ? restoreState : null;
+    if (state && state.url === window.location.href) {
+      window.scrollTo(state.scrollX || 0, state.scrollY || 0);
+      requestAnimationFrame(() => { const target = state.focus && document.querySelector(state.focus); if (target) target.focus({ preventScroll: true }); });
+    } else if (destination.hash) requestAnimationFrame(() => document.getElementById(destination.hash.slice(1))?.scrollIntoView());
+    else window.scrollTo(0, 0);
+    bindTrackListEvents(); updateTrackRowsUI(); restoreSafeDraft(); return true;
   }
 
   function createPlayerDOM() {
@@ -201,7 +237,7 @@
         </div>
         <div class="player-progress-row">
           <span id="player-time-cur" class="player-time">00:00</span>
-          <div id="player-progress-bar" class="player-progress-bar">
+          <div id="player-progress-bar" class="player-progress-bar" role="slider" tabindex="0" aria-label="播放进度" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00 / 00:00">
             <div id="player-progress-fill" class="player-progress-fill"></div>
             <div id="player-progress-thumb" class="player-progress-thumb"></div>
           </div>
@@ -210,7 +246,9 @@
       </div>
 
       <div class="player-right">
-        <button id="player-btn-lyrics" class="player-tool-btn" title="歌词 (L)">词</button>
+        <button id="player-btn-lyrics" class="player-tool-btn" title="歌词 (L)" aria-expanded="false" aria-controls="lyrics-overlay">词</button>
+        <button id="player-btn-shortcuts" class="player-tool-btn" title="快捷键说明" aria-expanded="false">?</button>
+        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>Space 播放/暂停 · L 歌词 · Esc 关闭歌词</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
         <div class="player-volume-wrap">
           <button id="player-btn-mute" class="player-tool-btn" title="静音">🔊</button>
           <input id="player-volume-slider" type="range" min="0" max="1" step="0.01" value="1" title="音量">
@@ -307,6 +345,8 @@
     const muteBtn = document.getElementById('player-btn-mute');
     const lyricsBtn = document.getElementById('player-btn-lyrics');
     const lyricsCloseBtn = document.getElementById('lyrics-close-btn');
+    const shortcutsBtn = document.getElementById('player-btn-shortcuts');
+    const shortcutsDisableBtn = document.getElementById('player-shortcuts-disable');
 
     if (playBtn) playBtn.addEventListener('click', togglePlay);
     if (prevBtn) prevBtn.addEventListener('click', playPrevious);
@@ -371,6 +411,16 @@
         window.addEventListener('touchmove', onTouchMove);
         window.addEventListener('touchend', onTouchEnd);
       }, { passive: true });
+      progressBar.addEventListener('keydown', (e) => {
+        if (!audio || !audio.duration) return;
+        let next = audio.currentTime || 0;
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next -= 5;
+        else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next += 5;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = audio.duration;
+        else return;
+        e.preventDefault(); audio.currentTime = Math.max(0, Math.min(audio.duration, next)); onTimeUpdate();
+      });
     }
 
     if (volumeSlider) {
@@ -409,7 +459,8 @@
         const isVisible = overlay.style.display !== 'none';
         overlay.style.display = isVisible ? 'none' : 'flex';
         lyricsBtn.classList.toggle('active', !isVisible);
-        if (!isVisible) scrollLyricsToActive(true);
+        lyricsBtn.setAttribute('aria-expanded', String(!isVisible));
+        if (!isVisible) { scrollLyricsToActive(true); lyricsCloseBtn?.focus(); } else lyricsBtn.focus();
       });
     }
 
@@ -418,9 +469,25 @@
         const overlay = document.getElementById('lyrics-overlay');
         const lyricsBtn = document.getElementById('player-btn-lyrics');
         if (overlay) overlay.style.display = 'none';
-        if (lyricsBtn) lyricsBtn.classList.remove('active');
+        if (lyricsBtn) { lyricsBtn.classList.remove('active'); lyricsBtn.setAttribute('aria-expanded', 'false'); lyricsBtn.focus(); }
       });
     }
+    if (shortcutsBtn) shortcutsBtn.addEventListener('click', () => {
+      const help = document.getElementById('player-shortcuts-help'); if (!help) return;
+      help.hidden = !help.hidden; shortcutsBtn.setAttribute('aria-expanded', String(!help.hidden));
+    });
+    const syncShortcutsToggleLabel = () => {
+      if (!shortcutsDisableBtn) return;
+      shortcutsDisableBtn.textContent = localStorage.getItem('032_shortcuts_disabled') === '1' ? '开启快捷键' : '关闭快捷键';
+    };
+    syncShortcutsToggleLabel();
+    if (shortcutsDisableBtn) shortcutsDisableBtn.addEventListener('click', () => {
+      const disabled = localStorage.getItem('032_shortcuts_disabled') === '1';
+      if (disabled) localStorage.removeItem('032_shortcuts_disabled');
+      else localStorage.setItem('032_shortcuts_disabled', '1');
+      syncShortcutsToggleLabel();
+      showToast(disabled ? '播放器快捷键已开启' : '播放器快捷键已关闭');
+    });
   }
 
   function bindTrackListEvents() {
@@ -461,6 +528,8 @@
       };
 
       if (playBtn) {
+        const accessibleTitle = el.getAttribute('data-track-title') || el.querySelector('strong')?.textContent.trim() || '歌曲';
+        playBtn.setAttribute('aria-label', `播放 ${accessibleTitle}`);
         playBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -673,9 +742,15 @@
     const totalElem = document.getElementById('player-time-total');
     const fillElem = document.getElementById('player-progress-fill');
     const thumbElem = document.getElementById('player-progress-thumb');
+    const progressElem = document.getElementById('player-progress-bar');
 
     if (curElem) curElem.textContent = formatTime(curTime);
     if (totalElem && durTime > 0) totalElem.textContent = formatTime(durTime);
+    if (progressElem) {
+      progressElem.setAttribute('aria-valuemax', String(Math.floor(durTime)));
+      progressElem.setAttribute('aria-valuenow', String(Math.floor(curTime)));
+      progressElem.setAttribute('aria-valuetext', `${formatTime(curTime)} / ${formatTime(durTime)}`);
+    }
 
     if (!isDraggingProgress && durTime > 0) {
       const percent = Math.min(100, Math.max(0, (curTime / durTime) * 100));
@@ -993,21 +1068,14 @@
 
   function bindGlobalShortcuts() {
     document.addEventListener('keydown', (e) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.altKey && e.code === 'ArrowRight') {
-        e.preventDefault();
-        playNext();
-      } else if (e.altKey && e.code === 'ArrowLeft') {
-        e.preventDefault();
-        playPrevious();
-      } else if (e.key === 'l' || e.key === 'L') {
-        const lyricsBtn = document.getElementById('player-btn-lyrics');
-        if (lyricsBtn) lyricsBtn.click();
+      const target = e.target instanceof Element ? e.target : document.activeElement;
+      const interactive = target?.closest('input, textarea, select, button, a, summary, [contenteditable="true"], [role="slider"]');
+      if (e.key === 'Escape' && document.getElementById('lyrics-overlay')?.style.display !== 'none') {
+        e.preventDefault(); document.getElementById('lyrics-close-btn')?.click(); return;
       }
+      if (localStorage.getItem('032_shortcuts_disabled') === '1' || interactive || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
+      if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+      else if (e.key === 'l' || e.key === 'L') { e.preventDefault(); document.getElementById('player-btn-lyrics')?.click(); }
     });
   }
 
@@ -1018,16 +1086,18 @@
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
-  function showToast(msg) {
-    let toast = document.querySelector('.toast');
+  function showToast(msg, persistent) {
+    let toast = document.querySelector('.client-toast');
     if (!toast) {
       toast = document.createElement('div');
-      toast.className = 'toast';
+      toast.className = 'toast client-toast';
+      toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
+      toast.setAttribute('role', persistent ? 'alert' : 'status');
       document.body.appendChild(toast);
     }
     toast.textContent = msg;
     toast.style.display = 'block';
-    setTimeout(() => { toast.style.display = 'none'; }, 3500);
+    if (!persistent) setTimeout(() => { toast.style.display = 'none'; }, 3500);
   }
 
   if (document.readyState === 'loading') {

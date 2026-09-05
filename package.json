@@ -1,0 +1,11 @@
+{
+  "name": "032music-server-ui-tests",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}

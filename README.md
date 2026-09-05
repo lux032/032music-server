@@ -277,6 +277,18 @@ internal/http           API、管理面板和认证
 
 项目保持模块化单体结构，适合直接在 GoLand 中单步调试，也可以使用同一份代码构建 Docker 镜像。
 
+### 管理端浏览器交互测试
+
+浏览器测试使用 Playwright Chromium，并在 `127.0.0.1:45439` 启动独立 Go 服务。测试脚本为每次运行创建临时数据目录和合成 MP3，结束后删除；不会读取 `.env`、`.local` 或现有音乐库/数据库，外部补全也不会启用。
+
+```powershell
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+测试报告、trace、截图和 `node_modules` 均被 Git 忽略。375px/820px 项目是 Chromium 触控视口验证，不等同于真实 iOS Safari 验证。
+
 ## 歌手身份与在线元数据
 
 管理面板的“元数据”区域包含：

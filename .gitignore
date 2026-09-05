@@ -22,6 +22,10 @@
 *.cookie
 *.headers
 *.exe
+/node_modules/
+/playwright-report/
+/test-results/
+/blob-report/
 
 # Editors and operating systems
 .idea/
@@ -32,3 +36,6 @@ Thumbs.db
 # Captured debug artifacts (may contain session credentials)
 rc.txt
 track*.bin
+
+# e2e temp artifacts
+.gotmp/
