@@ -52,6 +52,10 @@ type loginPageData struct {
 	Error string
 }
 
+// indexLetters is the shared letter index used by the library index bar and
+// the template helper.
+var indexLetters = []string{"あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"}
+
 type dashboardPageData struct {
 	Username       string
 	CSRFToken      string
@@ -72,7 +76,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"enrichmentRunProgress": enrichmentRunProgress,
 		"enrichmentTargetLabel": enrichmentTargetLabel,
 		"indexValues": func() []string {
-			return []string{"あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"}
+			return indexLetters
 		},
 	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,6 +31,27 @@ type libraryPageData struct {
 	Page, PageCount, PageSize                                                 int
 	PrevURL, NextURL                                                          string
 	Pages                                                                     []pageLink
+	SearchFields                                                              []queryField
+	IndexLinks                                                                []indexLink
+	FilterTags                                                                []filterTag
+}
+
+// queryField is a hidden form field that keeps the current filter state when
+// a search form is submitted.
+type queryField struct {
+	Name, Value string
+}
+
+// indexLink is one entry of the letter index bar, carrying the full current
+// filter state so letters refine rather than replace it.
+type indexLink struct {
+	Value, URL string
+	Current    bool
+}
+
+// filterTag is a removable active-condition chip shown above the results.
+type filterTag struct {
+	Label, RemoveURL string
 }
 
 type pageLink struct {
@@ -54,7 +76,117 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 	if err != nil {
 		return libraryPageData{}, err
 	}
-	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: "/admin/" + section}, nil
+	path := "/admin/" + section
+	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: path, SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), FilterTags: filterTags(r, path)}, nil
+}
+
+// filterQuery rebuilds the current filter query parameters without paging or
+// notice state, so every control that changes a condition also resets to the
+// first page.
+func filterQuery(r *http.Request) url.Values {
+	source := r.URL.Query()
+	values := url.Values{}
+	for _, name := range []string{"q", "artist", "album", "year", "genre", "sort", "index"} {
+		if value := source.Get(name); value != "" && value != "0" {
+			values.Set(name, value)
+		}
+	}
+	return values
+}
+
+// searchFields keeps every active filter except the visible keyword input as
+// hidden fields, so submitting a search refines the current view instead of
+// discarding the other conditions.
+func searchFields(r *http.Request) []queryField {
+	values := filterQuery(r)
+	values.Del("q")
+	fields := make([]queryField, 0, len(values))
+	for _, name := range []string{"artist", "album", "year", "genre", "sort", "index"} {
+		if value := values.Get(name); value != "" {
+			fields = append(fields, queryField{Name: name, Value: value})
+		}
+	}
+	return fields
+}
+
+func indexLinks(r *http.Request, path string) []indexLink {
+	base := filterQuery(r)
+	current := base.Get("index")
+	base.Del("index")
+	links := make([]indexLink, 0, len(indexLetters))
+	for _, letter := range indexLetters {
+		values := url.Values{}
+		for name, list := range base {
+			values[name] = append([]string(nil), list...)
+		}
+		values.Set("index", letter)
+		links = append(links, indexLink{Value: letter, URL: path + "?" + values.Encode(), Current: letter == current})
+	}
+	return links
+}
+
+// filterTags renders the active conditions as removable chips. Names for
+// artist and album conditions are resolved by resolveFilterTagNames once the
+// handler has loaded the option lists.
+func filterTags(r *http.Request, path string) []filterTag {
+	base := filterQuery(r)
+	tags := []filterTag{}
+	add := func(name, label string) {
+		values := url.Values{}
+		for key, list := range base {
+			values[key] = append([]string(nil), list...)
+		}
+		values.Del(name)
+		removeURL := path
+		if encoded := values.Encode(); encoded != "" {
+			removeURL += "?" + encoded
+		}
+		tags = append(tags, filterTag{Label: label, RemoveURL: removeURL})
+	}
+	if value := base.Get("q"); value != "" {
+		add("q", "关键词："+value)
+	}
+	if value := base.Get("artist"); value != "" {
+		add("artist", "artist:"+value)
+	}
+	if value := base.Get("album"); value != "" {
+		add("album", "album:"+value)
+	}
+	if value := base.Get("year"); value != "" {
+		add("year", "年份："+value)
+	}
+	if value := base.Get("genre"); value != "" {
+		add("genre", "流派："+value)
+	}
+	if value := base.Get("index"); value != "" {
+		add("index", "首字母："+value)
+	}
+	if value := base.Get("sort"); value != "" {
+		add("sort", "排序："+value)
+	}
+	return tags
+}
+
+// resolveFilterTagNames replaces raw ID placeholders in filter chips with the
+// display names of the selected artist and album.
+func (data *libraryPageData) resolveFilterTagNames() {
+	artistNames := map[string]string{}
+	for _, artist := range data.Artists {
+		artistNames[strconv.FormatInt(artist.ID, 10)] = artist.Name
+	}
+	albumTitles := map[string]string{}
+	for _, album := range data.Albums {
+		albumTitles[strconv.FormatInt(album.ID, 10)] = album.Title
+	}
+	for index := range data.FilterTags {
+		label := data.FilterTags[index].Label
+		if name, ok := artistNames[strings.TrimPrefix(label, "artist:")]; ok && strings.HasPrefix(label, "artist:") {
+			data.FilterTags[index].Label = "歌手：" + name
+		}
+		if title, ok := albumTitles[strings.TrimPrefix(label, "album:")]; ok && strings.HasPrefix(label, "album:") {
+			data.FilterTags[index].Label = "专辑：" + title
+		}
+	}
 }
 
 func (a *App) handleArtistsPage(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +212,8 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	data.ArtistRole = role
 	data.ArtistRoleLabel = label
 	data.ClearPath = "/admin/artists/" + role
+	data.IndexLinks = indexLinks(r, data.ClearPath)
+	data.FilterTags = filterTags(r, data.ClearPath)
 	applyPage(r, &f, 60)
 	if err == nil {
 		data.Artists, err = a.store.ListArtists(r.Context(), f)
@@ -87,6 +221,7 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	if err == nil {
 		data.Total, err = a.store.CountArtists(r.Context(), f)
 	}
+	data.resolveFilterTagNames()
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }
@@ -103,6 +238,7 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{ArtistRole: "album", Limit: 500})
 	}
+	data.resolveFilterTagNames()
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }
@@ -120,6 +256,7 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{ArtistRole: "track", Limit: 500})
 		data.Albums, _ = a.store.ListAlbums(r.Context(), storage.Filters{Limit: 500})
 	}
+	data.resolveFilterTagNames()
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }
@@ -203,7 +340,7 @@ func (a *App) handleUpdateArtist(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/admin/artists/album?notice=已保存", 303)
+	redirectWithNotice(w, r, adminReturnPath(r, "/admin/artists/album"), "已保存")
 }
 func (a *App) handleUpdateAlbum(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
@@ -229,7 +366,7 @@ func (a *App) handleUpdateTrack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/admin/tracks?notice=已保存", 303)
+	redirectWithNotice(w, r, adminReturnPath(r, "/admin/tracks"), "已保存")
 }
 func (a *App) validCSRF(r *http.Request) bool {
 	_ = r.ParseForm()

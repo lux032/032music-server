@@ -120,6 +120,13 @@ details form { display: grid; gap: .6rem; margin-top: .75rem; }
 .apply-focus, .clear-focus { height: 43px; border-radius: 6px; padding: 0 14px; }
 .apply-focus { color: #18140c; background: #d4aa54; }
 .clear-focus { display: grid; place-items: center; color: #92949b; background: #25262b; font-size: .78rem; }
+.filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin: -18px 0 24px; }
+.filter-tag { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #303137; border-radius: 999px; padding: 5px 12px; color: #c8cad0; background: #1b1c20; font-size: .74rem; }
+.filter-tag:hover { border-color: #d4aa54; color: #f2e3bd; }
+.filter-tag .tag-remove { color: #8d8f96; font-size: .9rem; }
+.filter-tag.clear-all { color: #92949b; background: transparent; border-style: dashed; }
+.queue-actions { display: grid; gap: 6px; margin-bottom: 10px; }
+.queue-actions .secondary-button { width: 100%; text-align: left; }
 .album-browser { display: grid; grid-template-columns: repeat(auto-fill,minmax(156px,1fr)); gap: 30px 22px; }
 .album-tile { min-width: 0; color: inherit; }
 .cover-wrap { position: relative; overflow: hidden; aspect-ratio: 1; margin-bottom: 12px; border-radius: 3px; background: #24262b; box-shadow: 0 12px 25px rgba(0,0,0,.3); }

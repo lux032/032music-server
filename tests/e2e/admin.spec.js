@@ -144,3 +144,74 @@ test('mobile keeps lyrics entry and progress slider keyboard-accessible', async 
   await page.keyboard.press('Escape');
   await expect(page.locator('#player-btn-lyrics')).toBeFocused();
 });
+
+test('search, index and focus filters stack and tags remove one condition', async ({ page }) => {
+  await page.goto('/admin/albums');
+  const search = page.locator('.instant-search input[name="q"]');
+  await search.fill('E2E');
+  await search.press('Enter');
+  await expect(page).toHaveURL(/q=E2E/);
+
+  // Index bar refines the current view instead of discarding the keyword.
+  await page.locator('.index-bar a', { hasText: /^E$/ }).click();
+  await expect(page).toHaveURL(/index=E/);
+  await expect(page).toHaveURL(/q=E2E/);
+
+  // Active conditions are visible as removable chips.
+  await expect(page.locator('.filter-tag', { hasText: '关键词' })).toBeVisible();
+  await expect(page.locator('.filter-tag', { hasText: '首字母' })).toBeVisible();
+
+  // Submitting the focus form keeps the keyword and the index letter.
+  await page.getByRole('button', { name: '应用' }).click();
+  await expect(page).toHaveURL(/index=E/);
+  await expect(page).toHaveURL(/q=E2E/);
+
+  // Removing one chip keeps the remaining conditions.
+  await page.locator('.filter-tag', { hasText: '首字母' }).click();
+  await expect(page).toHaveURL(/q=E2E/);
+  await expect(page).not.toHaveURL(/index=/);
+
+  // Searching again preserves nothing stale and resets paging implicitly.
+  await page.locator('.instant-search input[name="q"]').fill('不存在的关键词');
+  await page.locator('.instant-search input[name="q"]').press('Enter');
+  await expect(page).toHaveURL(/q=%E4%B8%8D%E5%AD%98%E5%9C%A8/);
+  await expect(page.locator('.zero-state')).toBeVisible();
+});
+
+test('queue buttons add next/append without replacing the current queue', async ({ page }) => {
+  await trackPage(page);
+  await page.locator('.track-table-row').first().locator('.row-play-btn').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#player-title')).toContainText('E2E Track');
+  const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue.length);
+
+  const second = page.locator('.track-table-row').nth(1);
+  await second.locator('summary').click();
+  await second.locator('.queue-next-btn').click();
+  await expect(page.locator('.client-toast')).toContainText('下一首播放');
+  let state = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')));
+  expect(state.queue.length).toBe(before + 1);
+
+  const third = page.locator('.track-table-row').nth(2);
+  await third.locator('summary').click();
+  await third.locator('.queue-append-btn').click();
+  await expect(page.locator('.client-toast')).toContainText('队列末尾');
+  state = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')));
+  expect(state.queue.length).toBe(before + 2);
+
+  // Queue buttons must not trigger row playback.
+  await expect(page.locator('#player-title')).toContainText('E2E Track');
+});
+
+test('track quick edit keeps the filtered list context after save', async ({ page }) => {
+  await page.goto('/admin/tracks?q=E2E&sort=year');
+  const row = page.locator('.track-table-row').first();
+  await row.locator('summary').click();
+  const editForm = row.locator('form[action^="/admin/tracks/"]');
+  await editForm.locator('input[name="composer"]').fill('E2E Composer');
+  await editForm.getByRole('button', { name: '保存' }).click();
+  await expect(page).toHaveURL(/q=E2E/);
+  await expect(page).toHaveURL(/sort=year/);
+  await expect(page.locator('.toast')).toContainText('已保存');
+  await expect(editForm.locator('input[name="composer"]')).toHaveValue('E2E Composer');
+});

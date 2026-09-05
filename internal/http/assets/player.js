@@ -537,6 +537,16 @@
         });
       }
 
+      el.querySelectorAll('.queue-next-btn, .queue-append-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          queueTrackFromPage(trackId, btn.classList.contains('queue-next-btn') ? 'next' : 'append');
+          const menu = btn.closest('details');
+          if (menu) menu.removeAttribute('open');
+        });
+      });
+
       el.addEventListener('dblclick', clickHandler);
     });
 
@@ -598,6 +608,25 @@
     });
 
     return tracks;
+  }
+
+  // queueTrackFromPage inserts a track from the current page into the
+  // playback queue without replacing it: mode 'next' puts it right after the
+  // current track, 'append' puts it at the end. When nothing is queued yet,
+  // the track starts playing immediately so the button never feels dead.
+  function queueTrackFromPage(trackId, mode) {
+    const track = extractAllTracksFromPage().find(t => String(t.id) === String(trackId));
+    if (!track) return;
+    if (queue.length === 0 || currentIndex === -1) {
+      queue.push(track);
+      playTrackAtIndex(queue.length - 1);
+      showToast(`开始播放：${track.title}`);
+      return;
+    }
+    if (mode === 'next') queue.splice(currentIndex + 1, 0, track);
+    else queue.push(track);
+    saveState();
+    showToast(mode === 'next' ? `已加入下一首播放：${track.title}` : `已添加到队列末尾：${track.title}`);
   }
 
   function playTrackAtIndex(index) {
@@ -1086,18 +1115,28 @@
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
+  let toastTimer = null;
+
   function showToast(msg, persistent) {
     let toast = document.querySelector('.client-toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.className = 'toast client-toast';
-      toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
-      toast.setAttribute('role', persistent ? 'alert' : 'status');
       document.body.appendChild(toast);
     }
+    toast.setAttribute('aria-live', persistent ? 'assertive' : 'polite');
+    toast.setAttribute('role', persistent ? 'alert' : 'status');
     toast.textContent = msg;
     toast.style.display = 'block';
-    if (!persistent) setTimeout(() => { toast.style.display = 'none'; }, 3500);
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    if (!persistent) {
+      // Guard by message so a stale transient timer can never hide a newer
+      // (possibly persistent) notification.
+      toastTimer = setTimeout(() => {
+        toastTimer = null;
+        if (toast.textContent === msg) toast.style.display = 'none';
+      }, 3500);
+    }
   }
 
   if (document.readyState === 'loading') {
