@@ -72,8 +72,7 @@ test('POST pending prevents duplicate submit and failures preserve input', async
 
 test('expired login stores only non-sensitive draft and never replays POST', async ({ page }) => {
   await page.goto('/admin/settings/metadata');
-  const form = page.locator('form.source-settings');
-  await form.locator('input[name="lastfm_api_key"]').fill('SECRET-VALUE');
+  const form = page.locator('form.source-card-form').first();
   const ordinary = form.locator('input[name="musicbrainz_application_name"]');
   await ordinary.fill('safe draft');
   let posts = 0;
@@ -129,6 +128,39 @@ test('keyboard interaction does not steal Space and shortcuts can be disabled', 
   await page.locator('main h1').click();
   await page.keyboard.press('KeyL');
   await expect(page.locator('#lyrics-overlay')).toBeVisible();
+});
+
+test('dashboard renders notice, Chinese scan status and offline hint', async ({ page }) => {
+  await page.goto('/admin?notice=扫描已启动');
+  await expect(page.locator('.toast')).toContainText('扫描已启动');
+  await expect(page.locator('#scan-title')).toContainText(/扫描状态：(尚未扫描|正在扫描|扫描完成|扫描失败)/);
+  await expect(page.locator('#scan-last-updated')).toContainText('最后更新：');
+
+  // Once the status poll cannot reach the server, the dashboard must say so
+  // instead of silently showing stale data.
+  await page.route('**/admin/status', route => route.abort('failed'));
+  await expect(page.locator('#scan-last-updated')).toContainText('状态更新中断，重试连接中…');
+  await page.unroute('**/admin/status');
+});
+
+test('metadata source card saves independently', async ({ page }) => {
+  await page.goto('/admin/settings/metadata');
+  const form = page.locator('form[data-scope-form]', { has: page.locator('input[name="scope"][value="musicbrainz"]') });
+  await form.locator('input[name="musicbrainz_application_name"]').fill('E2E App');
+  await expect(form.getByRole('button', { name: '保存 MusicBrainz 设置' })).toHaveClass(/is-unsaved/);
+  let posts = 0;
+  page.on('request', r => { if (r.method() === 'POST' && r.url().includes('/admin/settings/metadata')) posts++; });
+  await form.getByRole('button', { name: '保存 MusicBrainz 设置' }).click();
+  // Brand-named success notice, not the raw scope key.
+  await expect(page.locator('.toast')).toContainText('MusicBrainz 设置已保存');
+  await expect(page).toHaveURL(/notice=MusicBrainz/);
+  expect(posts).toBe(1);
+
+  // Saving the MusicBrainz card must not touch the other source cards.
+  const lastfm = page.locator('form[data-scope-form]', { has: page.locator('input[name="scope"][value="lastfm"]') });
+  await expect(lastfm.locator('input[name="lastfm_api_key"]')).toHaveValue('');
+  const saved = page.locator('form[data-scope-form]', { has: page.locator('input[name="scope"][value="musicbrainz"]') });
+  await expect(saved.locator('input[name="musicbrainz_application_name"]')).toHaveValue('E2E App');
 });
 
 test('mobile keeps lyrics entry and progress slider keyboard-accessible', async ({ page }, testInfo) => {

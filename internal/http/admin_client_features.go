@@ -401,6 +401,23 @@ func formatAdminTime(value string) string {
 	return parsed.Local().Format("2006-01-02 15:04")
 }
 
+// scanStatusLabel renders the scanner job status in Chinese for the
+// dashboard first paint, matching the client-side statusMap in admin.js.
+func scanStatusLabel(value string) string {
+	switch value {
+	case "never":
+		return "尚未扫描"
+	case "running":
+		return "正在扫描"
+	case "completed":
+		return "扫描完成"
+	case "failed":
+		return "扫描失败"
+	default:
+		return value
+	}
+}
+
 func playbackStateLabel(value string) string {
 	switch value {
 	case "playing":

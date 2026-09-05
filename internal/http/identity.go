@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,39 +53,86 @@ func (a *App) handleMetadataSettings(w http.ResponseWriter, r *http.Request) {
 	a.render(w, 200, "metadata-settings.html", data)
 }
 
+// metadataScopeLabel renders the source key with its brand name in success
+// notices, so users see "MusicBrainz 设置已保存" instead of a raw scope key.
+func metadataScopeLabel(scope string) string {
+	switch scope {
+	case "musicbrainz":
+		return "MusicBrainz"
+	case "lastfm":
+		return "Last.fm"
+	case "vgmdb":
+		return "VGMdb"
+	case "bangumi":
+		return "Bangumi"
+	default:
+		return scope
+	}
+}
+
 func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", 403)
 		return
 	}
+	scope := r.FormValue("scope")
 	existingLastFM, _ := a.store.MetadataSourceSetting(r.Context(), "lastfm")
-	for _, source := range []string{"musicbrainz", "lastfm", "vgmdb", "bangumi"} {
-		setting := storage.MetadataSourceSetting{Source: source, Enabled: r.FormValue(source+"_enabled") != "", AutoMatch: r.FormValue(source+"_auto") != "", Priority: int(parseInt64(r.FormValue(source + "_priority"))), CacheDays: int(parseInt64(r.FormValue(source + "_cache_days"))), Language: r.FormValue(source + "_language"), APIKey: strings.TrimSpace(r.FormValue(source + "_api_key")), ApplicationName: r.FormValue(source + "_application_name"), ApplicationVersion: r.FormValue(source + "_application_version"), Contact: r.FormValue(source + "_contact")}
-		if source == "musicbrainz" && setting.Enabled && strings.TrimSpace(setting.Contact) == "" {
-			redirectWithNotice(w, r, "/admin/settings/metadata", "启用 MusicBrainz 时必须填写联系邮箱或项目地址")
-			return
+	if scope == "biography" {
+		biographySettings := storage.BiographySettings{
+			PreferredLanguages: strings.TrimSpace(r.FormValue("biography_languages")),
+			SourcePriority:     strings.TrimSpace(r.FormValue("biography_source_priority")),
+			WikipediaEnabled:   r.FormValue("wikipedia_enabled") != "",
+			EnglishFallback:    r.FormValue("biography_english_fallback") != "",
+			CacheDays:          int(parseInt64(r.FormValue("biography_cache_days"))),
 		}
-		if source == "lastfm" && setting.Enabled && setting.APIKey == "" && !existingLastFM.HasAPIKey {
-			redirectWithNotice(w, r, "/admin/settings/metadata", "首次启用 Last.fm 时必须填写 API Key")
-			return
-		}
-		if err := a.store.SaveMetadataSourceSetting(r.Context(), setting); err != nil {
+		if err := a.store.SaveBiographySettings(r.Context(), biographySettings); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-	}
-	biographySettings := storage.BiographySettings{
-		PreferredLanguages: strings.TrimSpace(r.FormValue("biography_languages")),
-		SourcePriority:     strings.TrimSpace(r.FormValue("biography_source_priority")),
-		WikipediaEnabled:   r.FormValue("wikipedia_enabled") != "",
-		EnglishFallback:    r.FormValue("biography_english_fallback") != "",
-		CacheDays:          int(parseInt64(r.FormValue("biography_cache_days"))),
-	}
-	if err := a.store.SaveBiographySettings(r.Context(), biographySettings); err != nil {
-		http.Error(w, err.Error(), 500)
+		redirectWithNotice(w, r, "/admin/settings/metadata", "歌手简介策略设置已保存")
 		return
 	}
-	redirectWithNotice(w, r, "/admin/settings/metadata", "元数据来源设置已保存")
+
+	// 单卡独立保存逻辑
+	if scope != "" {
+		validScope := false
+		for _, s := range []string{"musicbrainz", "lastfm", "vgmdb", "bangumi"} {
+			if scope == s {
+				validScope = true
+				break
+			}
+		}
+		if validScope {
+			setting := storage.MetadataSourceSetting{
+				Source:             scope,
+				Enabled:            r.FormValue(scope+"_enabled") != "",
+				AutoMatch:          r.FormValue(scope+"_auto") != "",
+				Priority:           int(parseInt64(r.FormValue(scope + "_priority"))),
+				CacheDays:          int(parseInt64(r.FormValue(scope + "_cache_days"))),
+				Language:           r.FormValue(scope + "_language"),
+				APIKey:             strings.TrimSpace(r.FormValue(scope + "_api_key")),
+				ApplicationName:    r.FormValue(scope + "_application_name"),
+				ApplicationVersion: r.FormValue(scope + "_application_version"),
+				Contact:            r.FormValue(scope + "_contact"),
+			}
+			if scope == "musicbrainz" && setting.Enabled && strings.TrimSpace(setting.Contact) == "" {
+				redirectWithNotice(w, r, "/admin/settings/metadata", "启用 MusicBrainz 时必须填写联系邮箱或项目地址")
+				return
+			}
+			if scope == "lastfm" && setting.Enabled && setting.APIKey == "" && !existingLastFM.HasAPIKey {
+				redirectWithNotice(w, r, "/admin/settings/metadata", "首次启用 Last.fm 时必须填写 API Key")
+				return
+			}
+			if err := a.store.SaveMetadataSourceSetting(r.Context(), setting); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			redirectWithNotice(w, r, "/admin/settings/metadata", fmt.Sprintf("%s 设置已保存", metadataScopeLabel(scope)))
+			return
+		}
+		http.Error(w, "invalid scope", 400)
+		return
+	}
 }
 
 func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {

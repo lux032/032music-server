@@ -66,6 +66,7 @@ type dashboardPageData struct {
 	MusicDirectory string
 	Statistics     storage.Statistics
 	Scan           storage.ScanJob
+	Notice         string
 }
 
 func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Manager, enrichmentManager *enrichment.Manager, logger *slog.Logger, version string) (*App, error) {
@@ -75,6 +76,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"playbackStateLabel":    playbackStateLabel,
 		"enrichmentRunProgress": enrichmentRunProgress,
 		"enrichmentTargetLabel": enrichmentTargetLabel,
+		"scanStatusLabel":       scanStatusLabel,
 		"indexValues": func() []string {
 			return indexLetters
 		},
@@ -323,6 +325,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		MusicDirectory: a.config.MusicDirectory,
 		Statistics:     stats,
 		Scan:           latestScan(a.store, r),
+		Notice:         r.URL.Query().Get("notice"),
 	})
 }
 
