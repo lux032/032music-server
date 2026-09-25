@@ -54,6 +54,7 @@ type Artist struct {
 	ImageURL   string `json:"imageUrl"`
 	AlbumCount int64  `json:"albumCount"`
 	TrackCount int64  `json:"trackCount"`
+	IsFavorite bool   `json:"isFavorite"`
 }
 
 type Album struct {
@@ -128,7 +129,8 @@ type Filters struct {
 	Query, Genre, Sort, ArtistRole, Index string
 	ArtistID, AlbumID                     int64
 	Year, Limit, Offset                   int
-	HideInstrumental                      bool
+	HideInstrumental, Favorite            bool
+	favoriteOrder                         bool
 }
 
 func (s *Store) LibraryByRoot(ctx context.Context, root string) (Library, error) {
@@ -469,10 +471,12 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 		order = "album_count DESC, name COLLATE NOCASE"
 	} else if f.Sort == "tracks" {
 		order = "track_count DESC, name COLLATE NOCASE"
+	} else if f.favoriteOrder {
+		order = "ar.favorited_at DESC, ar.id DESC"
 	}
 	where, args := artistWhere(f, role)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id) track_count FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id) track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -480,9 +484,11 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	list := make([]Artist, 0)
 	for rows.Next() {
 		var v Artist
-		if err = rows.Scan(&v.ID, &v.Name, &v.ImageURL, &v.AlbumCount, &v.TrackCount); err != nil {
+		var favorite int
+		if err = rows.Scan(&v.ID, &v.Name, &v.ImageURL, &v.AlbumCount, &v.TrackCount, &favorite); err != nil {
 			return nil, err
 		}
+		v.IsFavorite = favorite != 0
 		list = append(list, v)
 	}
 	return list, rows.Err()
@@ -548,6 +554,9 @@ func (s *Store) CountArtists(ctx context.Context, f Filters) (int64, error) {
 func artistWhere(f Filters, role string) (string, []any) {
 	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id)))"}
 	args := []any{role, role, role}
+	if f.Favorite {
+		clauses = append(clauses, "ar.is_favorite=1")
+	}
 	variants := SearchVariants(f.Query)
 	if len(variants) > 0 {
 		parts := make([]string, 0, len(variants)*2)

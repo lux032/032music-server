@@ -326,12 +326,14 @@ func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error
 	var d ArtistDetail
 	var merged sql.NullInt64
 	var hasLocalBiography bool
+	var favorite int
 	var preferredSource, preferredLanguage string
-	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(user_display_name,display_name),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=artists.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=artists.id)) THEN '/api/v1/artists/'||artists.id||'/image' ELSE '' END,COALESCE(user_biography,biography,''),COALESCE(TRIM(user_biography),'')<>'',COALESCE(country,''),COALESCE(artist_type,''),merged_into_artist_id,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=artists.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=artists.id),COALESCE(preferred_biography_source,''),COALESCE(preferred_biography_language,'') FROM artists WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.ImageURL, &d.Biography, &hasLocalBiography, &d.Country, &d.ArtistType, &merged, &d.AlbumCount, &d.TrackCount, &preferredSource, &preferredLanguage)
+	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(user_display_name,display_name),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=artists.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=artists.id)) THEN '/api/v1/artists/'||artists.id||'/image' ELSE '' END,COALESCE(user_biography,biography,''),COALESCE(TRIM(user_biography),'')<>'',COALESCE(country,''),COALESCE(artist_type,''),merged_into_artist_id,is_favorite,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=artists.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=artists.id),COALESCE(preferred_biography_source,''),COALESCE(preferred_biography_language,'') FROM artists WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.ImageURL, &d.Biography, &hasLocalBiography, &d.Country, &d.ArtistType, &merged, &favorite, &d.AlbumCount, &d.TrackCount, &preferredSource, &preferredLanguage)
 	if err != nil {
 		return d, err
 	}
 	d.MergedIntoID = merged.Int64
+	d.IsFavorite = favorite != 0
 	rows, err := s.db.QueryContext(ctx, `SELECT value FROM artist_names WHERE artist_id=? ORDER BY name_type,value`, id)
 	if err != nil {
 		return d, err
@@ -401,13 +403,15 @@ func (s *Store) MergeArtists(ctx context.Context, sourceID, targetID int64) (int
 	defer tx.Rollback()
 	var sourceName, targetName string
 	var sourceMerged, targetMerged sql.NullInt64
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name),merged_into_artist_id FROM artists WHERE id=?`, sourceID).Scan(&sourceName, &sourceMerged); err != nil {
+	var sourceFavorite, targetFavorite int
+	var sourceFavoritedAt sql.NullString
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name),merged_into_artist_id,is_favorite,favorited_at FROM artists WHERE id=?`, sourceID).Scan(&sourceName, &sourceMerged, &sourceFavorite, &sourceFavoritedAt); err != nil {
 		return 0, err
 	}
 	if sourceMerged.Valid {
 		return 0, errors.New("source artist is already merged")
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name),merged_into_artist_id FROM artists WHERE id=?`, targetID).Scan(&targetName, &targetMerged); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name),merged_into_artist_id,is_favorite FROM artists WHERE id=?`, targetID).Scan(&targetName, &targetMerged, &targetFavorite); err != nil {
 		return 0, err
 	}
 	if targetMerged.Valid {
@@ -418,6 +422,14 @@ func (s *Store) MergeArtists(ctx context.Context, sourceID, targetID int64) (int
 		return 0, err
 	}
 	operationID, _ := result.LastInsertId()
+	if sourceFavorite == 1 && targetFavorite == 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE artists SET is_favorite=1,favorited_at=? WHERE id=?`, sourceFavoritedAt, targetID); err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET favorite_set_by_merge=1 WHERE id=?`, operationID); err != nil {
+			return 0, err
+		}
+	}
 	albumRows, err := tx.QueryContext(ctx, `SELECT album_id,position,join_phrase FROM album_artists WHERE artist_id=?`, sourceID)
 	if err != nil {
 		return 0, err
@@ -534,7 +546,8 @@ func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) erro
 	defer tx.Rollback()
 	var sourceID, targetID int64
 	var status string
-	if err = tx.QueryRowContext(ctx, `SELECT source_artist_id,target_artist_id,status FROM artist_merge_operations WHERE id=?`, operationID).Scan(&sourceID, &targetID, &status); err != nil {
+	var favoriteSetByMerge int
+	if err = tx.QueryRowContext(ctx, `SELECT source_artist_id,target_artist_id,status,favorite_set_by_merge FROM artist_merge_operations WHERE id=?`, operationID).Scan(&sourceID, &targetID, &status, &favoriteSetByMerge); err != nil {
 		return err
 	}
 	if status != "merged" {
@@ -594,6 +607,20 @@ func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) erro
 	if _, err = tx.ExecContext(ctx, `UPDATE artists SET merged_into_artist_id=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, sourceID); err != nil {
 		return err
 	}
+	if favoriteSetByMerge == 1 {
+		var successorID int64
+		err = tx.QueryRowContext(ctx, `SELECT mo.id FROM artist_merge_operations mo JOIN artists source ON source.id=mo.source_artist_id WHERE mo.target_artist_id=? AND mo.id<>? AND mo.status='merged' AND source.is_favorite=1 ORDER BY mo.id LIMIT 1`, targetID, operationID).Scan(&successorID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if successorID != 0 {
+			if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET favorite_set_by_merge=1 WHERE id=?`, successorID); err != nil {
+				return err
+			}
+		} else if _, err = tx.ExecContext(ctx, `UPDATE artists SET is_favorite=0,favorited_at=NULL WHERE id=?`, targetID); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET status='rolled_back',rolled_back_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, operationID); err != nil {
 		return err
 	}
@@ -617,7 +644,9 @@ func (s *Store) MergeOperations(ctx context.Context) ([]MergeOperation, error) {
 	return list, rows.Err()
 }
 
-func canonicalArtistID(ctx context.Context, tx *sql.Tx, id int64) (int64, error) {
+func canonicalArtistID(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id int64) (int64, error) {
 	seen := map[int64]bool{}
 	for {
 		if seen[id] {
@@ -625,7 +654,7 @@ func canonicalArtistID(ctx context.Context, tx *sql.Tx, id int64) (int64, error)
 		}
 		seen[id] = true
 		var next sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT merged_into_artist_id FROM artists WHERE id=?`, id).Scan(&next); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT merged_into_artist_id FROM artists WHERE id=?`, id).Scan(&next); err != nil {
 			return 0, err
 		}
 		if !next.Valid {

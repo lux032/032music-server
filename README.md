@@ -157,7 +157,8 @@ Authorization: Bearer <API_TOKEN>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/v1/artists` | 歌手列表；可用 `role=album` 或 `role=track` 按关系分类 |
+| `GET` | `/api/v1/artists` | 歌手列表；可用 `role=album` 或 `role=track` 按关系分类，`favorite=true` 只看收藏 |
+| `GET` | `/api/v1/artists/{id}` | 歌手详情、专辑和曲目（最多返回 5000 首，`tracksTotal` 为实际总数）；合并 ID 返回规范歌手及 `mergedFrom` |
 | `GET` | `/api/v1/albums` | 专辑列表 |
 | `GET` | `/api/v1/albums/{id}` | 专辑和曲目详情 |
 | `GET` | `/api/v1/tracks` | 歌曲列表 |
@@ -207,10 +208,14 @@ http://server:4533/api/v1/tracks/123/stream?mediaToken=<MEDIA_TOKEN>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| `PUT` / `DELETE` | `/api/v1/artists/{id}/favorite` | 收藏或取消收藏歌手（合并 ID 指向规范歌手） |
+| `GET` | `/api/v1/favorites/artists` | 收藏歌手分页列表 |
 | `PUT` / `DELETE` | `/api/v1/albums/{id}/favorite` | 收藏或取消收藏专辑 |
 | `PUT` / `DELETE` | `/api/v1/tracks/{id}/favorite` | 收藏或取消收藏歌曲 |
 | `GET` | `/api/v1/favorites/albums` | 收藏专辑列表 |
 | `GET` | `/api/v1/favorites/tracks` | 收藏歌曲列表 |
+
+歌手详情中的 `artist.trackCount` 统计该歌手所有角色关联的曲目；`tracksTotal` 则统计其 primary 曲目与作为专辑歌手的专辑内曲目的去重合集，两者口径不同。合并回滚后，源歌手恢复其原有收藏状态。歌手标签改名后若旧歌手成为孤儿并被 `CleanupOrphans` 删除，旧歌手的收藏会丢失；重扫现有歌手不会重置收藏。
 
 ### 歌单
 

@@ -62,7 +62,7 @@ type pageLink struct {
 
 func filters(r *http.Request) storage.Filters {
 	q := r.URL.Query()
-	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), Index: strings.TrimSpace(q.Get("index")), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset"))), HideInstrumental: q.Get("hideInstrumental") == "true"}
+	return storage.Filters{Query: strings.TrimSpace(q.Get("q")), Genre: strings.TrimSpace(q.Get("genre")), Sort: q.Get("sort"), ArtistRole: q.Get("role"), Index: strings.TrimSpace(q.Get("index")), ArtistID: parseInt64(q.Get("artist")), AlbumID: parseInt64(q.Get("album")), Year: int(parseInt64(q.Get("year"))), Limit: int(parseInt64(q.Get("limit"))), Offset: int(parseInt64(q.Get("offset"))), HideInstrumental: q.Get("hideInstrumental") == "true", Favorite: q.Get("favorite") == "true"}
 }
 
 func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error) {
@@ -209,6 +209,7 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	data, err := a.pageBase(r, "artists")
 	f := filters(r)
 	f.ArtistRole = role
+	f.Favorite = false // The favorite query parameter belongs to the public artists API.
 	data.ArtistRole = role
 	data.ArtistRoleLabel = label
 	data.ClearPath = "/admin/artists/" + role
