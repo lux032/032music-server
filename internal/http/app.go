@@ -36,6 +36,7 @@ type App struct {
 	assets          http.Handler
 	transcoder      *transcodeManager
 	thumbnails      *thumbnailManager
+	similaritySlots chan struct{}
 }
 
 type healthResponse struct {
@@ -94,19 +95,20 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	}
 
 	return &App{
-		config:       cfg,
-		store:        store,
-		logger:       logger,
-		version:      version,
-		startedAt:    time.Now(),
-		templates:    templates,
-		sessions:     newSessionManager(cfg.CookieSecure, store),
-		loginLimiter: newLoginLimiter(),
-		scanner:      scannerManager,
-		enrichment:   enrichmentManager,
-		transcoder:   newTranscodeManager(cfg, logger),
-		thumbnails:   newThumbnailManager(cfg),
-		assets:       http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
+		similaritySlots: make(chan struct{}, 4),
+		config:          cfg,
+		store:           store,
+		logger:          logger,
+		version:         version,
+		startedAt:       time.Now(),
+		templates:       templates,
+		sessions:        newSessionManager(cfg.CookieSecure, store),
+		loginLimiter:    newLoginLimiter(),
+		scanner:         scannerManager,
+		enrichment:      enrichmentManager,
+		transcoder:      newTranscodeManager(cfg, logger),
+		thumbnails:      newThumbnailManager(cfg),
+		assets:          http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
 	}, nil
 }
 
@@ -135,6 +137,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/albums/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbum)))
 	mux.Handle("GET /api/v1/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITracks)))
 	mux.Handle("GET /api/v1/tracks/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrack)))
+	mux.Handle("GET /api/v1/tracks/{id}/similar", a.requireAPIOrAdmin(a.withSimilaritySlot(http.HandlerFunc(a.handleSimilarTracks))))
+	mux.Handle("GET /api/v1/tracks/path", a.requireAPIOrAdmin(a.withSimilaritySlot(http.HandlerFunc(a.handleTrackPath))))
 	mux.Handle("GET /api/v1/sync/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncAlbums)))
 	mux.Handle("GET /api/v1/sync/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncTracks)))
 	mux.Handle("GET /api/v1/tracks/sync", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncTracks)))
