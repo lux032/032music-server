@@ -308,3 +308,9 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 
 `skipCount` 与 `skipInference` 同属后续跳过推断功能，目前曲目 JSON 不提供 `skipCount`。
 外部 `.lrc` 文本超过 1 MiB 时，`/lyrics.lrc` 返回 HTTP 413（不截断）。
+
+## 服务端转码
+
+`GET /api/v1/tracks/{id}/transcode.mp3` 和 `.ogg` 分别实时输出 MP3 和 Opus/Ogg；支持 `bitrate`（MP3: 128/192/256/320，默认 320；Ogg: 64/96/128/160/192/256，默认 128）和 `offsetMs` 毫秒输入定位。实时流不支持非零字节 Range（416 返回 `Content-Range: bytes */*`），seek 请重新请求并设置 offsetMs。时长未知时 offsetMs 只校验非负；若定位超过实际音频长度，ffmpeg 可能只输出容器头的短流。`GET /api/v1/tracks/{id}/transcode.flac` 全量转码后缓存到 `<data>/transcode-cache`，返回 Content-Length 并支持字节 Range；`maxSampleRate=48000` 对已知采样率将 44.1k 族高解析源降至 44.1k、其他高解析源降至 48k；未知源采样率使用 ffmpeg `aformat=sample_rates=44100|48000` 兜底（实测未知 88.2k 可能选 48k），未知位深的无损源按 24-bit 输出。缓存以稳定 ETag 提供 If-Range 续传，访问时间仅记录在内存（重启后从缓存文件 mtime 初始化）。Sonos 播放 Hi-Res 可使用缓存 FLAC；首次请求必须等待转码完成。三个端点均可用 `mediaToken` 或媒体 Bearer token 授权，HEAD 不启动转码。`/api/v1/capabilities` 可查看实际可用编码器。
+
+配置：`MUSIC_SERVER_FFMPEG_PATH`（默认 PATH 中的 ffmpeg）、`MUSIC_SERVER_TRANSCODE_LIVE_MAX`（默认 4）、`MUSIC_SERVER_TRANSCODE_CACHE_JOBS`（默认 2）、`MUSIC_SERVER_TRANSCODE_CACHE_MB`（默认 4096）。缺少 ffmpeg 或编码器时对应格式返回 503，服务器仍正常启动。

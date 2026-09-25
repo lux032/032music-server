@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -33,6 +34,7 @@ type App struct {
 	enrichment      *enrichment.Manager
 	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
 	assets          http.Handler
+	transcoder      *transcodeManager
 }
 
 type healthResponse struct {
@@ -101,9 +103,13 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		loginLimiter: newLoginLimiter(),
 		scanner:      scannerManager,
 		enrichment:   enrichmentManager,
+		transcoder:   newTranscodeManager(cfg, logger),
 		assets:       http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
 	}, nil
 }
+
+func (a *App) CancelTranscodes() { a.transcoder.CancelAll() }
+func (a *App) WaitTranscodes()   { a.transcoder.Wait() }
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -151,6 +157,9 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIOrAdmin(http.HandlerFunc(a.handleClearPlaybackHistory)))
 	mux.Handle("GET /api/v1/tracks/{id}/lyrics.lrc", a.requireMediaAccess(http.HandlerFunc(a.handleAPITrackLyricsText)))
 	mux.Handle("GET /api/v1/tracks/{id}/lyrics", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackLyrics)))
+	for _, format := range []string{"mp3", "ogg", "flac"} {
+		mux.Handle("GET /api/v1/tracks/{id}/transcode."+format, a.requireMediaAccess(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleTranscode(w, r, format) })))
+	}
 	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireMediaAccess(http.HandlerFunc(a.handleStream)))
 	mux.Handle("GET /api/v1/artwork/{id}", a.requireMediaAccess(http.HandlerFunc(a.handleArtwork)))
 	mux.Handle("GET /api/v1/artists/{id}/image", a.requireMediaAccess(http.HandlerFunc(a.handleArtistImage)))
@@ -439,10 +448,14 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+func panicAsError(value any) error { err, _ := value.(error); return err }
 func (a *App) recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				if errors.Is(panicAsError(recovered), http.ErrAbortHandler) {
+					panic(http.ErrAbortHandler)
+				}
 				a.logger.Error("panic recovered", "panic", recovered, "stack", string(debug.Stack()))
 				writeAPIError(w, http.StatusInternalServerError, "internal_error", "An internal error occurred.")
 			}

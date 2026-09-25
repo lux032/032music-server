@@ -6,6 +6,7 @@ services:
         VERSION: dev
     container_name: 032music-server
     restart: unless-stopped
+    init: true
     ports:
       - "${MUSIC_SERVER_PORT:-4533}:4533"
     environment:
@@ -15,6 +16,10 @@ services:
       MUSIC_SERVER_MEDIA_TOKEN: "${MUSIC_SERVER_MEDIA_TOKEN:?set MUSIC_SERVER_MEDIA_TOKEN in .env (must differ from API token)}"
       MUSIC_SERVER_LIBRARY_NAME: "${MUSIC_SERVER_LIBRARY_NAME:-Music}"
       MUSIC_SERVER_LOG_LEVEL: "${MUSIC_SERVER_LOG_LEVEL:-info}"
+      MUSIC_SERVER_FFMPEG_PATH: "${MUSIC_SERVER_FFMPEG_PATH:-ffmpeg}"
+      MUSIC_SERVER_TRANSCODE_LIVE_MAX: "${MUSIC_SERVER_TRANSCODE_LIVE_MAX:-4}"
+      MUSIC_SERVER_TRANSCODE_CACHE_JOBS: "${MUSIC_SERVER_TRANSCODE_CACHE_JOBS:-2}"
+      MUSIC_SERVER_TRANSCODE_CACHE_MB: "${MUSIC_SERVER_TRANSCODE_CACHE_MB:-4096}"
       MUSIC_SERVER_COOKIE_SECURE: "${MUSIC_SERVER_COOKIE_SECURE:-false}"
     volumes:
       - "${MUSIC_SERVER_DATA_PATH:-./data}:/data"

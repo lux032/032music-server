@@ -7,22 +7,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	ListenAddress  string
-	DataDirectory  string
-	DatabasePath   string
-	MusicDirectory string
-	LibraryName    string
-	AdminUsername  string
-	AdminPassword  string
-	APIToken       string
-	MediaToken     string
-	CookieSecure   bool
-	LogLevel       string
-	DevMode        bool
+	ListenAddress      string
+	DataDirectory      string
+	DatabasePath       string
+	MusicDirectory     string
+	LibraryName        string
+	AdminUsername      string
+	AdminPassword      string
+	APIToken           string
+	MediaToken         string
+	CookieSecure       bool
+	LogLevel           string
+	FFmpegPath         string
+	TranscodeLiveMax   int
+	TranscodeCacheJobs int
+	TranscodeCacheMB   int
+	DevMode            bool
 	// MediaTokenGenerated is true when no MEDIA_TOKEN was configured and a
 	// random one was generated for this process. Media URLs change on every
 	// restart in that state; main should log a loud warning.
@@ -60,6 +65,10 @@ func Load() (Config, error) {
 		APIToken:            apiToken,
 		MediaToken:          mediaToken,
 		CookieSecure:        parseBool(os.Getenv("MUSIC_SERVER_COOKIE_SECURE")),
+		FFmpegPath:          os.Getenv("MUSIC_SERVER_FFMPEG_PATH"),
+		TranscodeLiveMax:    positiveEnv("MUSIC_SERVER_TRANSCODE_LIVE_MAX", 4),
+		TranscodeCacheJobs:  positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_JOBS", 2),
+		TranscodeCacheMB:    positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_MB", 4096),
 		LogLevel:            strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
 		DevMode:             devMode,
 		MediaTokenGenerated: mediaTokenGenerated,
@@ -127,6 +136,14 @@ func randomToken() string {
 		panic(fmt.Sprintf("generate random media token: %v", err))
 	}
 	return hex.EncodeToString(buf)
+}
+
+func positiveEnv(name string, fallback int) int {
+	n, err := strconv.Atoi(os.Getenv(name))
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 func envOrDefault(name, fallback string) string {

@@ -89,6 +89,7 @@ func run() error {
 		IdleTimeout: 2 * time.Minute,
 	}
 
+	server.RegisterOnShutdown(app.CancelTranscodes)
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -98,29 +99,33 @@ func run() error {
 		serverError <- server.ListenAndServe()
 	}()
 
+	var serveErr error
 	select {
-	case err := <-serverError:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+	case serveErr = <-serverError:
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
 		}
-		return nil
 	case <-shutdownContext.Done():
 		logger.Info("shutdown requested")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		return err
+	shutdownErr := server.Shutdown(ctx)
+	if shutdownErr != nil {
+		logger.Error("http shutdown failed", "error", shutdownErr)
+		app.CancelTranscodes()
 	}
 
 	// Stop background workers and wait for them to finish writing before
 	// run() returns and the deferred db.Close() executes.
 	rootCancel()
+	app.CancelTranscodes()
 	workersDone := make(chan struct{})
 	go func() {
 		scannerManager.Wait()
 		enrichmentManager.Wait()
+		app.WaitTranscodes()
 		close(workersDone)
 	}()
 	select {
@@ -130,7 +135,10 @@ func run() error {
 		logger.Warn("timed out waiting for background workers; closing database anyway")
 	}
 
-	return nil
+	if serveErr != nil {
+		return serveErr
+	}
+	return shutdownErr
 }
 
 func newLogger(levelName string) *slog.Logger {

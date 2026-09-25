@@ -21,7 +21,16 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"works": true, "multilingualIndex": true,
 			"artistDetail": true, "artistFavorites": true,
 			"audioProperties": true, "lyricsText": true, "playlistCreateWithItems": true,
-			"transcode": false, "artworkThumbnails": false, "similarTracks": false, "trackPath": false, "skipInference": false,
+			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": false, "similarTracks": false, "trackPath": false, "skipInference": false,
+		},
+		"transcode": map[string]any{
+			"available":   a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"],
+			"urlTemplate": "/api/v1/tracks/{id}/transcode.{format}",
+			"formats": map[string]any{
+				"mp3":  map[string]any{"available": a.transcoder.available["mp3"], "live": true, "offset": true, "bitrates": []int{128, 192, 256, 320}, "default": 320},
+				"ogg":  map[string]any{"available": a.transcoder.available["ogg"], "codec": "opus", "live": true, "offset": true, "bitrates": []int{64, 96, 128, 160, 192, 256}, "default": 128},
+				"flac": map[string]any{"available": a.transcoder.available["flac"], "live": false, "ranges": true, "offset": false, "maxSampleRates": []int{48000}},
+			},
 		},
 		"media": map[string]any{
 			"streaming": "original", "supportsRange": true,

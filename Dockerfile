@@ -15,6 +15,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM alpine:3.23
 
+RUN apk add --no-cache ffmpeg && \
+    ffmpeg -hide_banner -encoders | grep -q libmp3lame && \
+    ffmpeg -hide_banner -encoders | grep -q libopus
+
 RUN addgroup -S musicserver && \
     adduser -S -G musicserver -h /app musicserver && \
     mkdir -p /data /music && \

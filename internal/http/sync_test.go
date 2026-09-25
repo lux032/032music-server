@@ -31,9 +31,10 @@ func setupTestApp(t *testing.T) (*App, *storage.Store, string) {
 
 	token := "valid-test-token-at-least-24-chars"
 	cfg := config.Config{
-		APIToken:     token,
-		MediaToken:   token,
-		CookieSecure: false,
+		APIToken:      token,
+		MediaToken:    token,
+		CookieSecure:  false,
+		DataDirectory: t.TempDir(),
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
