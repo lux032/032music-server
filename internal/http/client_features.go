@@ -11,7 +11,7 @@ import (
 
 func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"apiVersion": "v1",
+		"apiVersion": "v1", "apiRevision": 2,
 		"features": map[string]bool{
 			"albums": true, "artists": true, "tracks": true, "search": true,
 			"favorites": true, "playlists": true, "playbackProgress": true,
@@ -20,11 +20,14 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"lyrics": true, "instrumentalFilter": true,
 			"works": true, "multilingualIndex": true,
 			"artistDetail": true, "artistFavorites": true,
+			"audioProperties": true, "lyricsText": true, "playlistCreateWithItems": true,
+			"transcode": false, "artworkThumbnails": false, "similarTracks": false, "trackPath": false, "skipInference": false,
 		},
 		"media": map[string]any{
 			"streaming": "original", "supportsRange": true,
-			"authentication": []string{"bearer", "query"},
-			"queryParameter": "mediaToken",
+			"authentication":      []string{"bearer", "query"},
+			"mediaAuthentication": []string{"mediaToken", "session"},
+			"queryParameter":      "mediaToken",
 		},
 		"limits": map[string]int{"maxPageSize": 500, "maxPlaylistTracks": 5000},
 	})
@@ -95,13 +98,14 @@ func (a *App) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		TrackIDs    []int64 `json:"trackIds"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
-	value, err := a.store.CreatePlaylist(r.Context(), input.Name, input.Description)
+	value, err := a.store.CreatePlaylistWithItems(r.Context(), input.Name, input.Description, input.TrackIDs)
 	if err != nil {
 		a.writeFeatureError(w, r, err, "create_failed")
 		return

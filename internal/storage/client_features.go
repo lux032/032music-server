@@ -130,8 +130,8 @@ func (s *Store) FavoriteTracks(ctx context.Context, limit, offset int) ([]Track,
 
 const trackByIDSelect = `SELECT
 	t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),
-	COALESCE((SELECT GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id),'Unknown Artist'),
-	COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),
+	` + trackArtistSQL + `,
+	COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),
 	COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),
 	COALESCE((SELECT af.container FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
 	COALESCE((SELECT af.mime_type FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
@@ -155,7 +155,13 @@ func scanTrack(row interface{ Scan(...any) error }) (Track, error) {
 }
 
 func (s *Store) TrackByID(ctx context.Context, id int64) (Track, error) {
-	return scanTrack(s.db.QueryRowContext(ctx, trackByIDSelect+` WHERE t.id=?`, id))
+	track, err := scanTrack(s.db.QueryRowContext(ctx, trackByIDSelect+` WHERE t.id=?`, id))
+	if err != nil {
+		return track, err
+	}
+	items := []Track{track}
+	err = s.hydrateTracks(ctx, items)
+	return items[0], err
 }
 
 // tracksByIDs loads many tracks in a single query (N+1 fix) and returns them
@@ -189,7 +195,8 @@ func (s *Store) tracksByIDs(ctx context.Context, ids []int64) ([]Track, error) {
 		}
 		result = append(result, track)
 	}
-	return result, nil
+	rows.Close()
+	return result, s.hydrateTracks(ctx, result)
 }
 
 func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlist, int64, error) {
@@ -271,9 +278,6 @@ func (s *Store) DeletePlaylist(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ReplacePlaylistItems(ctx context.Context, playlistID int64, trackIDs []int64) error {
-	if len(trackIDs) > 5000 {
-		return errors.New("playlist cannot contain more than 5000 tracks")
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -289,20 +293,8 @@ func (s *Store) ReplacePlaylistItems(ctx context.Context, playlistID int64, trac
 	if _, err := tx.ExecContext(ctx, `DELETE FROM playlist_items WHERE playlist_id=?`, playlistID); err != nil {
 		return err
 	}
-	seen := make(map[int64]struct{}, len(trackIDs))
-	position := 0
-	for _, trackID := range trackIDs {
-		if trackID <= 0 {
-			return fmt.Errorf("invalid track id %d", trackID)
-		}
-		if _, ok := seen[trackID]; ok {
-			continue
-		}
-		seen[trackID] = struct{}{}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?,?,?)`, playlistID, trackID, position); err != nil {
-			return fmt.Errorf("add track %d to playlist: %w", trackID, err)
-		}
-		position++
+	if err := insertPlaylistItems(ctx, tx, playlistID, trackIDs); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE playlists SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, playlistID); err != nil {
 		return err
@@ -422,4 +414,62 @@ func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]Playb
 func (s *Store) ClearPlaybackHistory(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM playback_progress`)
 	return err
+}
+
+func insertPlaylistItems(ctx context.Context, tx *sql.Tx, id int64, trackIDs []int64) error {
+	if len(trackIDs) > 5000 {
+		return errors.New("playlist cannot contain more than 5000 tracks")
+	}
+	seen := make(map[int64]bool, len(trackIDs))
+	position := 0
+	for _, trackID := range trackIDs {
+		if trackID <= 0 {
+			return fmt.Errorf("invalid track id %d", trackID)
+		}
+		if seen[trackID] {
+			continue
+		}
+		seen[trackID] = true
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tracks WHERE id=?)`, trackID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("invalid track id %d", trackID)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?,?,?)`, id, trackID, position); err != nil {
+			return err
+		}
+		position++
+	}
+	return nil
+}
+func (s *Store) CreatePlaylistWithItems(ctx context.Context, name, description string, trackIDs []int64) (Playlist, error) {
+	if trackIDs == nil {
+		return s.CreatePlaylist(ctx, name, description)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Playlist{}, errors.New("playlist name must not be empty")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Playlist{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT INTO playlists(name,description) VALUES(?,?)`, name, strings.TrimSpace(description))
+	if err != nil {
+		return Playlist{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Playlist{}, err
+	}
+	if err = insertPlaylistItems(ctx, tx, id, trackIDs); err != nil {
+		return Playlist{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Playlist{}, err
+	}
+	return s.PlaylistByID(ctx, id)
 }

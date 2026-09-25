@@ -190,19 +190,14 @@ Authorization: Bearer <API_TOKEN>
 
 ### 媒体访问
 
-音频、封面和歌手图片同时接受以下两种认证方式：
-
-```http
-Authorization: Bearer <API_TOKEN>
-```
-
-或在 URL 中使用只读媒体 Token：
+音频、封面、歌手图片及歌词文本只接受 `mediaToken` 查询参数或管理员会话 Cookie；不接受 Bearer API Token。Bearer Token 仅供 JSON API 使用。生产环境应配置独立的 `MUSIC_SERVER_MEDIA_TOKEN`。请求日志不记录查询参数。
 
 ```text
-http://server:4533/api/v1/tracks/123/stream?mediaToken=<MEDIA_TOKEN>
+GET /api/v1/tracks/123/lyrics.lrc?mediaToken=<MEDIA_TOKEN>
+GET /api/v1/tracks/123/stream?mediaToken=<MEDIA_TOKEN>
 ```
 
-查询参数方式用于 Sonos 等无法自行添加 HTTP Header 的设备。不要把管理密码或主 API Token 拼进媒体 URL；生产环境应配置独立的 `MUSIC_SERVER_MEDIA_TOKEN`。服务自身的请求日志只记录路径，不记录查询参数。
+曲目 JSON 新增 `codec`、`sampleRate`、`bitDepth`、`bitrateKbps`、`channels`、`viewCount`、`lastViewedAt`（epoch 秒）、`lyricsUrl`；同步曲目另增 `discNumber`、`trackNumber`，同步专辑新增 `trackCount`、`albumType`、`compilation`、`live`、`formats`。无播放历史时播放时间与次数扩展字段省略。`POST /api/v1/playlists` 可选 `trackIds` 数组，一次事务创建并填充（去重，最多 5000 项，无效 ID 返回 400）。`GET /api/v1/tracks/{id}/lyrics.lrc` 提供外部优先的原始歌词文本（UTF BOM 自动转码）。能力端点 `apiRevision: 2`、`media.mediaAuthentication` 列出媒体认证方式，旧 `media.authentication` 字段保持兼容。
 
 ### 收藏
 
@@ -310,3 +305,6 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 歌手简介按“语言优先级 → 来源优先级”选择，默认顺序为 `zh,ja,en` 和 Wikipedia → Last.fm。Wikipedia 只通过已确认的 MusicBrainz MBID 与 Wikidata 站点链接定位，避免同名歌手误匹配；各来源和语言的结果（包括确实无结果的状态）都会保存在 SQLite 中。歌手页会标出当前来源和语言，也可以为单个歌手固定某个可用版本或恢复全局策略。本地人工简介始终拥有最高优先级。
 
 扫描完成后，只有同时启用“来源”和“参与自动匹配”的数据源才会进入后台匹配。文件标签携带明确 MBID，或 MusicBrainz 与 Last.fm 返回相同 MBID 时，系统才自动确认；其余结果进入审核队列。外部匹配不会自动合并两个本地歌手。
+
+`skipCount` 与 `skipInference` 同属后续跳过推断功能，目前曲目 JSON 不提供 `skipCount`。
+外部 `.lrc` 文本超过 1 MiB 时，`/lyrics.lrc` 返回 HTTP 413（不截断）。

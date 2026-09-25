@@ -88,9 +88,8 @@ var artistTrackLimit = 5000
 // Explicit projection for detail tracks, including the user-overridden credit fields.
 const artistTrackSelect = `SELECT
  t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),
- COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary' ORDER BY ta.position,ar.id)),
- (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),'Unknown Artist'),
- COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),
+ ` + trackArtistSQL + `,
+ COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),
  COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),
  COALESCE((SELECT af.container FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
  COALESCE((SELECT af.mime_type FROM audio_files af WHERE af.track_id=t.id AND af.status='available' ORDER BY af.id LIMIT 1),''),
@@ -106,7 +105,7 @@ func (s *Store) ArtistTracks(ctx context.Context, id int64) ([]Track, int64, err
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+artistTrackIDs+`)`, id, id).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, artistTrackSelect+` ORDER BY COALESCE(a.user_release_year,a.release_year,0),COALESCE(a.user_title,a.title) COLLATE NOCASE,a.id,t.disc_number,t.track_number,t.id LIMIT ?`, id, id, artistTrackLimit)
+	rows, err := s.db.QueryContext(ctx, artistTrackSelect+` ORDER BY COALESCE(a.user_release_year,a.release_year,0),COALESCE(a.user_title,a.title) COLLATE NOCASE,a.id,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id LIMIT ?`, id, id, artistTrackLimit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -119,7 +118,11 @@ func (s *Store) ArtistTracks(ctx context.Context, id int64) ([]Track, int64, err
 		}
 		tracks = append(tracks, track)
 	}
-	return tracks, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	rows.Close()
+	return tracks, total, s.hydrateTracks(ctx, tracks)
 }
 
 func scanArtistTrack(row interface{ Scan(...any) error }) (Track, error) {

@@ -238,7 +238,7 @@ func (s *Store) RemoveWorkTrack(ctx context.Context, workID, trackID int64, role
 }
 
 func (s *Store) TracksForWork(ctx context.Context, workID int64) ([]WorkTrack, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),COALESCE((SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary'),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(g.name,',') FROM track_genres tg JOIN genres g ON g.id=tg.genre_id WHERE tg.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0),wt.role,wt.season,wt.sequence,wt.source FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE wt.work_id=? ORDER BY wt.season,wt.role,wt.sequence,a.sort_title,t.disc_number,t.track_number,t.id`, workID)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(g.name,',') FROM track_genres tg JOIN genres g ON g.id=tg.genre_id WHERE tg.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0),wt.role,wt.season,wt.sequence,wt.source FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE wt.work_id=? ORDER BY wt.season,wt.role,wt.sequence,a.sort_title,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id`, workID)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,18 @@ func (s *Store) TracksForWork(ctx context.Context, workID int64) ([]WorkTrack, e
 		value.IsFavorite = favorite != 0
 		values = append(values, value)
 	}
-	return values, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ptrs := make([]*Track, len(values))
+	for i := range values {
+		ptrs[i] = &values[i].Track
+	}
+	if err := hydrateTrackExtras(ctx, s, ptrs); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID int64, association metadata.WorkAssociation) error {

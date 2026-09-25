@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lux032/032music-server/internal/lyrics"
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -40,6 +41,9 @@ type Manager struct {
 	mu               sync.Mutex
 	running          bool
 	onComplete       func()
+	readMetadata     func(string) (metadata.AudioMetadata, error)
+	probeAudio       func(string, string) metadata.AudioProps
+	updateAudioProbe func(context.Context, int64, string, metadata.AudioProps, bool) error
 	wg               sync.WaitGroup
 }
 
@@ -132,10 +136,38 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 		}
 		unchanged, _ := m.store.AudioFileUnchanged(ctx, m.library.ID, rel, info.Size(), info.ModTime().UnixNano())
 		if scanType == "incremental" && unchanged {
-			_ = m.store.TouchAudioFile(ctx, m.library.ID, rel)
-			skipped++
+			lrc := externalLRC(path)
+			probeFailed := false
+			needed, e := m.store.AudioProbeNeeded(ctx, m.library.ID, rel)
+			if e != nil {
+				probeFailed = true
+				m.recordError(ctx, jobID, rel, "probe_check_failed", e)
+			} else if needed {
+				update := m.updateAudioProbe
+				if update == nil {
+					update = m.store.UpdateAudioProbe
+				}
+				if e = update(ctx, m.library.ID, rel, m.probe(path, strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")), lrc); e != nil {
+					probeFailed = true
+					m.recordError(ctx, jobID, rel, "probe_failed", e)
+				}
+			}
+			// Even a failed probe must touch the file to prevent MarkMissing from hiding it.
+			if e = m.store.TouchAudioFile(ctx, m.library.ID, rel, lrc); e != nil {
+				probeFailed = true
+				m.recordError(ctx, jobID, rel, "touch_failed", e)
+			}
+			if probeFailed {
+				failed++
+			} else {
+				skipped++
+			}
 		} else {
-			meta, readErr := metadata.Read(path)
+			readMetadata := m.readMetadata
+			if readMetadata == nil {
+				readMetadata = metadata.Read
+			}
+			meta, readErr := readMetadata(path)
 			if readErr != nil {
 				failed++
 				m.recordError(ctx, jobID, rel, "metadata_failed", readErr)
@@ -144,7 +176,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 				if artErr != nil {
 					m.logger.Warn("cache artwork failed", "path", rel, "error", artErr)
 				}
-				if importErr := m.store.ImportTrack(ctx, storage.ImportInput{LibraryID: m.library.ID, RelativePath: rel, FileSize: info.Size(), ModifiedAtNS: info.ModTime().UnixNano(), Metadata: meta, Artwork: art}); importErr != nil {
+				if importErr := m.store.ImportTrack(ctx, storage.ImportInput{LibraryID: m.library.ID, RelativePath: rel, FileSize: info.Size(), ModifiedAtNS: info.ModTime().UnixNano(), Metadata: meta, Artwork: art, AudioProps: m.probe(path, meta.Container), HasExternalLRC: externalLRC(path)}); importErr != nil {
 					failed++
 					m.recordError(ctx, jobID, rel, "import_failed", importErr)
 				} else {
@@ -321,4 +353,30 @@ func extension(mimeType string) string {
 	default:
 		return ".img"
 	}
+}
+
+func externalLRC(path string) bool {
+	info, err := os.Stat(lyrics.DetectLRCPath(path))
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return false
+	}
+	// BOM-only files have no usable lyrics. Checking at most three bytes is enough.
+	f, err := os.Open(lyrics.DetectLRCPath(path))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var prefix [3]byte
+	n, _ := f.Read(prefix[:])
+	if info.Size() <= 3 && n == 3 && prefix == [3]byte{0xef, 0xbb, 0xbf} {
+		return false
+	}
+	return !(info.Size() == 2 && n >= 2 && ((prefix[0] == 0xff && prefix[1] == 0xfe) || (prefix[0] == 0xfe && prefix[1] == 0xff)))
+}
+
+func (m *Manager) probe(path, container string) metadata.AudioProps {
+	if m.probeAudio != nil {
+		return m.probeAudio(path, container)
+	}
+	return metadata.ProbeAudio(path, container)
 }

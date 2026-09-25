@@ -29,6 +29,8 @@ type ImportInput struct {
 	FileSize, ModifiedAtNS int64
 	Metadata               metadata.AudioMetadata
 	Artwork                *ArtworkInput
+	AudioProps             metadata.AudioProps
+	HasExternalLRC         bool
 }
 
 type ScanJob struct {
@@ -96,33 +98,34 @@ type AlbumEdit struct {
 }
 
 type Track struct {
-	ID             int64    `json:"id"`
-	AlbumID        int64    `json:"albumId"`
-	Title          string   `json:"title"`
-	Album          string   `json:"album"`
-	Artist         string   `json:"artist"`
-	Genres         string   `json:"genres"`
-	Composer       string   `json:"composer"`
-	Lyricist       string   `json:"lyricist"`
-	Arranger       string   `json:"arranger"`
-	TrackType      string   `json:"trackType"`
-	Container      string   `json:"container"`
-	MIMEType       string   `json:"mimeType"`
-	RelativePath   string   `json:"relativePath"`
-	ArtworkURL     string   `json:"artworkUrl"`
-	Year           int      `json:"year"`
-	DiscNumber     int      `json:"discNumber"`
-	TrackNumber    int      `json:"trackNumber"`
-	FileSize       int64    `json:"fileSize"`
-	DurationMillis int64    `json:"durationMillis"`
-	StreamURL      string   `json:"streamUrl"`
-	AddedAt        string   `json:"addedAt"`
-	UpdatedAt      string   `json:"updatedAt"`
-	LastPlayedAt   string   `json:"lastPlayedAt,omitempty"`
-	PositionMillis int64    `json:"positionMillis"`
-	PlayCount      int64    `json:"playCount"`
-	IsFavorite     bool     `json:"isFavorite"`
-	Artists        []Artist `json:"artists,omitempty"`
+	ID             int64  `json:"id"`
+	AlbumID        int64  `json:"albumId"`
+	Title          string `json:"title"`
+	Album          string `json:"album"`
+	Artist         string `json:"artist"`
+	Genres         string `json:"genres"`
+	Composer       string `json:"composer"`
+	Lyricist       string `json:"lyricist"`
+	Arranger       string `json:"arranger"`
+	TrackType      string `json:"trackType"`
+	Container      string `json:"container"`
+	MIMEType       string `json:"mimeType"`
+	RelativePath   string `json:"relativePath"`
+	ArtworkURL     string `json:"artworkUrl"`
+	Year           int    `json:"year"`
+	DiscNumber     int    `json:"discNumber"`
+	TrackNumber    int    `json:"trackNumber"`
+	FileSize       int64  `json:"fileSize"`
+	DurationMillis int64  `json:"durationMillis"`
+	StreamURL      string `json:"streamUrl"`
+	AddedAt        string `json:"addedAt"`
+	UpdatedAt      string `json:"updatedAt"`
+	LastPlayedAt   string `json:"lastPlayedAt,omitempty"`
+	PositionMillis int64  `json:"positionMillis"`
+	PlayCount      int64  `json:"playCount"`
+	IsFavorite     bool   `json:"isFavorite"`
+	TrackExtras
+	Artists []Artist `json:"artists,omitempty"`
 }
 
 type Filters struct {
@@ -148,8 +151,31 @@ func (s *Store) AudioFileUnchanged(ctx context.Context, libraryID int64, relativ
 	return unchanged, err
 }
 
-func (s *Store) TouchAudioFile(ctx context.Context, libraryID int64, relativePath string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE audio_files SET status='available', last_scanned_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE library_id=? AND relative_path=?`, libraryID, relativePath)
+const AudioProbeVersion = 1
+
+func (s *Store) AudioProbeNeeded(ctx context.Context, libraryID int64, relativePath string) (bool, error) {
+	var needed bool
+	err := s.db.QueryRowContext(ctx, `SELECT audio_probe_version < ? FROM audio_files WHERE library_id=? AND relative_path=?`, AudioProbeVersion, libraryID, relativePath).Scan(&needed)
+	return needed, err
+}
+func (s *Store) UpdateAudioProbe(ctx context.Context, libraryID int64, relativePath string, props metadata.AudioProps, lrc bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE audio_files SET codec=?,sample_rate=?,bit_depth=?,bitrate=?,channels=?,audio_probe_version=?,has_external_lrc=? WHERE library_id=? AND relative_path=?`, nullableString(props.Codec), nullableInt(props.SampleRate), nullableInt(props.BitDepth), nullableInt(props.BitrateKbps), nullableInt(props.Channels), AudioProbeVersion, boolInt(lrc), libraryID, relativePath)
+	return err
+}
+func nullableInt(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+func nullableString(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+func (s *Store) TouchAudioFile(ctx context.Context, libraryID int64, relativePath string, lrc bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE audio_files SET status='available', has_external_lrc=?,last_scanned_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE library_id=? AND relative_path=?`, boolInt(lrc), libraryID, relativePath)
 	return err
 }
 
@@ -285,7 +311,7 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns,container,mime_type,status,last_scanned_at) VALUES(?,?,?,?,?,?,?,'available',strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(library_id,relative_path) DO UPDATE SET track_id=excluded.track_id,file_size=excluded.file_size,modified_at_ns=excluded.modified_at_ns,container=excluded.container,mime_type=excluded.mime_type,status='available',last_scanned_at=excluded.last_scanned_at,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, input.LibraryID, trackID, input.RelativePath, input.FileSize, input.ModifiedAtNS, m.Container, m.MIMEType)
+	result, err := tx.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns,container,mime_type,codec,sample_rate,bit_depth,bitrate,channels,audio_probe_version,has_external_lrc,status,last_scanned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'available',strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(library_id,relative_path) DO UPDATE SET track_id=excluded.track_id,file_size=excluded.file_size,modified_at_ns=excluded.modified_at_ns,container=excluded.container,mime_type=excluded.mime_type,codec=excluded.codec,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,bitrate=excluded.bitrate,channels=excluded.channels,audio_probe_version=excluded.audio_probe_version,has_external_lrc=excluded.has_external_lrc,status='available',last_scanned_at=excluded.last_scanned_at,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, input.LibraryID, trackID, input.RelativePath, input.FileSize, input.ModifiedAtNS, m.Container, m.MIMEType, nullableString(input.AudioProps.Codec), nullableInt(input.AudioProps.SampleRate), nullableInt(input.AudioProps.BitDepth), nullableInt(input.AudioProps.BitrateKbps), nullableInt(input.AudioProps.Channels), AudioProbeVersion, boolInt(input.HasExternalLRC))
 	if err != nil {
 		return err
 	}
@@ -718,7 +744,7 @@ func (s *Store) ArtistsForAlbumTracks(ctx context.Context, albumID int64) (map[i
 
 func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	limit, offset := page(f)
-	order := "COALESCE(a.user_title,a.title),t.disc_number,t.track_number,t.id"
+	order := "COALESCE(a.user_title,a.title),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id"
 	if f.Sort == "title" {
 		order = "COALESCE(t.user_title,t.title) COLLATE NOCASE"
 	} else if f.Sort == "year" {
@@ -726,7 +752,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	} else if f.Sort == "recentlyPlayed" {
 		order = "COALESCE(pp.last_played_at,'') DESC," + order
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),COALESCE(GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),t.disc_number,t.track_number,COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) AND (?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal')) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental), limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) AND (?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal')) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental), limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +767,11 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 		v.IsFavorite = favorite != 0
 		list = append(list, v)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return list, s.hydrateTracks(ctx, list)
 }
 
 func (s *Store) Genres(ctx context.Context) ([]string, error) {
@@ -819,7 +849,7 @@ func (s *Store) UpdateTrack(ctx context.Context, id int64, title string, disc, n
 	if number < 0 {
 		number = 0
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tracks SET user_title=NULLIF(?,''),disc_number=?,track_number=?,user_composer=NULLIF(?,''),user_track_type=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, strings.TrimSpace(title), disc, number, strings.TrimSpace(composer), strings.TrimSpace(trackType), id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tracks SET user_title=NULLIF(?,''),user_disc_number=CASE WHEN ?=disc_number THEN NULL ELSE ? END,user_track_number=CASE WHEN ?=track_number THEN NULL ELSE ? END,user_composer=NULLIF(?,''),user_track_type=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, strings.TrimSpace(title), disc, disc, number, number, strings.TrimSpace(composer), strings.TrimSpace(trackType), id); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM track_genre_overrides WHERE track_id=?`, id); err != nil {
