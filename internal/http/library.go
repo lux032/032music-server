@@ -649,7 +649,13 @@ func (p *patchedReadSeeker) Seek(offset int64, whence int) (int64, error) {
 	return p.offset, nil
 }
 func (a *App) handleArtwork(w http.ResponseWriter, r *http.Request) {
-	path, mimeType, err := a.store.ArtworkPath(r.Context(), parseInt64(r.PathValue("id")))
+	size, err := thumbnailSize(r)
+	if err != nil {
+		writeAPIError(w, 400, "invalid_request", "Invalid size.")
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	path, mimeType, err := a.store.ArtworkPath(r.Context(), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -665,13 +671,27 @@ func (a *App) handleArtwork(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if size != 0 {
+		if a.serveThumbnail(w, r, file, info, "artwork", id, size, "public, max-age=31536000, immutable") {
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if size == 0 {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 func (a *App) handleArtistImage(w http.ResponseWriter, r *http.Request) {
-	path, mimeType, err := a.store.ArtistImagePath(r.Context(), parseInt64(r.PathValue("id")))
+	size, err := thumbnailSize(r)
+	if err != nil {
+		writeAPIError(w, 400, "invalid_request", "Invalid size.")
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	path, mimeType, err := a.store.ArtistImagePath(r.Context(), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -686,12 +706,20 @@ func (a *App) handleArtistImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	if size != 0 {
+		if a.serveThumbnail(w, r, file, info, "artist", id, size, "public, max-age=86400") {
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
 	}
 	if mimeType == "" {
 		mimeType = "image/jpeg"
 	}
 	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	if size == 0 {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }

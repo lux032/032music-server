@@ -73,6 +73,7 @@ type transcodeManager struct {
 	jobs               map[string]*transcodeJob
 	access             map[string]time.Time
 	openCache          func(string) (*os.File, error)
+	removeCache        func(string) error
 	logger             *slog.Logger
 	// run is replaceable by tests; all spawned commands must be context-bound.
 	run func(context.Context, []string, string) error
@@ -86,7 +87,7 @@ func positiveLimit(value, fallback int) int {
 }
 func newTranscodeManager(cfg config.Config, logger *slog.Logger) *transcodeManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &transcodeManager{ctx: ctx, cancel: cancel, dir: filepath.Join(cfg.DataDirectory, "transcode-cache"), available: map[string]bool{}, live: make(chan struct{}, positiveLimit(cfg.TranscodeLiveMax, 4)), cache: make(chan struct{}, positiveLimit(cfg.TranscodeCacheJobs, 2)), limit: int64(positiveLimit(cfg.TranscodeCacheMB, 4096)) * 1024 * 1024, jobs: map[string]*transcodeJob{}, access: map[string]time.Time{}, openCache: os.Open, logger: logger}
+	m := &transcodeManager{ctx: ctx, cancel: cancel, dir: filepath.Join(cfg.DataDirectory, "transcode-cache"), available: map[string]bool{}, live: make(chan struct{}, positiveLimit(cfg.TranscodeLiveMax, 4)), cache: make(chan struct{}, positiveLimit(cfg.TranscodeCacheJobs, 2)), limit: int64(positiveLimit(cfg.TranscodeCacheMB, 4096)) * 1024 * 1024, jobs: map[string]*transcodeJob{}, access: map[string]time.Time{}, openCache: os.Open, removeCache: os.Remove, logger: logger}
 	m.path = cfg.FFmpegPath
 	if m.path == "" {
 		m.path = "ffmpeg"
@@ -504,10 +505,12 @@ func (m *transcodeManager) evictLocked(keep string) {
 		}
 		f := files[old]
 		files = append(files[:old], files[old+1:]...)
-		if os.Remove(filepath.Join(m.dir, f.name)) == nil {
+		if m.removeCache(filepath.Join(m.dir, f.name)) == nil {
 			delete(m.access, f.name)
 			total -= f.size
 		} else {
+			// Preserve the file and its accounted bytes; retry on a later eviction.
+			m.access[f.name] = time.Now()
 			break
 		} // Do not delete newer entries to compensate for a locked file.
 	}

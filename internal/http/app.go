@@ -35,6 +35,7 @@ type App struct {
 	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
 	assets          http.Handler
 	transcoder      *transcodeManager
+	thumbnails      *thumbnailManager
 }
 
 type healthResponse struct {
@@ -104,6 +105,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		scanner:      scannerManager,
 		enrichment:   enrichmentManager,
 		transcoder:   newTranscodeManager(cfg, logger),
+		thumbnails:   newThumbnailManager(cfg),
 		assets:       http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
 	}, nil
 }

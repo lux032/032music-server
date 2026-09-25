@@ -153,3 +153,30 @@ func TestTranscodeRoutesAndHead(t *testing.T) {
 		t.Fatal("manager did not cancel")
 	}
 }
+
+func TestTranscodeEvictionDeleteFailure(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"old.flac", "new.flac"} {
+		if err := os.WriteFile(filepath.Join(dir, name), make([]byte, 100), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := &transcodeManager{dir: dir, limit: 100, access: map[string]time.Time{"old.flac": time.Now().Add(-time.Hour), "new.flac": time.Now()}, removeCache: func(string) error { return os.ErrPermission }}
+	m.evict("")
+	if len(m.access) != 2 || !m.access["old.flac"].After(time.Now().Add(-time.Minute)) {
+		t.Fatalf("failed eviction lost access index: %v", m.access)
+	}
+	for _, name := range []string{"old.flac", "new.flac"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.removeCache = os.Remove
+	m.evict("new.flac")
+	if _, err := os.Stat(filepath.Join(dir, "old.flac")); !os.IsNotExist(err) {
+		t.Fatalf("old file not removed: %v", err)
+	}
+	if _, ok := m.access["old.flac"]; ok {
+		t.Fatal("old access still indexed")
+	}
+}
