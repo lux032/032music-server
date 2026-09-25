@@ -298,30 +298,83 @@ func TestArtistFavoriteExplicitUpdateAndMultipleMerges(t *testing.T) {
 	if err = store.db.QueryRowContext(ctx, `SELECT is_favorite FROM artists WHERE id=?`, target).Scan(&favorite); err != nil || favorite != 0 {
 		t.Fatalf("LIFO rollback favorite=%d err=%v", favorite, err)
 	}
-	op, err := store.MergeArtists(ctx, first, second)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestArtistFavoriteExplicitUpdateClearsMergeFlag(t *testing.T) {
+	for _, steps := range []struct {
+		name           string
+		deleteFirst    bool
+		putAfterDelete bool
+		wantFavorite   int
+	}{
+		{"delete_then_put", true, true, 1},
+		{"delete_only", true, false, 0},
+		{"repeat_put_confirms", false, true, 1},
+	} {
+		t.Run(steps.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, err := Open(filepath.Join(t.TempDir(), "explicit.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if err = store.Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			source := insertRoleTestArtist(t, ctx, store, "Source", "source")
+			target := insertRoleTestArtist(t, ctx, store, "Target", "target")
+			if err = store.SetArtistFavorite(ctx, source, true); err != nil {
+				t.Fatal(err)
+			}
+			op, err := store.MergeArtists(ctx, source, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertArtistFavoriteState(t, ctx, store, target, 1)
+			assertArtistMergeFavoriteFlag(t, ctx, store, op, 1)
+			if steps.deleteFirst {
+				if err = store.SetArtistFavorite(ctx, target, false); err != nil {
+					t.Fatal(err)
+				}
+				assertArtistMergeFavoriteFlag(t, ctx, store, op, 0)
+			}
+			if steps.putAfterDelete {
+				if err = store.SetArtistFavorite(ctx, target, true); err != nil {
+					t.Fatal(err)
+				}
+				assertArtistMergeFavoriteFlag(t, ctx, store, op, 0)
+				if _, err = store.db.ExecContext(ctx, `UPDATE artists SET favorited_at='2020-01-01T00:00:00Z' WHERE id=?`, target); err != nil {
+					t.Fatal(err)
+				}
+				if err = store.SetArtistFavorite(ctx, target, true); err != nil {
+					t.Fatal(err)
+				}
+				var stamp string
+				if err = store.db.QueryRowContext(ctx, `SELECT favorited_at FROM artists WHERE id=?`, target).Scan(&stamp); err != nil || stamp != "2020-01-01T00:00:00Z" {
+					t.Fatalf("repeated PUT timestamp=%q err=%v", stamp, err)
+				}
+			}
+			if err = store.RollbackArtistMerge(ctx, op); err != nil {
+				t.Fatal(err)
+			}
+			assertArtistFavoriteState(t, ctx, store, target, steps.wantFavorite)
+			assertArtistFavoriteState(t, ctx, store, source, 1)
+		})
 	}
-	if err = store.SetArtistFavorite(ctx, first, false); err != nil {
-		t.Fatal(err)
+}
+
+func assertArtistFavoriteState(t *testing.T, ctx context.Context, store *Store, id int64, want int) {
+	t.Helper()
+	var got int
+	if err := store.db.QueryRowContext(ctx, `SELECT is_favorite FROM artists WHERE id=?`, id).Scan(&got); err != nil || got != want {
+		t.Fatalf("artist %d favorite=%d want=%d err=%v", id, got, want, err)
 	}
-	if err = store.SetArtistFavorite(ctx, first, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = store.db.ExecContext(ctx, `UPDATE artists SET favorited_at='2020-01-01T00:00:00Z' WHERE id=?`, second); err != nil {
-		t.Fatal(err)
-	}
-	if err = store.SetArtistFavorite(ctx, first, true); err != nil {
-		t.Fatal(err)
-	}
-	var stamp string
-	if err = store.db.QueryRowContext(ctx, `SELECT favorited_at FROM artists WHERE id=?`, second).Scan(&stamp); err != nil || stamp != "2020-01-01T00:00:00Z" {
-		t.Fatalf("repeated PUT timestamp=%q err=%v", stamp, err)
-	}
-	if err = store.RollbackArtistMerge(ctx, op); err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.QueryRowContext(ctx, `SELECT is_favorite FROM artists WHERE id=?`, second).Scan(&favorite); err != nil || favorite != 1 {
-		t.Fatalf("explicit favorite rollback=%d err=%v", favorite, err)
+}
+
+func assertArtistMergeFavoriteFlag(t *testing.T, ctx context.Context, store *Store, id int64, want int) {
+	t.Helper()
+	var got int
+	if err := store.db.QueryRowContext(ctx, `SELECT favorite_set_by_merge FROM artist_merge_operations WHERE id=?`, id).Scan(&got); err != nil || got != want {
+		t.Fatalf("merge %d flag=%d want=%d err=%v", id, got, want, err)
 	}
 }

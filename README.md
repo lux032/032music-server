@@ -215,7 +215,7 @@ http://server:4533/api/v1/tracks/123/stream?mediaToken=<MEDIA_TOKEN>
 | `GET` | `/api/v1/favorites/albums` | 收藏专辑列表 |
 | `GET` | `/api/v1/favorites/tracks` | 收藏歌曲列表 |
 
-歌手详情中的 `artist.trackCount` 统计该歌手所有角色关联的曲目；`tracksTotal` 则统计其 primary 曲目与作为专辑歌手的专辑内曲目的去重合集，两者口径不同。合并回滚后，源歌手恢复其原有收藏状态。歌手标签改名后若旧歌手成为孤儿并被 `CleanupOrphans` 删除，旧歌手的收藏会丢失；重扫现有歌手不会重置收藏。
+歌手详情中的 `artist.trackCount` 统计该歌手所有角色关联的曲目；`tracksTotal` 则统计其 primary 曲目与作为专辑歌手的专辑内曲目的去重合集，两者口径不同。合并回滚后，源歌手恢复其原有收藏状态。对因合并而被收藏的目标再次显式收藏，会将其确认为用户收藏，之后回滚合并不再取消。歌手标签改名后若旧歌手成为孤儿并被 `CleanupOrphans` 删除，旧歌手的收藏会丢失；重扫现有歌手不会重置收藏。
 
 ### 歌单
 
