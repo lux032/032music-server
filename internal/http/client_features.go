@@ -21,7 +21,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"works": true, "multilingualIndex": true,
 			"artistDetail": true, "artistFavorites": true,
 			"audioProperties": true, "lyricsText": true, "playlistCreateWithItems": true,
-			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true, "skipInference": false,
+			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true, "skipInference": true,
 		},
 		"transcode": map[string]any{
 			"available":   a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"],
@@ -33,6 +33,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			},
 		},
 		"similarity": map[string]any{"method": "metadata", "distanceRange": []int{0, 1}},
+		"playback":   map[string]any{"skipInference": map[string]any{"thresholdMillis": 30000, "thresholdFraction": 0.5, "windowMinutes": 30, "explicitField": "skipped"}},
 		"artwork": map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
 		"media": map[string]any{
 			"streaming": "original", "supportsRange": true,

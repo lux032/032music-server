@@ -17,6 +17,7 @@ type similarityMeta struct {
 	primary, credit, genre, work map[int64]bool
 	playlists                    map[int64]bool
 	available                    bool
+	playCount, skipCount         int64
 }
 type similarityFactors struct {
 	artist, credit, genre, era, playlist, work float64
@@ -50,8 +51,9 @@ func scoreSimilarity(f similarityFactors) (float64, []string) {
 		score *= .5
 		reasons = append(reasons, "sameAlbum")
 	}
-	if f.skipFactor > 0 {
+	if f.skipFactor > 0 && f.skipFactor < 1 {
 		score *= clamp(f.skipFactor)
+		reasons = append(reasons, "oftenSkipped")
 	}
 	return clamp(score), reasons
 }
@@ -77,6 +79,11 @@ func compareSimilarity(a, b similarityMeta) (float64, []string) {
 		f.era = math.Exp(-math.Abs(float64(a.track.Year-b.track.Year)) / 5)
 	}
 	f.playlist = clamp(float64(overlap(a.playlists, b.playlists)) / 2)
+	// Skip penalty: tracks that listeners frequently abandon are de-prioritised
+	// once there is enough evidence (at least 3 recorded outcomes).
+	if total := b.skipCount + b.playCount; total >= 3 {
+		f.skipFactor = 1 - .3*float64(b.skipCount)/float64(total)
+	}
 	return scoreSimilarity(f)
 }
 func nonMain(t string) bool {

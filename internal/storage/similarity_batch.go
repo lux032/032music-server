@@ -13,13 +13,13 @@ func (s *Store) similarityBatch(ctx context.Context, ids []int64) (map[int64]*si
 	for start := 0; start < len(ids); start += 500 {
 		part := ids[start:min(start+500, len(ids))]
 		in, args := inClause(part)
-		rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),COALESCE(a.user_release_year,a.release_year,0) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE t.id IN (`+in+`)`, args...)
+		rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),COALESCE(a.user_release_year,a.release_year,0),COALESCE(pp.play_count,0),COALESCE(pp.skip_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id IN (`+in+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			m := &similarityMeta{}
-			if err = rows.Scan(&m.track.ID, &m.track.AlbumID, &m.track.Title, &m.track.TrackType, &m.track.Year); err != nil {
+			if err = rows.Scan(&m.track.ID, &m.track.AlbumID, &m.track.Title, &m.track.TrackType, &m.track.Year, &m.playCount, &m.skipCount); err != nil {
 				break
 			}
 			result[m.track.ID] = m

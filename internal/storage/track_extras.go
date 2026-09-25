@@ -14,6 +14,7 @@ type TrackExtras struct {
 	BitrateKbps  int    `json:"bitrateKbps,omitempty"`
 	Channels     int    `json:"channels,omitempty"`
 	ViewCount    *int64 `json:"viewCount,omitempty"`
+	SkipCount    *int64 `json:"skipCount,omitempty"`
 	LastViewedAt *int64 `json:"lastViewedAt,omitempty"`
 	LyricsURL    string `json:"lyricsUrl,omitempty"`
 }
@@ -46,16 +47,16 @@ func hydrateTrackExtras[T extraTrack](ctx context.Context, s *Store, items []T) 
 			byID[id] = append(byID[id], item)
 		}
 		placeholders, args := inClause(ids)
-		rows, err := s.db.QueryContext(ctx, `SELECT t.id,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(af.codec,''),COALESCE(af.sample_rate,0),COALESCE(af.bit_depth,0),COALESCE(af.bitrate,0),COALESCE(af.channels,0),COALESCE(pp.play_count,0),COALESCE(pp.last_played_at,''),CASE WHEN TRIM(COALESCE(t.lyrics,''))<>'' OR COALESCE(af.has_external_lrc,0)=1 THEN 1 ELSE 0 END FROM tracks t LEFT JOIN audio_files af ON af.id=(SELECT id FROM audio_files WHERE track_id=t.id AND status='available' ORDER BY id LIMIT 1) LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id IN (`+placeholders+`)`, args...)
+		rows, err := s.db.QueryContext(ctx, `SELECT t.id,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(af.codec,''),COALESCE(af.sample_rate,0),COALESCE(af.bit_depth,0),COALESCE(af.bitrate,0),COALESCE(af.channels,0),COALESCE(pp.play_count,0),COALESCE(pp.skip_count,0),COALESCE(pp.last_played_at,''),CASE WHEN TRIM(COALESCE(t.lyrics,''))<>'' OR COALESCE(af.has_external_lrc,0)=1 THEN 1 ELSE 0 END FROM tracks t LEFT JOIN audio_files af ON af.id=(SELECT id FROM audio_files WHERE track_id=t.id AND status='available' ORDER BY id LIMIT 1) LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var id, plays int64
+			var id, plays, skips int64
 			var d, n, hasLyrics int
 			var date string
 			var x TrackExtras
-			if err = rows.Scan(&id, &d, &n, &x.Codec, &x.SampleRate, &x.BitDepth, &x.BitrateKbps, &x.Channels, &plays, &date, &hasLyrics); err != nil {
+			if err = rows.Scan(&id, &d, &n, &x.Codec, &x.SampleRate, &x.BitDepth, &x.BitrateKbps, &x.Channels, &plays, &skips, &date, &hasLyrics); err != nil {
 				break
 			}
 			if date != "" {
@@ -64,6 +65,7 @@ func hydrateTrackExtras[T extraTrack](ctx context.Context, s *Store, items []T) 
 					x.LastViewedAt = &epoch
 					count := plays
 					x.ViewCount = &count
+					x.SkipCount = &skips
 				}
 			}
 			if hasLyrics != 0 {

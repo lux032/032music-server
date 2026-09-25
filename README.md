@@ -197,7 +197,7 @@ GET /api/v1/tracks/123/lyrics.lrc?mediaToken=<MEDIA_TOKEN>
 GET /api/v1/tracks/123/stream?mediaToken=<MEDIA_TOKEN>
 ```
 
-曲目 JSON 新增 `codec`、`sampleRate`、`bitDepth`、`bitrateKbps`、`channels`、`viewCount`、`lastViewedAt`（epoch 秒）、`lyricsUrl`；同步曲目另增 `discNumber`、`trackNumber`，同步专辑新增 `trackCount`、`albumType`、`compilation`、`live`、`formats`。无播放历史时播放时间与次数扩展字段省略。`POST /api/v1/playlists` 可选 `trackIds` 数组，一次事务创建并填充（去重，最多 5000 项，无效 ID 返回 400）。`GET /api/v1/tracks/{id}/lyrics.lrc` 提供外部优先的原始歌词文本（UTF BOM 自动转码）。能力端点 `apiRevision: 2`、`media.mediaAuthentication` 列出媒体认证方式，旧 `media.authentication` 字段保持兼容。
+曲目 JSON 新增 `codec`、`sampleRate`、`bitDepth`、`bitrateKbps`、`channels`、`viewCount`、`lastViewedAt`（epoch 秒）、`lyricsUrl`；同步曲目另增 `discNumber`、`trackNumber`，同步专辑新增 `trackCount`、`albumType`、`compilation`、`live`、`formats`。无播放历史时播放时间与次数扩展字段省略。`POST /api/v1/playlists` 可选 `trackIds` 数组，一次事务创建并填充（去重，最多 5000 项，无效 ID 返回 400）。`GET /api/v1/tracks/{id}/lyrics.lrc` 提供外部优先的原始歌词文本（UTF BOM 自动转码）；外部 `.lrc` 文本超过 1 MiB 时返回 HTTP 413（不截断）。能力端点 `apiRevision: 2`、`media.mediaAuthentication` 列出媒体认证方式，旧 `media.authentication` 字段保持兼容。
 
 ### 收藏
 
@@ -306,8 +306,13 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 
 扫描完成后，只有同时启用“来源”和“参与自动匹配”的数据源才会进入后台匹配。文件标签携带明确 MBID，或 MusicBrainz 与 Last.fm 返回相同 MBID 时，系统才自动确认；其余结果进入审核队列。外部匹配不会自动合并两个本地歌手。
 
-`skipCount` 与 `skipInference` 同属后续跳过推断功能，目前曲目 JSON 不提供 `skipCount`。
-外部 `.lrc` 文本超过 1 MiB 时，`/lyrics.lrc` 返回 HTTP 413（不截断）。
+## 跳过推断与 skipCount
+
+曲目 JSON 在已有播放记录时输出 `skipCount`（含 0）；从未播放的曲目仍整体省略 `viewCount`、`lastViewedAt`、`skipCount`。`/api/v1/playback/history` 记录带 `skipCount` 与 `lastSkippedAt`；清空历史同时清零。
+
+`POST /api/v1/playback/timeline` 可选字段 `skipped`（布尔）与 `clientId`（≤128 字节，接受后忽略）：`skipped=true` 必须与 `state=stopped` 同发，无条件计一次；`skipped=false` 抑制本次推断；省略时服务端按以下规则推断（在同一条 UPSERT 内原子完成）：本次为 `stopped` 且 `continuing=true`、旧状态为 playing/paused/buffering、旧位置与本次上报位置中的较大值小于阈值（曲长优先取曲库时长，其次取已记录/上报时长中的较大值，都未知按 30 秒）、旧 `last_played_at` 在 30 分钟内、且本轮尚未 scrobble。命中时更新 `last_skipped_at`。
+
+误判边界：主动切歌计为 skip；短于 60 秒的曲目阈值为其一半时长；短于约 10–20 秒的曲目自然播完也可能被计为 skip（切歌上报早于 scrobble）；10 秒上报间隔带来最高约 10 秒的位置误差；多客户端同时播放同一曲目（共享单一进度行）可能相互影响。显式 `skipped=true` 作用于从未播放的曲目时会计数并参与相似度降权，但该曲目不出现在播放历史、曲目 JSON 不输出 `skipCount`；显式 `skipped=true` 重复发送会重复计数。相似推荐中，播放+跳过合计 ≥3 的候选按跳过比例降权（最多 30%）。
 
 ## 封面缩略图
 
@@ -323,6 +328,6 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 
 `GET /api/v1/tracks/{id}/similar?limit=30` returns `{items:[{track,distance,score,reasons}]}` (limit 1–100). `GET /api/v1/tracks/path?from=ID&to=ID&limit=25` returns `{items:[Track],complete}` (limit 2–100). Both require API/admin credentials, not a media token. Distances range from 0 (closest) to 1.
 
-Candidates are bounded index lookups on primary singer credits (200), creator credits (200), work links (100), effective genre links (300 combined raw/override), and playlist occurrences (200). Weighted similarity: primary singer .30, shared creator .20, genre Jaccard .20, year proximity .10, playlist co-occurrence .10, work link .10; same album halves the score. The optional skip multiplier is neutral until skip counts are available. Missing audio, non-main versions (unless the seed itself is non-main), and duplicate normalized title + canonical primary singer are suppressed. Paths use width-three beam search with a two-second budget and append the destination even if no complete connection was found. Budget expiry can make the intermediate route load-dependent; an unavailable-audio or non-main destination cannot be a complete candidate (unless the starting track is itself non-main). Up to four simultaneous similarity/path searches are admitted; excess requests return 503 with Retry-After.
+Candidates are bounded index lookups on primary singer credits (200), creator credits (200), work links (100), effective genre links (300 combined raw/override), and playlist occurrences (200). Weighted similarity: primary singer .30, shared creator .20, genre Jaccard .20, year proximity .10, playlist co-occurrence .10, work link .10; same album halves the score. Candidates with at least 3 recorded play/skip outcomes are penalised by up to 30% proportional to their skip ratio (reported as the `oftenSkipped` reason). Missing audio, non-main versions (unless the seed itself is non-main), and duplicate normalized title + canonical primary singer are suppressed. Paths use width-three beam search with a two-second budget and append the destination even if no complete connection was found. Budget expiry can make the intermediate route load-dependent; an unavailable-audio or non-main destination cannot be a complete candidate (unless the starting track is itself non-main). Up to four simultaneous similarity/path searches are admitted; excess requests return 503 with Retry-After.
 
 This is **metadata**, not acoustic analysis: quality depends on tagging and playlist coverage. Title folding is not complete NFKC: it covers full-width ASCII, whitespace, case, and common bracketed version suffixes, but not all Unicode compatibility characters (including half-width katakana).

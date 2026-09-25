@@ -25,10 +25,36 @@ func TestScoreSimilarity(t *testing.T) {
 	}
 }
 func TestNormalizedTitle(t *testing.T) {
-	for _, tc := range [][2]string{{"ＨＥＬＬＯ　(TV Size)", "hello"}, {"勇者【カラオケ】", "勇者"}, {" Song [Remastered]", "song"}, {"炎（オフボーカル）", "炎"}, {"曲「インスト」", "曲"},{"Song (Instinct)","song (instinct)"},{"Song (TV Size (Remastered))","song"},{"(Instrumental)","(instrumental)"}} {
+	for _, tc := range [][2]string{{"ＨＥＬＬＯ　(TV Size)", "hello"}, {"勇者【カラオケ】", "勇者"}, {" Song [Remastered]", "song"}, {"炎（オフボーカル）", "炎"}, {"曲「インスト」", "曲"}, {"Song (Instinct)", "song (instinct)"}, {"Song (TV Size (Remastered))", "song"}, {"(Instrumental)", "(instrumental)"}} {
 		if got := normalizedTitle(tc[0]); got != tc[1] {
 			t.Errorf("%q => %q want %q", tc[0], got, tc[1])
 		}
+	}
+}
+func TestSkipPenaltyScoring(t *testing.T) {
+	seed := similarityMeta{track: Track{ID: 1, AlbumID: 1}, primary: map[int64]bool{1: true}}
+	for _, tc := range []struct {
+		name             string
+		play, skip       int64
+		want             float64
+		wantOftenSkipped bool
+	}{{"neutral below evidence threshold", 1, 1, .3, false}, {"one third of outcomes skipped penalised lightly", 2, 1, .3 * (1 - .3*1.0/3.0), true}, {"half skipped penalised", 1, 3, .3 * (1 - .3*3.0/4.0), true}, {"always skipped capped at thirty percent", 0, 5, .3 * .7, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := similarityMeta{track: Track{ID: 2, AlbumID: 2}, primary: map[int64]bool{1: true}, playCount: tc.play, skipCount: tc.skip}
+			score, reasons := compareSimilarity(seed, candidate)
+			if score < tc.want-1e-9 || score > tc.want+1e-9 {
+				t.Fatalf("score = %v want %v", score, tc.want)
+			}
+			found := false
+			for _, r := range reasons {
+				if r == "oftenSkipped" {
+					found = true
+				}
+			}
+			if found != tc.wantOftenSkipped {
+				t.Fatalf("reasons = %v", reasons)
+			}
+		})
 	}
 }
 func similarityFixture(t *testing.T) *Store {

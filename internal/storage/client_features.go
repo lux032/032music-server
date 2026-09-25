@@ -29,6 +29,8 @@ type PlaybackUpdate struct {
 	PositionMillis int64  `json:"positionMillis"`
 	DurationMillis int64  `json:"durationMillis"`
 	Continuing     bool   `json:"continuing"`
+	ClientID       string `json:"clientId,omitempty"`
+	Skipped        *bool  `json:"skipped,omitempty"`
 }
 
 type PlaybackRecord struct {
@@ -37,6 +39,8 @@ type PlaybackRecord struct {
 	PositionMillis  int64  `json:"positionMillis"`
 	DurationMillis  int64  `json:"durationMillis"`
 	PlayCount       int64  `json:"playCount"`
+	SkipCount       int64  `json:"skipCount"`
+	LastSkippedAt   string `json:"lastSkippedAt,omitempty"`
 	LastPlayedAt    string `json:"lastPlayedAt,omitempty"`
 	LastCompletedAt string `json:"lastCompletedAt,omitempty"`
 	UpdatedAt       string `json:"updatedAt"`
@@ -346,6 +350,12 @@ func (s *Store) UpdatePlayback(ctx context.Context, update PlaybackUpdate) error
 	if update.PositionMillis < 0 || update.DurationMillis < 0 {
 		return errors.New("playback times must not be negative")
 	}
+	if len(update.ClientID) > 128 {
+		return errors.New("clientId must not exceed 128 bytes")
+	}
+	if update.Skipped != nil && *update.Skipped && update.State != "stopped" {
+		return errors.New("skipped=true must have stopped state")
+	}
 	switch update.State {
 	case "playing", "paused", "buffering", "stopped":
 	default:
@@ -355,9 +365,25 @@ func (s *Store) UpdatePlayback(ctx context.Context, update PlaybackUpdate) error
 	if update.State == "playing" {
 		lastPlayed = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
 	}
-	query := `INSERT INTO playback_progress(track_id,state,position_ms,duration_ms,last_played_at) VALUES(?,?,?,?,` + lastPlayed + `)
-		ON CONFLICT(track_id) DO UPDATE SET state=excluded.state,position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),last_played_at=COALESCE(excluded.last_played_at,playback_progress.last_played_at),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
-	if _, err := s.db.ExecContext(ctx, query, update.TrackID, update.State, update.PositionMillis, update.DurationMillis); err != nil {
+	mode := 0 // omitted: infer; explicit false: suppress; explicit true: count
+	if update.Skipped != nil {
+		if *update.Skipped {
+			mode = 1
+		} else {
+			mode = -1
+		}
+	}
+	// The threshold subquery reads the probed track duration in the same atomic
+	// statement; fallback uses the old progress duration and incoming duration.
+	threshold := `MIN(30000, CASE WHEN COALESCE((SELECT duration_ms FROM tracks WHERE id=excluded.track_id),0)>0 THEN (SELECT duration_ms FROM tracks WHERE id=excluded.track_id)/2 WHEN MAX(playback_progress.duration_ms,excluded.duration_ms)>0 THEN MAX(playback_progress.duration_ms,excluded.duration_ms)/2 ELSE 30000 END)`
+	inferred := `excluded.state='stopped' AND ?=1 AND playback_progress.state IN ('playing','paused','buffering') AND MAX(playback_progress.position_ms,excluded.position_ms)<` + threshold + ` AND playback_progress.last_played_at IS NOT NULL AND playback_progress.last_played_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 minutes') AND (playback_progress.last_completed_at IS NULL OR playback_progress.last_completed_at<playback_progress.last_played_at)`
+	skip := `(?=1 OR (?=0 AND ` + inferred + `))`
+	// The INSERT branch counts only explicit skipped=true; inference requires a
+	// pre-existing row (previous state), so a first-ever stopped report is not
+	// counted as a skip.
+	query := `INSERT INTO playback_progress(track_id,state,position_ms,duration_ms,last_played_at,skip_count,last_skipped_at) VALUES(?,?,?,?,` + lastPlayed + `,CASE WHEN ?=1 THEN 1 ELSE 0 END,CASE WHEN ?=1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END)
+		ON CONFLICT(track_id) DO UPDATE SET state=excluded.state,position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),last_played_at=COALESCE(excluded.last_played_at,playback_progress.last_played_at),skip_count=playback_progress.skip_count+CASE WHEN ` + skip + ` THEN 1 ELSE 0 END,last_skipped_at=CASE WHEN ` + skip + ` THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE playback_progress.last_skipped_at END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+	if _, err := s.db.ExecContext(ctx, query, update.TrackID, update.State, update.PositionMillis, update.DurationMillis, mode, mode, mode, mode, boolInt(update.Continuing), mode, mode, boolInt(update.Continuing)); err != nil {
 		return err
 	}
 	if plausibleClientDuration(update.DurationMillis) {
@@ -383,7 +409,7 @@ func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]Playb
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM playback_progress WHERE last_played_at IS NOT NULL`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT track_id,state,position_ms,duration_ms,play_count,COALESCE(last_played_at,''),COALESCE(last_completed_at,''),updated_at FROM playback_progress WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC,track_id LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT track_id,state,position_ms,duration_ms,play_count,skip_count,COALESCE(last_skipped_at,''),COALESCE(last_played_at,''),COALESCE(last_completed_at,''),updated_at FROM playback_progress WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC,track_id LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -392,7 +418,7 @@ func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]Playb
 	ids := make([]int64, 0)
 	for rows.Next() {
 		var value PlaybackRecord
-		if err := rows.Scan(&value.TrackID, &value.State, &value.PositionMillis, &value.DurationMillis, &value.PlayCount, &value.LastPlayedAt, &value.LastCompletedAt, &value.UpdatedAt); err != nil {
+		if err := rows.Scan(&value.TrackID, &value.State, &value.PositionMillis, &value.DurationMillis, &value.PlayCount, &value.SkipCount, &value.LastSkippedAt, &value.LastPlayedAt, &value.LastCompletedAt, &value.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		ids = append(ids, value.TrackID)
