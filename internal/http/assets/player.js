@@ -17,6 +17,28 @@
   let timelineReportTimer = null;
   let isDraggingProgress = false;
 
+  // The CSRF meta tag lives in <head>, which PJAX never replaces, so the
+  // token is re-read on every request AND re-synced in applyPage() after
+  // each navigation (the server may have rotated the session token).
+  function csrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? (meta.getAttribute('content') || '') : '';
+  }
+
+  // apiFetch wraps fetch for /api/v1 calls: session-authenticated state
+  // changing requests must echo the session CSRF token in a header.
+  function apiFetch(url, options) {
+    const opts = Object.assign({ credentials: 'same-origin' }, options);
+    const method = (opts.method || 'GET').toUpperCase();
+    const headers = Object.assign({}, opts.headers);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      const token = csrfToken();
+      if (token) headers['X-CSRF-Token'] = token;
+    }
+    opts.headers = headers;
+    return fetch(url, opts);
+  }
+
   function init() {
     if (!document.body || document.body.classList.contains('login-page')) return;
 
@@ -110,7 +132,10 @@
       navigationAbortController = new AbortController();
       const res = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html' }, signal: navigationAbortController.signal });
       const html = await res.text();
-      if (!res.ok || !applyPage(html, res.url || url, push, restoreState)) window.location.href = url;
+      // applyPage returns true on success, 'reload' on a build mismatch and
+      // false on structural failures; the latter two both need a full
+      // navigation, which also picks up fresh assets on a new deployment.
+      if (!res.ok || applyPage(html, res.url || url, push, restoreState) !== true) window.location.href = res.url || url;
     } catch (err) {
       if (err && err.name === 'AbortError') return;
       window.location.href = url;
@@ -150,7 +175,15 @@
         return;
       }
       sessionStorage.removeItem(draftStorageKey);
-      if (!applyPage(html, res.url || window.location.href, true)) showFormError(form, '服务器已响应，但页面无法更新。请刷新核对保存结果。');
+      const applied = applyPage(html, res.url || window.location.href, true);
+      if (applied === 'reload') {
+        // The write succeeded but the response belongs to a newer build:
+        // navigate to the result page directly instead of reporting a
+        // failure (the form must not look retryable, it already committed).
+        window.location.href = res.url || url;
+        return;
+      }
+      if (!applied) showFormError(form, '服务器已响应，但页面无法更新。请刷新核对保存结果。');
     } catch (_) {
       showFormError(form, '无法确认保存结果。输入内容已保留；请核对后再决定是否重试。');
     } finally {
@@ -184,6 +217,19 @@
     currentDocUrl = url;
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (!doc.body || doc.body.classList.contains('login-page')) return false;
+    // A new server build ships assets under a different content hash; the
+    // running JS can no longer trust the freshly fetched DOM, so fall back
+    // to a full navigation instead of stitching incompatible versions.
+    const currentBuild = document.querySelector('meta[name="app-build"]')?.getAttribute('content');
+    const incomingBuild = doc.querySelector('meta[name="app-build"]')?.getAttribute('content');
+    if (currentBuild && incomingBuild && currentBuild !== incomingBuild) return 'reload';
+    // <head> survives PJAX swaps, so the session CSRF token must be copied
+    // over manually before any later apiFetch call reads it.
+    const incomingCsrf = doc.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    if (incomingCsrf) {
+      const currentCsrf = document.querySelector('meta[name="csrf-token"]');
+      if (currentCsrf) currentCsrf.setAttribute('content', incomingCsrf);
+    }
     const newMain = doc.querySelector('main'), curMain = document.querySelector('main');
     if (!newMain || !curMain) return false;
     doc.querySelectorAll('[autofocus]').forEach((el) => el.removeAttribute('autofocus'));
@@ -503,10 +549,22 @@
       if (!playBtn) {
         const numElem = el.querySelector('.track-number, span:first-child, .drag-position, .tieup-role');
         if (numElem && !numElem.querySelector('.row-play-btn')) {
+          // Build nodes instead of innerHTML: the original text comes from
+          // file tags and must never be re-parsed as HTML.
           const originalText = numElem.textContent.trim();
           numElem.classList.add('playable-number');
-          numElem.innerHTML = `<span class="num-text">${originalText}</span><button type="button" class="row-play-btn" title="播放">▶</button>`;
-          playBtn = numElem.querySelector('.row-play-btn');
+          numElem.textContent = '';
+          const numText = document.createElement('span');
+          numText.className = 'num-text';
+          numText.textContent = originalText;
+          const rowPlayButton = document.createElement('button');
+          rowPlayButton.type = 'button';
+          rowPlayButton.className = 'row-play-btn';
+          rowPlayButton.title = '播放';
+          rowPlayButton.textContent = '▶';
+          numElem.appendChild(numText);
+          numElem.appendChild(rowPlayButton);
+          playBtn = rowPlayButton;
         }
       }
 
@@ -863,6 +921,12 @@
     }
   }
 
+  function artworkForSize(artwork, size) {
+    if (!artwork) return '';
+    if (/([?&])size=\d+/.test(artwork)) return artwork.replace(/([?&])size=\d+/, `$1size=${size}`);
+    return artwork + (artwork.includes('?') ? '&' : '?') + 'size=' + size;
+  }
+
   function updateMediaSession(track) {
     if (!('mediaSession' in navigator)) return;
     try {
@@ -870,7 +934,9 @@
         title: track.title || '未知歌曲',
         artist: track.artist || '',
         album: track.album || '',
-        artwork: track.artwork ? [{ src: track.artwork, sizes: '512x512', type: 'image/jpeg' }] : []
+        // data-track-artwork carries a 256px thumbnail; the lock-screen
+        // artwork is requested at 512px so it stays sharp on dense screens.
+        artwork: track.artwork ? [{ src: artworkForSize(track.artwork, 512), sizes: '512x512', type: 'image/jpeg' }] : []
       });
 
       navigator.mediaSession.setActionHandler('play', togglePlay);
@@ -975,10 +1041,10 @@
     const positionMs = Math.floor((audio.currentTime || 0) * 1000);
     const durationMs = Math.floor((audio.duration || 0) * 1000) || 0;
 
-    fetch('/api/v1/playback/timeline', {
+    apiFetch('/api/v1/playback/timeline', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
+      keepalive: true,
       body: JSON.stringify({
         trackId: parseInt(track.id, 10),
         positionMillis: positionMs,
@@ -995,10 +1061,10 @@
     const positionMs = audio ? Math.floor((audio.currentTime || 0) * 1000) : 0;
     const durationMs = audio ? Math.floor((audio.duration || 0) * 1000) : 0;
 
-    fetch('/api/v1/playback/scrobble', {
+    apiFetch('/api/v1/playback/scrobble', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
+      keepalive: true,
       body: JSON.stringify({
         trackId: parseInt(trackId, 10),
         positionMillis: positionMs,

@@ -34,7 +34,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 		},
 		"similarity": map[string]any{"method": "metadata", "distanceRange": []int{0, 1}},
 		"playback":   map[string]any{"skipInference": map[string]any{"thresholdMillis": 30000, "thresholdFraction": 0.5, "windowMinutes": 30, "explicitField": "skipped"}},
-		"artwork": map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
+		"artwork":    map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
 		"media": map[string]any{
 			"streaming": "original", "supportsRange": true,
 			"authentication":      []string{"bearer", "query"},

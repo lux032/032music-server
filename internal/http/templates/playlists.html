@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>歌单 · 032</title><link rel="stylesheet" href="/admin/assets/admin.css"><script defer src="/admin/assets/navigation.js"></script><script defer src="/admin/assets/player.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{.CSRFToken}}"><meta name="app-build" content="{{appBuild}}"><title>歌单 · 032</title><link rel="stylesheet" href="{{assetCSS}}"><script defer src="{{assetNavJS}}"></script><script defer src="{{assetPlayerJS}}"></script></head>
 <body class="roon-shell">
 <aside class="sidebar"><a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a><nav>
   <p>我的音乐库</p><a href="/admin/albums"><i>▦</i> 专辑</a><a href="/admin/artists"><i>●</i> 歌手</a><a href="/admin/tracks"><i>≡</i> 歌曲</a><a href="/admin/works"><i>◇</i> 作品</a><a href="/admin/favorites"><i>♥</i> 收藏</a><a class="active" href="/admin/playlists"><i>♫</i> 歌单</a><a href="/admin/playback"><i>↺</i> 播放记录</a>
@@ -10,5 +10,5 @@
   <header class="browser-header"><div><p class="kicker">PLAYLISTS</p><h1>歌单</h1><p class="result-count">{{.Total}} 个歌单</p></div></header>
   {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
   <section class="feature-card create-playlist"><div><p class="kicker">NEW PLAYLIST</p><h2>创建歌单</h2><p class="result-count">先创建名称，再进入详情搜索并添加歌曲。</p></div><form method="post" action="/admin/playlists"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><label>名称<input name="name" maxlength="160" required placeholder="例如：夜间聆听"></label><label>说明<textarea name="description" rows="2" maxlength="1000" placeholder="可选"></textarea></label><button>创建歌单</button></form></section>
-  <section class="playlist-grid">{{range .Playlists}}<a class="playlist-card" href="/admin/playlists/{{.ID}}"><div class="playlist-cover">{{if .ArtworkURL}}<img src="{{.ArtworkURL}}" alt="" loading="lazy">{{else}}<span>♫</span>{{end}}</div><div><h2>{{.Name}}</h2><p>{{if .Description}}{{.Description}}{{else}}暂无说明{{end}}</p><small>{{.ItemCount}} 首歌曲 · 更新于 {{.UpdatedAt}}</small></div><span class="card-arrow">→</span></a>{{else}}<div class="zero-state"><strong>还没有歌单</strong><span>使用上方表单创建第一个歌单。</span></div>{{end}}</section>
+  <section class="playlist-grid">{{range .Playlists}}<a class="playlist-card" href="/admin/playlists/{{.ID}}"><div class="playlist-cover">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span>♫</span>{{end}}</div><div><h2>{{.Name}}</h2><p>{{if .Description}}{{.Description}}{{else}}暂无说明{{end}}</p><small>{{.ItemCount}} 首歌曲 · 更新于 {{.UpdatedAt}}</small></div><span class="card-arrow">→</span></a>{{else}}<div class="zero-state"><strong>还没有歌单</strong><span>使用上方表单创建第一个歌单。</span></div>{{end}}</section>
 </main></body></html>

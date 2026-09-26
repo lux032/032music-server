@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -8,11 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lux032/032music-server/internal/config"
@@ -33,7 +35,7 @@ type App struct {
 	scanner         *scanner.Manager
 	enrichment      *enrichment.Manager
 	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
-	assets          http.Handler
+	assets          *assetRegistry
 	transcoder      *transcodeManager
 	thumbnails      *thumbnailManager
 	similaritySlots chan struct{}
@@ -74,6 +76,11 @@ type dashboardPageData struct {
 }
 
 func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Manager, enrichmentManager *enrichment.Manager, logger *slog.Logger, version string) (*App, error) {
+	assets, err := newAssetRegistry(webFiles, "assets")
+	if err != nil {
+		return nil, err
+	}
+
 	templates, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMillis":  formatDurationMillis,
 		"formatAdminTime":       formatAdminTime,
@@ -84,14 +91,22 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"indexValues": func() []string {
 			return indexLetters
 		},
+		// asset* emit content-addressed asset URLs so browsers can cache them
+		// forever; appBuild exposes the build hash as a meta tag used by the
+		// PJAX layer to detect deployments. No-arg variants are used instead
+		// of {{asset "name"}} because html/template's context escaper breaks
+		// when several attribute actions carry string literals.
+		"assetCSS":      func() string { return assets.assetURL("admin.css") },
+		"assetNavJS":    func() string { return assets.assetURL("navigation.js") },
+		"assetPlayerJS": func() string { return assets.assetURL("player.js") },
+		"assetAdminJS":  func() string { return assets.assetURL("admin.js") },
+		"appBuild":      func() string { return assets.hash },
+		// thumb appends a thumbnail size parameter to an artwork or artist
+		// image URL. Empty URLs stay empty so {{if}} guards keep working.
+		"thumb": thumbURL,
 	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse admin templates: %w", err)
-	}
-
-	assetFS, err := fs.Sub(webFiles, "assets")
-	if err != nil {
-		return nil, fmt.Errorf("load admin assets: %w", err)
 	}
 
 	return &App{
@@ -108,7 +123,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		enrichment:      enrichmentManager,
 		transcoder:      newTranscodeManager(cfg, logger),
 		thumbnails:      newThumbnailManager(cfg),
-		assets:          http.StripPrefix("/admin/assets/", http.FileServer(http.FS(assetFS))),
+		assets:          assets,
 	}, nil
 }
 
@@ -179,7 +194,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/accept", a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "confirmed") })))
 	mux.Handle("POST /api/v1/enrichment/artists/{artistId}/relations/{candidateId}/reject", a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAPIArtistRelationDecision(w, r, "rejected") })))
 
-	mux.Handle("GET /admin/assets/", a.assets)
+	mux.Handle("GET /admin/assets/", http.HandlerFunc(a.assets.serveAssets))
 	mux.HandleFunc("GET /admin/login", a.handleLoginPage)
 	mux.HandleFunc("POST /admin/login", a.handleLogin)
 	mux.Handle("POST /admin/logout", a.requireAdmin(http.HandlerFunc(a.handleLogout)))
@@ -238,7 +253,7 @@ func (a *App) Handler() http.Handler {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	})
 
-	return a.recoverPanic(a.securityHeaders(a.logRequests(mux)))
+	return a.recoverPanic(a.securityHeaders(a.logRequests(a.gzipResponse(mux))))
 }
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -353,12 +368,40 @@ func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-CSRF-Token")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if _, ok := a.sessions.get(r); ok {
+		// A valid Bearer API token is a self-contained, non-ambient
+		// credential: it bypasses the session CSRF check entirely and must
+		// be honoured even when a browser session cookie rides along.
+		if scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
+			if secureEqual(token, a.config.APIToken) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// An invalid Bearer attempt must not fall through to ambient
+			// session auth; otherwise a cross-site page could attach a forged
+			// Authorization header and still ride the victim's session.
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "A valid API token is required.")
+			return
+		}
+		if session, ok := a.sessions.get(r); ok {
+			// Browser session writes are cross-site forgeable, so state
+			// changing requests must prove they came from the admin UI by
+			// echoing the per-session token from <meta name="csrf-token">.
+			// Bearer-token clients are unaffected: the token itself is the
+			// credential and is never ambient.
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+			default:
+				if !secureEqual(r.Header.Get("X-CSRF-Token"), session.CSRFToken) {
+					writeAPIError(w, http.StatusForbidden, "csrf_invalid", "A valid X-CSRF-Token header is required for session-authenticated writes.")
+					return
+				}
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -424,24 +467,61 @@ func (a *App) requireAPIToken(next http.Handler) http.Handler {
 	})
 }
 
+var renderBufferPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// render executes the template into a pooled buffer first. A template error
+// then produces a clean 500 instead of a half-written page after the status
+// line has already been committed.
 func (a *App) render(w http.ResponseWriter, status int, name string, data any) {
+	buffer := renderBufferPool.Get().(*bytes.Buffer)
+	buffer.Reset()
+	defer putRenderBuffer(buffer)
+	if err := a.templates.ExecuteTemplate(buffer, name, data); err != nil {
+		a.logger.Error("render admin template", "template", name, "error", err)
+		http.Error(w, "render error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := a.templates.ExecuteTemplate(w, name, data); err != nil {
-		a.logger.Error("render admin template", "template", name, "error", err)
+	_, _ = buffer.WriteTo(w)
+}
+
+// putRenderBuffer returns a buffer to the pool unless it grew beyond 256KB;
+// retaining oversized buffers would pin memory after a one-off large page.
+func putRenderBuffer(buffer *bytes.Buffer) {
+	if buffer.Cap() > 256*1024 {
+		return
 	}
+	renderBufferPool.Put(buffer)
 }
 
 func (a *App) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		next.ServeHTTP(w, r)
-		a.logger.Info("http request",
+		fields := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"durationMs", time.Since(started).Milliseconds(),
-		)
+		}
+		if quietAccessLogPath(r.URL.Path) {
+			a.logger.Debug("http request", fields...)
+			return
+		}
+		a.logger.Info("http request", fields...)
 	})
+}
+
+// quietAccessLogPath keeps high-frequency asset, artwork and polling
+// requests out of the Info log so real events stay visible.
+func quietAccessLogPath(path string) bool {
+	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/artists/") && strings.HasSuffix(path, "/image") {
+		return true
+	}
+	return false
 }
 
 func (a *App) securityHeaders(next http.Handler) http.Handler {
@@ -474,6 +554,19 @@ func secureEqual(left, right string) bool {
 	leftHash := sha256.Sum256([]byte(left))
 	rightHash := sha256.Sum256([]byte(right))
 	return subtle.ConstantTimeCompare(leftHash[:], rightHash[:]) == 1
+}
+
+// thumbURL appends a thumbnail size parameter to an artwork or artist
+// image URL. Empty URLs stay empty so template {{if}} guards keep working.
+func thumbURL(rawURL string, size int) string {
+	if rawURL == "" {
+		return ""
+	}
+	separator := "?"
+	if strings.Contains(rawURL, "?") {
+		separator = "&"
+	}
+	return rawURL + separator + "size=" + strconv.Itoa(size)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
