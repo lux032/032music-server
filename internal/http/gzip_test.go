@@ -210,7 +210,7 @@ func TestGzipSkipsAssets(t *testing.T) {
 
 	// Assets are pre-compressed by the registry; the middleware must leave
 	// them alone even on the legacy no-cache path.
-	req := httptest.NewRequest(http.MethodGet, "/admin/assets/admin.css", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/assets/tokens.css", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -224,8 +224,8 @@ func TestGzipSkipsAssets(t *testing.T) {
 	if strings.Contains(plain, "\x1f\x8b") {
 		t.Fatal("asset body looks double-compressed")
 	}
-	if !strings.Contains(plain, "roon-shell") {
-		t.Fatal("asset body does not look like admin.css")
+	if !strings.Contains(plain, "--accent") {
+		t.Fatal("asset body does not look like tokens.css")
 	}
 }
 

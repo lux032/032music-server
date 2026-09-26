@@ -1,6 +1,57 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{.CSRFToken}}"><meta name="app-build" content="{{appBuild}}"><title>匹配审核 · 032</title><link rel="stylesheet" href="{{assetCSS}}"><script defer src="{{assetNavJS}}"></script><script defer src="{{assetPlayerJS}}"></script></head>
-<body class="roon-shell">
-<aside class="sidebar"><a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a><nav><p>我的音乐库</p><a href="/admin/albums" title="专辑" aria-label="专辑"><i>▦</i> 专辑</a><a href="/admin/artists" title="歌手" aria-label="歌手"><i>●</i> 歌手</a><a href="/admin/tracks" title="歌曲" aria-label="歌曲"><i>≡</i> 歌曲</a><a href="/admin/works"><i>◇</i> 作品</a><a href="/admin/favorites"><i>♥</i> 收藏</a><a href="/admin/playlists"><i>♫</i> 歌单</a><a href="/admin/playback"><i>↺</i> 播放记录</a><p>元数据</p><a class="active" href="/admin/matches"><i>◎</i> 匹配审核</a><a href="/admin/merges"><i>⇄</i> 合并历史</a><a href="/admin/settings/metadata"><i>⚙</i> 数据来源</a><p>管理</p><a href="/admin" title="控制台" aria-label="控制台"><i>⌁</i> 控制台</a></nav></aside>
-<main class="browser-main identity-main"><header class="browser-header"><div><p class="kicker">IDENTITY REVIEW</p><h1>匹配审核</h1><p class="result-count">低于自动确认阈值的候选必须人工确认。</p></div><form method="post" action="/admin/matches/run"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button>自动匹配全部歌手</button></form></header>{{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
-<section class="review-list">{{range $item := .Review}}<article><header><a href="/admin/artists/{{$item.Artist.ID}}"><strong>{{$item.Artist.Name}}</strong></a><span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span></header><div>{{range $item.Candidates}}<section><b>{{.DisplayName}}</b><span>{{.Source}} · 置信度 {{.Score}}</span><small>{{.Disambiguation}} {{.Country}} {{.ArtistType}}</small><div class="candidate-actions"><form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button>确认</button></form><form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">拒绝</button></form></div></section>{{end}}</div></article>{{else}}<div class="zero-state"><strong>没有等待审核的候选</strong><span>可以启动一次自动匹配。</span></div>{{end}}</section></main></body></html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>匹配审核 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main identity-main">
+    <header class="browser-header">
+      <div>
+        <p class="kicker">IDENTITY REVIEW</p>
+        <h1>匹配审核</h1>
+        <p class="result-count">低于自动确认阈值的候选必须人工确认。</p>
+      </div>
+      <form method="post" action="/admin/matches/run">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button>自动匹配全部歌手</button>
+      </form>
+    </header>
+    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+
+    <section class="review-list">
+      {{range $item := .Review}}
+      <article>
+        <header>
+          <a href="/admin/artists/{{$item.Artist.ID}}"><strong>{{$item.Artist.Name}}</strong></a>
+          <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+        </header>
+        <div>
+          {{range $item.Candidates}}
+          <section>
+            <b>{{.DisplayName}}</b>
+            <span>{{.Source}} · 置信度 {{.Score}}</span>
+            <small>{{.Disambiguation}} {{.Country}} {{.ArtistType}}</small>
+            <div class="candidate-actions">
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button>确认</button>
+              </form>
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button">拒绝</button>
+              </form>
+            </div>
+          </section>
+          {{end}}
+        </div>
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>没有等待审核的候选</strong><span>可以启动一次自动匹配。</span></div>
+      {{end}}
+    </section>
+  </main>
+</body>
+</html>

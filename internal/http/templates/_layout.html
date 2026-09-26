@@ -1,0 +1,132 @@
+{{/* Shared chrome for every admin page: head assets, sidebar, now-playing panel. */}}
+{{define "head"}}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{.CSRFToken}}">
+<meta name="app-build" content="{{appBuild}}">
+<meta name="icon-sprite" content="{{assetIconsSVG}}">
+<link rel="stylesheet" href="{{assetTokensCSS}}">
+<link rel="stylesheet" href="{{assetBaseCSS}}">
+<link rel="stylesheet" href="{{assetShellCSS}}">
+<link rel="stylesheet" href="{{assetPagesCSS}}">
+<script defer src="{{assetNavJS}}"></script>
+<script defer src="{{assetPlayerJS}}"></script>
+<script defer src="{{assetAdminJS}}"></script>
+{{end}}
+
+{{define "sidebar"}}
+<aside class="sidebar" id="app-sidebar">
+  <a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a>
+  <nav aria-label="音乐库">
+    <a href="/admin/albums" data-nav="albums" data-mp="1" class="{{if eq .Nav "albums"}}active{{end}}"{{if eq .Nav "albums"}} aria-current="page"{{end}} title="专辑" aria-label="专辑"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg> 专辑</a>
+    <a href="/admin/artists/album" data-nav="artists" data-mp="1" class="{{if eq .Nav "artists"}}active{{end}}"{{if eq .Nav "artists"}} aria-current="page"{{end}} title="歌手" aria-label="歌手"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 歌手</a>
+    <a href="/admin/tracks" data-nav="tracks" data-mp="1" class="{{if eq .Nav "tracks"}}active{{end}}"{{if eq .Nav "tracks"}} aria-current="page"{{end}} title="歌曲" aria-label="歌曲"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-tracks"></use></svg> 歌曲</a>
+    <a href="/admin/works" data-nav="works" class="{{if eq .Nav "works"}}active{{end}}"{{if eq .Nav "works"}} aria-current="page"{{end}} title="作品" aria-label="作品"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品</a>
+    <a href="/admin/favorites" data-nav="favorites" data-mp="1" class="{{if eq .Nav "favorites"}}active{{end}}"{{if eq .Nav "favorites"}} aria-current="page"{{end}} title="收藏" aria-label="收藏"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart"></use></svg> 收藏</a>
+    <a href="/admin/playlists" data-nav="playlists" class="{{if eq .Nav "playlists"}}active{{end}}"{{if eq .Nav "playlists"}} aria-current="page"{{end}} title="歌单" aria-label="歌单"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg> 歌单</a>
+    <a href="/admin/playback" data-nav="playback" class="{{if eq .Nav "playback"}}active{{end}}"{{if eq .Nav "playback"}} aria-current="page"{{end}} title="播放记录" aria-label="播放记录"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-history"></use></svg> 播放记录</a>
+  </nav>
+  <button type="button" class="sidebar-more" id="sidebar-more" aria-expanded="false" aria-controls="sidebar-more-sheet" aria-label="更多导航">
+    <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg> 更多
+  </button>
+  <div class="sidebar-group{{if .Nav}}{{if or (eq .Nav "console") (eq .Nav "matches") (eq .Nav "enrichment") (eq .Nav "merges") (eq .Nav "settings")}} open{{end}}{{end}}" id="sidebar-admin-group">
+    <button type="button" class="sidebar-group-toggle" id="sidebar-group-toggle" aria-expanded="{{if .Nav}}{{if or (eq .Nav "console") (eq .Nav "matches") (eq .Nav "enrichment") (eq .Nav "merges") (eq .Nav "settings")}}true{{else}}false{{end}}{{else}}false{{end}}" aria-controls="sidebar-admin-items">
+      <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-gear"></use></svg> 管理
+      <svg class="icon group-chevron" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg>
+    </button>
+    <nav id="sidebar-admin-items" class="group-items" aria-label="管理">
+      <a href="/admin" data-nav="console" class="{{if eq .Nav "console"}}active{{end}}"{{if eq .Nav "console"}} aria-current="page"{{end}} title="控制台" aria-label="控制台"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 控制台</a>
+      <a href="/admin/matches" data-nav="matches" class="{{if eq .Nav "matches"}}active{{end}}"{{if eq .Nav "matches"}} aria-current="page"{{end}} title="匹配审核" aria-label="匹配审核"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg> 匹配审核</a>
+      <a href="/admin/enrichment" data-nav="enrichment" class="{{if eq .Nav "enrichment"}}active{{end}}"{{if eq .Nav "enrichment"}} aria-current="page"{{end}} title="自动增强" aria-label="自动增强"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-enrichment"></use></svg> 自动增强</a>
+      <a href="/admin/merges" data-nav="merges" class="{{if eq .Nav "merges"}}active{{end}}"{{if eq .Nav "merges"}} aria-current="page"{{end}} title="合并历史" aria-label="合并历史"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-merges"></use></svg> 合并历史</a>
+      <a href="/admin/settings/metadata" data-nav="settings" class="{{if eq .Nav "settings"}}active{{end}}"{{if eq .Nav "settings"}} aria-current="page"{{end}} title="数据来源" aria-label="数据来源"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-settings"></use></svg> 数据来源</a>
+    </nav>
+  </div>
+  <div class="sidebar-scan idle" id="sidebar-scan">
+    <svg class="scan-ring" viewBox="0 0 36 36" aria-hidden="true">
+      <circle class="ring-bg" cx="18" cy="18" r="15.9"></circle>
+      <circle class="ring-fg" id="sidebar-scan-ring" cx="18" cy="18" r="15.9" pathLength="100"></circle>
+    </svg>
+    <div class="scan-text">
+      <strong id="sidebar-scan-title">音乐库已就绪</strong>
+      <span id="sidebar-scan-detail">—</span>
+    </div>
+  </div>
+  <div class="sidebar-user">
+    <span>{{.Username}}</span>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+      <button class="icon-button" title="退出" aria-label="退出"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-logout"></use></svg></button>
+    </form>
+  </div>
+
+  {{/* Mobile-only “更多” sheet: secondary destinations, the admin group and
+      the account/logout entry that the bottom bar cannot fit. */}}
+  <div class="sidebar-more-sheet" id="sidebar-more-sheet" hidden>
+    <nav aria-label="更多导航">
+      <a href="/admin/works" data-nav="works" class="{{if eq .Nav "works"}}active{{end}}"{{if eq .Nav "works"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品</a>
+      <a href="/admin/playlists" data-nav="playlists" class="{{if eq .Nav "playlists"}}active{{end}}"{{if eq .Nav "playlists"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg> 歌单</a>
+      <a href="/admin/playback" data-nav="playback" class="{{if eq .Nav "playback"}}active{{end}}"{{if eq .Nav "playback"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-history"></use></svg> 播放记录</a>
+      <p>管理</p>
+      <a href="/admin" data-nav="console" class="{{if eq .Nav "console"}}active{{end}}"{{if eq .Nav "console"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 控制台</a>
+      <a href="/admin/matches" data-nav="matches" class="{{if eq .Nav "matches"}}active{{end}}"{{if eq .Nav "matches"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg> 匹配审核</a>
+      <a href="/admin/enrichment" data-nav="enrichment" class="{{if eq .Nav "enrichment"}}active{{end}}"{{if eq .Nav "enrichment"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-enrichment"></use></svg> 自动增强</a>
+      <a href="/admin/merges" data-nav="merges" class="{{if eq .Nav "merges"}}active{{end}}"{{if eq .Nav "merges"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-merges"></use></svg> 合并历史</a>
+      <a href="/admin/settings/metadata" data-nav="settings" class="{{if eq .Nav "settings"}}active{{end}}"{{if eq .Nav "settings"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-settings"></use></svg> 数据来源</a>
+    </nav>
+    <div class="sheet-user">
+      <span>{{.Username}}</span>
+      <form method="post" action="/admin/logout">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button class="secondary-button" title="退出登录">退出登录</button>
+      </form>
+    </div>
+  </div>
+</aside>
+{{end}}
+
+{{define "nowplaying"}}
+<aside id="now-playing" class="now-playing" aria-label="当前播放与播放队列">
+  <header class="np-head">
+    <span class="np-tagline">音乐让生活更好</span>
+    <button type="button" id="np-collapse" class="np-icon-btn" title="收起面板" aria-label="收起面板">
+      <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-panel"></use></svg>
+    </button>
+  </header>
+  <section class="np-current">
+    <h2>当前播放</h2>
+    <div class="np-cover-row">
+      <div class="np-cover" id="np-cover"><div class="np-cover-empty">032</div></div>
+      <div class="np-meta">
+        <strong id="np-title">未在播放</strong>
+        <span id="np-artist">—</span>
+        <span id="np-album"></span>
+      </div>
+      <div class="np-actions">
+        <button type="button" id="np-favorite" class="np-icon-btn" title="收藏" aria-label="收藏" disabled>
+          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart"></use></svg>
+        </button>
+        <button type="button" id="np-more" class="np-icon-btn" title="更多" aria-label="更多" disabled>
+          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg>
+        </button>
+      </div>
+    </div>
+    <div class="np-progress">
+      <div class="np-progress-bar" id="np-progress-bar" role="slider" tabindex="0" aria-label="播放进度" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div class="np-progress-fill" id="np-progress-fill"></div>
+      </div>
+      <div class="np-times"><span id="np-time-cur">0:00</span><span id="np-time-total">0:00</span></div>
+    </div>
+  </section>
+  <section class="np-queue-section">
+    <div class="np-queue-head">
+      <h2>播放队列 (<span id="np-queue-count">0</span>)</h2>
+      <button type="button" id="np-queue-clear" class="np-clear" disabled>清空</button>
+    </div>
+    <ol id="np-queue-list" class="np-queue-list"></ol>
+  </section>
+</aside>
+<button type="button" id="np-expand" class="np-expand" title="展开播放面板" aria-label="展开播放面板">
+  <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-queue"></use></svg>
+</button>
+{{end}}

@@ -1,18 +1,117 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{.CSRFToken}}"><meta name="app-build" content="{{appBuild}}"><title>{{.Detail.Playlist.Name}} · 032</title><link rel="stylesheet" href="{{assetCSS}}"><script defer src="{{assetNavJS}}"></script><script defer src="{{assetPlayerJS}}"></script></head>
-<body class="roon-shell">
-<aside class="sidebar"><a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a><nav>
-  <p>我的音乐库</p><a href="/admin/albums"><i>▦</i> 专辑</a><a href="/admin/artists"><i>●</i> 歌手</a><a href="/admin/tracks"><i>≡</i> 歌曲</a><a href="/admin/works"><i>◇</i> 作品</a><a href="/admin/favorites"><i>♥</i> 收藏</a><a class="active" href="/admin/playlists"><i>♫</i> 歌单</a><a href="/admin/playback"><i>↺</i> 播放记录</a>
-  <p>元数据</p><a href="/admin/matches"><i>◎</i> 匹配审核</a><a href="/admin/merges"><i>⇄</i> 合并历史</a><a href="/admin/settings/metadata"><i>⚙</i> 数据来源</a><p>管理</p><a href="/admin"><i>⌁</i> 控制台</a>
-</nav></aside>
-<main class="browser-main feature-main playlist-detail-main">
-  <nav class="detail-toolbar" aria-label="页面导航"><a class="back-button" href="/admin/playlists" data-history-back="/admin/playlists"><span class="back-button-icon" aria-hidden="true">←</span><span>返回歌单</span></a><span class="detail-context">歌单管理</span></nav>
-  <header class="playlist-heading"><div class="playlist-cover large">{{if .Detail.Playlist.ArtworkURL}}<img src="{{thumb .Detail.Playlist.ArtworkURL 512}}" alt="" decoding="async">{{else}}<span>♫</span>{{end}}</div><div><p class="kicker">PLAYLIST</p><h1>{{.Detail.Playlist.Name}}</h1><p>{{if .Detail.Playlist.Description}}{{.Detail.Playlist.Description}}{{else}}暂无说明{{end}}</p><span class="result-count">{{.Detail.Playlist.ItemCount}} 首歌曲 · 更新于 {{.Detail.Playlist.UpdatedAt}}</span></div></header>
-  {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
-  <div class="playlist-layout"><section><div class="section-title"><h2>歌曲</h2><span>{{.Detail.Playlist.ItemCount}} 首</span></div><div class="playlist-track-list">{{range .Detail.Tracks}}<article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="FLAC"><span class="drag-position playable-number"><span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span><button type="button" class="row-play-btn" title="播放 {{.Title}}">▶</button></span><a class="feature-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a><div class="feature-track-copy"><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}</small></div><div class="track-actions"><form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/move"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="icon-action" name="direction" value="up" title="上移" aria-label="上移 {{.Title}}">↑</button><button class="icon-action" name="direction" value="down" title="下移" aria-label="下移 {{.Title}}">↓</button></form><form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/remove"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="icon-action danger-action" title="从歌单移除" aria-label="从歌单移除 {{.Title}}">×</button></form></div></article>{{else}}<div class="zero-state"><strong>歌单还是空的</strong><span>从右侧搜索歌曲并添加。</span></div>{{end}}</div></section>
-    <aside class="playlist-tools"><section class="feature-card"><p class="kicker">ADD TRACKS</p><h2>添加歌曲</h2><form class="playlist-search" method="get"><label>搜索曲名、歌手或专辑<input name="q" value="{{.Query}}" placeholder="输入关键词" required></label><button>搜索</button></form>{{if .Query}}<div class="candidate-track-list">{{range .Candidates}}<article><div><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}</small></div><form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="trackId" value="{{.ID}}"><button class="icon-action" title="添加 {{.Title}}" aria-label="添加 {{.Title}}">＋</button></form></article>{{else}}<p class="result-count">没有可添加的匹配歌曲。</p>{{end}}</div>{{end}}</section>
-      <section class="feature-card"><p class="kicker">DETAILS</p><h2>歌单信息</h2><form class="stack-form" method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><label>名称<input name="name" maxlength="160" required value="{{.Detail.Playlist.Name}}"></label><label>说明<textarea name="description" rows="4" maxlength="1000">{{.Detail.Playlist.Description}}</textarea></label><button>保存信息</button></form></section>
-      <section class="feature-card danger-zone"><p class="kicker">DANGER ZONE</p><h2>删除歌单</h2><p class="result-count">仅删除歌单“{{.Detail.Playlist.Name}}”和其中的排序，不会删除任何音乐文件。此操作不可撤销。</p><details class="danger-confirm"><summary class="danger-button">删除歌单…</summary><div class="danger-confirm-panel"><strong>确定删除“{{.Detail.Playlist.Name}}”吗？</strong><p>取消不会发送任何请求。</p><form method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}/delete"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button class="danger-button" name="confirm" value="delete">是，永久删除歌单</button><button class="secondary-button" type="button" data-cancel-confirm>取消</button></form></div></details></section>
-    </aside></div>
-</main></body></html>
+<head>
+  {{template "head" .}}
+  <title>{{.Detail.Playlist.Name}} · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main playlist-detail-main">
+    <nav class="detail-toolbar" aria-label="页面导航">
+      <a class="back-button" href="/admin/playlists" data-history-back="/admin/playlists">
+        <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
+        <span>返回歌单</span>
+      </a>
+      <span class="detail-context">歌单管理</span>
+    </nav>
+    <header class="playlist-heading">
+      <div class="playlist-cover large">{{if .Detail.Playlist.ArtworkURL}}<img class="fade-img" src="{{thumb .Detail.Playlist.ArtworkURL 512}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>{{end}}</div>
+      <div>
+        <p class="kicker">PLAYLIST</p>
+        <h1>{{.Detail.Playlist.Name}}</h1>
+        <p>{{if .Detail.Playlist.Description}}{{.Detail.Playlist.Description}}{{else}}暂无说明{{end}}</p>
+        <span class="result-count">{{.Detail.Playlist.ItemCount}} 首歌曲 · 更新于 {{.Detail.Playlist.UpdatedAt}}</span>
+      </div>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <div class="playlist-layout">
+      <section>
+        <div class="section-title"><h2>歌曲</h2><span>{{.Detail.Playlist.ItemCount}} 首</span></div>
+        <div class="playlist-track-list">
+          {{range .Detail.Tracks}}
+          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="FLAC" data-track-duration-ms="{{.DurationMillis}}">
+            <span class="drag-position playable-number">
+              <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
+              <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+            </span>
+            <a class="feature-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
+            <div class="feature-track-copy">
+              <strong>{{.Title}}</strong>
+              <small>{{.Artist}} · {{.Album}}</small>
+            </div>
+            <div class="track-actions">
+              <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/move">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="icon-action" name="direction" value="up" title="上移" aria-label="上移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-up"></use></svg></button>
+                <button class="icon-action" name="direction" value="down" title="下移" aria-label="下移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button>
+              </form>
+              <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/remove">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="icon-action danger-action" title="从歌单移除" aria-label="从歌单移除 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+              </form>
+            </div>
+          </article>
+          {{else}}
+          <div class="zero-state"><strong>歌单还是空的</strong><span>从右侧搜索歌曲并添加。</span></div>
+          {{end}}
+        </div>
+      </section>
+      <aside class="playlist-tools">
+        <section class="feature-card">
+          <p class="kicker">ADD TRACKS</p>
+          <h2>添加歌曲</h2>
+          <form class="playlist-search" method="get">
+            <label>搜索曲名、歌手或专辑<input name="q" value="{{.Query}}" placeholder="输入关键词" required></label>
+            <button>搜索</button>
+          </form>
+          {{if .Query}}
+          <div class="candidate-track-list">
+            {{range .Candidates}}
+            <article>
+              <div><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}</small></div>
+              <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="trackId" value="{{.ID}}">
+                <button class="icon-action" title="添加 {{.Title}}" aria-label="添加 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
+              </form>
+            </article>
+            {{else}}
+            <p class="result-count">没有可添加的匹配歌曲。</p>
+            {{end}}
+          </div>
+          {{end}}
+        </section>
+        <section class="feature-card">
+          <p class="kicker">DETAILS</p>
+          <h2>歌单信息</h2>
+          <form class="stack-form" method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>名称<input name="name" maxlength="160" required value="{{.Detail.Playlist.Name}}"></label>
+            <label>说明<textarea name="description" rows="4" maxlength="1000">{{.Detail.Playlist.Description}}</textarea></label>
+            <button>保存信息</button>
+          </form>
+        </section>
+        <section class="feature-card danger-zone">
+          <p class="kicker">DANGER ZONE</p>
+          <h2>删除歌单</h2>
+          <p class="result-count">仅删除歌单“{{.Detail.Playlist.Name}}”和其中的排序，不会删除任何音乐文件。此操作不可撤销。</p>
+          <details class="danger-confirm">
+            <summary class="danger-button">删除歌单…</summary>
+            <div class="danger-confirm-panel">
+              <strong>确定删除“{{.Detail.Playlist.Name}}”吗？</strong>
+              <p>取消不会发送任何请求。</p>
+              <form method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}/delete">
+                <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+                <button class="danger-button" name="confirm" value="delete">是，永久删除歌单</button>
+                <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+              </form>
+            </div>
+          </details>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

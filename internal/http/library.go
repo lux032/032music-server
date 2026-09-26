@@ -17,23 +17,24 @@ import (
 )
 
 type libraryPageData struct {
-	Username, CSRFToken, Section, Query, Genre, Sort, Index, Notice, ReturnTo string
-	ArtistRole, ArtistRoleLabel, ClearPath                                    string
-	Year                                                                      int
-	ArtistID, AlbumID                                                         int64
-	Artists                                                                   []storage.Artist
-	Albums                                                                    []storage.Album
-	Tracks                                                                    []storage.Track
-	Genres                                                                    []string
-	Years                                                                     []int
-	AlbumDetail                                                               *storage.Album
-	Total                                                                     int64
-	Page, PageCount, PageSize                                                 int
-	PrevURL, NextURL                                                          string
-	Pages                                                                     []pageLink
-	SearchFields                                                              []queryField
-	IndexLinks                                                                []indexLink
-	FilterTags                                                                []filterTag
+	Chrome
+	Section, Query, Genre, Sort, Index, Notice, ReturnTo string
+	ArtistRole, ArtistRoleLabel, ClearPath               string
+	Year                                                 int
+	ArtistID, AlbumID                                    int64
+	Artists                                              []storage.Artist
+	Albums                                               []storage.Album
+	Tracks                                               []storage.Track
+	Genres                                               []string
+	Years                                                []int
+	AlbumDetail                                          *storage.Album
+	Total                                                int64
+	Page, PageCount, PageSize                            int
+	PrevURL, NextURL                                     string
+	Pages                                                []pageLink
+	SearchFields                                         []queryField
+	IndexLinks                                           []indexLink
+	FilterTags                                           []filterTag
 }
 
 // queryField is a hidden form field that keeps the current filter state when
@@ -77,7 +78,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 		return libraryPageData{}, err
 	}
 	path := "/admin/" + section
-	return libraryPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: path, SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), FilterTags: filterTags(r, path)}, nil
+	return libraryPageData{Chrome: chromeFor(session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: path, SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), FilterTags: filterTags(r, path)}, nil
 }
 
 // filterQuery rebuilds the current filter query parameters without paging or

@@ -21,21 +21,32 @@ type artistReleaseGroup struct {
 	Releases []storage.Album
 }
 type identityPageData struct {
-	Username, CSRFToken, Section, Notice string
-	Settings                             []storage.MetadataSourceSetting
-	BiographySettings                    storage.BiographySettings
-	Artist                               *storage.ArtistDetail
-	Artists                              []storage.Artist
-	Albums                               []storage.Album
-	ReleaseGroups                        []artistReleaseGroup
-	Tracks                               []storage.Track
-	Review                               []matchReviewItem
-	Merges                               []storage.MergeOperation
+	Chrome
+	Section, Notice   string
+	Settings          []storage.MetadataSourceSetting
+	BiographySettings storage.BiographySettings
+	Artist            *storage.ArtistDetail
+	Artists           []storage.Artist
+	Albums            []storage.Album
+	ReleaseGroups     []artistReleaseGroup
+	Tracks            []storage.Track
+	Review            []matchReviewItem
+	Merges            []storage.MergeOperation
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
 	session, _ := a.sessions.get(r)
-	return identityPageData{Username: session.Username, CSRFToken: session.CSRFToken, Section: section, Notice: r.URL.Query().Get("notice")}
+	return identityPageData{Chrome: chromeFor(session, identityNavKey(section)), Section: section, Notice: r.URL.Query().Get("notice")}
+}
+
+// identityNavKey maps the identity section to the sidebar navigation key.
+func identityNavKey(section string) string {
+	switch section {
+	case "settings", "matches", "merges":
+		return section
+	default:
+		return "artists"
+	}
 }
 
 func (a *App) handleMetadataSettings(w http.ResponseWriter, r *http.Request) {

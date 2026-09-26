@@ -58,13 +58,26 @@ type loginPageData struct {
 	Error string
 }
 
+// Chrome carries the shared page-frame fields into every admin template:
+// the logged-in user, the session CSRF token and the active navigation key.
+// Page data structs embed it so templates keep using .Username/.CSRFToken
+// while the shared layout partial can highlight navigation via .Nav.
+type Chrome struct {
+	Username  string
+	CSRFToken string
+	Nav       string
+}
+
+func chromeFor(session adminSession, nav string) Chrome {
+	return Chrome{Username: session.Username, CSRFToken: session.CSRFToken, Nav: nav}
+}
+
 // indexLetters is the shared letter index used by the library index bar and
 // the template helper.
 var indexLetters = []string{"あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"}
 
 type dashboardPageData struct {
-	Username       string
-	CSRFToken      string
+	Chrome
 	Version        string
 	Uptime         string
 	DatabaseStatus string
@@ -96,11 +109,15 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		// PJAX layer to detect deployments. No-arg variants are used instead
 		// of {{asset "name"}} because html/template's context escaper breaks
 		// when several attribute actions carry string literals.
-		"assetCSS":      func() string { return assets.assetURL("admin.css") },
-		"assetNavJS":    func() string { return assets.assetURL("navigation.js") },
-		"assetPlayerJS": func() string { return assets.assetURL("player.js") },
-		"assetAdminJS":  func() string { return assets.assetURL("admin.js") },
-		"appBuild":      func() string { return assets.hash },
+		"assetTokensCSS": func() string { return assets.assetURL("tokens.css") },
+		"assetBaseCSS":   func() string { return assets.assetURL("base.css") },
+		"assetShellCSS":  func() string { return assets.assetURL("shell.css") },
+		"assetPagesCSS":  func() string { return assets.assetURL("pages.css") },
+		"assetIconsSVG":  func() string { return assets.assetURL("icons.svg") },
+		"assetNavJS":     func() string { return assets.assetURL("navigation.js") },
+		"assetPlayerJS":  func() string { return assets.assetURL("player.js") },
+		"assetAdminJS":   func() string { return assets.assetURL("admin.js") },
+		"appBuild":       func() string { return assets.hash },
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
 		"thumb": thumbURL,
@@ -255,7 +272,19 @@ func (a *App) Handler() http.Handler {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	})
 
-	return a.recoverPanic(a.securityHeaders(a.logRequests(a.gzipResponse(mux))))
+	// The /api/v1 subtree goes through apiFallback so OPTIONS preflights
+	// reach the CORS logic (ServeMux method patterns would otherwise answer
+	// a bare 405 before any middleware runs). The fallback forwards every
+	// non-OPTIONS request that matches a registered route to the main mux,
+	// so all routing and auth behavior for known endpoints is unchanged.
+	root := http.NewServeMux()
+	root.Handle("/api/v1/", a.apiFallback(mux))
+	// A bare /api/v1 (no trailing slash) keeps the pre-P1 behavior: a plain
+	// 404, not the subtree redirect ServeMux would otherwise synthesize.
+	root.Handle("/api/v1", http.HandlerFunc(http.NotFound))
+	root.Handle("/", mux)
+
+	return a.recoverPanic(a.securityHeaders(a.logRequests(a.gzipResponse(root))))
 }
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -353,8 +382,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.render(w, http.StatusOK, "dashboard.html", dashboardPageData{
-		Username:       session.Username,
-		CSRFToken:      session.CSRFToken,
+		Chrome:         chromeFor(session, "console"),
 		Version:        a.version,
 		Uptime:         time.Since(a.startedAt).Round(time.Second).String(),
 		DatabaseStatus: "正常",
@@ -371,10 +399,8 @@ func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-CSRF-Token")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+		// No OPTIONS branch here: apiFallback intercepts every /api/v1
+		// preflight before the route-specific middleware runs.
 		// A valid Bearer API token is a self-contained, non-ambient
 		// credential: it bypasses the session CSRF check entirely and must
 		// be honoured even when a browser session cookie rides along.
@@ -417,10 +443,7 @@ func (a *App) requireMediaAccess(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Range, Content-Type, Accept")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+		// No OPTIONS branch here either: apiFallback answers preflights.
 		if _, ok := a.sessions.get(r); ok {
 			next.ServeHTTP(w, r)
 			return
@@ -479,6 +502,58 @@ func (a *App) requireAPIToken(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// apiFallback owns the /api/v1 subtree's edge cases:
+//   - OPTIONS preflights get the union of the CORS allow-lists the API and
+//     media middlewares use (they carry no credentials and must succeed so
+//     browsers will send the real request).
+//   - A request whose path and method both match a registered route is
+//     forwarded to the main mux unchanged.
+//   - A path that exists under other methods gets a JSON 405 with an Allow
+//     header, mirroring what ServeMux itself would have produced.
+//   - Anything else is an unknown path: it passes through the standard auth
+//     middleware and ends at a JSON 404.
+func (a *App) apiFallback(apiMux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Range, X-CSRF-Token")
+			w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if _, pattern := apiMux.Handler(r); pattern != "" {
+			apiMux.ServeHTTP(w, r)
+			return
+		}
+		allowed := []string{}
+		hasGet := false
+		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+			probe := r.Clone(r.Context())
+			probe.Method = method
+			if _, pattern := apiMux.Handler(probe); pattern != "" {
+				allowed = append(allowed, method)
+				if method == "GET" {
+					hasGet = true
+				}
+			}
+		}
+		if len(allowed) > 0 {
+			if hasGet {
+				allowed = append(allowed, "HEAD")
+			}
+			allowed = append(allowed, "OPTIONS")
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "The requested method is not allowed for this resource.")
+			return
+		}
+		a.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeAPIError(w, http.StatusNotFound, "not_found", "The requested API resource does not exist.")
+		})).ServeHTTP(w, r)
 	})
 }
 

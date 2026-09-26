@@ -19,7 +19,7 @@ func TestVersionedAssetServedImmutable(t *testing.T) {
 	app, _, _ := setupTestApp(t)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodGet, app.assets.assetURL("admin.css"), nil)
+	req := httptest.NewRequest(http.MethodGet, app.assets.assetURL("tokens.css"), nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -38,8 +38,8 @@ func TestVersionedAssetServedImmutable(t *testing.T) {
 	if rec.Body.Len() == 0 {
 		t.Fatal("empty body")
 	}
-	if strings.Contains(rec.Body.String(), "roon-shell") == false {
-		t.Fatal("body does not look like admin.css")
+	if strings.Contains(rec.Body.String(), "--accent") == false {
+		t.Fatal("body does not look like tokens.css")
 	}
 }
 
@@ -78,15 +78,15 @@ func TestStaleAssetHashRedirects(t *testing.T) {
 	app, _, _ := setupTestApp(t)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/assets/000000000000/admin.css", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/assets/000000000000/tokens.css", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if location := rec.Header().Get("Location"); location != app.assets.assetURL("admin.css") {
-		t.Fatalf("Location = %q, want %q", location, app.assets.assetURL("admin.css"))
+	if location := rec.Header().Get("Location"); location != app.assets.assetURL("tokens.css") {
+		t.Fatalf("Location = %q, want %q", location, app.assets.assetURL("tokens.css"))
 	}
 }
 
@@ -94,7 +94,7 @@ func TestLegacyAssetPathNoCacheAndConditional(t *testing.T) {
 	app, _, _ := setupTestApp(t)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/assets/admin.css", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/assets/tokens.css", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -109,7 +109,7 @@ func TestLegacyAssetPathNoCacheAndConditional(t *testing.T) {
 		t.Fatal("missing ETag")
 	}
 
-	conditional := httptest.NewRequest(http.MethodGet, "/admin/assets/admin.css", nil)
+	conditional := httptest.NewRequest(http.MethodGet, "/admin/assets/tokens.css", nil)
 	conditional.Header.Set("If-None-Match", etag)
 	conditionalRec := httptest.NewRecorder()
 	handler.ServeHTTP(conditionalRec, conditional)
@@ -133,7 +133,7 @@ func TestAssetFuncUsedInTemplates(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="`+app.assets.assetURL("admin.css")+`"`) {
+	if !strings.Contains(body, `href="`+app.assets.assetURL("tokens.css")+`"`) {
 		t.Fatal("dashboard does not reference the versioned stylesheet")
 	}
 	if !strings.Contains(body, `<meta name="app-build" content="`+app.assets.hash+`">`) {
@@ -141,6 +141,47 @@ func TestAssetFuncUsedInTemplates(t *testing.T) {
 	}
 	if !strings.Contains(body, `<meta name="csrf-token" content="`) {
 		t.Fatal("dashboard missing csrf-token meta")
+	}
+}
+
+// The shared head must pull in the full split stylesheet set and the icon
+// sprite meta tag on every chrome page.
+func TestHeadReferencesSplitAssets(t *testing.T) {
+	app, cookie, _ := csrfSessionApp(t)
+	handler := app.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, name := range []string{"tokens.css", "base.css", "shell.css", "pages.css"} {
+		if !strings.Contains(body, `href="`+app.assets.assetURL(name)+`"`) {
+			t.Fatalf("dashboard head missing %s", name)
+		}
+	}
+	if !strings.Contains(body, `<meta name="icon-sprite" content="`+app.assets.assetURL("icons.svg")+`">`) {
+		t.Fatal("dashboard missing icon-sprite meta")
+	}
+}
+
+// The icon sprite must be served with an SVG content type so <use>
+// references resolve.
+func TestIconSpriteServedAsSVG(t *testing.T) {
+	app, _, _ := setupTestApp(t)
+	handler := app.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, app.assets.assetURL("icons.svg"), nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/svg+xml") {
+		t.Fatalf("Content-Type = %q, want image/svg+xml", ct)
 	}
 }
 

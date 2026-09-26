@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lux032/032music-server/internal/config"
@@ -53,11 +54,10 @@ func TestMediaAccessRejectsInvalidToken(t *testing.T) {
 }
 
 func TestMediaAccessAllowsOptionsAndCORSHeaders(t *testing.T) {
-	app := &App{
-		config:   config.Config{APIToken: "api-token-at-least-24-characters", MediaToken: "media-token-at-least-24-characters"},
-		sessions: testSessionManager(t),
-	}
-	handler := app.requireMediaAccess(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	// Since the fallback owns /api/v1 preflights, exercise the full handler
+	// rather than the bare middleware (whose OPTIONS branch was removed).
+	app, _, _ := setupTestApp(t)
+	handler := app.Handler()
 	request := httptest.NewRequest(http.MethodOptions, "/api/v1/tracks/1/stream", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -66,6 +66,9 @@ func TestMediaAccessAllowsOptionsAndCORSHeaders(t *testing.T) {
 	}
 	if response.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want *", response.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if allow := response.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(allow, "Range") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want Range included", allow)
 	}
 }
 

@@ -16,31 +16,35 @@ import (
 const adminFeaturePageSize = 50
 
 type favoritesPageData struct {
-	Username, CSRFToken, Notice string
-	Albums                      []storage.Album
-	Tracks                      []storage.Track
-	AlbumTotal, TrackTotal      int64
+	Chrome
+	Notice                 string
+	Albums                 []storage.Album
+	Tracks                 []storage.Track
+	AlbumTotal, TrackTotal int64
 }
 
 type playlistsPageData struct {
-	Username, CSRFToken, Notice string
-	Playlists                   []storage.Playlist
-	Total                       int64
+	Chrome
+	Notice    string
+	Playlists []storage.Playlist
+	Total     int64
 }
 
 type playlistPageData struct {
-	Username, CSRFToken, Notice, Query string
-	Detail                             storage.PlaylistDetail
-	Candidates                         []storage.Track
+	Chrome
+	Notice, Query string
+	Detail        storage.PlaylistDetail
+	Candidates    []storage.Track
 }
 
 type playbackPageData struct {
-	Username, CSRFToken, Notice string
-	History                     []storage.PlaybackRecord
-	Total                       int64
-	Page, PageCount             int
-	PrevURL, NextURL            string
-	Pages                       []pageLink
+	Chrome
+	Notice           string
+	History          []storage.PlaybackRecord
+	Total            int64
+	Page, PageCount  int
+	PrevURL, NextURL string
+	Pages            []pageLink
 }
 
 func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +60,7 @@ func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, http.StatusOK, "favorites.html", favoritesPageData{
-		Username: session.Username, CSRFToken: session.CSRFToken, Notice: r.URL.Query().Get("notice"),
+		Chrome: chromeFor(session, "favorites"), Notice: r.URL.Query().Get("notice"),
 		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal,
 	})
 }
@@ -95,7 +99,7 @@ func (a *App) handleAdminPlaylists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, http.StatusOK, "playlists.html", playlistsPageData{
-		Username: session.Username, CSRFToken: session.CSRFToken, Notice: r.URL.Query().Get("notice"),
+		Chrome: chromeFor(session, "playlists"), Notice: r.URL.Query().Get("notice"),
 		Playlists: playlists, Total: total,
 	})
 }
@@ -145,7 +149,7 @@ func (a *App) handleAdminPlaylist(w http.ResponseWriter, r *http.Request) {
 		candidates = filtered
 	}
 	a.render(w, http.StatusOK, "playlist.html", playlistPageData{
-		Username: session.Username, CSRFToken: session.CSRFToken, Notice: r.URL.Query().Get("notice"),
+		Chrome: chromeFor(session, "playlists"), Notice: r.URL.Query().Get("notice"),
 		Query: query, Detail: detail, Candidates: candidates,
 	})
 }
@@ -269,7 +273,7 @@ func (a *App) handleAdminPlayback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := playbackPageData{
-		Username: session.Username, CSRFToken: session.CSRFToken, Notice: r.URL.Query().Get("notice"),
+		Chrome: chromeFor(session, "playback"), Notice: r.URL.Query().Get("notice"),
 		History: history, Total: total, Page: page,
 	}
 	data.PageCount = int((total + adminFeaturePageSize - 1) / adminFeaturePageSize)

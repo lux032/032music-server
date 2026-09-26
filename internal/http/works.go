@@ -11,21 +11,23 @@ import (
 )
 
 type worksPageData struct {
-	Username, CSRFToken, Query, Type, Index, Sort, Notice string
-	Year, Page, PageCount, PageSize                       int
-	Total                                                 int64
-	Works                                                 []storage.Work
-	Years                                                 []int
-	PrevURL, NextURL                                      string
-	Pages                                                 []pageLink
+	Chrome
+	Query, Type, Index, Sort, Notice string
+	Year, Page, PageCount, PageSize  int
+	Total                            int64
+	Works                            []storage.Work
+	Years                            []int
+	PrevURL, NextURL                 string
+	Pages                            []pageLink
 }
 
 type workPageData struct {
-	Username, CSRFToken, Notice string
-	Work                        storage.Work
-	Tracks                      []storage.WorkTrack
-	Candidates                  []storage.Track
-	Query                       string
+	Chrome
+	Notice     string
+	Work       storage.Work
+	Tracks     []storage.WorkTrack
+	Candidates []storage.Track
+	Query      string
 }
 
 func workFilters(r *http.Request) storage.WorkFilters {
@@ -161,7 +163,7 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := worksPageData{Username: session.Username, CSRFToken: session.CSRFToken, Query: filter.Query, Type: filter.Type, Index: filter.Index, Sort: filter.Sort, Year: filter.Year, Works: values, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, Sort: filter.Sort, Year: filter.Year, Works: values, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
 	data.PageCount = int((total + 35) / 36)
 	if data.PageCount < 1 {
 		data.PageCount = 1
@@ -203,7 +205,7 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("trackQ"))
 	candidates, _ := a.store.ListTracks(r.Context(), storage.Filters{Query: query, Limit: 30})
-	a.render(w, http.StatusOK, "work.html", workPageData{Username: session.Username, CSRFToken: session.CSRFToken, Notice: r.URL.Query().Get("notice"), Work: value, Tracks: tracks, Candidates: candidates, Query: query})
+	a.render(w, http.StatusOK, "work.html", workPageData{Chrome: chromeFor(session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: tracks, Candidates: candidates, Query: query})
 }
 
 func (a *App) handleUpdateWork(w http.ResponseWriter, r *http.Request) {

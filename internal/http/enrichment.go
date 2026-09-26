@@ -30,10 +30,11 @@ type enrichmentArtistReview struct {
 }
 
 type enrichmentPageData struct {
-	Username, CSRFToken, Notice string
-	Runs                        []storage.EnrichmentRun
-	Works                       []enrichmentWorkReview
-	Artists                     []enrichmentArtistReview
+	Chrome
+	Notice  string
+	Runs    []storage.EnrichmentRun
+	Works   []enrichmentWorkReview
+	Artists []enrichmentArtistReview
 }
 
 func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunRequest, error) {
@@ -166,7 +167,7 @@ func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []
 
 func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
-	data := enrichmentPageData{Username: session.Username, CSRFToken: session.CSRFToken, Notice: r.URL.Query().Get("notice")}
+	data := enrichmentPageData{Chrome: chromeFor(session, "enrichment"), Notice: r.URL.Query().Get("notice")}
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
 	data.Works, data.Artists = a.enrichmentReviews(r.Context())
 	a.render(w, http.StatusOK, "enrichment-jobs.html", data)

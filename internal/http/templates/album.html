@@ -1,34 +1,155 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{.CSRFToken}}"><meta name="app-build" content="{{appBuild}}"><title>{{.AlbumDetail.Title}} · 032</title><link rel="stylesheet" href="{{assetCSS}}"><script defer src="{{assetNavJS}}"></script><script defer src="{{assetPlayerJS}}"></script></head>
-<body class="roon-shell album-page">
-<aside class="sidebar">
-  <a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a>
-  <nav><p>我的音乐库</p><a href="/admin/albums" class="active" title="专辑" aria-label="专辑"><i>▦</i> 专辑</a><a href="/admin/artists" title="歌手" aria-label="歌手"><i>●</i> 歌手</a><a href="/admin/tracks" title="歌曲" aria-label="歌曲"><i>≡</i> 歌曲</a><a href="/admin/works"><i>◇</i> 作品</a><a href="/admin/favorites"><i>♥</i> 收藏</a><a href="/admin/playlists"><i>♫</i> 歌单</a><a href="/admin/playback"><i>↺</i> 播放记录</a><p>管理</p><a href="/admin"><i>⌁</i> 控制台</a></nav>
-  <div class="sidebar-user"><span>{{.Username}}</span></div>
-</aside>
-<main class="album-main">
-  <nav class="detail-toolbar" aria-label="页面导航"><a class="back-button" href="/admin/albums" data-history-back="/admin/albums"><span class="back-button-icon" aria-hidden="true">←</span><span>返回专辑</span></a><span class="detail-context">专辑详情</span></nav>
-  {{if .AlbumDetail.ArtworkURL}}<div class="detail-ambient" aria-hidden="true"><img src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async"></div>{{end}}
-  {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
-  <section class="album-hero">
-    {{if .AlbumDetail.ArtworkURL}}<img class="hero-cover" src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async">{{else}}<div class="hero-cover cover-placeholder">032</div>{{end}}
-    <div class="album-heading"><p class="kicker">{{.AlbumDetail.AlbumType}}</p><h1>{{.AlbumDetail.Title}}</h1>{{if .AlbumDetail.Version}}<p class="album-version">{{.AlbumDetail.Version}}</p>{{end}}<h2 class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</h2><div class="album-facts">{{if .AlbumDetail.Year}}<span>{{.AlbumDetail.Year}}</span>{{end}}<span>{{.AlbumDetail.DiscCount}} 碟</span><span>{{.AlbumDetail.TrackCount}} 首</span><span>{{.AlbumDetail.Formats}}</span></div><div class="album-actions"><button class="primary-round">▶ 播放</button><a href="#edit" class="secondary-round">编辑专辑</a><form method="post" action="/admin/favorites/albums/{{.AlbumDetail.ID}}"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="favorite" value="{{if .AlbumDetail.IsFavorite}}0{{else}}1{{end}}"><input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}"><button class="secondary-round favorite-button {{if .AlbumDetail.IsFavorite}}selected{{end}}">{{if .AlbumDetail.IsFavorite}}♥ 已收藏{{else}}♡ 收藏专辑{{end}}</button></form></div></div>
-  </section>
-  <div class="album-columns">
-    <section class="album-content"><div class="section-title"><h2>曲目</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div><div class="detail-tracks">{{range .Tracks}}<article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}"><span class="playable-number"><span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span><button type="button" class="row-play-btn" title="播放 {{.Title}}">▶</button></span><div><strong>{{.Title}}</strong><small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}</small><form class="inline-favorite" method="post" action="/admin/favorites/tracks/{{.ID}}"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}"><input type="hidden" name="returnTo" value="/admin/albums/{{$.AlbumDetail.ID}}"><button class="text-action {{if .IsFavorite}}selected{{end}}">{{if .IsFavorite}}♥ 已收藏{{else}}♡ 收藏{{end}}</button></form></div><span class="format-pill">{{.Container}}</span></article>{{end}}</div>{{if .AlbumDetail.Review}}<div class="editorial"><p class="kicker">ALBUM NOTES</p><p>{{.AlbumDetail.Review}}</p></div>{{end}}</section>
-    <aside class="album-inspector"><section><p class="kicker">RELEASE</p><dl><div><dt>演出者</dt><dd class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</dd></div>{{if .AlbumDetail.ReleaseDate}}<div><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}{{if .AlbumDetail.OriginalReleaseDate}}<div><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}{{if .AlbumDetail.Label}}<div><dt>厂牌</dt><dd>{{.AlbumDetail.Label}}</dd></div>{{end}}{{if .AlbumDetail.CatalogNumber}}<div><dt>目录号</dt><dd>{{.AlbumDetail.CatalogNumber}}</dd></div>{{end}}{{if .AlbumDetail.Country}}<div><dt>国家/地区</dt><dd>{{.AlbumDetail.Country}}</dd></div>{{end}}{{if .AlbumDetail.Genres}}<div><dt>流派</dt><dd>{{.AlbumDetail.Genres}}</dd></div>{{end}}</dl></section><section><p class="kicker">MEDIA</p><dl>{{if .AlbumDetail.Formats}}<div><dt>格式</dt><dd>{{.AlbumDetail.Formats}}</dd></div>{{end}}{{if .AlbumDetail.TotalSize}}<div><dt>容量</dt><dd>{{.AlbumDetail.TotalSize}}</dd></div>{{end}}</dl></section></aside>
-  </div>
-  <section id="edit" class="album-editor">
-    <div class="editor-head"><div><p class="kicker">METADATA OVERRIDES</p><h2>编辑专辑</h2><p>这些值优先于文件标签，源音乐文件不会被修改。</p></div></div>
-    <form method="post" action="/admin/albums/{{.AlbumDetail.ID}}"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-      <fieldset><legend>基本信息</legend>
-        <label>专辑标题<input name="title" value="{{.AlbumDetail.Title}}"></label>
-        <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
-        <div class="form-grid"><label>专辑类型<select name="albumType"><option value="album" {{if eq .AlbumDetail.AlbumType "album"}}selected{{end}}>专辑</option><option value="single" {{if eq .AlbumDetail.AlbumType "single"}}selected{{end}}>单曲</option><option value="ep" {{if eq .AlbumDetail.AlbumType "ep"}}selected{{end}}>EP</option><option value="soundtrack" {{if eq .AlbumDetail.AlbumType "soundtrack"}}selected{{end}}>原声</option><option value="compilation" {{if eq .AlbumDetail.AlbumType "compilation"}}selected{{end}}>合辑</option><option value="live" {{if eq .AlbumDetail.AlbumType "live"}}selected{{end}}>现场</option><option value="bootleg" {{if eq .AlbumDetail.AlbumType "bootleg"}}selected{{end}}>Bootleg</option><option value="other" {{if eq .AlbumDetail.AlbumType "other"}}selected{{end}}>其他</option></select></label><label>版本 / Edition<input name="version" value="{{.AlbumDetail.Version}}" placeholder="Deluxe Edition, Remaster…"></label></div>
-      </fieldset>
-      <fieldset><legend>发行信息</legend><div class="form-grid thirds"><label>发行年份<input type="number" name="year" value="{{.AlbumDetail.Year}}"></label><label>发行日期<input name="releaseDate" value="{{.AlbumDetail.ReleaseDate}}" placeholder="YYYY-MM-DD"></label><label>原始发行日期<input name="originalReleaseDate" value="{{.AlbumDetail.OriginalReleaseDate}}" placeholder="YYYY-MM-DD"></label><label>厂牌<input name="label" value="{{.AlbumDetail.Label}}"></label><label>目录号<input name="catalogNumber" value="{{.AlbumDetail.CatalogNumber}}"></label><label>国家/地区<input name="country" value="{{.AlbumDetail.Country}}"></label></div></fieldset>
-      <fieldset><legend>分类与说明</legend><label>流派（逗号分隔）<input name="genres" value="{{.AlbumDetail.Genres}}"></label><div class="check-row"><label><input type="checkbox" name="compilation" {{if .AlbumDetail.Compilation}}checked{{end}}> 合辑</label><label><input type="checkbox" name="live" {{if .AlbumDetail.Live}}checked{{end}}> 现场录音</label><label><input type="checkbox" name="bootleg" {{if .AlbumDetail.Bootleg}}checked{{end}}> Bootleg</label></div><label>专辑简介<textarea name="review" rows="8" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label></fieldset>
-      <div class="editor-actions"><a href="/admin/albums/{{.AlbumDetail.ID}}">取消</a><button>保存覆盖信息</button></div>
-    </form>
-  </section>
-</main></body></html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>{{.AlbumDetail.Title}} · 032</title>
+</head>
+<body class="roon-shell album-page" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main album-main">
+    <nav class="detail-toolbar" aria-label="页面导航">
+      <a class="back-button" href="/admin/albums" data-history-back="/admin/albums">
+        <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
+        <span>返回专辑</span>
+      </a>
+      <span class="detail-context">专辑详情</span>
+    </nav>
+    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+
+    <section class="album-hero">
+      {{if .AlbumDetail.ArtworkURL}}<img class="hero-cover fade-img" src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async">{{else}}<div class="hero-cover cover-placeholder">032</div>{{end}}
+      <div class="album-heading">
+        <p class="kicker">{{.AlbumDetail.AlbumType}}</p>
+        <h1>{{.AlbumDetail.Title}}</h1>
+        {{if .AlbumDetail.Version}}<p class="album-version">{{.AlbumDetail.Version}}</p>{{end}}
+        <h2 class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</h2>
+        <div class="album-facts">
+          {{if .AlbumDetail.Year}}<span>{{.AlbumDetail.Year}}</span>{{end}}
+          <span>{{.AlbumDetail.DiscCount}} 碟</span>
+          <span>{{.AlbumDetail.TrackCount}} 首</span>
+          <span>{{.AlbumDetail.Formats}}</span>
+        </div>
+        <div class="album-actions">
+          <button type="button" class="primary-round"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
+          <a href="#edit" class="secondary-round">编辑专辑</a>
+          <form method="post" action="/admin/favorites/albums/{{.AlbumDetail.ID}}">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="favorite" value="{{if .AlbumDetail.IsFavorite}}0{{else}}1{{end}}">
+            <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
+            <button class="secondary-round favorite-button {{if .AlbumDetail.IsFavorite}}selected{{end}}">{{if .AlbumDetail.IsFavorite}}已收藏{{else}}收藏专辑{{end}}</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <div class="album-columns">
+      <section class="album-content">
+        <div class="section-title"><h2>曲目</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div>
+        <div class="detail-tracks">
+          {{range .Tracks}}
+          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
+            <span class="playable-number">
+              <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
+              <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+            </span>
+            <div>
+              <strong>{{.Title}}</strong>
+              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}</small>
+            </div>
+            <span class="format-pill">{{.Container}}</span>
+            <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
+            <form class="inline-favorite" method="post" action="/admin/favorites/tracks/{{.ID}}">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}">
+              <input type="hidden" name="returnTo" value="/admin/albums/{{$.AlbumDetail.ID}}">
+              <button class="icon-action {{if .IsFavorite}}selected{{end}}" title="{{if .IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Title}}" aria-label="{{if .IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Title}}">
+                <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#{{if .IsFavorite}}icon-heart-fill{{else}}icon-heart{{end}}"></use></svg>
+              </button>
+            </form>
+          </article>
+          {{end}}
+        </div>
+        {{if .AlbumDetail.Review}}<div class="editorial"><p class="kicker">ALBUM NOTES</p><p>{{.AlbumDetail.Review}}</p></div>{{end}}
+      </section>
+      <aside class="album-inspector">
+        <section>
+          <p class="kicker">RELEASE</p>
+          <dl>
+            <div><dt>演出者</dt><dd class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</dd></div>
+            {{if .AlbumDetail.ReleaseDate}}<div><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}
+            {{if .AlbumDetail.OriginalReleaseDate}}<div><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}
+            {{if .AlbumDetail.Label}}<div><dt>厂牌</dt><dd>{{.AlbumDetail.Label}}</dd></div>{{end}}
+            {{if .AlbumDetail.CatalogNumber}}<div><dt>目录号</dt><dd>{{.AlbumDetail.CatalogNumber}}</dd></div>{{end}}
+            {{if .AlbumDetail.Country}}<div><dt>国家/地区</dt><dd>{{.AlbumDetail.Country}}</dd></div>{{end}}
+            {{if .AlbumDetail.Genres}}<div><dt>流派</dt><dd>{{.AlbumDetail.Genres}}</dd></div>{{end}}
+          </dl>
+        </section>
+        <section>
+          <p class="kicker">MEDIA</p>
+          <dl>
+            {{if .AlbumDetail.Formats}}<div><dt>格式</dt><dd>{{.AlbumDetail.Formats}}</dd></div>{{end}}
+            {{if .AlbumDetail.TotalSize}}<div><dt>容量</dt><dd>{{.AlbumDetail.TotalSize}}</dd></div>{{end}}
+          </dl>
+        </section>
+      </aside>
+    </div>
+
+    <section id="edit" class="album-editor">
+      <div class="editor-head">
+        <div>
+          <p class="kicker">METADATA OVERRIDES</p>
+          <h2>编辑专辑</h2>
+          <p>这些值优先于文件标签，源音乐文件不会被修改。</p>
+        </div>
+      </div>
+      <form method="post" action="/admin/albums/{{.AlbumDetail.ID}}">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <fieldset>
+          <legend>基本信息</legend>
+          <label>专辑标题<input name="title" value="{{.AlbumDetail.Title}}"></label>
+          <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
+          <div class="form-grid">
+            <label>专辑类型<select name="albumType">
+              <option value="album" {{if eq .AlbumDetail.AlbumType "album"}}selected{{end}}>专辑</option>
+              <option value="single" {{if eq .AlbumDetail.AlbumType "single"}}selected{{end}}>单曲</option>
+              <option value="ep" {{if eq .AlbumDetail.AlbumType "ep"}}selected{{end}}>EP</option>
+              <option value="soundtrack" {{if eq .AlbumDetail.AlbumType "soundtrack"}}selected{{end}}>原声</option>
+              <option value="compilation" {{if eq .AlbumDetail.AlbumType "compilation"}}selected{{end}}>合辑</option>
+              <option value="live" {{if eq .AlbumDetail.AlbumType "live"}}selected{{end}}>现场</option>
+              <option value="bootleg" {{if eq .AlbumDetail.AlbumType "bootleg"}}selected{{end}}>Bootleg</option>
+              <option value="other" {{if eq .AlbumDetail.AlbumType "other"}}selected{{end}}>其他</option>
+            </select></label>
+            <label>版本 / Edition<input name="version" value="{{.AlbumDetail.Version}}" placeholder="Deluxe Edition, Remaster…"></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>发行信息</legend>
+          <div class="form-grid thirds">
+            <label>发行年份<input type="number" name="year" value="{{.AlbumDetail.Year}}"></label>
+            <label>发行日期<input name="releaseDate" value="{{.AlbumDetail.ReleaseDate}}" placeholder="YYYY-MM-DD"></label>
+            <label>原始发行日期<input name="originalReleaseDate" value="{{.AlbumDetail.OriginalReleaseDate}}" placeholder="YYYY-MM-DD"></label>
+            <label>厂牌<input name="label" value="{{.AlbumDetail.Label}}"></label>
+            <label>目录号<input name="catalogNumber" value="{{.AlbumDetail.CatalogNumber}}"></label>
+            <label>国家/地区<input name="country" value="{{.AlbumDetail.Country}}"></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>分类与说明</legend>
+          <label>流派（逗号分隔）<input name="genres" value="{{.AlbumDetail.Genres}}"></label>
+          <div class="check-row">
+            <label><input type="checkbox" name="compilation" {{if .AlbumDetail.Compilation}}checked{{end}}> 合辑</label>
+            <label><input type="checkbox" name="live" {{if .AlbumDetail.Live}}checked{{end}}> 现场录音</label>
+            <label><input type="checkbox" name="bootleg" {{if .AlbumDetail.Bootleg}}checked{{end}}> Bootleg</label>
+          </div>
+          <label>专辑简介<textarea name="review" rows="8" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label>
+        </fieldset>
+        <div class="editor-actions">
+          <a href="/admin/albums/{{.AlbumDetail.ID}}">取消</a>
+          <button>保存覆盖信息</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
