@@ -74,7 +74,7 @@ func chromeFor(session adminSession, nav string) Chrome {
 
 // indexLetters is the shared letter index used by the library index bar and
 // the template helper.
-var indexLetters = []string{"あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"}
+var indexLetters = []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "#"}
 
 type dashboardPageData struct {
 	Chrome
@@ -96,6 +96,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 
 	templates, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMillis":  formatDurationMillis,
+		"firstGenre":            firstGenre,
 		"formatAdminTime":       formatAdminTime,
 		"playbackStateLabel":    playbackStateLabel,
 		"enrichmentRunProgress": enrichmentRunProgress,
@@ -117,6 +118,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"assetNavJS":     func() string { return assets.assetURL("navigation.js") },
 		"assetPlayerJS":  func() string { return assets.assetURL("player.js") },
 		"assetAdminJS":   func() string { return assets.assetURL("admin.js") },
+		"assetBrowseJS":  func() string { return assets.assetURL("browse.js") },
 		"appBuild":       func() string { return assets.hash },
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.

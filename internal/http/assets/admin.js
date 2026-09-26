@@ -50,6 +50,7 @@
     const btn = document.getElementById('sidebar-more');
     if (!sheet || !btn) return;
     sheet.hidden = !open;
+    document.body.classList.toggle('more-sheet-open', open);
     btn.setAttribute('aria-expanded', String(open));
     if (open) sheet.querySelector('a')?.focus();
   }

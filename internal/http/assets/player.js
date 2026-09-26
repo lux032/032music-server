@@ -220,7 +220,12 @@
       // applyPage returns true on success, 'reload' on a build mismatch and
       // false on structural failures; the latter two both need a full
       // navigation, which also picks up fresh assets on a new deployment.
-      if (!res.ok || applyPage(html, res.url || url, push, restoreState) !== true) window.location.href = res.url || url;
+      if (!res.ok) { window.location.href = res.url || url; return; }
+      const destination = res.url || url;
+      // A composing search must keep its live input; the browse controls
+      // cancel only their own stale response, not unrelated navigation.
+      if (!document.dispatchEvent(new CustomEvent('032:pjax-before-swap', { cancelable: true, detail: { url: destination } }))) return;
+      if (applyPage(html, destination, push, restoreState) !== true) window.location.href = destination;
     } catch (err) {
       if (err && err.name === 'AbortError') return;
       window.location.href = url;
@@ -230,6 +235,11 @@
       if (controller && navigationAbortController === controller) finishNavProgress();
     }
   }
+
+  window.__032BrowseNavigate = (url, replace) => {
+    if (pendingForms.size && !window.confirm('更改仍在保存中。现在离开可能无法确认保存结果。是否仍要离开？')) return false;
+    return pjaxNavigate(url, !replace, replace ? { app: '032', url } : null);
+  };
 
   function setFormPending(form, submitter, pending) {
     form.classList.toggle('is-pending', pending);
@@ -373,6 +383,7 @@
     doc.querySelectorAll('script[src]').forEach((script) => { const src = script.getAttribute('src'); if (!src || document.querySelector(`script[src="${src}"]`)) return; const el = document.createElement('script'); el.src = src; document.head.appendChild(el); });
     const destination = new URL(url, window.location.href);
     if (push && destination.href !== window.location.href) history.pushState({ app: '032', url: destination.href, previousURL: window.location.href, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
+    if (!push && restoreState && restoreState.app === '032' && destination.href !== window.location.href) history.replaceState({ app: '032', url: destination.href, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
     const state = !push && restoreState && restoreState.app === '032' ? restoreState : null;
     if (state && state.url === window.location.href) {
       window.scrollTo(state.scrollX || 0, state.scrollY || 0);
@@ -724,6 +735,15 @@
         if (menu) menu.removeAttribute('open');
         return;
       }
+      const albumAction = e.target.closest('.album-queue-action');
+      if (albumAction) {
+        e.preventDefault();
+        const card = albumAction.closest('[data-album-id]');
+        if (card) queueAlbumFromPage(card.dataset.albumId, albumAction.dataset.mode);
+        const menu = albumAction.closest('details');
+        if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
+        return;
+      }
       const albumPlayBtn = e.target.closest('.album-hero .primary-round');
       if (albumPlayBtn) {
         e.preventDefault();
@@ -847,6 +867,43 @@
     saveState();
     emitPlayerState();
     showToast(mode === 'next' ? `已加入下一首播放：${track.title}` : `已添加到队列末尾：${track.title}`);
+  }
+
+  const loadingAlbums = new Set();
+  async function queueAlbumFromPage(albumId, mode) {
+    if (loadingAlbums.has(albumId)) return;
+    loadingAlbums.add(albumId);
+    try {
+      const response = await fetch(`/api/v1/albums/${encodeURIComponent(albumId)}`, { credentials: 'same-origin' });
+      if (response.status === 401) { window.location.assign('/admin/login'); return; }
+      if (!response.ok) throw new Error('专辑加载失败');
+      const payload = await response.json();
+      const tracks = (payload.tracks || []).map(track => ({
+        id: String(track.id), title: track.title, artist: track.artist,
+        album: track.album || payload.album?.title || '',
+        artwork: artworkForSize(track.artworkUrl || payload.album?.artworkUrl || '', 256),
+        container: track.container, durationMs: track.durationMillis,
+        streamUrl: `/api/v1/tracks/${track.id}/stream`
+      }));
+      if (!tracks.length) { showToast('这张专辑没有可播放的歌曲'); return; }
+      if (mode === 'play') {
+        queue = tracks;
+        playHistory = [];
+        playTrackAtIndex(0);
+      } else if (!queue.length || currentIndex < 0) {
+        queue = tracks;
+        playHistory = [];
+        playTrackAtIndex(0);
+        showToast(`开始播放：${payload.album?.title || '专辑'}`);
+      } else {
+        if (mode === 'next') queue.splice(currentIndex + 1, 0, ...tracks);
+        else queue.push(...tracks);
+        saveState();
+        emitPlayerState();
+        showToast(mode === 'next' ? '已加入下一首播放' : '已添加到队列末尾');
+      }
+    } catch (error) { showToast('专辑加载失败，请重试'); }
+    finally { loadingAlbums.delete(albumId); }
   }
 
   function playTrackAtIndex(index, skipHistoryPush) {
@@ -1458,7 +1515,7 @@
     const fillElem = document.getElementById('np-progress-fill');
     const bar = document.getElementById('np-progress-bar');
     if (curElem) curElem.textContent = formatTime(curTime);
-    if (totalElem) totalElem.textContent = durTime > 0 ? formatTime(durTime) : '00:00';
+    if (totalElem) totalElem.textContent = durTime > 0 ? formatTime(durTime) : '0:00';
     if (bar) {
       bar.setAttribute('aria-valuemax', String(Math.floor(durTime)));
       bar.setAttribute('aria-valuenow', String(Math.floor(curTime)));

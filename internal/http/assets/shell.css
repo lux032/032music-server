@@ -784,3 +784,6 @@ body.np-collapsed .np-expand { display: grid; }
   .now-playing { transition: none; }
   .eq-bars i { animation: none; height: 6px; }
 }
+
+/* Keep the scrim below the sidebar (900) and its sheet (950). */
+@media (max-width: 900px) { body.more-sheet-open::before { content: ""; position: fixed; inset: 0; z-index: 895; background: rgba(13, 25, 47, .34); } .sidebar-more-sheet nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; } }

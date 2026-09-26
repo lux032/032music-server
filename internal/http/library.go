@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -29,11 +30,13 @@ type libraryPageData struct {
 	Years                                                []int
 	AlbumDetail                                          *storage.Album
 	Total                                                int64
+	TotalLabel                                           string
 	Page, PageCount, PageSize                            int
 	PrevURL, NextURL                                     string
 	Pages                                                []pageLink
 	SearchFields                                         []queryField
 	IndexLinks                                           []indexLink
+	KanaIndex                                            bool
 	FilterTags                                           []filterTag
 }
 
@@ -46,13 +49,13 @@ type queryField struct {
 // indexLink is one entry of the letter index bar, carrying the full current
 // filter state so letters refine rather than replace it.
 type indexLink struct {
-	Value, URL string
-	Current    bool
+	Value, URL    string
+	Current, Kana bool
 }
 
 // filterTag is a removable active-condition chip shown above the results.
 type filterTag struct {
-	Label, RemoveURL string
+	Name, Value, Label, RemoveURL string
 }
 
 type pageLink struct {
@@ -78,7 +81,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 		return libraryPageData{}, err
 	}
 	path := "/admin/" + section
-	return libraryPageData{Chrome: chromeFor(session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: path, SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), FilterTags: filterTags(r, path)}, nil
+	return libraryPageData{Chrome: chromeFor(session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: path, SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), KanaIndex: isKanaIndex(f.Index), FilterTags: filterTags(r, path)}, nil
 }
 
 // filterQuery rebuilds the current filter query parameters without paging or
@@ -110,20 +113,62 @@ func searchFields(r *http.Request) []queryField {
 	return fields
 }
 
+func firstGenre(genres string) string {
+	parts := splitCSV(genres)
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+func formatLibraryCount(n int64) string {
+	if n < 1000 {
+		return strconv.FormatInt(n, 10)
+	}
+	return formatLibraryCount(n/1000) + fmt.Sprintf(",%03d", n%1000)
+}
+
+func isKanaIndex(value string) bool {
+	return value != "" && strings.Contains("あかさたなはまやらわ", value)
+}
+
 func indexLinks(r *http.Request, path string) []indexLink {
 	base := filterQuery(r)
 	current := base.Get("index")
 	base.Del("index")
-	links := make([]indexLink, 0, len(indexLetters))
+	allURL := path
+	if encoded := base.Encode(); encoded != "" {
+		allURL += "?" + encoded
+	}
+	links := []indexLink{{Value: "全部", URL: allURL, Current: current == ""}}
 	for _, letter := range indexLetters {
 		values := url.Values{}
 		for name, list := range base {
 			values[name] = append([]string(nil), list...)
 		}
 		values.Set("index", letter)
-		links = append(links, indexLink{Value: letter, URL: path + "?" + values.Encode(), Current: letter == current})
+		links = append(links, indexLink{Value: letter, URL: path + "?" + values.Encode(), Current: letter == current, Kana: isKanaIndex(letter)})
 	}
 	return links
+}
+
+func librarySortLabel(value string) string {
+	switch value {
+	case "title":
+		return "标题"
+	case "year":
+		return "发行年份"
+	case "added":
+		return "加入时间"
+	case "name":
+		return "名称"
+	case "albums":
+		return "专辑关联数量"
+	case "tracks":
+		return "单曲关联数量"
+	default:
+		return value
+	}
 }
 
 // filterTags renders the active conditions as removable chips. Names for
@@ -142,7 +187,7 @@ func filterTags(r *http.Request, path string) []filterTag {
 		if encoded := values.Encode(); encoded != "" {
 			removeURL += "?" + encoded
 		}
-		tags = append(tags, filterTag{Label: label, RemoveURL: removeURL})
+		tags = append(tags, filterTag{Name: name, Value: strings.TrimPrefix(label, "排序："), Label: label, RemoveURL: removeURL})
 	}
 	if value := base.Get("q"); value != "" {
 		add("q", "关键词："+value)
@@ -163,7 +208,7 @@ func filterTags(r *http.Request, path string) []filterTag {
 		add("index", "首字母："+value)
 	}
 	if value := base.Get("sort"); value != "" {
-		add("sort", "排序："+value)
+		add("sort", "排序："+librarySortLabel(value))
 	}
 	return tags
 }
@@ -268,9 +313,11 @@ func (data *libraryPageData) resolveFilterTagNames() {
 		label := data.FilterTags[index].Label
 		if name, ok := artistNames[strings.TrimPrefix(label, "artist:")]; ok && strings.HasPrefix(label, "artist:") {
 			data.FilterTags[index].Label = "歌手：" + name
+			data.FilterTags[index].Value = name
 		}
 		if title, ok := albumTitles[strings.TrimPrefix(label, "album:")]; ok && strings.HasPrefix(label, "album:") {
 			data.FilterTags[index].Label = "专辑：" + title
+			data.FilterTags[index].Value = title
 		}
 	}
 }
@@ -309,6 +356,7 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 		data.Total, err = a.store.CountArtists(r.Context(), f)
 	}
 	data.resolveFilterTagNames()
+	data.TotalLabel = formatLibraryCount(data.Total)
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }
@@ -331,6 +379,7 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 		a.ensureSelectedArtist(r, &data)
 	}
 	data.resolveFilterTagNames()
+	data.TotalLabel = formatLibraryCount(data.Total)
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }
@@ -353,6 +402,7 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 		a.ensureSelectedAlbum(r, &data)
 	}
 	data.resolveFilterTagNames()
+	data.TotalLabel = formatLibraryCount(data.Total)
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }

@@ -193,10 +193,12 @@ test('search, index and focus filters stack and tags remove one condition', asyn
   await expect(page.locator('.filter-tag', { hasText: '关键词' })).toBeVisible();
   await expect(page.locator('.filter-tag', { hasText: '首字母' })).toBeVisible();
 
-  // Submitting the focus form keeps the keyword and the index letter.
-  await page.getByRole('button', { name: '应用' }).click();
+  // Selecting a sort order keeps the keyword and the index letter.
+  await page.locator('.filter-control[data-filter=sort] .filter-trigger').click();
+  await page.locator('.filter-control[data-filter=sort] [role=option][data-value=year]').click();
   await expect(page).toHaveURL(/index=E/);
   await expect(page).toHaveURL(/q=E2E/);
+  await expect(page).toHaveURL(/sort=year/);
 
   // Removing one chip keeps the remaining conditions.
   await page.locator('.filter-tag', { hasText: '首字母' }).click();
@@ -246,4 +248,67 @@ test('track quick edit keeps the filtered list context after save', async ({ pag
   await expect(page).toHaveURL(/sort=year/);
   await expect(page.locator('.toast')).toContainText('已保存');
   await expect(editForm.locator('input[name="composer"]')).toHaveValue('E2E Composer');
+});
+
+test('instant search preserves the focused complete input across PJAX', async ({ page }) => {
+  await page.goto('/admin/albums');
+  const search = page.locator('.instant-search input[name="q"]');
+  await search.focus();
+  await search.pressSequentially('E2E', { delay: 180 });
+  await expect(page).toHaveURL(/q=E2E/);
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('E2E');
+});
+
+test('unfinished album search does not follow sidebar navigation', async ({ page }) => {
+  await page.goto('/admin/albums');
+  await page.locator('.instant-search input[name="q"]').fill('E2E');
+  await page.locator('.sidebar a[href="/admin/tracks"]').click();
+  await expect(page).toHaveURL(/\/admin\/tracks$/);
+  await page.waitForTimeout(400);
+  await expect(page).toHaveURL(/\/admin\/tracks$/);
+});
+
+test('in-flight search does not interrupt IME composition', async ({ page }) => {
+  await page.goto('/admin/albums');
+  let releaseResponse;
+  const heldResponse = new Promise(resolve => { releaseResponse = resolve; });
+  let requestStarted;
+  const started = new Promise(resolve => { requestStarted = resolve; });
+  await page.route('**/admin/albums?q=E2E', async route => {
+    requestStarted();
+    await heldResponse;
+    await route.continue();
+  });
+  const search = page.locator('.instant-search input[name="q"]');
+  await search.fill('E2E');
+  await started;
+  await search.evaluate(input => { input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); input.value = '新标题'; });
+  releaseResponse();
+  // The stale response must be discarded while composition owns the input.
+  await page.waitForTimeout(350);
+  await expect(search).toHaveValue('新标题');
+  await expect(page).toHaveURL(/\/admin\/albums$/);
+  await search.evaluate(input => input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
+  await expect(page).toHaveURL(/q=%E6%96%B0%E6%A0%87%E9%A2%98/);
+  await expect(search).toHaveValue('新标题');
+});
+
+test('works filters remain visible after library focus fallback is hidden', async ({ page }) => {
+  await page.goto('/admin/works');
+  await expect(page.locator('form.focus-bar select[name="type"]')).toBeVisible();
+  await expect(page.locator('form.focus-bar button', { hasText: '应用' })).toBeVisible();
+});
+
+test('artist typeahead Enter selects a matching artist rather than All', async ({ page }) => {
+  await page.goto('/admin/albums');
+  const trigger = page.locator('.filter-control[data-filter="artist"] .filter-trigger');
+  await trigger.click();
+  const input = page.getByRole('combobox', { name: '搜索歌手' });
+  await input.fill('E2E');
+  await expect(page.locator('#filter-list-artist [role="option"]:not([data-value=""])')).toBeVisible();
+  await expect(page.locator('#filter-list-artist')).toHaveAttribute('data-ready', 'true');
+  await input.press('Enter');
+  await expect(page).toHaveURL(/artist=\d+/);
+  await expect(trigger).toContainText('E2E Artist');
 });

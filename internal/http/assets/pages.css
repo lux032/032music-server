@@ -1035,3 +1035,66 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   .create-playlist form, .create-work form { grid-template-columns: 1fr; }
   .artist-hero { grid-template-columns: 1fr; padding-top: 24px; }
 }
+
+/* P2 browser presentation */
+.browser-header { align-items: center; margin-bottom: 14px; }
+.browser-header h1 { font-size: clamp(2rem, 3vw, 2.6rem); }
+.browser-header .result-count { margin: 0; color: var(--muted); }
+.instant-search { width: min(540px, 55%); margin-right: 4%; }
+.focus-bar.library-focus { display: none; }
+.browser-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 14px 0 18px; }
+.filter-control { position: relative; }
+.filter-trigger { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; min-height: 38px; border: 1px solid var(--line); border-radius: 11px; padding: 7px 12px; color: var(--text-secondary); background: var(--surface); white-space: nowrap; }
+.filter-trigger .icon { width: 15px; height: 15px; flex: none; }
+.filter-trigger:hover, .filter-trigger.selected, .filter-trigger[aria-expanded="true"] { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.filter-popover { position: absolute; z-index: 550; top: calc(100% + 6px); left: 0; width: min(260px, calc(100vw - 32px)); max-height: 290px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; padding: 7px; background: var(--surface); box-shadow: var(--shadow-pop); }
+.filter-popover[hidden] { display: none; }
+.filter-popover input { width: 100%; margin-bottom: 6px; }
+.filter-popover [role="option"] { display: block; width: 100%; border-radius: 6px; padding: 8px 10px; color: var(--text); background: transparent; text-align: left; }
+.filter-popover [role="option"]:hover, .filter-popover [role="option"]:focus-visible { color: var(--accent); background: var(--accent-soft); }
+.filter-clear { margin-left: auto; color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
+.filter-clear:hover { color: var(--accent); }
+.filter-tags { margin: 0 0 14px; }
+.filter-tag { padding: 3px 9px; background: var(--bg-soft); }
+.index-bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; white-space: nowrap; margin: 0 0 20px; border: 0; padding: 0 0 4px; }
+.index-bar a { flex: none; min-width: 29px; border-radius: 999px; }
+.index-bar a:link, .index-bar a:visited { color: var(--muted); }
+.index-bar a.active:link, .index-bar a.active:visited { color: #fff; }
+.index-bar a:hover { color: var(--accent); }
+.index-bar .kana-toggle { flex: none; border-radius: 999px; padding: 4px 10px; color: var(--text-secondary); background: var(--accent-soft); }
+.index-bar .kana-links { display: flex; flex: none; gap: 4px; }
+.index-bar .kana-links[hidden] { display: none; }
+.index-bar a:first-child { padding: 0 12px; }
+.album-browser { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 24px; }
+.library-album-card .cover-wrap { border-radius: 8px; margin-bottom: 7px; }
+.library-album-card .album-tile-cover { display: block; width: 100%; height: 100%; }
+.library-album-card:hover .cover-wrap, .library-album-card:focus-within .cover-wrap { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+.library-album-card:hover .play-disc, .library-album-card:focus-within .play-disc { opacity: 1; transform: none; }
+.library-album-card .play-disc { border: 0; cursor: pointer; }
+.album-card-title { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; }
+.album-card-title > a { overflow: hidden; color: var(--text); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.library-album-card p { overflow: hidden; margin: 2px 0; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.library-album-card small { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.album-card-menu { position: relative; flex: none; }
+.album-card-menu summary { display: grid; place-items: center; width: 28px; height: 28px; cursor: pointer; list-style: none; border-radius: 6px; }
+.album-card-menu summary::-webkit-details-marker { display: none; }
+.album-card-menu summary:hover { background: var(--accent-soft); }
+.album-card-menu .icon { width: 17px; height: 17px; }
+.album-menu-items { position: absolute; z-index: 90; top: 100%; right: 0; width: 185px; border: 1px solid var(--line); border-radius: 10px; padding: 5px; background: var(--surface); box-shadow: var(--shadow-pop); }
+.album-menu-items button, .album-menu-items a { display: block; width: 100%; border: 0; border-radius: 6px; padding: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.album-menu-items button:hover, .album-menu-items a:hover { background: var(--accent-soft); color: var(--accent); }
+.album-menu-items form { margin: 0; }
+.artist-avatar { border-radius: 50%; }
+.track-table-head, .track-table-row { grid-template-columns: 48px minmax(210px, 2fr) minmax(130px, 1fr) 70px 60px 45px; min-width: 650px; }
+@media (max-width: 1200px) { .album-browser { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .album-browser { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 12px; } .browser-header { align-items: flex-start; flex-direction: column; } .instant-search { width: 100%; margin: 0; } .browser-filters { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px; } .filter-control { flex: none; } .filter-popover { position: fixed; top: min(220px, 28vh); left: 16px; right: 16px; width: auto; max-height: min(300px, 50vh); } .filter-clear { flex: none; } }
+@media (prefers-reduced-motion: reduce) { .library-album-card .cover-wrap, .library-album-card .play-disc { transition: none; } }
+
+@media (scripting: none) { .focus-bar.library-focus { display: flex !important; } .browser-filters { display: none !important; } }
+.library-album-card .album-card-menu { min-width: 0; }
+.library-album-card .album-card-title > a { flex: 1; min-width: 0; }
+.library-album-card .album-card-menu summary { padding: 4px; color: var(--text-secondary); background: transparent; }
+.library-album-card .album-card-menu summary:hover { color: var(--accent); background: var(--accent-soft); }
+.pagination a, .pagination span { border-radius: 999px; }
+@media (max-width: 900px) { .browser-filters { overflow-x: auto; overflow-y: hidden; } .browser-filters:has(.filter-popover:not([hidden])) { overflow: visible; } }
+@media (max-width: 599px) { .album-browser { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

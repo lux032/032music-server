@@ -211,7 +211,7 @@ func TestAdminAlbumsPageIgnoresAlbumParamWithoutPhantomCard(t *testing.T) {
 	if cards != 3 {
 		t.Fatalf("grid cards = %d, want 3 (phantom card?)", cards)
 	}
-	if !strings.Contains(body, "3 个结果") {
+	if !strings.Contains(body, "共 3 张专辑") {
 		t.Fatalf("result count missing: %s", body[:400])
 	}
 }
