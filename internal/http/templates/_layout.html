@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="{{assetShellCSS}}">
 <link rel="stylesheet" href="{{assetPagesCSS}}">
 <script defer src="{{assetNavJS}}"></script>
-<script defer src="{{assetPlayerJS}}"></script>
+<script type="module" src="{{assetPlayerMainJS}}"></script>
 <script defer src="{{assetAdminJS}}"></script>
 <script defer src="{{assetBrowseJS}}"></script>
 {{end}}
@@ -104,7 +104,7 @@
         <span id="np-album"></span>
       </div>
       <div class="np-actions">
-        <button type="button" id="np-favorite" class="np-icon-btn" title="收藏" aria-label="收藏" disabled>
+        <button type="button" id="np-favorite" class="np-icon-btn" title="收藏" aria-label="收藏" aria-pressed="false" disabled>
           <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart"></use></svg>
         </button>
         <button type="button" id="np-more" class="np-icon-btn" title="更多" aria-label="更多" disabled>

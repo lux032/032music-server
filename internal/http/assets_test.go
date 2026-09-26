@@ -47,7 +47,7 @@ func TestVersionedAssetServesPrecompressedGzip(t *testing.T) {
 	app, _, _ := setupTestApp(t)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodGet, app.assets.assetURL("player.js"), nil)
+	req := httptest.NewRequest(http.MethodGet, app.assets.assetURL("player-bar.js"), nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -70,7 +70,7 @@ func TestVersionedAssetServesPrecompressedGzip(t *testing.T) {
 		t.Fatalf("read gzip body: %v", err)
 	}
 	if !strings.Contains(string(plain), "global-player") {
-		t.Fatal("decompressed body does not look like player.js")
+		t.Fatal("decompressed body does not look like player-bar.js")
 	}
 }
 
@@ -141,6 +141,20 @@ func TestAssetFuncUsedInTemplates(t *testing.T) {
 	}
 	if !strings.Contains(body, `<meta name="csrf-token" content="`) {
 		t.Fatal("dashboard missing csrf-token meta")
+	}
+}
+
+func TestHeadReferencesPlayerModule(t *testing.T) {
+	app, cookie, _ := csrfSessionApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `<script type="module" src="`+app.assets.assetURL("player-main.js")+`"></script>`) {
+		t.Fatal("dashboard missing versioned module entry")
 	}
 }
 
@@ -281,5 +295,23 @@ func TestLibraryPagesUseThumbnails(t *testing.T) {
 	}
 	if !strings.Contains(body, `decoding="async"`) {
 		t.Fatal("album grid images should use async decoding")
+	}
+}
+
+func TestVersionedPlayerModulesJavaScriptMIME(t *testing.T) {
+	app, _, _ := setupTestApp(t)
+	for _, name := range []string{"player-main.js", "router.js", "player-core.js", "queue.js", "now-playing.js", "player-bar.js", "lyrics.js", "shortcuts.js", "util.js", "state.js", "fullscreen.js"} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, app.assets.assetURL(name), nil)
+			rec := httptest.NewRecorder()
+			app.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			ct := rec.Header().Get("Content-Type")
+			if !strings.HasPrefix(ct, "text/javascript") && !strings.HasPrefix(ct, "application/javascript") {
+				t.Fatalf("Content-Type = %q", ct)
+			}
+		})
 	}
 }

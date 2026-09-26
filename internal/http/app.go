@@ -110,16 +110,16 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		// PJAX layer to detect deployments. No-arg variants are used instead
 		// of {{asset "name"}} because html/template's context escaper breaks
 		// when several attribute actions carry string literals.
-		"assetTokensCSS": func() string { return assets.assetURL("tokens.css") },
-		"assetBaseCSS":   func() string { return assets.assetURL("base.css") },
-		"assetShellCSS":  func() string { return assets.assetURL("shell.css") },
-		"assetPagesCSS":  func() string { return assets.assetURL("pages.css") },
-		"assetIconsSVG":  func() string { return assets.assetURL("icons.svg") },
-		"assetNavJS":     func() string { return assets.assetURL("navigation.js") },
-		"assetPlayerJS":  func() string { return assets.assetURL("player.js") },
-		"assetAdminJS":   func() string { return assets.assetURL("admin.js") },
-		"assetBrowseJS":  func() string { return assets.assetURL("browse.js") },
-		"appBuild":       func() string { return assets.hash },
+		"assetTokensCSS":    func() string { return assets.assetURL("tokens.css") },
+		"assetBaseCSS":      func() string { return assets.assetURL("base.css") },
+		"assetShellCSS":     func() string { return assets.assetURL("shell.css") },
+		"assetPagesCSS":     func() string { return assets.assetURL("pages.css") },
+		"assetIconsSVG":     func() string { return assets.assetURL("icons.svg") },
+		"assetNavJS":        func() string { return assets.assetURL("navigation.js") },
+		"assetPlayerMainJS": func() string { return assets.assetURL("player-main.js") },
+		"assetAdminJS":      func() string { return assets.assetURL("admin.js") },
+		"assetBrowseJS":     func() string { return assets.assetURL("browse.js") },
+		"appBuild":          func() string { return assets.hash },
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
 		"thumb": thumbURL,

@@ -287,6 +287,21 @@ body.np-animated .now-playing { transition: transform var(--dur-slow) var(--ease
   transition: background var(--dur-fast) var(--ease);
 }
 .np-queue-list li:hover { background: var(--surface-hover); }
+.np-queue-list li { position: relative; display: flex; align-items: center; }
+.np-queue-list li.dragging { z-index: 2; background: var(--accent-soft); box-shadow: 0 4px 16px var(--line-strong); opacity: .8; }
+.np-queue-list li.dragging::after { content: ''; position: absolute; inset: auto 0 -2px; border-bottom: 2px solid var(--accent); }
+.np-queue-list li:not(.dragging) { transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.q-remove, .q-drag { flex: none; display: grid; place-items: center; border: 0; background: none; color: var(--muted); padding: 4px; }
+.q-remove .icon, .q-drag .icon { width: 16px; height: 16px; }
+.q-remove { opacity: 0; }
+.np-queue-list li:hover .q-remove, .q-remove:focus-visible, .np-queue-list li:focus-within .q-remove { opacity: 1; }
+.q-drag { cursor: grab; touch-action: none; }
+.q-drag:active { cursor: grabbing; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.np-more-menu { position: fixed; z-index: 1200; min-width: 160px; padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: 0 8px 24px var(--line-strong); }
+.np-more-menu button { display: block; width: 100%; padding: 8px 12px; text-align: left; background: transparent; color: var(--text); border: 0; }
+.np-more-menu button:hover:not(:disabled), .np-more-menu button:focus-visible { background: var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .np-queue-list li { transition: none !important; } }
 .np-queue-list li.current { background: var(--accent-soft); }
 /* [M3] The whole row is a real button: keyboard reachable, screen-reader
    announced. It must fully override the global accent button style. */
@@ -295,7 +310,8 @@ body.np-animated .now-playing { transition: transform var(--dur-slow) var(--ease
   grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: 0;
   border-radius: var(--radius-md);
   padding: 7px 10px;
@@ -580,6 +596,44 @@ body.np-collapsed .np-expand { display: grid; }
 .lyric-line.active { color: var(--accent); font-size: 1.12rem; font-weight: 700; }
 .lyrics-zero-state, .lyrics-loading { padding-top: 80px; color: var(--muted); font-size: var(--fs-md); }
 
+#player-fullscreen {
+  position: fixed; z-index: 2000; inset: 0; overflow-y: auto;
+  display: grid; grid-template-columns: minmax(220px, 460px) minmax(280px, 490px);
+  align-content: center; justify-content: center; gap: 16px 48px;
+  padding: 48px; color: var(--text); background: var(--bg-soft); isolation: isolate;
+}
+#player-fullscreen::before {
+  content: ''; position: fixed; inset: -40px; z-index: -2;
+  background: var(--fs-artwork) center / cover no-repeat;
+  filter: blur(42px); opacity: .45;
+}
+#player-fullscreen::after {
+  content: ''; position: fixed; inset: 0; z-index: -1;
+  background: rgba(255, 255, 255, .79);
+}
+#player-fullscreen .fs-close { grid-column: 1 / -1; justify-self: end; background: var(--surface); box-shadow: var(--shadow-card); }
+#player-fullscreen .fs-cover { grid-row: span 4; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); }
+#player-fullscreen .fs-cover[hidden] { display: none; }
+#player-fullscreen:not(.has-cover) { grid-template-columns: minmax(220px, 540px); }
+#player-fullscreen:not(.has-cover) .fs-close { grid-column: 1; }
+#player-fullscreen .fs-meta { display: grid; gap: 8px; align-content: end; }
+#player-fullscreen .fs-title { font-size: clamp(1.5rem, 3vw, 2.3rem); }
+#player-fullscreen .fs-artist, #player-fullscreen .fs-album { color: var(--text-secondary); }
+#player-fullscreen .fs-progress-row { display: flex; align-items: center; gap: 12px; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+#player-fullscreen .fs-progress { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+#player-fullscreen .fs-controls { display: flex; align-items: center; justify-content: center; gap: 16px; }
+#player-fullscreen .fs-controls button { flex: none; }
+#player-fullscreen .fs-lyrics { max-height: 200px; overflow-y: auto; text-align: center; color: var(--muted); scrollbar-width: thin; }
+#player-fullscreen .fs-lyrics p { margin: 12px 0; }
+#player-fullscreen .fs-lyrics .active { color: var(--accent); font-weight: 700; }
+@media (max-width: 900px) {
+  #player-fullscreen, #player-fullscreen:not(.has-cover) { grid-template-columns: minmax(0, 1fr); align-content: start; gap: 18px; padding: 20px 24px; }
+  #player-fullscreen .fs-close { grid-column: 1; }
+  #player-fullscreen .fs-cover { grid-row: auto; max-width: min(65vw, 300px); justify-self: center; }
+  #player-fullscreen .fs-meta { align-content: start; }
+  #player-fullscreen .fs-lyrics { max-height: 30vh; }
+}
+
 /* ------------------------------------------------------- now-playing row marks */
 .now-playing-row { background: var(--accent-soft) !important; }
 .now-playing-row strong { color: var(--accent) !important; }
@@ -595,6 +649,7 @@ body.np-collapsed .np-expand { display: grid; }
 
 /* Playable row number -> hover play button */
 .playable-number { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.playable-number .num-text { pointer-events: none; }
 .playable-number .row-play-btn {
   display: grid;
   position: absolute;
@@ -609,7 +664,7 @@ body.np-collapsed .np-expand { display: grid; }
   font-size: 0.72rem;
   line-height: 1;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .playable-number .row-play-btn .icon { width: 12px; height: 12px; }
 .playable-number .row-play-btn:focus, .playable-number .row-play-btn:focus-visible { position: static; opacity: 1; pointer-events: auto; }
@@ -771,7 +826,7 @@ body.np-collapsed .np-expand { display: grid; }
   .player-progress-row .player-progress-bar:hover { height: 3px; }
   .player-progress-thumb { display: none; }
   .player-right { width: auto; }
-  .player-volume-wrap, #player-btn-shuffle, #player-btn-prev, #player-btn-next, #player-btn-loop, #player-btn-fullscreen { display: none; }
+  .player-volume-wrap, #player-btn-shuffle, #player-btn-prev, #player-btn-next, #player-btn-loop { display: none; }
 }
 
 @media (max-width: 480px) {

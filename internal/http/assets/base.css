@@ -141,12 +141,20 @@ svg.icon {
 .is-pending button:disabled { cursor: wait; }
 .client-toast {
   position: fixed;
-  z-index: 1200;
-  top: 18px;
-  right: 18px;
-  max-width: min(440px, calc(100vw - 36px));
+  z-index: 2100;
+  bottom: calc(var(--player-h) + 34px);
+  left: calc(50% - (var(--nowplaying-w) - var(--sidebar-w)) / 2);
+  transform: translateX(-50%);
+  min-width: min(220px, calc(100vw - 36px));
+  max-width: min(440px, calc(100vw - var(--sidebar-w) - var(--nowplaying-w) - 36px));
+  padding: 12px 18px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  background: var(--surface);
   box-shadow: var(--shadow-pop);
 }
+@media (max-width: 900px) { .client-toast { left: 50%; bottom: calc(var(--player-h) + 76px); max-width: calc(100vw - 36px); } }
 
 .zero-state {
   grid-column: 1/-1;
