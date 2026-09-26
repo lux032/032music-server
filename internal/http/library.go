@@ -167,6 +167,91 @@ func filterTags(r *http.Request, path string) []filterTag {
 	return tags
 }
 
+// ensureSelectedArtist appends the currently filtered artist to the dropdown
+// option list when it falls outside the first options page, so the <select>
+// can display it and resolveFilterTagNames can label its chip.
+func (a *App) ensureSelectedArtist(r *http.Request, data *libraryPageData) {
+	if data.ArtistID == 0 {
+		return
+	}
+	for _, artist := range data.Artists {
+		if artist.ID == data.ArtistID {
+			return
+		}
+	}
+	if name, err := a.store.ArtistNameByID(r.Context(), data.ArtistID); err == nil {
+		data.Artists = append(data.Artists, storage.Artist{ID: data.ArtistID, Name: name})
+	}
+}
+
+// ensureSelectedAlbum does the same for the album dropdown. It must only run
+// on pages where data.Albums holds dropdown options (the tracks page): on the
+// albums page data.Albums IS the result grid, and appending a bare
+// Album{ID,Title} would render a phantom card.
+func (a *App) ensureSelectedAlbum(r *http.Request, data *libraryPageData) {
+	if data.AlbumID == 0 {
+		return
+	}
+	for _, album := range data.Albums {
+		if album.ID == data.AlbumID {
+			return
+		}
+	}
+	if title, err := a.store.AlbumTitleByID(r.Context(), data.AlbumID); err == nil {
+		data.Albums = append(data.Albums, storage.Album{ID: data.AlbumID, Title: title})
+	}
+}
+
+// adminOptionsPageLimit caps how many dropdown options browse pages load.
+// It is a var so tests can shrink it to exercise the beyond-first-page
+// fallback in ensureSelectedArtist/ensureSelectedAlbum.
+var adminOptionsPageLimit = 500
+
+// optionItem is the JSON shape of the lightweight dropdown endpoints.
+type optionItem struct {
+	ID    int64  `json:"id"`
+	Label string `json:"label"`
+}
+
+// optionsLimit parses the limit query parameter for the dropdown endpoints:
+// default 20, capped at 100.
+func optionsLimit(r *http.Request) int {
+	limit := int(parseInt64(r.URL.Query().Get("limit")))
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return limit
+}
+
+func (a *App) handleAdminArtistOptions(w http.ResponseWriter, r *http.Request) {
+	artists, err := a.store.ListArtistOptions(r.Context(), r.URL.Query().Get("role"), r.URL.Query().Get("q"), optionsLimit(r))
+	if err != nil {
+		writeAPIError(w, 500, "query_failed", err.Error())
+		return
+	}
+	items := make([]optionItem, 0, len(artists))
+	for _, artist := range artists {
+		items = append(items, optionItem{ID: artist.ID, Label: artist.Name})
+	}
+	writeJSON(w, 200, items)
+}
+
+func (a *App) handleAdminAlbumOptions(w http.ResponseWriter, r *http.Request) {
+	albums, err := a.store.ListAlbumOptions(r.Context(), r.URL.Query().Get("q"), optionsLimit(r))
+	if err != nil {
+		writeAPIError(w, 500, "query_failed", err.Error())
+		return
+	}
+	items := make([]optionItem, 0, len(albums))
+	for _, album := range albums {
+		items = append(items, optionItem{ID: album.ID, Label: album.Title})
+	}
+	writeJSON(w, 200, items)
+}
+
 // resolveFilterTagNames replaces raw ID placeholders in filter chips with the
 // display names of the selected artist and album.
 func (data *libraryPageData) resolveFilterTagNames() {
@@ -237,7 +322,12 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 		data.Total, err = a.store.CountAlbums(r.Context(), f)
 	}
 	if err == nil {
-		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{ArtistRole: "album", Limit: 500})
+		data.Artists, _ = a.store.ListArtistOptions(r.Context(), "album", "", adminOptionsPageLimit)
+	}
+	if err == nil {
+		// data.Albums is the result grid here, not a dropdown: only the
+		// artist filter may append its selected option.
+		a.ensureSelectedArtist(r, &data)
 	}
 	data.resolveFilterTagNames()
 	setPagination(r, &data, f)
@@ -254,8 +344,12 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 		data.Total, err = a.store.CountTracks(r.Context(), f)
 	}
 	if err == nil {
-		data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{ArtistRole: "track", Limit: 500})
-		data.Albums, _ = a.store.ListAlbums(r.Context(), storage.Filters{Limit: 500})
+		data.Artists, _ = a.store.ListArtistOptions(r.Context(), "track", "", adminOptionsPageLimit)
+		data.Albums, _ = a.store.ListAlbumOptions(r.Context(), "", adminOptionsPageLimit)
+	}
+	if err == nil {
+		a.ensureSelectedArtist(r, &data)
+		a.ensureSelectedAlbum(r, &data)
 	}
 	data.resolveFilterTagNames()
 	setPagination(r, &data, f)

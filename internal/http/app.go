@@ -200,6 +200,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/logout", a.requireAdmin(http.HandlerFunc(a.handleLogout)))
 	mux.Handle("GET /admin", a.requireAdmin(http.HandlerFunc(a.handleDashboard)))
 	mux.Handle("GET /admin/status", a.requireAdmin(http.HandlerFunc(a.handleAdminStatus)))
+	mux.Handle("GET /admin/options/artists", a.requireAdminJSON(http.HandlerFunc(a.handleAdminArtistOptions)))
+	mux.Handle("GET /admin/options/albums", a.requireAdminJSON(http.HandlerFunc(a.handleAdminAlbumOptions)))
 	mux.Handle("POST /admin/scan", a.requireAdmin(http.HandlerFunc(a.handleStartScan)))
 	mux.Handle("GET /admin/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistsPage)))
 	mux.Handle("GET /admin/artists/album", a.requireAdmin(http.HandlerFunc(a.handleAlbumArtistsPage)))
@@ -449,6 +451,19 @@ func (a *App) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := a.sessions.get(r); !ok {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireAdminJSON is requireAdmin for fetch()-consumed admin endpoints: an
+// unauthenticated request gets a 401 JSON error instead of a login redirect
+// (which fetch would otherwise follow into an HTML page).
+func (a *App) requireAdminJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := a.sessions.get(r); !ok {
+			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Admin session required.")
 			return
 		}
 		next.ServeHTTP(w, r)

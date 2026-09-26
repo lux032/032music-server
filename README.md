@@ -182,6 +182,14 @@ Authorization: Bearer <API_TOKEN>
 
 单页最多返回 500 条记录。专辑和歌曲还会返回 `addedAt`、`updatedAt`、`isFavorite`、`lastPlayedAt`；歌曲额外返回 `durationMillis`、`streamUrl`、`positionMillis` 和 `playCount`。`sort=added` 按最近入库排序，`sort=recentlyPlayed` 按最近播放排序。
 
+浏览筛选语义（`/api/v1/albums`、`/api/v1/tracks` 与管理端浏览页共用同一套条件）：
+
+- 条件叠加生效，列表结果与 `total` 计数始终一致。`index`（首字母）只作用于专辑列表；`album` 参数只作用于歌曲列表，对专辑列表无效；`hideInstrumental=true` 只作用于歌曲列表，用于隐藏伴奏/Off Vocal 曲目。
+- 专辑的 `q` 匹配专辑标题、读音排序名与专辑歌手显示名；歌曲的 `q` 与 `artist` 匹配任意角色的曲目艺人（含作曲等 credit），管理端歌手详情页的曲目列表同样包含这些 credit 曲目。关键词的假名变体（平/片假名互转）会自动匹配；罗马音仅在标签提供了 reading/sort 字段时才能命中。匹配优先使用人工改过的显示名。
+- 专辑返回的 `artist` 字段为逗号加空格分隔（`", "`）的全部专辑歌手，不受关键词命中影响。
+- 流派采用“有效流派”：专辑有人工流派覆盖时以覆盖为准，否则取其所有曲目有效流派的并集；曲目有人工覆盖时以覆盖为准，否则用文件标签。筛选条件、列表返回的 `genres` 与专辑详情三处口径一致。
+- 排序键末尾始终附带 ID 决胜，分页稳定、不重不漏。
+
 歌手实体在资料、图片和外部身份层保持唯一，但浏览时可按标签关系区分：`role=album` 只返回出现在专辑歌手标签中的艺人，`role=track` 只返回出现在单曲歌手标签中的艺人，不传或使用 `role=all` 则保持兼容并返回全部艺人。同一位艺人可以同时属于两个分类。
 
 ### 客户端能力

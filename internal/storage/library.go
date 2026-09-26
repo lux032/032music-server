@@ -520,53 +520,37 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	return list, rows.Err()
 }
 
+// ListAlbums runs a two-stage paginated browse: stage one resolves the page
+// of album ids with the shared albumWhere predicate and a stable ORDER BY,
+// stage two hydrates display fields in batch. This keeps list and count
+// semantics identical and avoids per-row correlated subqueries over the
+// whole table before pagination.
 func (s *Store) ListAlbums(ctx context.Context, f Filters) ([]Album, error) {
 	limit, offset := page(f)
-	if f.Index != "" {
-		condition, args := IndexCondition("COALESCE(NULLIF(a.reading_title,''),a.sort_title,COALESCE(a.user_title,a.title))", f.Index)
-		rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE((SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),a.disc_count,(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),'',COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),COALESCE(a.user_performed_by,a.performed_by,''),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_version,a.version,''),COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),''),COALESCE((SELECT SUM(af.file_size) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),0),a.added_at,a.updated_at,a.is_favorite,COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),'') FROM albums a WHERE `+condition+` AND (?='' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR COALESCE(a.reading_title,'') LIKE '%'||?||'%') AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) ORDER BY COALESCE(NULLIF(a.reading_title,''),a.sort_title) COLLATE NOCASE LIMIT ? OFFSET ?`, append(args, f.Query, f.Query, f.Query, f.Year, f.Year, limit, offset)...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		list := make([]Album, 0)
-		for rows.Next() {
-			var v Album
-			var favorite int
-			if err = rows.Scan(&v.ID, &v.Title, &v.Artist, &v.Year, &v.DiscCount, &v.TrackCount, &v.Genres, &v.ArtworkURL, &v.PerformedBy, &v.AlbumType, &v.Version, &v.Formats, &v.TotalBytes, &v.AddedAt, &v.UpdatedAt, &favorite, &v.LastPlayedAt); err != nil {
-				return nil, err
-			}
-			v.IsFavorite = favorite != 0
-			v.TotalSize = formatBytes(v.TotalBytes)
-			list = append(list, v)
-		}
-		return list, rows.Err()
-	}
-	order := "a.sort_title COLLATE NOCASE"
-	if f.Sort == "year" {
-		order = "COALESCE(a.user_release_year,a.release_year,0) DESC,a.sort_title"
-	} else if f.Sort == "added" {
-		order = "a.added_at DESC"
-	} else if f.Sort == "recentlyPlayed" {
-		order = "COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),'') DESC,a.sort_title"
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE(GROUP_CONCAT(DISTINCT COALESCE(ar.user_display_name,ar.display_name)),'Unknown Artist'),COALESCE(a.user_release_year,a.release_year,0),a.disc_count,COUNT(DISTINCT t.id),COALESCE((SELECT GROUP_CONCAT(DISTINCT gx.name) FROM genres gx WHERE EXISTS(SELECT 1 FROM tracks tx WHERE tx.album_id=a.id AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=tx.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=tx.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=tx.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=tx.id AND rx.genre_id=gx.id))))),''),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(a.user_performed_by,a.performed_by,''),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_version,a.version,''),COALESCE(GROUP_CONCAT(DISTINCT UPPER(af.container)),''),COALESCE((SELECT SUM(saf.file_size) FROM tracks st JOIN audio_files saf ON saf.track_id=st.id AND saf.status='available' WHERE st.album_id=a.id),0),a.added_at,a.updated_at,a.is_favorite,COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),'') FROM albums a LEFT JOIN album_artists aa ON aa.album_id=a.id LEFT JOIN artists ar ON ar.id=aa.artist_id LEFT JOIN tracks t ON t.album_id=a.id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 WHERE (?='' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR COALESCE(a.reading_title,'') LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR EXISTS(SELECT 1 FROM album_artists ax WHERE ax.album_id=a.id AND ax.artist_id=?) OR EXISTS(SELECT 1 FROM tracks tx JOIN track_artists tax ON tax.track_id=tx.id WHERE tx.album_id=a.id AND tax.artist_id=?)) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM tracks tx JOIN genres gx ON gx.name=? COLLATE NOCASE WHERE tx.album_id=a.id AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=tx.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=tx.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=tx.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=tx.id AND rx.genre_id=gx.id))))) GROUP BY a.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.ArtistID, f.Year, f.Year, f.Genre, f.Genre, limit, offset)
+	where, args := albumWhere(f)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE `+where+` ORDER BY `+albumOrder(f)+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	list := make([]Album, 0)
+	ids := make([]int64, 0, limit)
 	for rows.Next() {
-		var v Album
-		var favorite int
-		if err = rows.Scan(&v.ID, &v.Title, &v.Artist, &v.Year, &v.DiscCount, &v.TrackCount, &v.Genres, &v.ArtworkURL, &v.PerformedBy, &v.AlbumType, &v.Version, &v.Formats, &v.TotalBytes, &v.AddedAt, &v.UpdatedAt, &favorite, &v.LastPlayedAt); err != nil {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		v.IsFavorite = favorite != 0
-		v.TotalSize = formatBytes(v.TotalBytes)
-		list = append(list, v)
+		ids = append(ids, id)
 	}
-	return list, rows.Err()
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return []Album{}, nil
+	}
+	return s.hydrateAlbums(ctx, ids)
 }
 
 func (s *Store) CountArtists(ctx context.Context, f Filters) (int64, error) {
@@ -612,18 +596,15 @@ func normalizeArtistRole(value string) string {
 
 func (s *Store) CountAlbums(ctx context.Context, f Filters) (int64, error) {
 	var total int64
-	if f.Index != "" {
-		condition, args := IndexCondition("COALESCE(NULLIF(a.reading_title,''),a.sort_title,COALESCE(a.user_title,a.title))", f.Index)
-		err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums a WHERE `+condition+` AND (?='' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR COALESCE(a.reading_title,'') LIKE '%'||?||'%') AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?)`, append(args, f.Query, f.Query, f.Query, f.Year, f.Year)...).Scan(&total)
-		return total, err
-	}
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums a WHERE (?='' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR EXISTS(SELECT 1 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')) AND (?=0 OR EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?) OR EXISTS(SELECT 1 FROM tracks tx JOIN track_artists ta ON ta.track_id=tx.id WHERE tx.album_id=a.id AND ta.artist_id=?)) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM tracks tx JOIN track_genres tg ON tg.track_id=tx.id JOIN genres g ON g.id=tg.genre_id WHERE tx.album_id=a.id AND g.name=? COLLATE NOCASE))`, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.ArtistID, f.Year, f.Year, f.Genre, f.Genre).Scan(&total)
+	where, args := albumWhere(f)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums a WHERE `+where, args...).Scan(&total)
 	return total, err
 }
 
 func (s *Store) CountTracks(ctx context.Context, f Filters) (int64, error) {
 	var total int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR EXISTS(SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')) AND (?=0 OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?)) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM track_genres tg JOIN genres g ON g.id=tg.genre_id WHERE tg.track_id=t.id AND g.name=? COLLATE NOCASE)) AND (?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal'))`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental)).Scan(&total)
+	where, args := trackWhere(f)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE `+where, args...).Scan(&total)
 	return total, err
 }
 
@@ -632,7 +613,7 @@ const albumByIDSelect = `SELECT
 	COALESCE(a.user_performed_by,a.performed_by,(SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),'Unknown Artist'),
 	COALESCE(a.user_release_year,a.release_year,0), a.disc_count,
 	(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),
-	COALESCE((SELECT GROUP_CONCAT(g.name,',') FROM album_genre_overrides ago JOIN genres g ON g.id=ago.genre_id WHERE ago.album_id=a.id ORDER BY ago.position),(SELECT GROUP_CONCAT(DISTINCT g.name) FROM tracks t JOIN track_genres tg ON tg.track_id=t.id JOIN genres g ON g.id=tg.genre_id WHERE t.album_id=a.id),''),
+	COALESCE((SELECT GROUP_CONCAT(g.name,',' ORDER BY ago.position) FROM album_genre_overrides ago JOIN genres g ON g.id=ago.genre_id WHERE ago.album_id=a.id),(SELECT GROUP_CONCAT(name,',' ORDER BY gid) FROM (SELECT t.album_id, g.id AS gid, g.name FROM tracks t JOIN track_genre_overrides ox ON ox.track_id=t.id JOIN genres g ON g.id=ox.genre_id WHERE t.album_id=a.id UNION SELECT t.album_id, g.id, g.name FROM tracks t JOIN track_genres tg ON tg.track_id=t.id JOIN genres g ON g.id=tg.genre_id WHERE t.album_id=a.id AND NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id))),''),
 	COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),
 	COALESCE(a.user_album_type,a.album_type,'album'), COALESCE(a.user_version,a.version,''),
 	COALESCE(a.user_release_date,a.release_date,''), COALESCE(a.user_original_release_date,a.original_release_date,''),
@@ -746,13 +727,15 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	limit, offset := page(f)
 	order := "COALESCE(a.user_title,a.title),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id"
 	if f.Sort == "title" {
-		order = "COALESCE(t.user_title,t.title) COLLATE NOCASE"
+		order = "COALESCE(t.user_title,t.title) COLLATE NOCASE,t.id"
 	} else if f.Sort == "year" {
 		order = "COALESCE(a.user_release_year,a.release_year,0) DESC," + order
 	} else if f.Sort == "recentlyPlayed" {
 		order = "COALESCE(pp.last_played_at,'') DESC," + order
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' LEFT JOIN artists ar ON ar.id=ta.artist_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE (?='' OR COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR ar.display_name LIKE '%'||?||'%') AND (?=0 OR ar.id=?) AND (?=0 OR a.id=?) AND (?=0 OR COALESCE(a.user_release_year,a.release_year)=?) AND (?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND ((EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id AND ox.genre_id=gx.id)) OR (NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id) AND EXISTS(SELECT 1 FROM track_genres rx WHERE rx.track_id=t.id AND rx.genre_id=gx.id))))) AND (?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal')) GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, f.Query, f.Query, f.Query, f.Query, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental), limit, offset)
+	where, args := trackWhere(f)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',') FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id ORDER BY ox.position),(SELECT GROUP_CONCAT(gx.name,',') FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id ORDER BY rx.position),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -773,7 +756,6 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	rows.Close()
 	return list, s.hydrateTracks(ctx, list)
 }
-
 func (s *Store) Genres(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name FROM genres ORDER BY name COLLATE NOCASE`)
 	if err != nil {
@@ -867,7 +849,11 @@ func (s *Store) UpdateTrack(ctx context.Context, id int64, title string, disc, n
 			return err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM genres WHERE NOT EXISTS(SELECT 1 FROM track_genres raw WHERE raw.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides user WHERE user.genre_id=genres.id)`); err != nil {
+	// Orphan cleanup must consider all three genre references: raw track tags,
+	// track-level overrides AND album-level overrides. Otherwise editing a
+	// track would delete a genre only referenced by an album override and
+	// cascade-delete that override.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM genres WHERE NOT EXISTS(SELECT 1 FROM track_genres raw WHERE raw.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides user WHERE user.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM album_genre_overrides ago WHERE ago.genre_id=genres.id)`); err != nil {
 		return err
 	}
 	return tx.Commit()
