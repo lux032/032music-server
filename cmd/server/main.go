@@ -38,10 +38,6 @@ func run() error {
 	if cfg.DevMode {
 		logger.Warn("MUSIC_SERVER_DEV_MODE is enabled: weak admin passwords are allowed and the media token may fall back to the API token; do not use in production")
 	}
-	if cfg.MediaTokenGenerated {
-		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value")
-	}
-
 	db, err := storage.Open(cfg.DatabasePath)
 	if err != nil {
 		return err
@@ -68,9 +64,15 @@ func run() error {
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
 	scannerManager.SetOnComplete(func() { enrichmentManager.StartAuto(rootCtx) })
 
+	// NewApp applies MUSIC_SERVER_RESET_CREDENTIALS and loads admin-page
+	// credential overrides, so the per-boot media token warning is only
+	// meaningful afterwards: a stored override replaces the random token.
 	app, err := webhttp.NewApp(cfg, db, scannerManager, enrichmentManager, logger, version)
 	if err != nil {
 		return err
+	}
+	if cfg.MediaTokenGenerated && app.CredentialSources().MediaToken == webhttp.CredentialSourceEnv {
+		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value or set a media token on the admin security page")
 	}
 	if _, err := scannerManager.Start(rootCtx, "incremental"); err != nil {
 		logger.Warn("automatic startup scan was not started", "error", err)

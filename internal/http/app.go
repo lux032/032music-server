@@ -24,21 +24,27 @@ import (
 )
 
 type App struct {
-	config          config.Config
-	store           *storage.Store
-	logger          *slog.Logger
-	version         string
-	startedAt       time.Time
-	templates       *template.Template
-	sessions        *sessionManager
-	loginLimiter    *loginLimiter
-	scanner         *scanner.Manager
-	enrichment      *enrichment.Manager
-	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
-	assets          *assetRegistry
-	transcoder      *transcodeManager
-	thumbnails      *thumbnailManager
-	similaritySlots chan struct{}
+	// config keeps the raw environment values; effective (possibly
+	// admin-overridden) credentials are read from credentials.
+	config      config.Config
+	credentials *credentialStore
+	// afterLoginCredentialsRead is a test hook run by handleLogin right
+	// after it read the credentials snapshot; nil in production.
+	afterLoginCredentialsRead func()
+	store                     *storage.Store
+	logger                    *slog.Logger
+	version                   string
+	startedAt                 time.Time
+	templates                 *template.Template
+	sessions                  *sessionManager
+	loginLimiter              *loginLimiter
+	scanner                   *scanner.Manager
+	enrichment                *enrichment.Manager
+	startEnrichment           func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
+	assets                    *assetRegistry
+	transcoder                *transcodeManager
+	thumbnails                *thumbnailManager
+	similaritySlots           chan struct{}
 }
 
 type healthResponse struct {
@@ -131,16 +137,30 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		return nil, fmt.Errorf("parse admin templates: %w", err)
 	}
 
+	credentialCtx, cancelCredentials := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelCredentials()
+	credentials, err := newCredentialStore(credentialCtx, cfg, store, logger)
+	if err != nil {
+		return nil, fmt.Errorf("load credential overrides: %w", err)
+	}
+	trustedProxies, err := config.ParseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("parse MUSIC_SERVER_TRUSTED_PROXIES: %w", err)
+	}
+	limiter := newLoginLimiter()
+	limiter.trustedProxies = trustedProxies
+
 	return &App{
 		similaritySlots: make(chan struct{}, 4),
 		config:          cfg,
+		credentials:     credentials,
 		store:           store,
 		logger:          logger,
 		version:         version,
 		startedAt:       time.Now(),
 		templates:       templates,
 		sessions:        newSessionManager(cfg.CookieSecure, store),
-		loginLimiter:    newLoginLimiter(),
+		loginLimiter:    limiter,
 		scanner:         scannerManager,
 		enrichment:      enrichmentManager,
 		transcoder:      newTranscodeManager(cfg, logger),
@@ -238,6 +258,13 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/artists/{id}/merge", a.requireAdmin(http.HandlerFunc(a.handleMergeArtist)))
 	mux.Handle("GET /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleMetadataSettings)))
 	mux.Handle("POST /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleSaveMetadataSettings)))
+	mux.Handle("GET /admin/settings/security", a.requireAdmin(http.HandlerFunc(a.handleSecurityPage)))
+	mux.Handle("POST /admin/settings/security/username", a.requireAdmin(http.HandlerFunc(a.handleSecurityUsername)))
+	mux.Handle("POST /admin/settings/security/password", a.requireAdmin(http.HandlerFunc(a.handleSecurityPassword)))
+	mux.Handle("POST /admin/settings/security/api-token", a.requireAdmin(http.HandlerFunc(a.handleSecurityAPIToken)))
+	mux.Handle("POST /admin/settings/security/media-token", a.requireAdmin(http.HandlerFunc(a.handleSecurityMediaToken)))
+	mux.Handle("POST /admin/settings/security/media-token/reveal", a.requireAdmin(http.HandlerFunc(a.handleSecurityRevealMediaToken)))
+	mux.Handle("POST /admin/settings/security/reset/{key}", a.requireAdmin(http.HandlerFunc(a.handleSecurityReset)))
 	mux.Handle("POST /admin/matches/run", a.requireAdmin(http.HandlerFunc(a.handleRunArtistMatching)))
 	mux.Handle("GET /admin/matches", a.requireAdmin(http.HandlerFunc(a.handleMatchReview)))
 	mux.Handle("GET /admin/enrichment", a.requireAdmin(http.HandlerFunc(a.handleAdminEnrichment)))
@@ -332,7 +359,21 @@ func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
-	a.render(w, http.StatusOK, "login.html", loginPageData{})
+	// Only fixed messages keyed by a short code are shown, so the query
+	// string cannot inject arbitrary text into the login page.
+	a.render(w, http.StatusOK, "login.html", loginPageData{Error: loginNotices[r.URL.Query().Get("notice")]})
+}
+
+// loginNotices are the 303 redirect notices of handleLogin.
+var loginNotices = map[string]string{
+	"busy":  "系统繁忙，请稍后重试。",
+	"retry": "登录状态已变更，请重试。",
+}
+
+// loginUsernameLogID identifies a submitted username in logs without
+// recording the (possibly mistyped password-like) raw value.
+func loginUsernameLogID(username string) string {
+	return sessionTokenHash(username)[:12]
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -342,24 +383,47 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := r.FormValue("username")
-	key := loginKey(r, username)
-	if locked, remaining := a.loginLimiter.locked(key); locked {
-		a.logger.Warn("login attempt while locked out", "username", username, "remoteAddr", r.RemoteAddr)
+	if locked, remaining := a.loginLimiter.lockedFor(r, username); locked {
+		a.logger.Warn("login attempt while locked out", "usernameHash", loginUsernameLogID(username), "remoteAddr", r.RemoteAddr)
 		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %d 分钟后再试。", int(remaining.Minutes())+1)})
 		return
 	}
 
-	usernameOK := secureEqual(username, a.config.AdminUsername)
-	passwordOK := secureEqual(r.FormValue("password"), a.config.AdminPassword)
+	// Order matters: read the session generation BEFORE the credentials.
+	// A username/password change publishes the new credentials before it
+	// bumps the generation, so a login that authenticates against the old
+	// credentials always holds the old generation and createAt refuses it.
+	generation := a.sessions.currentGeneration()
+	creds := a.currentCredentials()
+	if a.afterLoginCredentialsRead != nil {
+		a.afterLoginCredentialsRead()
+	}
+	usernameOK := secureEqual(username, creds.username)
+	// The password is always checked, even for a wrong username, so the
+	// response time does not reveal whether the username exists.
+	passwordOK, err := a.checkAdminPassword(r, creds, r.FormValue("password"))
+	if errors.Is(err, errPasswordBusy) {
+		http.Redirect(w, r, "/admin/login?notice=busy", http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		a.logger.Error("verify admin password", "error", err)
+		a.render(w, http.StatusServiceUnavailable, "login.html", loginPageData{Error: "暂时无法验证登录信息,请稍后再试。"})
+		return
+	}
 	if !usernameOK || !passwordOK {
-		a.loginLimiter.recordFailure(key)
-		time.Sleep(250 * time.Millisecond)
+		a.loginLimiter.recordFailureFor(r, username)
+		time.Sleep(loginFailureDelay)
 		a.render(w, http.StatusUnauthorized, "login.html", loginPageData{Error: "用户名或密码不正确。"})
 		return
 	}
-	a.loginLimiter.recordSuccess(key)
+	a.loginLimiter.recordSuccessFor(r, username)
 
-	if _, err := a.sessions.create(w, a.config.AdminUsername); err != nil {
+	if _, err := a.sessions.createAt(w, creds.username, generation); err != nil {
+		if errors.Is(err, errSessionsRevoked) {
+			http.Redirect(w, r, "/admin/login?notice=retry", http.StatusSeeOther)
+			return
+		}
 		a.logger.Error("create admin session", "error", err)
 		a.render(w, http.StatusInternalServerError, "login.html", loginPageData{Error: "暂时无法创建登录会话。"})
 		return
@@ -410,7 +474,7 @@ func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 		// credential: it bypasses the session CSRF check entirely and must
 		// be honoured even when a browser session cookie rides along.
 		if scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
-			if secureEqual(token, a.config.APIToken) {
+			if a.currentCredentials().apiTokenMatches(token) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -449,6 +513,9 @@ func (a *App) requireMediaAccess(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Range, Content-Type, Accept")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
 		// No OPTIONS branch here either: apiFallback answers preflights.
+		// The media token is checked once, when the request starts: rotating
+		// it from the admin page rejects new requests immediately but does
+		// not cut off a stream that is already being served.
 		if _, ok := a.sessions.get(r); ok {
 			next.ServeHTTP(w, r)
 			return
@@ -461,12 +528,13 @@ func (a *App) requireMediaAccess(next http.Handler) http.Handler {
 		// API token must never be usable on media endpoints: media URLs are
 		// routinely shared and leak into browser history, proxy logs and
 		// Referer headers.
-		if tokenQuery != "" && secureEqual(tokenQuery, a.config.MediaToken) {
+		creds := a.currentCredentials()
+		if tokenQuery != "" && creds.mediaTokenMatches(tokenQuery) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-		if ok && strings.EqualFold(scheme, "Bearer") && secureEqual(token, a.config.MediaToken) {
+		if ok && strings.EqualFold(scheme, "Bearer") && token != "" && creds.mediaTokenMatches(token) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -501,7 +569,7 @@ func (a *App) requireAdminJSON(next http.Handler) http.Handler {
 func (a *App) requireAPIToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-		if !ok || !strings.EqualFold(scheme, "Bearer") || !secureEqual(token, a.config.APIToken) {
+		if !ok || !strings.EqualFold(scheme, "Bearer") || !a.currentCredentials().apiTokenMatches(token) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "A valid API token is required.")
 			return

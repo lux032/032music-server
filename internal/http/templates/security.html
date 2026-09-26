@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>账号与安全 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main identity-main">
+    <header class="browser-header">
+      <div>
+        <h1>账号与安全</h1>
+        <p class="result-count">修改立即生效。所有操作都需要输入当前密码。</p>
+      </div>
+    </header>
+    {{if .ResetMode}}<div class="toast" data-security-reset-mode="{{.ResetMode}}">MUSIC_SERVER_RESET_CREDENTIALS={{.ResetMode}} 仍在生效：每次启动都会清除对应的管理页设置与全部登录会话。确认恢复后请移除该环境变量。</div>{{end}}
+    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    {{with .Flash}}<div class="toast" data-security-flash><strong>{{.Label}}</strong> <code>{{.Value}}</code></div>{{end}}
+
+    <section class="source-card" data-security-item="username">
+      <header><div><p class="kicker">来源：{{.Sources.Username}}</p><h2>用户名</h2></div></header>
+      <form method="post" action="/admin/settings/security/username">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>新用户名<input name="new_username" autocomplete="username" maxlength="64" required></label>
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div class="editor-actions"><button type="submit">修改用户名</button></div>
+      </form>
+    </section>
+
+    <section class="source-card" data-security-item="password">
+      <header><div><p class="kicker">来源：{{.Sources.Password}}</p><h2>密码</h2></div></header>
+      <form method="post" action="/admin/settings/security/password">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <label>新密码<input type="password" name="new_password" autocomplete="new-password" required></label>
+        <label>确认新密码<input type="password" name="confirm_password" autocomplete="new-password" required></label>
+        <div class="editor-actions"><button type="submit">修改密码</button></div>
+      </form>
+    </section>
+
+    <section class="source-card" data-security-item="api-token">
+      <header><div><p class="kicker">来源：{{.Sources.APIToken}}</p><h2>API Token</h2></div></header>
+      <form method="post" action="/admin/settings/security/api-token">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>自定义 Token（留空则随机生成）<input type="password" name="custom_token" autocomplete="off"></label>
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div class="editor-actions"><button type="submit">更新 API Token</button></div>
+      </form>
+    </section>
+
+    <section class="source-card" data-security-item="media-token">
+      <header><div><p class="kicker">来源：{{.Sources.MediaToken}}{{if .MediaTokenEphemeral}}（每次启动随机生成）{{end}}</p><h2>媒体 Token</h2></div></header>
+      <form method="post" action="/admin/settings/security/media-token">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>自定义 Token（留空则随机生成）<input type="password" name="custom_token" autocomplete="off"></label>
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div class="editor-actions"><button type="submit">更新媒体 Token</button></div>
+      </form>
+      <form method="post" action="/admin/settings/security/media-token/reveal">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div class="editor-actions"><button type="submit">查看当前媒体 Token</button></div>
+      </form>
+    </section>
+
+    <section class="source-card" data-security-item="reset">
+      <header><div><h2>恢复为环境变量</h2></div></header>
+      <form method="post" action="/admin/settings/security/reset/username">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div class="editor-actions">
+          <button type="submit">恢复用户名</button>
+          <button type="submit" formaction="/admin/settings/security/reset/password">恢复密码</button>
+          <button type="submit" formaction="/admin/settings/security/reset/api-token">恢复 API Token</button>
+          <button type="submit" formaction="/admin/settings/security/reset/media-token">恢复媒体 Token</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

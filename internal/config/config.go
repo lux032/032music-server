@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,7 +34,50 @@ type Config struct {
 	// random one was generated for this process. Media URLs change on every
 	// restart in that state; main should log a loud warning.
 	MediaTokenGenerated bool
+	// ResetCredentials is MUSIC_SERVER_RESET_CREDENTIALS: "" (off),
+	// "password" (admin username + password overrides), "tokens" (API and
+	// media token overrides) or "all". While set, every startup deletes the
+	// matching admin-page overrides and all admin sessions.
+	ResetCredentials string
+	// TrustedProxies is MUSIC_SERVER_TRUSTED_PROXIES: comma-separated IPs
+	// or CIDRs of reverse proxies whose X-Forwarded-For is believed when
+	// rate limiting logins. Empty keeps RemoteAddr as the client address.
+	TrustedProxies string
 }
+
+// ParseTrustedProxies parses MUSIC_SERVER_TRUSTED_PROXIES. A bare IP is
+// treated as a single-address prefix.
+func ParseTrustedProxies(value string) ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if strings.Contains(item, "/") {
+			prefix, err := netip.ParsePrefix(item)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CIDR %q", item)
+			}
+			prefixes = append(prefixes, prefix.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(item)
+		if err != nil {
+			return nil, fmt.Errorf("invalid IP %q", item)
+		}
+		addr = addr.Unmap()
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes, nil
+}
+
+// Values accepted by MUSIC_SERVER_RESET_CREDENTIALS.
+const (
+	ResetCredentialsPassword = "password"
+	ResetCredentialsTokens   = "tokens"
+	ResetCredentialsAll      = "all"
+)
 
 func Load() (Config, error) {
 	dataDirectory := envOrDefault("MUSIC_SERVER_DATA_DIR", "/data")
@@ -74,6 +118,8 @@ func Load() (Config, error) {
 		LogLevel:            strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
 		DevMode:             devMode,
 		MediaTokenGenerated: mediaTokenGenerated,
+		ResetCredentials:    strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
+		TrustedProxies:      strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -117,6 +163,14 @@ func (c Config) Validate() error {
 	}
 	if len(c.MediaToken) < 24 {
 		problems = append(problems, "MUSIC_SERVER_MEDIA_TOKEN must contain at least 24 characters")
+	}
+	switch c.ResetCredentials {
+	case "", ResetCredentialsPassword, ResetCredentialsTokens, ResetCredentialsAll:
+	default:
+		problems = append(problems, "MUSIC_SERVER_RESET_CREDENTIALS must be password, tokens, or all")
+	}
+	if _, err := ParseTrustedProxies(c.TrustedProxies); err != nil {
+		problems = append(problems, "MUSIC_SERVER_TRUSTED_PROXIES must be comma-separated IPs or CIDRs: "+err.Error())
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

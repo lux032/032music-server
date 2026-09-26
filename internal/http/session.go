@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -30,6 +31,22 @@ type sessionManager struct {
 	store        *storage.Store
 	cookieSecure bool
 	lifetime     time.Duration
+	// generation increases whenever sessions are revoked in bulk. get()
+	// reads the database outside mu, so it only caches a persisted session
+	// when no revocation happened in between; otherwise a concurrent
+	// lookup could resurrect a session that was just deleted.
+	generation uint64
+	// flashes holds one-shot security notices (e.g. a freshly generated
+	// token) keyed by raw session token. They live only in memory and are
+	// never put into URLs or logs.
+	flashes map[string]securityFlash
+}
+
+// securityFlash is shown once on the next GET of the security page and
+// deleted immediately after being read.
+type securityFlash struct {
+	Label string
+	Value string
 }
 
 func newSessionManager(cookieSecure bool, store *storage.Store) *sessionManager {
@@ -38,6 +55,7 @@ func newSessionManager(cookieSecure bool, store *storage.Store) *sessionManager 
 		store:        store,
 		cookieSecure: cookieSecure,
 		lifetime:     8 * time.Hour,
+		flashes:      make(map[string]securityFlash),
 	}
 }
 
@@ -46,7 +64,29 @@ func sessionTokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// errSessionsRevoked is returned by createAt when sessions were revoked in
+// bulk (a username/password change) after the caller read the credentials
+// it authenticated against. The login must be retried.
+var errSessionsRevoked = errors.New("admin sessions were revoked during login")
+
+// currentGeneration returns the bulk-revocation counter. A login must read
+// it before reading the credentials it checks, and pass it to createAt.
+func (m *sessionManager) currentGeneration() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.generation
+}
+
 func (m *sessionManager) create(w http.ResponseWriter, username string) (adminSession, error) {
+	return m.createAt(w, username, m.currentGeneration())
+}
+
+// createAt creates a session only if no bulk revocation happened since
+// generation was read. The generation check, the database insert and the
+// cache insert all happen under mu, so a concurrent credential change
+// either runs entirely before (and createAt fails) or entirely after (and
+// its revocation deletes the new session).
+func (m *sessionManager) createAt(w http.ResponseWriter, username string, generation uint64) (adminSession, error) {
 	sessionToken, err := randomToken()
 	if err != nil {
 		return adminSession{}, err
@@ -64,16 +104,25 @@ func (m *sessionManager) create(w http.ResponseWriter, username string) (adminSe
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	m.mu.Lock()
+	if m.generation != generation {
+		m.mu.Unlock()
+		return adminSession{}, errSessionsRevoked
+	}
 	if err = m.store.CreateAdminSession(ctx, storage.AdminSession{TokenHash: sessionTokenHash(sessionToken), Username: session.Username, CSRFToken: session.CSRFToken, ExpiresAt: session.ExpiresAt}); err != nil {
+		m.mu.Unlock()
 		return adminSession{}, err
 	}
 	_ = m.store.DeleteExpiredAdminSessions(ctx, time.Now())
-
-	m.mu.Lock()
 	m.removeExpiredLocked(time.Now())
 	m.sessions[sessionToken] = session
 	m.mu.Unlock()
 
+	m.setCookie(w, sessionToken)
+	return session, nil
+}
+
+func (m *sessionManager) setCookie(w http.ResponseWriter, sessionToken string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminSessionCookie,
 		Value:    sessionToken,
@@ -83,8 +132,74 @@ func (m *sessionManager) create(w http.ResponseWriter, username string) (adminSe
 		Secure:   m.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
 
-	return session, nil
+// replaceAll keeps only the caller's session alive after a username or
+// password change. Under mu it:
+//  1. calls commit with the rotated session; commit must persist the
+//     credential change AND replace all persisted sessions with keep in one
+//     database transaction;
+//  2. on success calls publish (swap the credential pointer) — before the
+//     generation bump, so a login that read the old credentials always
+//     holds the old generation and fails in createAt;
+//  3. bumps the generation, clears the cache and flashes, caches the new
+//     session and sets the new cookie (new token + new CSRF token, which
+//     prevents session fixation).
+//
+// If commit fails nothing changes: credentials, sessions and the cookie
+// stay as they were.
+func (m *sessionManager) replaceAll(w http.ResponseWriter, username string, commit func(keep storage.AdminSession) error, publish func()) error {
+	sessionToken, err := randomToken()
+	if err != nil {
+		return err
+	}
+	csrfToken, err := randomToken()
+	if err != nil {
+		return err
+	}
+	session := adminSession{Username: username, CSRFToken: csrfToken, ExpiresAt: time.Now().Add(m.lifetime)}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := commit(storage.AdminSession{TokenHash: sessionTokenHash(sessionToken), Username: session.Username, CSRFToken: session.CSRFToken, ExpiresAt: session.ExpiresAt}); err != nil {
+		return err
+	}
+	publish()
+	m.generation++
+	clear(m.sessions)
+	clear(m.flashes)
+	m.sessions[sessionToken] = session
+	m.setCookie(w, sessionToken)
+	return nil
+}
+
+// setFlash stores a one-shot notice on the request's session. It reports
+// false when the session is no longer cached (e.g. revoked meanwhile).
+func (m *sessionManager) setFlash(r *http.Request, flash securityFlash) bool {
+	cookie, err := r.Cookie(adminSessionCookie)
+	if err != nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.sessions[cookie.Value]; !ok {
+		return false
+	}
+	m.flashes[cookie.Value] = flash
+	return true
+}
+
+// takeFlash returns and deletes the request session's one-shot notice.
+func (m *sessionManager) takeFlash(r *http.Request) (securityFlash, bool) {
+	cookie, err := r.Cookie(adminSessionCookie)
+	if err != nil {
+		return securityFlash{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	flash, ok := m.flashes[cookie.Value]
+	delete(m.flashes, cookie.Value)
+	return flash, ok
 }
 
 func (m *sessionManager) get(r *http.Request) (adminSession, bool) {
@@ -97,6 +212,7 @@ func (m *sessionManager) get(r *http.Request) (adminSession, bool) {
 	m.mu.Lock()
 	m.removeExpiredLocked(now)
 	session, ok := m.sessions[cookie.Value]
+	generation := m.generation
 	m.mu.Unlock()
 	if ok {
 		return session, true
@@ -111,8 +227,13 @@ func (m *sessionManager) get(r *http.Request) (adminSession, bool) {
 	}
 	session = adminSession{Username: persisted.Username, CSRFToken: persisted.CSRFToken, ExpiresAt: persisted.ExpiresAt}
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.generation != generation {
+		// Sessions were revoked while the database was being read; the
+		// row may already be gone, so do not trust (or cache) it.
+		return adminSession{}, false
+	}
 	m.sessions[cookie.Value] = session
-	m.mu.Unlock()
 	return session, true
 }
 
@@ -120,6 +241,7 @@ func (m *sessionManager) delete(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(adminSessionCookie); err == nil {
 		m.mu.Lock()
 		delete(m.sessions, cookie.Value)
+		delete(m.flashes, cookie.Value)
 		m.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -141,6 +263,7 @@ func (m *sessionManager) removeExpiredLocked(now time.Time) {
 	for token, session := range m.sessions {
 		if !session.ExpiresAt.After(now) {
 			delete(m.sessions, token)
+			delete(m.flashes, token)
 		}
 	}
 }

@@ -1,0 +1,39 @@
+name: Go race
+
+# Race-detector run for the concurrency-sensitive packages (credential hot
+# swap, session revocation, SQLite retry layer). -race needs cgo and a C
+# toolchain, which the Linux runner provides. Independent of the Docker
+# workflow; it does not change that workflow's jobs.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-race-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Race tests
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./internal/http/... ./internal/storage/...

@@ -119,7 +119,7 @@ Invoke-RestMethod `
 - 分页查看客户端同步的播放状态、断点位置和播放次数
 - 清空播放历史与断点位置；此操作不会删除歌曲、专辑、歌单或收藏
 
-所有修改操作都要求管理员会话和 CSRF Token，并采用 POST 后重定向，刷新页面不会重复提交。管理端通过当前登录会话访问音频和图片，不会把 API Token 或媒体 Token 写入页面。
+所有修改操作都要求管理员会话和 CSRF Token，并采用 POST 后重定向，刷新页面不会重复提交。管理端通过当前登录会话访问音频和图片，不会把 API Token 或媒体 Token 写入页面；唯一例外是“账号与安全”页在新生成 Token 或验证当前密码查看媒体 Token 后一次性显示（不进入 URL 与日志，响应禁止缓存）。
 
 ## 配置
 
@@ -133,9 +133,28 @@ Invoke-RestMethod `
 | `MUSIC_SERVER_ADMIN_USERNAME` | `admin` | 管理员用户名 |
 | `MUSIC_SERVER_ADMIN_PASSWORD` | 无 | 管理员密码，生产环境至少 12 个字符；`admin` 仅用于本地开发 |
 | `MUSIC_SERVER_API_TOKEN` | 无 | 客户端 Token，至少 24 个字符 |
-| `MUSIC_SERVER_MEDIA_TOKEN` | 回退到 API Token | Sonos、图片加载器等媒体客户端使用的只读 Token，生产环境应单独设置 |
+| `MUSIC_SERVER_MEDIA_TOKEN` | 见说明 | Sonos、图片加载器等媒体客户端使用的只读 Token，至少 24 个字符，生产环境应单独设置。未设置时：仅 `MUSIC_SERVER_DEV_MODE=1` 下回退为环境变量中的 API Token；否则每次启动随机生成（媒体 URL 重启后失效，启动日志会告警） |
 | `MUSIC_SERVER_COOKIE_SECURE` | `false` | HTTPS 部署时应设为 `true` |
 | `MUSIC_SERVER_LOG_LEVEL` | `info` | `debug`、`info`、`warn` 或 `error` |
+| `MUSIC_SERVER_RESET_CREDENTIALS` | 无 | 恢复用：`password`（用户名与密码）、`tokens`（API 与媒体 Token）或 `all`。启动时删除对应的管理页覆盖值及全部登录会话；变量保留期间每次启动都会重复并告警，恢复后请移除 |
+| `MUSIC_SERVER_TRUSTED_PROXIES` | 无 | 可选，逗号分隔的反向代理 IP 或 CIDR（如 `172.16.0.0/12,127.0.0.1`）。见下文“反向代理与登录限流” |
+
+### 管理页修改凭据
+
+管理员可在 `/admin/settings/security` 修改用户名、密码、API Token 与媒体 Token，修改立即生效：
+
+- 数据库中的覆盖值一旦设置即优先于环境变量；环境变量是初始值与兜底。每项都可“恢复为环境变量”，启动日志会提示哪些环境变量已被覆盖。
+- 密码以 PBKDF2-SHA256（600000 次迭代）哈希保存，API Token 只保存 SHA-256；媒体 Token 明文保存，以便输入当前密码后再次查看。
+- 所有修改、查看与恢复操作都要求输入当前密码；失败会计入登录限流。
+- 修改用户名或密码后，其他登录会话全部退出，当前会话换发新 Cookie 与 CSRF Token。重新生成 Token 不影响管理会话，旧 Token 立即失效；正在进行的媒体流不会被中断（媒体 Token 只在请求开始时校验）。
+- 忘记管理页设置的密码时，设置 `MUSIC_SERVER_RESET_CREDENTIALS=password` 重启即可恢复为环境变量中的用户名与密码。
+- 自定义 Token 至少 24 位，只能包含字母、数字和 `- _ . ~`（可直接放入 URL）。
+
+### 反向代理与登录限流
+
+登录与敏感操作的密码校验按“客户端 IP + 用户名”和“客户端 IP”两级限流，同一 IP 同时只允许一个密码哈希计算。默认以 TCP 连接对端（RemoteAddr）作为客户端 IP，不信任任何请求头。
+
+部署在反向代理之后时，所有请求都来自代理地址：任何人连续输错密码都会锁定代理 IP，连带锁住管理员自己。此时设置 `MUSIC_SERVER_TRUSTED_PROXIES` 为代理的 IP/CIDR：只有当连接对端属于受信代理时，才从 `X-Forwarded-For` 自右向左取第一个非受信地址作为客户端 IP（更左侧的条目可由客户端伪造，不会被采用）。取舍：只应填写确实会覆盖/追加 `X-Forwarded-For` 的代理；范围填得过宽（例如包含客户端所在网段）会让客户端伪造地址绕过限流。格式错误时服务拒绝启动。当前该设置只影响登录限流。
 
 ## API
 
@@ -198,7 +217,7 @@ Authorization: Bearer <API_TOKEN>
 
 ### 媒体访问
 
-音频、封面、歌手图片及歌词文本只接受 `mediaToken` 查询参数或管理员会话 Cookie；不接受 Bearer API Token。Bearer Token 仅供 JSON API 使用。生产环境应配置独立的 `MUSIC_SERVER_MEDIA_TOKEN`。请求日志不记录查询参数。
+音频、封面、歌手图片及歌词文本只接受 `mediaToken` 查询参数或管理员会话 Cookie；不接受 Bearer API Token。Bearer Token 仅供 JSON API 使用。生产环境应配置独立的 `MUSIC_SERVER_MEDIA_TOKEN`（或在管理页设置媒体 Token）。请求日志不记录查询参数。
 
 ```text
 GET /api/v1/tracks/123/lyrics.lrc?mediaToken=<MEDIA_TOKEN>
