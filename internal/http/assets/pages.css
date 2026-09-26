@@ -255,19 +255,6 @@
 .artist-row h2 a:hover { color: var(--accent); }
 .artist-row p { margin: 0; color: var(--muted); font-size: var(--fs-xs); }
 .artist-row details { position: relative; }
-.artist-row details form, .track-table-row details form {
-  position: absolute;
-  z-index: 40;
-  right: 0;
-  display: grid;
-  gap: 8px;
-  width: 300px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow-pop);
-}
 
 /* Track table */
 .track-browser { overflow-x: auto; }
@@ -755,7 +742,9 @@ a.console-stats > *:hover, .console-stats > a:hover { background: var(--bg-soft)
 img.artist-portrait { object-fit: cover; color: inherit; }
 .artist-hero h1 { max-width: 18ch; margin: 0 0 8px; font-size: clamp(2rem, 3.6vw, 3.4rem); letter-spacing: -0.03em; overflow-wrap: anywhere; }
 .artist-hero p { color: var(--text-secondary); }
-.artist-hero form { margin-top: 20px; }
+.artist-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 20px; }
+.artist-hero-actions form { margin: 0; }
+.artist-hero-actions .secondary-button { display: inline-flex; align-items: center; border-radius: var(--radius-md); font-size: var(--fs-sm); font-weight: 600; }
 .identity-columns { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 40px; }
 .artist-bio { max-width: 850px; margin-bottom: 40px; color: var(--text-secondary); line-height: 1.8; white-space: pre-line; }
 .biography-origin { display: flex; gap: 14px; align-items: center; margin: 0 0 12px; color: var(--muted); font-size: var(--fs-sm); }
@@ -1248,4 +1237,137 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   .security-inline-form label { max-width: none; flex-basis: auto; }
   .security-inline-form button { width: 100%; }
   .security-reset .danger-confirm-panel label { max-width: none; }
+}
+
+/* ------------------------------------------------ F1 slide-over edit drawers */
+/* Base (no-JS) state: an open row drawer spans its row as an inline card,
+   page drawers stay the in-page editor section. html.drawer-ready (set by
+   browse.js) upgrades both into the right-hand slide-over. */
+.edit-drawer .drawer-backdrop, .edit-drawer .drawer-close { display: none; }
+.row-drawer { min-width: 0; }
+html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
+.row-drawer > .drawer-panel {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.row-drawer .drawer-form { margin: 0; }
+.row-drawer .kicker { display: none; }
+.page-drawer .drawer-fields { gap: 0; }
+.drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.drawer-head h2 { margin: 0 0 4px; color: var(--text); font-size: 1.15rem; }
+.drawer-subtitle { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-sm); }
+.drawer-fields { display: grid; gap: 14px; min-width: 0; }
+.row-drawer .drawer-fields fieldset { display: grid; gap: 14px; min-width: 0; margin: 0; border: 0; padding: 0; }
+.row-drawer .drawer-fields legend { padding: 0; color: var(--accent); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.field-hint { margin: 0; color: var(--muted); font-size: var(--fs-xs); line-height: 1.6; }
+.form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.form-actions .secondary-button { display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-md); font-size: var(--fs-sm); font-weight: 600; }
+.track-table-row .drawer-trigger, .artist-row .drawer-trigger { display: inline-grid; place-items: center; border-radius: var(--radius-sm); }
+.track-table-row .drawer-trigger { width: 30px; height: 30px; color: var(--text-secondary); }
+.artist-row .drawer-trigger { padding: 5px 10px; font-size: var(--fs-sm); font-weight: 600; }
+.track-table-row .drawer-trigger:hover, .artist-row .drawer-trigger:hover { color: var(--accent); background: var(--accent-soft); }
+
+/* Enhanced slide-over. Fixed children escape the row/table layout, so the
+   form stays inside its row in the DOM (selectors and PJAX untouched). */
+.drawer-ready .page-drawer:not(.is-open) { display: none; }
+.drawer-ready .page-drawer.is-open { margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none; overflow: visible; }
+.drawer-ready.drawer-open { overflow: hidden; }
+.drawer-ready .edit-drawer .drawer-backdrop {
+  display: block;
+  position: fixed;
+  z-index: 1500;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: drawer-fade-in 0.3s var(--ease) both;
+}
+.drawer-ready .edit-drawer > .drawer-panel {
+  position: fixed;
+  z-index: 1501;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: min(420px, 100vw);
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: var(--radius-xl) 0 0 var(--radius-xl);
+  padding: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  background: var(--surface);
+  box-shadow: -24px 0 60px rgba(15, 23, 42, 0.18);
+  outline: none;
+  animation: drawer-slide-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.drawer-ready .edit-drawer.is-closing .drawer-backdrop { animation: drawer-fade-out 0.28s var(--ease) both; }
+.drawer-ready .edit-drawer.is-closing > .drawer-panel { animation: drawer-slide-out 0.28s cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes drawer-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes drawer-slide-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@keyframes drawer-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes drawer-fade-out { from { opacity: 1; } to { opacity: 0; } }
+.drawer-ready .edit-drawer .drawer-head { flex: none; border-bottom: 1px solid var(--line); padding: 22px 20px 18px 24px; }
+.drawer-ready .edit-drawer .drawer-head .kicker { display: block; margin-bottom: 6px; }
+.drawer-ready .edit-drawer .drawer-head p:last-child { margin: 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.55; }
+.drawer-ready .edit-drawer .drawer-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: -4px 0 0;
+  border-radius: 50%;
+  padding: 0;
+  color: var(--text-secondary);
+  background: transparent;
+}
+.drawer-ready .edit-drawer .drawer-close:hover { color: var(--text); background: var(--surface-hover); }
+.drawer-ready .edit-drawer .drawer-close .icon { width: 20px; height: 20px; }
+.drawer-ready .edit-drawer .drawer-quick { display: flex; flex: none; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); padding: 14px 24px; background: var(--bg-soft); }
+.drawer-ready .edit-drawer .drawer-quick .queue-actions { display: contents; }
+.drawer-ready .edit-drawer .drawer-quick .compact-action { display: block; margin: 0 !important; border: 0; padding: 0; }
+.drawer-ready .edit-drawer .drawer-quick .secondary-button { width: auto; min-height: 34px; padding: 0.35rem 0.8rem; font-size: var(--fs-xs); }
+.drawer-ready .edit-drawer .drawer-form { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; margin: 0; }
+.drawer-ready .edit-drawer .drawer-form > .form-error { flex: none; margin: 14px 24px 0; }
+.drawer-ready .edit-drawer .drawer-fields { flex: 1 1 auto; align-content: start; gap: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 24px 8px; }
+.drawer-ready .edit-drawer .drawer-fields fieldset { gap: 14px; border-bottom: 1px solid var(--line); padding: 20px 0 22px; }
+.drawer-ready .edit-drawer .drawer-fields fieldset:last-child { border-bottom: 0; }
+.drawer-ready .edit-drawer .drawer-fields legend { float: left; width: 100%; margin-bottom: 2px; }
+.drawer-ready .edit-drawer .drawer-fields input:not([type="checkbox"]),
+.drawer-ready .edit-drawer .drawer-fields select,
+.drawer-ready .edit-drawer .drawer-fields textarea { width: 100%; min-width: 0; }
+.drawer-ready .edit-drawer .drawer-fields .inline { gap: 12px; }
+.drawer-ready .edit-drawer .drawer-fields .inline label { flex: 1; }
+.drawer-ready .edit-drawer .form-grid, .drawer-ready .edit-drawer .form-grid.thirds { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
+.drawer-ready .edit-drawer .check-row { flex-wrap: wrap; gap: 10px 20px; }
+.drawer-ready .edit-drawer .form-actions {
+  flex: none;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 14px 24px max(14px, env(safe-area-inset-bottom));
+  background: var(--surface);
+  box-shadow: 0 -8px 20px rgba(18, 25, 38, 0.04);
+}
+.drawer-ready .edit-drawer .form-actions > * { min-width: 96px; min-height: 40px; }
+@media (max-width: 640px) {
+  .drawer-ready .edit-drawer > .drawer-panel { width: 100vw; border-left: 0; border-radius: 0; }
+  .drawer-ready .edit-drawer .drawer-head { padding: 18px 16px 14px 18px; }
+  .drawer-ready .edit-drawer .drawer-quick, .drawer-ready .edit-drawer .drawer-fields { padding-right: 18px; padding-left: 18px; }
+  .drawer-ready .edit-drawer .form-actions { padding-right: 18px; padding-left: 18px; }
+  .drawer-ready .edit-drawer .form-actions > * { flex: 1; }
+  .drawer-ready .edit-drawer .form-grid, .drawer-ready .edit-drawer .form-grid.thirds { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drawer-ready .edit-drawer .drawer-backdrop, .drawer-ready .edit-drawer > .drawer-panel { animation: none; }
 }

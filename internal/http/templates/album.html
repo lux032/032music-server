@@ -31,7 +31,7 @@
         </div>
         <div class="album-actions">
           <button type="button" class="primary-round"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
-          <a href="#edit" class="secondary-round">编辑专辑</a>
+          <a href="#edit" class="secondary-round" data-drawer-open="edit" aria-haspopup="dialog">编辑专辑</a>
           <form method="post" action="/admin/favorites/albums/{{.AlbumDetail.ID}}">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
             <input type="hidden" name="favorite" value="{{if .AlbumDetail.IsFavorite}}0{{else}}1{{end}}">
@@ -95,60 +95,66 @@
       </aside>
     </div>
 
-    <section id="edit" class="album-editor">
-      <div class="editor-head">
-        <div>
-          <p class="kicker">元数据覆盖</p>
-          <h2>编辑专辑</h2>
-          <p>这些值优先于文件标签，源音乐文件不会被修改。</p>
-        </div>
+    <section id="edit" class="edit-drawer page-drawer album-editor" data-drawer>
+      <div class="drawer-backdrop" data-drawer-close></div>
+      <div class="drawer-panel" aria-labelledby="album-drawer-title">
+        <header class="drawer-head editor-head">
+          <div>
+            <p class="kicker">元数据覆盖</p>
+            <h2 id="album-drawer-title">编辑专辑</h2>
+            <p>这些值优先于文件标签，源音乐文件不会被修改。</p>
+          </div>
+          <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+        </header>
+        <form class="drawer-form" method="post" action="/admin/albums/{{.AlbumDetail.ID}}">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <div class="drawer-fields">
+            <fieldset>
+              <legend>基本信息</legend>
+              <label>专辑标题<input name="title" value="{{.AlbumDetail.Title}}"></label>
+              <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
+              <div class="form-grid">
+                <label>专辑类型<select name="albumType">
+                  <option value="album" {{if eq .AlbumDetail.AlbumType "album"}}selected{{end}}>专辑</option>
+                  <option value="single" {{if eq .AlbumDetail.AlbumType "single"}}selected{{end}}>单曲</option>
+                  <option value="ep" {{if eq .AlbumDetail.AlbumType "ep"}}selected{{end}}>EP</option>
+                  <option value="soundtrack" {{if eq .AlbumDetail.AlbumType "soundtrack"}}selected{{end}}>原声</option>
+                  <option value="compilation" {{if eq .AlbumDetail.AlbumType "compilation"}}selected{{end}}>合辑</option>
+                  <option value="live" {{if eq .AlbumDetail.AlbumType "live"}}selected{{end}}>现场</option>
+                  <option value="bootleg" {{if eq .AlbumDetail.AlbumType "bootleg"}}selected{{end}}>Bootleg</option>
+                  <option value="other" {{if eq .AlbumDetail.AlbumType "other"}}selected{{end}}>其他</option>
+                </select></label>
+                <label>版本 / Edition<input name="version" value="{{.AlbumDetail.Version}}" placeholder="Deluxe Edition, Remaster…"></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>发行信息</legend>
+              <div class="form-grid thirds">
+                <label>发行年份<input type="number" name="year" value="{{.AlbumDetail.Year}}"></label>
+                <label>发行日期<input name="releaseDate" value="{{.AlbumDetail.ReleaseDate}}" placeholder="YYYY-MM-DD"></label>
+                <label>原始发行日期<input name="originalReleaseDate" value="{{.AlbumDetail.OriginalReleaseDate}}" placeholder="YYYY-MM-DD"></label>
+                <label>厂牌<input name="label" value="{{.AlbumDetail.Label}}"></label>
+                <label>目录号<input name="catalogNumber" value="{{.AlbumDetail.CatalogNumber}}"></label>
+                <label>国家/地区<input name="country" value="{{.AlbumDetail.Country}}"></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>分类与说明</legend>
+              <label>流派（逗号分隔）<input name="genres" value="{{.AlbumDetail.Genres}}"></label>
+              <div class="check-row">
+                <label><input type="checkbox" name="compilation" {{if .AlbumDetail.Compilation}}checked{{end}}> 合辑</label>
+                <label><input type="checkbox" name="live" {{if .AlbumDetail.Live}}checked{{end}}> 现场录音</label>
+                <label><input type="checkbox" name="bootleg" {{if .AlbumDetail.Bootleg}}checked{{end}}> Bootleg</label>
+              </div>
+              <label>专辑简介<textarea name="review" rows="8" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label>
+            </fieldset>
+          </div>
+          <div class="form-actions editor-actions">
+            <a class="secondary-button" href="/admin/albums/{{.AlbumDetail.ID}}" data-drawer-close>取消</a>
+            <button>保存覆盖信息</button>
+          </div>
+        </form>
       </div>
-      <form method="post" action="/admin/albums/{{.AlbumDetail.ID}}">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <fieldset>
-          <legend>基本信息</legend>
-          <label>专辑标题<input name="title" value="{{.AlbumDetail.Title}}"></label>
-          <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
-          <div class="form-grid">
-            <label>专辑类型<select name="albumType">
-              <option value="album" {{if eq .AlbumDetail.AlbumType "album"}}selected{{end}}>专辑</option>
-              <option value="single" {{if eq .AlbumDetail.AlbumType "single"}}selected{{end}}>单曲</option>
-              <option value="ep" {{if eq .AlbumDetail.AlbumType "ep"}}selected{{end}}>EP</option>
-              <option value="soundtrack" {{if eq .AlbumDetail.AlbumType "soundtrack"}}selected{{end}}>原声</option>
-              <option value="compilation" {{if eq .AlbumDetail.AlbumType "compilation"}}selected{{end}}>合辑</option>
-              <option value="live" {{if eq .AlbumDetail.AlbumType "live"}}selected{{end}}>现场</option>
-              <option value="bootleg" {{if eq .AlbumDetail.AlbumType "bootleg"}}selected{{end}}>Bootleg</option>
-              <option value="other" {{if eq .AlbumDetail.AlbumType "other"}}selected{{end}}>其他</option>
-            </select></label>
-            <label>版本 / Edition<input name="version" value="{{.AlbumDetail.Version}}" placeholder="Deluxe Edition, Remaster…"></label>
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>发行信息</legend>
-          <div class="form-grid thirds">
-            <label>发行年份<input type="number" name="year" value="{{.AlbumDetail.Year}}"></label>
-            <label>发行日期<input name="releaseDate" value="{{.AlbumDetail.ReleaseDate}}" placeholder="YYYY-MM-DD"></label>
-            <label>原始发行日期<input name="originalReleaseDate" value="{{.AlbumDetail.OriginalReleaseDate}}" placeholder="YYYY-MM-DD"></label>
-            <label>厂牌<input name="label" value="{{.AlbumDetail.Label}}"></label>
-            <label>目录号<input name="catalogNumber" value="{{.AlbumDetail.CatalogNumber}}"></label>
-            <label>国家/地区<input name="country" value="{{.AlbumDetail.Country}}"></label>
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>分类与说明</legend>
-          <label>流派（逗号分隔）<input name="genres" value="{{.AlbumDetail.Genres}}"></label>
-          <div class="check-row">
-            <label><input type="checkbox" name="compilation" {{if .AlbumDetail.Compilation}}checked{{end}}> 合辑</label>
-            <label><input type="checkbox" name="live" {{if .AlbumDetail.Live}}checked{{end}}> 现场录音</label>
-            <label><input type="checkbox" name="bootleg" {{if .AlbumDetail.Bootleg}}checked{{end}}> Bootleg</label>
-          </div>
-          <label>专辑简介<textarea name="review" rows="8" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label>
-        </fieldset>
-        <div class="editor-actions">
-          <a href="/admin/albums/{{.AlbumDetail.ID}}">取消</a>
-          <button>保存覆盖信息</button>
-        </div>
-      </form>
     </section>
   </main>
 </body>

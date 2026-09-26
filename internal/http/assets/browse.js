@@ -217,7 +217,117 @@
       items[(index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
     }
   });
+
+  // Slide-over edit drawers (F1). Row drawers are <details class="edit-drawer">
+  // opened by their <summary>; page drawers are sections opened by a
+  // [data-drawer-open] link to their id. Without this class every drawer
+  // stays an inline form, so no-JS editing keeps working unchanged.
+  document.documentElement.classList.add('drawer-ready');
+  const drawerFocusable = 'a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  const drawerFirstField = '.drawer-form input:not([type="hidden"]):not([disabled]), .drawer-form select:not([disabled]), .drawer-form textarea:not([disabled])';
+  let activeDrawer = null, drawerTrigger = null, pendingDrawerClose = null;
+  function drawerPanel(drawer) { return drawer.querySelector(':scope > .drawer-panel'); }
+  function drawerIsOpen(drawer) { return drawer instanceof HTMLDetailsElement ? drawer.open : drawer.classList.contains('is-open'); }
+  function drawerItems(panel) { return [...panel.querySelectorAll(drawerFocusable)].filter(el => el.getClientRects().length); }
+  function flushDrawerClose() {
+    if (!pendingDrawerClose) return;
+    const { timer, finish } = pendingDrawerClose;
+    pendingDrawerClose = null;
+    clearTimeout(timer);
+    finish();
+  }
+  function activateDrawer(drawer, trigger) {
+    flushDrawerClose();
+    if (activeDrawer && activeDrawer !== drawer) closeDrawer(activeDrawer, false, true);
+    activeDrawer = drawer;
+    drawerTrigger = trigger;
+    const panel = drawerPanel(drawer);
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.tabIndex = -1;
+    if (trigger && !(trigger instanceof HTMLElement && trigger.matches('summary'))) trigger.setAttribute('aria-expanded', 'true');
+    document.documentElement.classList.add('drawer-open');
+    (panel.querySelector(drawerFirstField) || panel).focus({ preventScroll: true });
+  }
+  function deactivateDrawer(drawer, restoreFocus) {
+    const panel = drawerPanel(drawer);
+    if (panel) { panel.removeAttribute('role'); panel.removeAttribute('aria-modal'); panel.removeAttribute('tabindex'); }
+    drawer.classList.remove('is-closing');
+    if (activeDrawer !== drawer) return;
+    const trigger = drawerTrigger;
+    activeDrawer = null;
+    drawerTrigger = null;
+    document.documentElement.classList.remove('drawer-open');
+    if (trigger && trigger.hasAttribute('aria-expanded') && !trigger.matches('summary')) trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+  function closeDrawer(drawer, restoreFocus = true, immediate = false) {
+    if (!drawerIsOpen(drawer) || drawer.classList.contains('is-closing')) return;
+    const finish = () => {
+      deactivateDrawer(drawer, restoreFocus);
+      if (drawer instanceof HTMLDetailsElement) drawer.open = false;
+      else drawer.classList.remove('is-open');
+    };
+    if (immediate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { finish(); return; }
+    drawer.classList.add('is-closing');
+    pendingDrawerClose = { timer: setTimeout(flushDrawerClose, 280), finish };
+  }
+  function openPageDrawer(drawer, trigger) {
+    if (drawerIsOpen(drawer)) return;
+    flushDrawerClose();
+    drawer.classList.add('is-open');
+    activateDrawer(drawer, trigger);
+  }
+  function openDrawerFromHash() {
+    if (!location.hash) return;
+    let id;
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch (_) { return; }
+    const drawer = document.getElementById(id);
+    if (drawer?.matches('.edit-drawer[data-drawer]')) openPageDrawer(drawer, document.querySelector(`[data-drawer-open="${CSS.escape(id)}"]`));
+  }
+  document.addEventListener('toggle', e => {
+    const drawer = e.target;
+    if (!(drawer instanceof HTMLDetailsElement) || !drawer.matches('.edit-drawer')) return;
+    if (drawer.open) { if (activeDrawer !== drawer) activateDrawer(drawer, drawer.querySelector(':scope > summary')); }
+    else if (activeDrawer === drawer) deactivateDrawer(drawer, true);
+  }, true);
+  // Capture phase so the PJAX link handler sees defaultPrevented on 取消.
+  document.addEventListener('click', e => {
+    if (!(e.target instanceof Element)) return;
+    const opener = e.target.closest('[data-drawer-open]');
+    if (opener) {
+      const drawer = document.getElementById(opener.dataset.drawerOpen);
+      if (drawer?.matches('.edit-drawer')) { e.preventDefault(); openPageDrawer(drawer, opener); }
+      return;
+    }
+    const closer = e.target.closest('[data-drawer-close]');
+    if (closer && activeDrawer?.contains(closer)) { e.preventDefault(); closeDrawer(activeDrawer); }
+  }, true);
+  document.addEventListener('keydown', e => {
+    if (!activeDrawer || e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDrawer(activeDrawer); return; }
+    if (e.key !== 'Tab') return;
+    const panel = drawerPanel(activeDrawer);
+    const items = drawerItems(panel);
+    if (!items.length) { e.preventDefault(); panel.focus(); return; }
+    const first = items[0], last = items[items.length - 1], current = document.activeElement;
+    if (!panel.contains(current)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+    else if (e.shiftKey && (current === first || current === panel)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && current === last) { e.preventDefault(); first.focus(); }
+  }, true);
+  document.addEventListener('focusin', e => {
+    if (!activeDrawer || pendingDrawerClose) return;
+    const panel = drawerPanel(activeDrawer);
+    if (panel && e.target instanceof Node && !panel.contains(e.target)) (drawerItems(panel)[0] || panel).focus({ preventScroll: true });
+  });
+  openDrawerFromHash();
+
   document.addEventListener('032:pjax-applied', () => {
+    if (pendingDrawerClose) { clearTimeout(pendingDrawerClose.timer); pendingDrawerClose = null; }
+    activeDrawer = null;
+    drawerTrigger = null;
+    document.documentElement.classList.remove('drawer-open');
+    openDrawerFromHash();
     composing = false;
     closeAll();
     if (pendingFilter) {

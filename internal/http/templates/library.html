@@ -104,14 +104,34 @@
           <p>{{.AlbumCount}} 张专辑 · {{.TrackCount}} 首单曲</p>
         </div>
         <a href="/admin/artists/{{.ID}}">资料与匹配</a>
-        <details>
-          <summary>编辑</summary>
-          <form method="post" action="/admin/artists/{{.ID}}">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
-            <input name="name" value="{{.Name}}">
-            <button>保存</button>
-          </form>
+        <details class="edit-drawer row-drawer">
+          <summary class="drawer-trigger">编辑</summary>
+          <div class="drawer-backdrop" data-drawer-close></div>
+          <div class="drawer-panel" aria-labelledby="artist-drawer-title-{{.ID}}">
+            <header class="drawer-head">
+              <div>
+                <p class="kicker">歌手</p>
+                <h2 id="artist-drawer-title-{{.ID}}">编辑歌手</h2>
+                <p class="drawer-subtitle">{{.Name}}</p>
+              </div>
+              <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+            </header>
+            <form class="drawer-form" method="post" action="/admin/artists/{{.ID}}">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
+              <div class="drawer-fields">
+                <fieldset>
+                  <legend>显示名称</legend>
+                  <label>名称<input name="name" value="{{.Name}}"></label>
+                  <p class="field-hint">留空即恢复文件标签中的名称，源音乐文件不会被修改。</p>
+                </fieldset>
+              </div>
+              <div class="form-actions">
+                <a class="secondary-button" href="{{$.ReturnTo}}" data-drawer-close>取消</a>
+                <button>保存</button>
+              </div>
+            </form>
+          </div>
         </details>
       </article>
       {{else}}
@@ -133,30 +153,54 @@
         <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>
         {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
         <span>{{formatDurationMillis .DurationMillis}}</span>
-        <details>
-          <summary title="更多操作" aria-label="更多操作"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg></summary>
-          <div class="queue-actions">
-            <button type="button" class="secondary-button queue-next-btn">下一首播放</button>
-            <button type="button" class="secondary-button queue-append-btn">添加到队列末尾</button>
-          </div>
-          <form class="compact-action" method="post" action="/admin/favorites/tracks/{{.ID}}">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}">
-            <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
-            <button class="secondary-button">{{if .IsFavorite}}取消收藏{{else}}加入收藏{{end}}</button>
-          </form>
-          <form method="post" action="/admin/tracks/{{.ID}}">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
-            <label>标题<input name="title" value="{{.Title}}"></label>
-            <div class="inline">
-              <label>碟号<input type="number" min="1" name="disc" value="{{.DiscNumber}}"></label>
-              <label>曲号<input type="number" min="0" name="number" value="{{.TrackNumber}}"></label>
+        <details class="edit-drawer row-drawer">
+          <summary class="drawer-trigger" title="编辑与更多操作" aria-label="编辑与更多操作"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg></summary>
+          <div class="drawer-backdrop" data-drawer-close></div>
+          <div class="drawer-panel" aria-labelledby="track-drawer-title-{{.ID}}">
+            <header class="drawer-head">
+              <div>
+                <p class="kicker">歌曲</p>
+                <h2 id="track-drawer-title-{{.ID}}">编辑歌曲</h2>
+                <p class="drawer-subtitle">{{.Title}}{{if .Artist}} · {{.Artist}}{{end}}</p>
+              </div>
+              <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+            </header>
+            <div class="drawer-quick">
+              <div class="queue-actions">
+                <button type="button" class="secondary-button queue-next-btn">下一首播放</button>
+                <button type="button" class="secondary-button queue-append-btn">添加到队列末尾</button>
+              </div>
+              <form class="compact-action" method="post" action="/admin/favorites/tracks/{{.ID}}">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}">
+                <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
+                <button class="secondary-button">{{if .IsFavorite}}取消收藏{{else}}加入收藏{{end}}</button>
+              </form>
             </div>
-            <label>作曲<input name="composer" value="{{.Composer}}"></label>
-            <label>流派<input name="genres" value="{{.Genres}}"></label>
-            <button>保存</button>
-          </form>
+            <form class="drawer-form" method="post" action="/admin/tracks/{{.ID}}">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
+              <div class="drawer-fields">
+                <fieldset>
+                  <legend>基本信息</legend>
+                  <label>标题<input name="title" value="{{.Title}}"></label>
+                  <div class="inline">
+                    <label>碟号<input type="number" min="1" name="disc" value="{{.DiscNumber}}"></label>
+                    <label>曲号<input type="number" min="0" name="number" value="{{.TrackNumber}}"></label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend>创作与分类</legend>
+                  <label>作曲<input name="composer" value="{{.Composer}}"></label>
+                  <label>流派<input name="genres" value="{{.Genres}}" placeholder="多个流派用逗号分隔"></label>
+                </fieldset>
+              </div>
+              <div class="form-actions">
+                <a class="secondary-button" href="{{$.ReturnTo}}" data-drawer-close>取消</a>
+                <button>保存</button>
+              </div>
+            </form>
+          </div>
         </details>
       </article>
       {{else}}

@@ -26,10 +26,13 @@
           <span>{{.Artist.AlbumCount}} 张专辑歌手关联</span>
           <span>{{.Artist.TrackCount}} 首单曲歌手关联</span>
         </div>
-        <form method="post" action="/admin/artists/{{.Artist.ID}}/match">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <button>重新匹配资料</button>
-        </form>
+        <div class="artist-hero-actions">
+          <form method="post" action="/admin/artists/{{.Artist.ID}}/match">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button>重新匹配资料</button>
+          </form>
+          <a href="#artist-edit" class="secondary-button" data-drawer-open="artist-edit" aria-haspopup="dialog">编辑歌手</a>
+        </div>
       </div>
     </section>
 
@@ -171,6 +174,35 @@
         </section>
       </aside>
     </div>
+
+    <section id="artist-edit" class="edit-drawer page-drawer album-editor" data-drawer>
+      <div class="drawer-backdrop" data-drawer-close></div>
+      <div class="drawer-panel" aria-labelledby="artist-drawer-title">
+        <header class="drawer-head editor-head">
+          <div>
+            <p class="kicker">元数据覆盖</p>
+            <h2 id="artist-drawer-title">编辑歌手</h2>
+            <p>显示名称优先于文件标签，源音乐文件不会被修改。</p>
+          </div>
+          <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+        </header>
+        <form class="drawer-form" method="post" action="/admin/artists/{{.Artist.ID}}">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/artists/{{.Artist.ID}}">
+          <div class="drawer-fields">
+            <fieldset>
+              <legend>基本信息</legend>
+              <label>显示名称<input name="name" value="{{.Artist.Name}}"></label>
+              <p class="field-hint">留空即恢复文件标签中的名称。</p>
+            </fieldset>
+          </div>
+          <div class="form-actions editor-actions">
+            <a class="secondary-button" href="/admin/artists/{{.Artist.ID}}" data-drawer-close>取消</a>
+            <button>保存</button>
+          </div>
+        </form>
+      </div>
+    </section>
   </main>
 </body>
 </html>
