@@ -82,6 +82,18 @@ func chromeFor(session adminSession, nav string) Chrome {
 // the template helper.
 var indexLetters = []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "#"}
 
+// indexLettersWhere returns the indexLetters entries whose kana-ness matches
+// kana, preserving order.
+func indexLettersWhere(kana bool) []string {
+	values := make([]string, 0, len(indexLetters))
+	for _, letter := range indexLetters {
+		if isKanaIndex(letter) == kana {
+			values = append(values, letter)
+		}
+	}
+	return values
+}
+
 type dashboardPageData struct {
 	Chrome
 	Version        string
@@ -104,15 +116,21 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"formatDurationMillis":  formatDurationMillis,
 		"firstGenre":            firstGenre,
 		"formatAdminTime":       formatAdminTime,
-		"formatTime":            formatTime,
+		"formatTime":            formatAdminTime,
 		"albumTypeLabel":        albumTypeLabel,
 		"workTypeLabel":         workTypeLabel,
 		"playbackStateLabel":    playbackStateLabel,
 		"enrichmentRunProgress": enrichmentRunProgress,
 		"enrichmentTargetLabel": enrichmentTargetLabel,
 		"scanStatusLabel":       scanStatusLabel,
+		// indexValues and kanaIndexValues split indexLetters the same way the
+		// library index bar does: "#" stays with the always-visible Latin
+		// letters, only kana go behind the かな toggle.
 		"indexValues": func() []string {
-			return indexLetters
+			return indexLettersWhere(false)
+		},
+		"kanaIndexValues": func() []string {
+			return indexLettersWhere(true)
 		},
 		// asset* emit content-addressed asset URLs so browsers can cache them
 		// forever; appBuild exposes the build hash as a meta tag used by the
@@ -437,7 +455,11 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	a.sessions.delete(w, r)
+	if err := a.sessions.delete(w, r); err != nil {
+		a.logger.Error("delete admin session", "error", err)
+		http.Error(w, "logout unavailable", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
 
@@ -645,6 +667,10 @@ func (a *App) render(w http.ResponseWriter, status int, name string, data any) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Admin pages carry per-session data (CSRF token, one-shot security
+	// flashes): never let the browser or a proxy keep a copy. no-store also
+	// keeps these pages out of the back/forward cache.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = buffer.WriteTo(w)
 }

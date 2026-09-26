@@ -137,7 +137,7 @@ func postSecurity(t *testing.T, app *App, handler http.Handler, cookie *http.Coo
 
 // securityNotice asserts a 303 back to the security page and returns the
 // notice text.
-func securityNotice(t *testing.T, rec *httptest.ResponseRecorder) string {
+func securityNoticeText(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303, body = %s", rec.Code, rec.Body.String())
@@ -149,7 +149,12 @@ func securityNotice(t *testing.T, rec *httptest.ResponseRecorder) string {
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
-	return location.Query().Get("notice")
+	code := location.Query().Get("notice")
+	notice, ok := securityNotices[code]
+	if !ok {
+		t.Fatalf("unknown security notice code %q", code)
+	}
+	return notice.Text
 }
 
 func getWithCookie(handler http.Handler, path string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -179,7 +184,7 @@ func mediaAuthorized(handler http.Handler, token string) bool {
 	return rec.Code != http.StatusUnauthorized
 }
 
-var flashPattern = regexp.MustCompile(`data-security-flash><strong>[^<]*</strong> <code>([^<]*)</code>`)
+var flashPattern = regexp.MustCompile(`<input id="security-flash-value"[^>]* value="([^"]*)"`)
 
 // takeSecurityFlash loads the security page and returns the flash value.
 func takeSecurityFlash(t *testing.T, handler http.Handler, cookie *http.Cookie) (string, bool) {
@@ -213,7 +218,7 @@ func TestCredentialPasswordChangeTakesEffectAndResets(t *testing.T) {
 	newPassword := "brand-new-password-456"
 
 	rec := postSecurity(t, app, handler, cookie, securityPagePath+"/password", url.Values{"current_password": {testAdminPassword}, "new_password": {newPassword}, "confirm_password": {newPassword}})
-	if notice := securityNotice(t, rec); !strings.Contains(notice, "密码已修改") {
+	if notice := securityNoticeText(t, rec); !strings.Contains(notice, "密码已修改") {
 		t.Fatalf("notice = %q", notice)
 	}
 	if strings.Contains(rec.Header().Get("Location"), newPassword) {
@@ -239,7 +244,7 @@ func TestCredentialPasswordChangeTakesEffectAndResets(t *testing.T) {
 
 	// Restore the environment password.
 	rec = postSecurity(t, app, handler, cookie, securityPagePath+"/reset/password", url.Values{"current_password": {newPassword}})
-	if notice := securityNotice(t, rec); !strings.Contains(notice, "已恢复为环境变量") {
+	if notice := securityNoticeText(t, rec); !strings.Contains(notice, "已恢复为环境变量") {
 		t.Fatalf("notice = %q", notice)
 	}
 	if got := app.CredentialSources().Password; got != CredentialSourceEnv {
@@ -263,7 +268,7 @@ func TestCredentialPasswordRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := postSecurity(t, app, handler, cookie, securityPagePath+"/password", url.Values{"current_password": {testAdminPassword}, "new_password": {tc.newPassword}, "confirm_password": {tc.confirm}})
-		if notice := securityNotice(t, rec); !strings.Contains(notice, tc.want) {
+		if notice := securityNoticeText(t, rec); !strings.Contains(notice, tc.want) {
 			t.Fatalf("%s: notice = %q, want %q", tc.name, notice, tc.want)
 		}
 	}
@@ -280,7 +285,7 @@ func TestCredentialPasswordChangeRevokesOtherSessionsAndRotatesCurrent(t *testin
 	newPassword := "rotated-password-789"
 
 	rec := postSecurity(t, app, handler, current, securityPagePath+"/password", url.Values{"current_password": {testAdminPassword}, "new_password": {newPassword}, "confirm_password": {newPassword}})
-	securityNotice(t, rec)
+	securityNoticeText(t, rec)
 	rotated := sessionCookieFrom(rec)
 	if rotated == nil || rotated.Value == current.Value {
 		t.Fatal("current session cookie was not rotated")
@@ -324,13 +329,13 @@ func TestCredentialUsernameChangeUpdatesSessionAndLogin(t *testing.T) {
 		{"admin", "相同"},
 	} {
 		rec := postSecurity(t, app, handler, cookie, securityPagePath+"/username", url.Values{"current_password": {testAdminPassword}, "new_username": {tc.username}})
-		if notice := securityNotice(t, rec); !strings.Contains(notice, tc.want) {
+		if notice := securityNoticeText(t, rec); !strings.Contains(notice, tc.want) {
 			t.Fatalf("username %q: notice = %q, want %q", tc.username, notice, tc.want)
 		}
 	}
 
 	rec := postSecurity(t, app, handler, cookie, securityPagePath+"/username", url.Values{"current_password": {testAdminPassword}, "new_username": {"  curator  "}})
-	if notice := securityNotice(t, rec); !strings.Contains(notice, "用户名已修改") {
+	if notice := securityNoticeText(t, rec); !strings.Contains(notice, "用户名已修改") {
 		t.Fatalf("notice = %q", notice)
 	}
 	rotated := sessionCookieFrom(rec)
@@ -350,7 +355,7 @@ func TestCredentialUsernameChangeUpdatesSessionAndLogin(t *testing.T) {
 	cookie = mustLogin(t, handler, "curator", testAdminPassword)
 
 	rec = postSecurity(t, app, handler, cookie, securityPagePath+"/reset/username", url.Values{"current_password": {testAdminPassword}})
-	securityNotice(t, rec)
+	securityNoticeText(t, rec)
 	if got := app.CredentialSources().Username; got != CredentialSourceEnv {
 		t.Fatalf("username source = %q, want env", got)
 	}
@@ -365,7 +370,7 @@ func TestCredentialAPITokenRegenerateFlashAndNoStore(t *testing.T) {
 	}
 
 	rec := postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {testAdminPassword}})
-	notice := securityNotice(t, rec)
+	notice := securityNoticeText(t, rec)
 	if !strings.Contains(notice, "旧 Token 已失效") {
 		t.Fatalf("notice = %q", notice)
 	}
@@ -406,7 +411,7 @@ func TestCredentialAPITokenRegenerateFlashAndNoStore(t *testing.T) {
 	}
 
 	rec = postSecurity(t, app, handler, cookie, securityPagePath+"/reset/api-token", url.Values{"current_password": {testAdminPassword}})
-	securityNotice(t, rec)
+	securityNoticeText(t, rec)
 	if apiStatus(handler, testEnvAPIToken) != http.StatusOK || apiStatus(handler, token) != http.StatusUnauthorized {
 		t.Fatal("reset did not restore the environment API token")
 	}
@@ -427,7 +432,7 @@ func TestCredentialCustomTokenValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := postSecurity(t, app, handler, cookie, securityPagePath+tc.path, url.Values{"current_password": {testAdminPassword}, "custom_token": {tc.token}})
-		if notice := securityNotice(t, rec); !strings.Contains(notice, tc.want) {
+		if notice := securityNoticeText(t, rec); !strings.Contains(notice, tc.want) {
 			t.Fatalf("%s %q: notice = %q, want %q", tc.path, tc.token, notice, tc.want)
 		}
 	}
@@ -437,7 +442,7 @@ func TestCredentialCustomTokenValidation(t *testing.T) {
 
 	custom := "  custom-api-token-0123456789-abcdef  "
 	rec := postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {custom}})
-	securityNotice(t, rec)
+	securityNoticeText(t, rec)
 	if got := apiStatus(handler, strings.TrimSpace(custom)); got != http.StatusOK {
 		t.Fatalf("custom API token (trimmed) status = %d, want 200", got)
 	}
@@ -454,7 +459,7 @@ func TestCredentialMediaTokenChangeRevealAndReset(t *testing.T) {
 	}
 
 	custom := "custom-media-token-0123456789"
-	securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {custom}}))
+	securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {custom}}))
 	if mediaAuthorized(handler, testEnvMediaToken) {
 		t.Fatal("old media token must be rejected after the change")
 	}
@@ -466,7 +471,7 @@ func TestCredentialMediaTokenChangeRevealAndReset(t *testing.T) {
 	}
 
 	// Reveal requires the current password.
-	notice := securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token/reveal", url.Values{"current_password": {"wrong-password"}}))
+	notice := securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token/reveal", url.Values{"current_password": {"wrong-password"}}))
 	if !strings.Contains(notice, "当前密码不正确") {
 		t.Fatalf("notice = %q", notice)
 	}
@@ -474,7 +479,7 @@ func TestCredentialMediaTokenChangeRevealAndReset(t *testing.T) {
 		t.Fatal("wrong password must not reveal the media token")
 	}
 	rec := postSecurity(t, app, handler, cookie, securityPagePath+"/media-token/reveal", url.Values{"current_password": {testAdminPassword}})
-	securityNotice(t, rec)
+	securityNoticeText(t, rec)
 	if strings.Contains(rec.Header().Get("Location"), custom) {
 		t.Fatal("media token leaked into the redirect URL")
 	}
@@ -483,17 +488,17 @@ func TestCredentialMediaTokenChangeRevealAndReset(t *testing.T) {
 	}
 
 	// Generate: the new token is flashed once and the custom one dies.
-	securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token", url.Values{"current_password": {testAdminPassword}}))
+	securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token", url.Values{"current_password": {testAdminPassword}}))
 	generated, ok := takeSecurityFlash(t, handler, cookie)
 	if !ok || !mediaAuthorized(handler, generated) || mediaAuthorized(handler, custom) {
 		t.Fatal("generated media token did not replace the custom one")
 	}
 
-	securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/reset/media-token", url.Values{"current_password": {testAdminPassword}}))
+	securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/reset/media-token", url.Values{"current_password": {testAdminPassword}}))
 	if !mediaAuthorized(handler, testEnvMediaToken) || mediaAuthorized(handler, generated) {
 		t.Fatal("reset did not restore the environment media token")
 	}
-	notice = securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/reset/media-token", url.Values{"current_password": {testAdminPassword}}))
+	notice = securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/reset/media-token", url.Values{"current_password": {testAdminPassword}}))
 	if !strings.Contains(notice, "已在使用环境变量") {
 		t.Fatalf("second reset notice = %q", notice)
 	}
@@ -519,7 +524,7 @@ func TestCredentialWrongCurrentPasswordIsRateLimited(t *testing.T) {
 	started := time.Now()
 	for i := 0; i < loginMaxFailures; i++ {
 		rec := postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {"not-the-password"}})
-		if notice := securityNotice(t, rec); !strings.Contains(notice, "当前密码不正确") {
+		if notice := securityNoticeText(t, rec); !strings.Contains(notice, "当前密码不正确") {
 			t.Fatalf("attempt %d notice = %q", i, notice)
 		}
 	}
@@ -528,7 +533,7 @@ func TestCredentialWrongCurrentPasswordIsRateLimited(t *testing.T) {
 	}
 	// Locked: even the correct password is refused, like the login form.
 	rec := postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {testAdminPassword}})
-	if notice := securityNotice(t, rec); !strings.Contains(notice, "失败次数过多") {
+	if notice := securityNoticeText(t, rec); !strings.Contains(notice, "失败次数过多") {
 		t.Fatalf("locked notice = %q", notice)
 	}
 	if _, code := loginAs(t, handler, "admin", testAdminPassword); code != http.StatusTooManyRequests {
@@ -560,8 +565,8 @@ func TestCredentialOverridesSurviveRestartAndBeatEnvironment(t *testing.T) {
 	cookie := mustLogin(t, handler, "admin", testAdminPassword)
 	apiToken := "persisted-api-token-0123456789"
 	mediaToken := "persisted-media-token-0123456789"
-	securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {apiToken}}))
-	securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {mediaToken}}))
+	securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {apiToken}}))
+	securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/media-token", url.Values{"current_password": {testAdminPassword}, "custom_token": {mediaToken}}))
 
 	restarted := newCredentialTestApp(t, credentialTestConfig(t), store)
 	restartedHandler := restarted.Handler()

@@ -237,4 +237,46 @@
       btn.classList.add('is-unsaved');
     }
   });
+
+  // ----------------------------------------- security page: copy one-shot value
+  // The flashed token lives only in a readonly input; copying never builds
+  // markup from its value (textContent only for the status line).
+  document.addEventListener('click', async (e) => {
+    const button = e.target instanceof Element ? e.target.closest('[data-copy-target]') : null;
+    if (!button) return;
+    const input = document.getElementById(button.getAttribute('data-copy-target') || '');
+    if (!(input instanceof HTMLInputElement)) return;
+    const status = button.closest('[data-security-flash]')?.querySelector('[data-copy-status]');
+    const report = (message) => { if (status) status.textContent = message; };
+    try {
+      if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(input.value);
+      report('已复制到剪贴板。');
+    } catch (_) {
+      input.focus();
+      input.select();
+      report('无法自动复制，已选中内容，请按 Ctrl+C（Mac 为 ⌘+C）复制。');
+    }
+  });
+
+  // One-shot security values must never come back from the back/forward
+  // cache: drop them when the page is hidden and again if a persisted page
+  // is restored (the HTML itself is served with Cache-Control: no-store).
+  function removeSecurityFlashes() {
+    document.querySelectorAll('[data-security-flash]').forEach((el) => el.remove());
+  }
+  window.addEventListener('pagehide', removeSecurityFlashes);
+  window.addEventListener('pageshow', (e) => { if (e.persisted) removeSecurityFlashes(); });
+
+  // Password input masks custom tokens even when CSS masking is unsupported.
+  document.addEventListener('click', (e) => {
+    const button = e.target instanceof Element ? e.target.closest('[data-mask-toggle]') : null;
+    if (!button) return;
+    const input = document.getElementById(button.getAttribute('data-mask-toggle') || '');
+    if (!(input instanceof HTMLInputElement)) return;
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    button.textContent = reveal ? '隐藏' : '显示';
+    button.setAttribute('aria-pressed', String(reveal));
+  });
 })();

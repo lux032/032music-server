@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -31,11 +32,18 @@ type sessionManager struct {
 	store        *storage.Store
 	cookieSecure bool
 	lifetime     time.Duration
-	// generation increases whenever sessions are revoked in bulk. get()
-	// reads the database outside mu, so it only caches a persisted session
-	// when no revocation happened in between; otherwise a concurrent
-	// lookup could resurrect a session that was just deleted.
+	// generation increases whenever sessions are revoked in bulk (a
+	// username/password change); logins created against an older
+	// generation are refused (see createAt).
 	generation uint64
+	// revocations increases on every revocation, bulk or single (logout).
+	// get() reads the database outside mu, so it only caches a persisted
+	// session when no revocation happened in between; otherwise a
+	// concurrent lookup could resurrect a session that was just deleted.
+	revocations uint64
+	// afterPersistedLookup is a test hook run by get() right after a
+	// cache-miss database read; nil in production.
+	afterPersistedLookup func()
 	// flashes holds one-shot security notices (e.g. a freshly generated
 	// token) keyed by raw session token. They live only in memory and are
 	// never put into URLs or logs.
@@ -166,6 +174,7 @@ func (m *sessionManager) replaceAll(w http.ResponseWriter, username string, comm
 	}
 	publish()
 	m.generation++
+	m.revocations++
 	clear(m.sessions)
 	clear(m.flashes)
 	m.sessions[sessionToken] = session
@@ -208,44 +217,61 @@ func (m *sessionManager) get(r *http.Request) (adminSession, bool) {
 		return adminSession{}, false
 	}
 
-	now := time.Now()
-	m.mu.Lock()
-	m.removeExpiredLocked(now)
-	session, ok := m.sessions[cookie.Value]
-	generation := m.generation
-	m.mu.Unlock()
-	if ok {
-		return session, true
-	}
+	// A cache miss reads the database outside mu. If any session was
+	// revoked meanwhile (logout or bulk revocation, both of which delete
+	// the row under mu before bumping revocations), the read may be stale:
+	// read again rather than caching a session that no longer exists.
+	for attempt := 0; attempt < 3; attempt++ {
+		now := time.Now()
+		m.mu.Lock()
+		m.removeExpiredLocked(now)
+		session, ok := m.sessions[cookie.Value]
+		revocations := m.revocations
+		m.mu.Unlock()
+		if ok {
+			return session, true
+		}
 
-	// Cache miss: fall back to the persisted session (post-restart).
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	persisted, err := m.store.AdminSessionByTokenHash(ctx, sessionTokenHash(cookie.Value))
-	if err != nil || !persisted.ExpiresAt.After(now) {
-		return adminSession{}, false
+		// Cache miss: fall back to the persisted session (post-restart).
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		persisted, err := m.store.AdminSessionByTokenHash(ctx, sessionTokenHash(cookie.Value))
+		cancel()
+		if m.afterPersistedLookup != nil {
+			m.afterPersistedLookup()
+		}
+		if err != nil || !persisted.ExpiresAt.After(now) {
+			return adminSession{}, false
+		}
+		session = adminSession{Username: persisted.Username, CSRFToken: persisted.CSRFToken, ExpiresAt: persisted.ExpiresAt}
+		m.mu.Lock()
+		if m.revocations == revocations {
+			m.sessions[cookie.Value] = session
+			m.mu.Unlock()
+			return session, true
+		}
+		m.mu.Unlock()
 	}
-	session = adminSession{Username: persisted.Username, CSRFToken: persisted.CSRFToken, ExpiresAt: persisted.ExpiresAt}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.generation != generation {
-		// Sessions were revoked while the database was being read; the
-		// row may already be gone, so do not trust (or cache) it.
-		return adminSession{}, false
-	}
-	m.sessions[cookie.Value] = session
-	return session, true
+	return adminSession{}, false
 }
 
-func (m *sessionManager) delete(w http.ResponseWriter, r *http.Request) {
+// delete logs the request's session out. The database row and the cache
+// entry are removed under mu and revocations is bumped, so a concurrent
+// cache-miss lookup that already read the row cannot resurrect it.
+func (m *sessionManager) delete(w http.ResponseWriter, r *http.Request) error {
 	if cookie, err := r.Cookie(adminSessionCookie); err == nil {
 		m.mu.Lock()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = m.store.DeleteAdminSession(ctx, sessionTokenHash(cookie.Value))
+		cancel()
+		if err != nil {
+			m.mu.Unlock()
+			slog.Warn("delete admin session failed", "error", err)
+			return err
+		}
 		delete(m.sessions, cookie.Value)
 		delete(m.flashes, cookie.Value)
+		m.revocations++
 		m.mu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = m.store.DeleteAdminSession(ctx, sessionTokenHash(cookie.Value))
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -257,6 +283,7 @@ func (m *sessionManager) delete(w http.ResponseWriter, r *http.Request) {
 		Secure:   m.cookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
+	return nil
 }
 
 func (m *sessionManager) removeExpiredLocked(now time.Time) {

@@ -62,7 +62,7 @@
             <strong>{{.Title}}</strong>
             <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
           </div>
-          <span class="format-pill">{{.Container}}</span>
+          {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
           <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
           <form method="post" action="/admin/favorites/tracks/{{.ID}}">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

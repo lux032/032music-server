@@ -19,16 +19,30 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
   function syncFavorite() {
     const track = s.queue[s.currentIndex];
     const detail = track && trackDetails.get(String(track.id));
+    const favored = !!detail?.isFavorite;
     for (const id of ['np-favorite', 'player-btn-favorite']) {
       const button = document.getElementById(id);
       if (!button) continue;
       button.disabled = !track || !detail || favoriteBusy;
       if (!detail && track) button.title = '歌曲信息加载中';
-      const favored = !!detail?.isFavorite;
       button.setAttribute('aria-pressed', String(favored));
       button.setAttribute('aria-label', track ? `${favored ? '取消收藏' : '收藏'} ${track.title}` : '收藏');
       button.title = favored ? '取消收藏' : '收藏';
       swapIcon(button, favored ? 'icon-heart-fill' : 'icon-heart');
+    }
+    if (detail && track) {
+      document.querySelectorAll('.inline-favorite, .compact-action').forEach(form => {
+        if (form.getAttribute('action') !== `/admin/favorites/tracks/${encodeURIComponent(track.id)}`) return;
+        const value = form.querySelector('input[name="favorite"]');
+        if (value) value.value = detail.isFavorite ? '0' : '1';
+        const button = form.querySelector('button');
+        if (!button) return;
+        button.classList.toggle('selected', favored);
+        if (form.classList.contains('inline-favorite')) {
+          button.title = button.getAttribute('aria-label') = `${favored ? '取消收藏' : '收藏'} ${track.title}`;
+          swapIcon(button, favored ? 'icon-heart-fill' : 'icon-heart');
+        } else button.textContent = favored ? '取消收藏' : '加入收藏';
+      });
     }
   }
 
@@ -255,7 +269,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     });
     for (const id of ['np-more', 'player-btn-more']) document.getElementById(id)?.setAttribute('aria-haspopup', 'menu');
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && menu) { e.preventDefault(); e.stopImmediatePropagation(); closeMenu(); } }, true);
-    document.addEventListener('032:pjax-applied', () => closeMenu(false));
+    document.addEventListener('032:pjax-applied', () => { closeMenu(false); syncFavorite(); });
     const live = document.createElement('div'); live.id = 'np-queue-live'; live.className = 'sr-only'; live.setAttribute('aria-live', 'polite');
     document.body.appendChild(live);
     const list = document.getElementById('np-queue-list');
@@ -271,13 +285,16 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         const handle = e.target.closest('.q-drag'); if (!handle || drag) return;
         const item = handle.closest('li[data-qindex]'); if (!item) return;
         e.preventDefault(); list.setPointerCapture(e.pointerId);
-        drag = { item, handle, pointerId: e.pointerId, from: Number(item.dataset.qindex), to: Number(item.dataset.qindex), y: e.clientY, lastX: e.clientX, lastY: e.clientY, scroll0: list.scrollTop, scrollTimer: null };
+        drag = { item, handle, pointerId: e.pointerId, from: Number(item.dataset.qindex), to: Number(item.dataset.qindex), y: e.clientY, lastX: e.clientX, lastY: e.clientY, scroll0: list.scrollTop, maxScroll: Math.max(0, list.scrollHeight - list.clientHeight), scrollTimer: null };
         drag.scrollTimer = setInterval(() => {
           if (!drag) return;
           const box = list.getBoundingClientRect();
           const edge = 45;
           const delta = drag.lastY < box.top + edge ? -12 : drag.lastY > box.bottom - edge ? 12 : 0;
-          if (delta) { list.scrollTop += delta; updateDrag(drag.lastX, drag.lastY); }
+          // Clamp to the pre-drag extent: the translated drag row itself adds
+          // scrollable overflow, which would otherwise let auto-scroll run forever.
+          const next = Math.min(drag.maxScroll, Math.max(0, list.scrollTop + delta));
+          if (next !== list.scrollTop) { list.scrollTop = next; updateDrag(drag.lastX, drag.lastY); }
         }, 30);
         item.classList.add('dragging');
         list.addEventListener('pointermove', onDragMove);
@@ -289,8 +306,9 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         if (!drag) return;
         const { item } = drag;
         const box = list.getBoundingClientRect();
-        // offsetTop is in the panel's coordinate space; the list may scroll.
-        const pointerY = y + list.scrollTop;
+        // offsetTop is relative to the list's offset parent, not the viewport.
+        const parentTop = list.offsetParent?.getBoundingClientRect().top || 0;
+        const pointerY = y - parentTop + list.scrollTop;
         const rows = Array.from(list.children).filter(row => row !== item && row.hasAttribute('data-qindex'));
         // The captured pointer still hits the dragged row. Inspect the stack
         // below it, while using layout offsets rather than animated rectangles.
@@ -331,8 +349,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         drag = null;
         return previous;
       }
-      function cancelDrag() {
-        if (!drag) return;
+      function cancelDrag(e) {
+        if (!drag || (e && e.pointerId !== drag.pointerId)) return;
         const { item, from } = cleanupDrag();
         const sibling = Array.from(list.children).filter(child => child !== item)[from] || null;
         list.insertBefore(item, sibling);

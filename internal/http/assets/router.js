@@ -241,6 +241,11 @@ import { updateTrackRowsUI } from './player-bar.js';
         if (toggle) toggle.setAttribute('aria-expanded', String(open));
       }
     }
+    // The logged-in username can change on the account & security page.
+    const incomingUser = doc.querySelector('.sidebar-user > span');
+    if (incomingUser) {
+      document.querySelectorAll('.sidebar-user > span, .sheet-user > span').forEach((el) => { el.textContent = incomingUser.textContent; });
+    }
     const incomingCsrfField = doc.querySelector('.sidebar input[name="csrfToken"]');
     if (incomingCsrfField) {
       document.querySelectorAll('.sidebar input[name="csrfToken"]').forEach((field) => { field.value = incomingCsrfField.value; });

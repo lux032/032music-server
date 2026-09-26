@@ -6,17 +6,15 @@ import (
 )
 
 func TestFormatTime(t *testing.T) {
-	original := time.Local
-	time.Local = time.FixedZone("fixture", 8*60*60)
-	defer func() { time.Local = original }()
+	zone := time.FixedZone("fixture", 8*60*60)
 	for _, tc := range []struct{ input, want string }{
 		{"2026-09-26T07:07:30Z", "2026-09-26 15:07"},
 		{"2026-09-26T07:07:30.123Z", "2026-09-26 15:07"},
 		{"", "—"},
 		{"unexpected", "unexpected"},
 	} {
-		if got := formatTime(tc.input); got != tc.want {
-			t.Errorf("formatTime(%q) = %q, want %q", tc.input, got, tc.want)
+		if got := formatAdminTimeIn(tc.input, zone); got != tc.want {
+			t.Errorf("formatAdminTimeIn(%q) = %q, want %q", tc.input, got, tc.want)
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 type worksPageData struct {
 	Chrome
 	Query, Type, Index, Sort, Notice string
+	KanaIndex                        bool
 	Year, Page, PageCount, PageSize  int
 	Total                            int64
 	Works                            []storage.Work
@@ -163,7 +164,7 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, Sort: filter.Sort, Year: filter.Year, Works: values, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Works: values, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
 	data.PageCount = int((total + 35) / 36)
 	if data.PageCount < 1 {
 		data.PageCount = 1

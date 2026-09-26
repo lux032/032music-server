@@ -7,76 +7,198 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main">
+  <main id="app-main" class="browser-main identity-main security-main">
     <header class="browser-header">
       <div>
         <h1>账号与安全</h1>
-        <p class="result-count">修改立即生效。所有操作都需要输入当前密码。</p>
+        <p class="result-count">管理登录账号、密码与客户端 Token。修改立即生效，每项操作都需要输入当前密码。</p>
       </div>
     </header>
-    {{if .ResetMode}}<div class="toast" data-security-reset-mode="{{.ResetMode}}">MUSIC_SERVER_RESET_CREDENTIALS={{.ResetMode}} 仍在生效：每次启动都会清除对应的管理页设置与全部登录会话。确认恢复后请移除该环境变量。</div>{{end}}
-    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
-    {{with .Flash}}<div class="toast" data-security-flash><strong>{{.Label}}</strong> <code>{{.Value}}</code></div>{{end}}
 
-    <section class="source-card" data-security-item="username">
-      <header><div><p class="kicker">来源：{{.Sources.Username}}</p><h2>用户名</h2></div></header>
+    {{if .ResetMode}}
+    <div class="security-banner" role="alert" data-security-reset-mode="{{.ResetMode}}">
+      <strong>重置模式正在生效：MUSIC_SERVER_RESET_CREDENTIALS={{.ResetMode}}</strong>
+      <p>每次启动都会清除在此页设置的{{.ResetItems}}，并让所有登录会话失效。恢复访问后，请记得从 .env 中删除该变量并重启服务，否则之后的修改会在下次启动时再次被清除。</p>
+    </div>
+    {{end}}
+
+    {{with .Notice}}<div class="{{if .Error}}form-error{{else}}toast{{end}} security-notice" role="{{if .Error}}alert{{else}}status{{end}}" data-security-notice>{{.Text}}</div>{{end}}
+
+    {{with .Flash}}
+    <section class="security-flash" data-security-flash>
+      <header>
+        <p class="kicker">一次性显示</p>
+        <h2>{{.Label}}</h2>
+      </header>
+      <p class="security-flash-warning">此内容只显示这一次：刷新或离开页面后将无法再次查看，请立即复制并妥善保存。</p>
+      <div class="security-flash-value">
+        <input id="security-flash-value" class="mono-input" type="text" readonly value="{{.Value}}" aria-label="{{.Label}}" autocomplete="off" spellcheck="false" data-security-flash-value>
+        <button type="button" class="secondary-button" data-copy-target="security-flash-value">复制</button>
+      </div>
+      <p class="security-copy-status" role="status" aria-live="polite" data-copy-status></p>
+    </section>
+    {{end}}
+
+    <section class="source-card security-card" data-security-item="username">
+      <header>
+        <div><p class="kicker">登录账号</p><h2>用户名</h2></div>
+        {{template "security-source" .Sources.Username}}
+      </header>
+      <p>当前用户名：<strong class="security-current" data-security-current-username>{{.CurrentUsername}}</strong>。修改后其他登录会话会全部退出，当前会话保持登录。</p>
       <form method="post" action="/admin/settings/security/username">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>新用户名<input name="new_username" autocomplete="username" maxlength="64" required></label>
-        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div class="form-grid">
+          <label>新用户名<input name="new_username" autocomplete="username" maxlength="{{.MaxUsernameLength}}" required><small>1–{{.MaxUsernameLength}} 个字符，首尾空格会被去除。</small></label>
+          <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        </div>
         <div class="editor-actions"><button type="submit">修改用户名</button></div>
       </form>
+      {{if eq .Sources.Username "override"}}
+      <details class="danger-confirm security-reset">
+        <summary class="secondary-button">恢复为环境变量…</summary>
+        <div class="danger-confirm-panel">
+          <strong>改用环境变量 MUSIC_SERVER_ADMIN_USERNAME？</strong>
+          <p>将删除在此页设置的用户名；其他登录会话会退出。</p>
+          <form method="post" action="/admin/settings/security/reset/username">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+            <div class="security-reset-actions">
+              <button type="submit" class="danger-button">确认恢复</button>
+              <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+            </div>
+          </form>
+        </div>
+      </details>
+      {{end}}
     </section>
 
-    <section class="source-card" data-security-item="password">
-      <header><div><p class="kicker">来源：{{.Sources.Password}}</p><h2>密码</h2></div></header>
+    <section class="source-card security-card" data-security-item="password">
+      <header>
+        <div><h2>登录密码</h2></div>
+        {{template "security-source" .Sources.Password}}
+      </header>
+      <p>密码以 PBKDF2 哈希保存，不会以明文写入数据库。修改后其他登录会话会全部退出，当前会话保持登录。</p>
       <form method="post" action="/admin/settings/security/password">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
-        <label>新密码<input type="password" name="new_password" autocomplete="new-password" required></label>
-        <label>确认新密码<input type="password" name="confirm_password" autocomplete="new-password" required></label>
+        <div class="form-grid thirds">
+          <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+          <label>新密码<input type="password" name="new_password" autocomplete="new-password" required{{if .MinPasswordLength}} minlength="{{.MinPasswordLength}}"{{end}}><small>{{if .MinPasswordLength}}至少 {{.MinPasswordLength}} 个字符，且不能与当前密码相同。{{else}}开发模式：不能为空，且不能与当前密码相同。{{end}}</small></label>
+          <label>确认新密码<input type="password" name="confirm_password" autocomplete="new-password" required></label>
+        </div>
         <div class="editor-actions"><button type="submit">修改密码</button></div>
       </form>
-    </section>
-
-    <section class="source-card" data-security-item="api-token">
-      <header><div><p class="kicker">来源：{{.Sources.APIToken}}</p><h2>API Token</h2></div></header>
-      <form method="post" action="/admin/settings/security/api-token">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>自定义 Token（留空则随机生成）<input type="password" name="custom_token" autocomplete="off"></label>
-        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
-        <div class="editor-actions"><button type="submit">更新 API Token</button></div>
-      </form>
-    </section>
-
-    <section class="source-card" data-security-item="media-token">
-      <header><div><p class="kicker">来源：{{.Sources.MediaToken}}{{if .MediaTokenEphemeral}}（每次启动随机生成）{{end}}</p><h2>媒体 Token</h2></div></header>
-      <form method="post" action="/admin/settings/security/media-token">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>自定义 Token（留空则随机生成）<input type="password" name="custom_token" autocomplete="off"></label>
-        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
-        <div class="editor-actions"><button type="submit">更新媒体 Token</button></div>
-      </form>
-      <form method="post" action="/admin/settings/security/media-token/reveal">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
-        <div class="editor-actions"><button type="submit">查看当前媒体 Token</button></div>
-      </form>
-    </section>
-
-    <section class="source-card" data-security-item="reset">
-      <header><div><h2>恢复为环境变量</h2></div></header>
-      <form method="post" action="/admin/settings/security/reset/username">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
-        <div class="editor-actions">
-          <button type="submit">恢复用户名</button>
-          <button type="submit" formaction="/admin/settings/security/reset/password">恢复密码</button>
-          <button type="submit" formaction="/admin/settings/security/reset/api-token">恢复 API Token</button>
-          <button type="submit" formaction="/admin/settings/security/reset/media-token">恢复媒体 Token</button>
+      {{if eq .Sources.Password "override"}}
+      <details class="danger-confirm security-reset">
+        <summary class="secondary-button">恢复为环境变量…</summary>
+        <div class="danger-confirm-panel">
+          <strong>改用环境变量 MUSIC_SERVER_ADMIN_PASSWORD？</strong>
+          <p>将删除在此页设置的密码，之后需使用环境变量中的密码登录；其他登录会话会退出。</p>
+          <form method="post" action="/admin/settings/security/reset/password">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+            <div class="security-reset-actions">
+              <button type="submit" class="danger-button">确认恢复</button>
+              <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+            </div>
+          </form>
         </div>
+      </details>
+      {{end}}
+    </section>
+
+    <section class="source-card security-card" data-security-item="api-token">
+      <header>
+        <div><p class="kicker">客户端访问</p><h2>API Token</h2></div>
+        {{template "security-source" .Sources.APIToken}}
+      </header>
+      <p>客户端通过 <code>Authorization: Bearer</code> 访问 JSON API。修改后所有使用旧 Token 的客户端需要更新。数据库只保存 Token 的哈希，新生成的 Token 只显示一次。</p>
+      <form method="post" action="/admin/settings/security/api-token" class="security-inline-form">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <button type="submit">生成新 Token</button>
       </form>
+      <details class="security-custom">
+        <summary>使用自定义 Token</summary>
+        <form method="post" action="/admin/settings/security/api-token">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <div class="form-grid">
+            <label for="api-custom-token">自定义 Token<span class="masked-field"><input id="api-custom-token" type="password" name="custom_token" autocomplete="new-password" autocapitalize="off" spellcheck="false" required minlength="{{.MinTokenLength}}" maxlength="{{.MaxTokenLength}}"><button type="button" class="secondary-button" data-mask-toggle="api-custom-token" aria-controls="api-custom-token" aria-pressed="false">显示</button></span><small>至少 {{.MinTokenLength}} 位，只能包含字母、数字和 - _ . ~，不能与媒体 Token 相同。</small></label>
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+          </div>
+          <div class="editor-actions"><button type="submit">保存自定义 Token</button></div>
+        </form>
+      </details>
+      {{if eq .Sources.APIToken "override"}}
+      <details class="danger-confirm security-reset">
+        <summary class="secondary-button">恢复为环境变量…</summary>
+        <div class="danger-confirm-panel">
+          <strong>改用环境变量 MUSIC_SERVER_API_TOKEN？</strong>
+          <p>在此页设置的 API Token 会立即失效，客户端需改用环境变量中的 Token。</p>
+          <form method="post" action="/admin/settings/security/reset/api-token">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+            <div class="security-reset-actions">
+              <button type="submit" class="danger-button">确认恢复</button>
+              <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+            </div>
+          </form>
+        </div>
+      </details>
+      {{end}}
+    </section>
+
+    <section class="source-card security-card" data-security-item="media-token">
+      <header>
+        <div><p class="kicker">客户端访问</p><h2>媒体 Token</h2></div>
+        {{template "security-source" .Sources.MediaToken}}
+      </header>
+      <p>Sonos 等外部播放器通过 <code>mediaToken</code> 参数读取音频、封面与歌词，不能访问其他 API。修改后正在播放的一首会播完，下一首开始需要新 Token。</p>
+      {{if .MediaTokenSharesAPIToken}}<p class="security-note">开发模式：未设置 MUSIC_SERVER_MEDIA_TOKEN，媒体 Token 当前与环境变量中的 API Token 相同。生产环境请单独设置。</p>{{end}}
+      {{if .MediaTokenEphemeral}}<p class="security-note">未设置 MUSIC_SERVER_MEDIA_TOKEN：当前媒体 Token 为本次启动随机生成，重启后会变化。建议在此生成固定 Token，或在 .env 中设置。</p>{{end}}
+      <form method="post" action="/admin/settings/security/media-token" class="security-inline-form">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <button type="submit">生成新 Token</button>
+      </form>
+      <details class="security-custom">
+        <summary>使用自定义 Token</summary>
+        <form method="post" action="/admin/settings/security/media-token">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <div class="form-grid">
+            <label for="media-custom-token">自定义 Token<span class="masked-field"><input id="media-custom-token" type="password" name="custom_token" autocomplete="new-password" autocapitalize="off" spellcheck="false" required minlength="{{.MinTokenLength}}" maxlength="{{.MaxTokenLength}}"><button type="button" class="secondary-button" data-mask-toggle="media-custom-token" aria-controls="media-custom-token" aria-pressed="false">显示</button></span><small>至少 {{.MinTokenLength}} 位，只能包含字母、数字和 - _ . ~，不能与 API Token 相同。</small></label>
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+          </div>
+          <div class="editor-actions"><button type="submit">保存自定义 Token</button></div>
+        </form>
+      </details>
+      <details class="security-custom" data-security-reveal>
+        <summary>查看当前媒体 Token</summary>
+        <form method="post" action="/admin/settings/security/media-token/reveal" class="security-inline-form">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+          <button type="submit" class="secondary-button">查看</button>
+        </form>
+      </details>
+      {{if eq .Sources.MediaToken "override"}}
+      <details class="danger-confirm security-reset">
+        <summary class="secondary-button">恢复为环境变量…</summary>
+        <div class="danger-confirm-panel">
+          <strong>改用环境变量 MUSIC_SERVER_MEDIA_TOKEN？</strong>
+          <p>在此页设置的媒体 Token 会立即失效，外部播放器需改用环境变量中的 Token。</p>
+          <form method="post" action="/admin/settings/security/reset/media-token">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+            <div class="security-reset-actions">
+              <button type="submit" class="danger-button">确认恢复</button>
+              <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+            </div>
+          </form>
+        </div>
+      </details>
+      {{end}}
     </section>
   </main>
 </body>
 </html>
+
+{{define "security-source"}}{{if eq . "override"}}<span class="status-badge warning" data-source="override">来源：管理页</span>{{else}}<span class="status-badge" data-source="env">来源：环境变量</span>{{end}}{{end}}

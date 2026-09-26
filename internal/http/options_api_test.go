@@ -267,3 +267,11 @@ func TestAdminAlbumsPageResolvesSelectedArtistBeyondFirstOptionsPage(t *testing.
 		t.Fatalf("selected option missing from dropdown")
 	}
 }
+
+func TestDeletedArtistFilterTagHasFallbackLabel(t *testing.T) {
+	data := libraryPageData{FilterTags: []filterTag{{Name: "artist", Label: "artist:987654", Value: "987654"}}}
+	data.resolveFilterTagNames()
+	if got := data.FilterTags[0].Label; got != "歌手：已删除的歌手" {
+		t.Fatalf("deleted artist tag = %q", got)
+	}
+}

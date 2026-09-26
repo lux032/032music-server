@@ -131,7 +131,7 @@
         </span>
         <div><strong>{{.Title}}</strong><small>{{.Artist}}</small></div>
         <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>
-        <span class="format-pill">{{.Container}}</span>
+        {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
         <span>{{formatDurationMillis .DurationMillis}}</span>
         <details>
           <summary title="更多操作" aria-label="更多操作"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg></summary>

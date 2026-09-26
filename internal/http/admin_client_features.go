@@ -395,6 +395,10 @@ func formatDurationMillis(value int64) string {
 }
 
 func formatAdminTime(value string) string {
+	return formatAdminTimeIn(value, time.Local)
+}
+
+func formatAdminTimeIn(value string, zone *time.Location) string {
 	if value == "" {
 		return "—"
 	}
@@ -402,10 +406,8 @@ func formatAdminTime(value string) string {
 	if err != nil {
 		return value
 	}
-	return parsed.Local().Format("2006-01-02 15:04")
+	return parsed.In(zone).Format("2006-01-02 15:04")
 }
-
-func formatTime(value string) string { return formatAdminTime(value) }
 
 func albumTypeLabel(value string) string {
 	switch value {

@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -42,6 +42,7 @@ const (
 	passwordSaltMaxBytes      = 64
 
 	maxAdminUsernameLength = 64
+	minAdminPasswordLength = 12
 	minCredentialTokenLen  = 24
 	maxCredentialTokenLen  = 512
 )
@@ -273,7 +274,11 @@ func (s *credentialStore) updateLogin(ctx context.Context, sessions *sessionMana
 		return nil, err
 	}
 	err = sessions.replaceAll(w, creds.username, func(keep storage.AdminSession) error {
-		return s.store.UpdateCredentialOverrides(ctx, set, remove, &keep)
+		// Bounded: this transaction runs while both the credential and the
+		// session locks are held.
+		txCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return s.store.UpdateCredentialOverrides(txCtx, set, remove, &keep)
 	}, func() {
 		s.overrides = next
 		s.current.Store(creds)
@@ -387,29 +392,29 @@ func hasControlCharacter(value string) bool {
 	return false
 }
 
-// normalizeAdminUsername applies the username rules and returns a
-// user-facing (non-sensitive) error message when invalid.
+// normalizeAdminUsername applies the username rules and returns a security
+// notice code (see securityNotices) when invalid.
 func normalizeAdminUsername(raw string) (string, string) {
 	username := strings.TrimSpace(raw)
 	switch {
 	case username == "":
-		return "", "用户名不能为空。"
+		return "", "username_empty"
 	case utf8.RuneCountInString(username) > maxAdminUsernameLength:
-		return "", fmt.Sprintf("用户名不能超过 %d 个字符。", maxAdminUsernameLength)
+		return "", "username_too_long"
 	case hasControlCharacter(username):
-		return "", "用户名不能包含控制字符。"
+		return "", "username_invalid"
 	}
 	return username, ""
 }
 
 // validateNewAdminPassword mirrors config.Validate: at least 12 characters
-// outside DevMode, non-empty in DevMode.
+// outside DevMode, non-empty in DevMode. It returns a notice code.
 func validateNewAdminPassword(password string, devMode bool) string {
 	if password == "" {
-		return "新密码不能为空。"
+		return "password_empty"
 	}
-	if !devMode && len(password) < 12 {
-		return "新密码至少 12 个字符。"
+	if !devMode && len(password) < minAdminPasswordLength {
+		return "password_too_short"
 	}
 	return ""
 }
@@ -421,18 +426,18 @@ func validTokenByte(b byte) bool {
 	return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '.' || b == '~'
 }
 
-// tokenProblem returns a user-facing message when token is not an
-// acceptable credential token, or "" when it is.
+// tokenProblem returns a notice code when token is not an acceptable
+// credential token, or "" when it is.
 func tokenProblem(token string) string {
 	switch {
 	case len(token) < minCredentialTokenLen:
-		return fmt.Sprintf("Token 至少 %d 位。", minCredentialTokenLen)
+		return "token_too_short"
 	case len(token) > maxCredentialTokenLen:
-		return fmt.Sprintf("Token 不能超过 %d 位。", maxCredentialTokenLen)
+		return "token_too_long"
 	}
 	for i := 0; i < len(token); i++ {
 		if !validTokenByte(token[i]) {
-			return "Token 只能包含字母、数字和 - _ . ~。"
+			return "token_invalid"
 		}
 	}
 	return ""
@@ -440,13 +445,14 @@ func tokenProblem(token string) string {
 
 // chooseCredentialToken returns the trimmed custom token when one was
 // submitted, or a freshly generated 32-byte token otherwise (base64url
-// without padding, which only uses A-Z a-z 0-9 - _).
+// without padding, which only uses A-Z a-z 0-9 - _). problem is a notice
+// code.
 func chooseCredentialToken(custom string) (token string, generated bool, problem string) {
 	custom = strings.TrimSpace(custom)
 	if custom == "" {
 		token, err := randomToken()
 		if err != nil {
-			return "", false, "无法生成随机 Token，请稍后再试。"
+			return "", false, "save_failed"
 		}
 		return token, true, ""
 	}

@@ -199,6 +199,10 @@ test('search, index and focus filters stack and tags remove one condition', asyn
   await expect(page).toHaveURL(/index=E/);
   await expect(page).toHaveURL(/q=E2E/);
   await expect(page).toHaveURL(/sort=year/);
+  // After the PJAX swap, focus returns to the (new) trigger instead of body.
+  const sortTrigger = page.locator('.filter-control[data-filter=sort] .filter-trigger');
+  await expect(sortTrigger).toBeFocused();
+  await expect(sortTrigger).toHaveAttribute('aria-expanded', 'false');
 
   // Removing one chip keeps the remaining conditions.
   await page.locator('.filter-tag', { hasText: '首字母' }).click();
@@ -311,4 +315,6 @@ test('artist typeahead Enter selects a matching artist rather than All', async (
   await input.press('Enter');
   await expect(page).toHaveURL(/artist=\d+/);
   await expect(trigger).toContainText('E2E Artist');
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
 });

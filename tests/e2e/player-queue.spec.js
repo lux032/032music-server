@@ -32,6 +32,8 @@ test('remove a queued track and clear with undo restores its position', async ({
 });
 
 test('Alt+Down reorders focused queue row and persists it', async ({ page }) => {
+  // Precondition: the first queued track is still the current one.
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex)).toBe(0);
   const first = await page.locator('#np-queue-list li').first().locator('.q-title').textContent();
   await page.locator('#np-queue-list .q-row').first().focus();
   await page.keyboard.press('Alt+ArrowDown');
@@ -68,6 +70,8 @@ test('first row plays without hover', async ({ page }) => {
 });
 
 test('slow pointer drag moves first queue row to third and persists order', async ({ page }) => {
+  // Precondition: the first queued track is still the current one.
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex)).toBe(0);
   const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue.map(t => String(t.id)));
   const handle = page.locator('.q-drag').first();
   const target = page.locator('#np-queue-list li').nth(2);
@@ -89,6 +93,8 @@ test('slow pointer drag moves first queue row to third and persists order', asyn
 });
 
 test('slow pointer drag moves third queue row to first and persists order', async ({ page }) => {
+  // Precondition: the first queued track is still the current one.
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex)).toBe(0);
   const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue.map(t => String(t.id)));
   const handle = page.locator('.q-drag').nth(2);
   const first = page.locator('#np-queue-list li').first();
@@ -110,4 +116,56 @@ test('slow pointer drag moves third queue row to first and persists order', asyn
     return JSON.parse(sessionStorage.getItem('032_player_state')).queue[index].id;
   });
   expect(String(firstVisibleId)).toBe(before[2]);
+});
+
+test('dragging to the queue bottom edge auto-scrolls and drops past the initial viewport', async ({ page }) => {
+  // Precondition: the first queued track is still the current one.
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex)).toBe(0);
+  const list = page.locator('#np-queue-list');
+  const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue.map(t => String(t.id)));
+  expect(before.length).toBeGreaterThanOrEqual(15);
+  // The queue must overflow the panel, otherwise there is nothing to auto-scroll.
+  const metrics = await list.evaluate(el => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 100);
+  expect(metrics.scrollTop).toBe(0);
+  // Highest queue index whose row is fully visible before the drag.
+  const lastVisible = await list.evaluate(el => {
+    const box = el.getBoundingClientRect();
+    return Math.max(...Array.from(el.children).filter(row => row.getBoundingClientRect().bottom <= box.bottom).map(row => Number(row.dataset.qindex)));
+  });
+  expect(lastVisible).toBeLessThan(before.length - 1);
+
+  const listBox = await list.boundingBox();
+  const handleBox = await page.locator('.q-drag').first().boundingBox();
+  const x = handleBox.x + handleBox.width / 2;
+  const startY = handleBox.y + handleBox.height / 2;
+  // Inside the 45px auto-scroll band at the bottom of the list.
+  const edgeY = listBox.y + listBox.height - 12;
+  await page.mouse.move(x, startY);
+  await page.mouse.down();
+  for (let i = 1; i <= 30; i++) {
+    await page.mouse.move(x, startY + (edgeY - startY) * i / 30);
+    await page.waitForTimeout(12);
+  }
+  // Hold at the edge: the auto-scroll timer keeps scrolling without pointer moves.
+  await expect.poll(() => list.evaluate(el => el.scrollTop), { timeout: 5_000 }).toBeGreaterThan(0);
+  const maxScroll = metrics.scrollHeight - metrics.clientHeight;
+  await expect.poll(() => list.evaluate(el => el.scrollTop), { timeout: 8_000 }).toBeGreaterThanOrEqual(maxScroll - 1);
+  // Keep holding: auto-scroll must stop at the queue end rather than chase
+  // the overflow created by the translated drag row.
+  await page.waitForTimeout(600);
+  expect(await list.evaluate(el => el.scrollTop)).toBeLessThanOrEqual(maxScroll + 1);
+  await page.mouse.move(x, edgeY - 1);
+  await page.mouse.up();
+
+  const moved = before[0];
+  await expect.poll(() => page.evaluate(id => JSON.parse(sessionStorage.getItem('032_player_state')).queue.map(t => String(t.id)).indexOf(id), moved)).toBeGreaterThan(lastVisible);
+  const after = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue.map(t => String(t.id)));
+  const to = after.indexOf(moved);
+  const expected = before.slice(1);
+  expected.splice(to, 0, moved);
+  expect(after).toEqual(expected);
+  // The playing track moved with the drop, so the current index follows it.
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex)).toBe(to);
+  await expect(page.locator('#np-queue-list li.current')).toHaveAttribute('data-qindex', String(to));
 });

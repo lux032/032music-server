@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -50,4 +52,33 @@ func TestWorksAPI(t *testing.T) {
 func jsonNumber(value int64) string {
 	data, _ := json.Marshal(value)
 	return string(data)
+}
+
+// TestWorksPageKanaIndex: the works index bar splits letters like the library
+// bar — "#" stays visible next to A-Z, only kana sit behind the かな toggle,
+// and a kana index opens the toggle on load.
+func TestWorksPageKanaIndex(t *testing.T) {
+	_, _, handler := credentialTestApp(t)
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+	body := getWithCookie(handler, "/admin/works", cookie).Body.String()
+	kanaStart := strings.Index(body, `<span class="kana-links"`)
+	if kanaStart < 0 {
+		t.Fatal("works page must render the kana links")
+	}
+	kanaEnd := kanaStart + strings.Index(body[kanaStart:], `</span>`)
+	kana := body[kanaStart:kanaEnd]
+	if !strings.Contains(body, `<button type="button" class="kana-toggle" aria-expanded="false">`) || !strings.Contains(kana, ` hidden>`) {
+		t.Fatal("kana links must start collapsed without a kana index")
+	}
+	if strings.Contains(kana, "index=%23") || !strings.Contains(body[:kanaStart], `href="/admin/works?index=%23"`) {
+		t.Fatal(`"#" must render outside the kana group`)
+	}
+	if !strings.Contains(kana, ">あ</a>") || !strings.Contains(kana, ">わ</a>") {
+		t.Fatal("kana group must list the kana rows")
+	}
+
+	body = getWithCookie(handler, "/admin/works?index="+url.QueryEscape("か"), cookie).Body.String()
+	if !strings.Contains(body, `<button type="button" class="kana-toggle" aria-expanded="true">`) || strings.Contains(body, `<span class="kana-links" hidden>`) {
+		t.Fatal("a kana index must expand the kana links")
+	}
 }

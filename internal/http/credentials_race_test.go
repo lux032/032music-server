@@ -62,7 +62,7 @@ func TestLoginRacingPasswordChangeLeavesNoSession(t *testing.T) {
 	app.afterLoginCredentialsRead = func() {
 		once.Do(func() {
 			rec := postSecurity(t, app, handler, admin, securityPagePath+"/password", url.Values{"current_password": {testAdminPassword}, "new_password": {newPassword}, "confirm_password": {newPassword}})
-			if notice := securityNotice(t, rec); !strings.Contains(notice, "密码已修改") {
+			if notice := securityNoticeText(t, rec); !strings.Contains(notice, "密码已修改") {
 				t.Errorf("injected change notice = %q", notice)
 			}
 			rotated = sessionCookieFrom(rec)
@@ -143,7 +143,7 @@ func TestPasswordChangeSessionReplacementFailureKeepsCredentials(t *testing.T) {
 	}
 	newPassword := "never-applied-password-1"
 	rec := postSecurity(t, app, handler, current, securityPagePath+"/password", url.Values{"current_password": {testAdminPassword}, "new_password": {newPassword}, "confirm_password": {newPassword}})
-	if notice := securityNotice(t, rec); !strings.Contains(notice, "保存失败") {
+	if notice := securityNoticeText(t, rec); !strings.Contains(notice, "保存失败") {
 		t.Fatalf("notice = %q", notice)
 	}
 	if sessionCookieFrom(rec) != nil {
@@ -226,7 +226,7 @@ func TestPasswordHashBusyGlobalTimeout(t *testing.T) {
 	if !strings.Contains(getWithCookie(handler, "/admin/login?notice=busy", nil).Body.String(), "系统繁忙") {
 		t.Fatal("login page does not show the busy notice")
 	}
-	notice := securityNotice(t, postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {password}}))
+	notice := securityNoticeText(t, postSecurity(t, app, handler, cookie, securityPagePath+"/api-token", url.Values{"current_password": {password}}))
 	if !strings.Contains(notice, "系统繁忙") {
 		t.Fatalf("sensitive op notice = %q", notice)
 	}

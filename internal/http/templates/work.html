@@ -50,7 +50,7 @@
               <strong>{{.Title}}</strong>
               <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Season}} · 第 {{.Season}} 季{{end}} · {{.Source}}</small>
             </div>
-            <span class="format-pill">{{.Container}}</span>
+            {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <form method="post" action="/admin/works/{{$.Work.ID}}/tracks/{{.ID}}/remove">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

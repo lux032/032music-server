@@ -44,6 +44,7 @@
     <nav class="index-bar" aria-label="首字母索引">
       {{$current := .Index}}
       {{range $v := (indexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}">{{$v}}</a>{{end}}
+      <button type="button" class="kana-toggle" aria-expanded="{{.KanaIndex}}">かな</button><span class="kana-links" {{if not .KanaIndex}}hidden{{end}}>{{range $v := (kanaIndexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}">{{$v}}</a>{{end}}</span>
     </nav>
 
     <section class="works-grid">

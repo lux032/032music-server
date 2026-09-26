@@ -1,7 +1,7 @@
 /* Browser controls use document delegation so they survive main-only PJAX swaps. */
 (() => {
   'use strict';
-  let searchTimer, optionTimer, request, composing = false, searchDraft = null, pendingSearchURL = null;
+  let searchTimer, optionTimer, request, composing = false, searchDraft = null, pendingSearchURL = null, pendingFilter = null;
   function clearSearchDraft() {
     clearTimeout(searchTimer);
     searchDraft = null;
@@ -30,6 +30,12 @@
     clearTimeout(searchTimer);
     searchDraft = { path: location.pathname, value: input.value, start: input.selectionStart, end: input.selectionEnd };
     searchTimer = setTimeout(() => submitSearch(input), 300);
+  }
+  function selectOption(control, value) {
+    const url = filteredURL(control.dataset.filter, value);
+    pendingFilter = { path: new URL(url).pathname, filter: control.dataset.filter };
+    if (navigate(url) === false) pendingFilter = null;
+    close(control, true);
   }
   function close(control, restore = false) {
     if (!control) return;
@@ -111,7 +117,7 @@
     const destination = new URL(link.href, location.href);
     if (destination.origin === location.origin && destination.pathname.startsWith('/admin')) clearSearchDraft();
   }, true);
-  window.addEventListener('popstate', clearSearchDraft);
+  window.addEventListener('popstate', () => { clearSearchDraft(); pendingFilter = null; });
   document.addEventListener('032:pjax-before-swap', e => {
     if (composing && searchDraft && searchDraft.path === location.pathname && pendingSearchURL === e.detail.url) {
       e.preventDefault();
@@ -137,8 +143,7 @@
     const option = e.target.closest('.filter-control [role="option"]');
     if (option) {
       const control = option.closest('.filter-control');
-      navigate(filteredURL(control.dataset.filter, option.dataset.value));
-      close(control, true);
+      selectOption(control, option.dataset.value);
       return;
     }
     if (!e.target.closest('.filter-control')) closeAll();
@@ -157,10 +162,9 @@
     if (e.key === 'Enter' && e.target.matches('[role="combobox"]')) {
       e.preventDefault();
       if (list.dataset.ready === 'true') {
-        const option = list.querySelector('[role="option"][aria-selected="true"]:not([data-value=""])') || list.querySelector('[role="option"]:not([data-value=""])');
+        const option = e.target.value.trim() ? (list.querySelector('[role="option"][aria-selected="true"]:not([data-value=""])') || list.querySelector('[role="option"]:not([data-value=""])')) : list.querySelector('[role="option"][data-value=""]');
         if (option) {
-          navigate(filteredURL(control.dataset.filter, option.dataset.value));
-          close(control, true);
+          selectOption(control, option.dataset.value);
         }
       }
       return;
@@ -216,6 +220,14 @@
   document.addEventListener('032:pjax-applied', () => {
     composing = false;
     closeAll();
+    if (pendingFilter) {
+      const { path, filter } = pendingFilter;
+      pendingFilter = null;
+      if (path === location.pathname) {
+        const trigger = [...document.querySelectorAll('.filter-control')].find(control => control.dataset.filter === filter)?.querySelector('.filter-trigger');
+        if (trigger) { trigger.setAttribute('aria-expanded', 'false'); trigger.focus({ preventScroll: true }); }
+      }
+    }
     if (!searchDraft || searchDraft.path !== location.pathname || !document.querySelector('.instant-search')) { clearSearchDraft(); return; }
     pendingSearchURL = null;
     const input = document.querySelector('.instant-search input[name="q"]');

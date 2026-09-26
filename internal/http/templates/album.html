@@ -27,7 +27,7 @@
           {{if .AlbumDetail.Year}}<span>{{.AlbumDetail.Year}}</span>{{end}}
           <span>{{.AlbumDetail.DiscCount}} 碟</span>
           <span>{{.AlbumDetail.TrackCount}} 首</span>
-          <span>{{.AlbumDetail.Formats}}</span>
+          {{if .AlbumDetail.Formats}}<span>{{.AlbumDetail.Formats}}</span>{{end}}
         </div>
         <div class="album-actions">
           <button type="button" class="primary-round"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
@@ -56,7 +56,7 @@
               <strong>{{.Title}}</strong>
               <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}</small>
             </div>
-            <span class="format-pill">{{.Container}}</span>
+            {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <form class="inline-favorite" method="post" action="/admin/favorites/tracks/{{.ID}}">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

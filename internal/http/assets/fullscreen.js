@@ -104,6 +104,8 @@ export function setupFullscreen() {
     progress.addEventListener('pointerdown', () => { seeking = true; });
     progress.addEventListener('pointerup', () => { seeking = false; syncFullscreen(); });
     progress.addEventListener('pointercancel', () => { seeking = false; syncFullscreen(); });
+    progress.addEventListener('lostpointercapture', () => { seeking = false; syncFullscreen(); });
+    progress.addEventListener('change', () => { seeking = false; syncFullscreen(); });
     progress.addEventListener('input', () => {
       if (!s.audio?.duration) return;
       s.audio.currentTime = Number(progress.value) * s.audio.duration / 100;

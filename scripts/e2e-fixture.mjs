@@ -32,8 +32,10 @@ export async function setup() {
   fs.mkdirSync(data, { recursive: true });
   fs.mkdirSync(music, { recursive: true });
 
+  // 60-second tracks: long enough that playback never advances to the
+  // next queue entry while a test inspects or reorders the queue.
   const fixture = path.join(music, 'fixture-01.mp3');
-  run(ffmpeg, ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+  run(ffmpeg, ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=60',
     '-metadata', 'title=E2E Track 01', '-metadata', 'artist=E2E Artist', '-metadata', 'album=E2E Album',
     '-y', fixture], 'ffmpeg fixture generation');
   for (let i = 2; i <= 20; i++) {
@@ -82,12 +84,23 @@ export async function teardown() {
   let state = null;
   try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch (_) { /* nothing to clean */ }
   if (state) {
+    const alive = () => { try { process.kill(state.pid, 0); return true; } catch (_) { return false; } };
     if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(state.pid), '/T', '/F'], { stdio: 'ignore' });
+      // Absolute path: a bare 'taskkill' can fail with ENOENT depending on
+      // how the runner's PATH was inherited, which silently left the server
+      // (and its locked music.db) running.
+      const taskkill = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
+      const res = spawnSync(taskkill, ['/pid', String(state.pid), '/T', '/F'], { stdio: 'ignore' });
+      if (res.error && alive()) { try { process.kill(state.pid); } catch (_) { /* already gone */ } }
     } else {
       try { process.kill(state.pid, 'SIGTERM'); } catch (_) { /* already gone */ }
     }
-    fs.rmSync(state.tempRoot, { recursive: true, force: true });
+    // The server holds music.db open until it has actually exited.
+    for (const deadline = Date.now() + 15_000; alive() && Date.now() < deadline;) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    // File handles can outlive the process briefly on Windows; retry EBUSY.
+    fs.rmSync(state.tempRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
     fs.rmSync(STATE_FILE, { force: true });
   }
 }

@@ -311,7 +311,11 @@ func (data *libraryPageData) resolveFilterTagNames() {
 	}
 	for index := range data.FilterTags {
 		label := data.FilterTags[index].Label
-		if name, ok := artistNames[strings.TrimPrefix(label, "artist:")]; ok && strings.HasPrefix(label, "artist:") {
+		if strings.HasPrefix(label, "artist:") {
+			name, ok := artistNames[strings.TrimPrefix(label, "artist:")]
+			if !ok {
+				name = "已删除的歌手"
+			}
 			data.FilterTags[index].Label = "歌手：" + name
 			data.FilterTags[index].Value = name
 		}
