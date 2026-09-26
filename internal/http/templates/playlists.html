@@ -10,7 +10,6 @@
   <main id="app-main" class="browser-main feature-main">
     <header class="browser-header">
       <div>
-        <p class="kicker">PLAYLISTS</p>
         <h1>歌单</h1>
         <p class="result-count">{{.Total}} 个歌单</p>
       </div>
@@ -19,7 +18,6 @@
 
     <section class="feature-card create-playlist">
       <div>
-        <p class="kicker">NEW PLAYLIST</p>
         <h2>创建歌单</h2>
         <p class="result-count">先创建名称，再进入详情搜索并添加歌曲。</p>
       </div>
@@ -38,7 +36,7 @@
         <div>
           <h2>{{.Name}}</h2>
           <p>{{if .Description}}{{.Description}}{{else}}暂无说明{{end}}</p>
-          <small>{{.ItemCount}} 首歌曲 · 更新于 {{.UpdatedAt}}</small>
+          <small>{{.ItemCount}} 首歌曲 · 更新于 {{formatTime .UpdatedAt}}</small>
         </div>
         <span class="card-arrow"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></span>
       </a>

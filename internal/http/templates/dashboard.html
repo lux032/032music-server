@@ -10,7 +10,6 @@
   <main id="app-main" class="browser-main console-main">
     <header class="browser-header">
       <div>
-        <p class="kicker">LIBRARY CONTROL</p>
         <h1>{{.LibraryName}}</h1>
         <p class="result-count path">{{.MusicDirectory}}</p>
       </div>
@@ -48,7 +47,6 @@
       <article class="scan-console">
         <div class="section-title">
           <div>
-            <p class="kicker">SCANNER</p>
             <h2 id="scan-title">扫描状态：{{scanStatusLabel .Scan.Status}}</h2>
             <small id="scan-last-updated">最后更新：--:--:--</small>
           </div>
@@ -77,10 +75,9 @@
         {{end}}
       </article>
       <aside class="console-note">
-        <p class="kicker">METADATA POLICY</p>
         <h2>本地标签优先</h2>
         <p>扫描读取嵌入标签与封面，管理端编辑保存为独立覆盖层。源音乐文件保持只读。</p>
-        <a href="/admin/albums">进入专辑浏览器 →</a>
+        <a href="/admin/albums">进入专辑浏览器 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
       </aside>
     </section>
   </main>

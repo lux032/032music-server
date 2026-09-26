@@ -10,7 +10,6 @@
   <main id="app-main" class="browser-main works-main">
     <header class="browser-header">
       <div>
-        <p class="kicker">WORKS &amp; TIE-UPS</p>
         <h1>作品</h1>
         <p class="result-count">{{.Total}} 个动画、影视或游戏作品</p>
       </div>
@@ -23,7 +22,7 @@
 
     <form class="focus-bar" method="get">
       <input type="hidden" name="q" value="{{.Query}}">
-      <button type="button" class="focus-label">FOCUS</button>
+      <button type="button" class="focus-label">筛选</button>
       <label><span>类型</span><select name="type">
         <option value="">全部类型</option>
         <option value="anime" {{if eq .Type "anime"}}selected{{end}}>动画</option>
@@ -65,15 +64,14 @@
 
     {{if gt .PageCount 1}}
     <nav class="pagination" aria-label="分页">
-      {{if .PrevURL}}<a href="{{.PrevURL}}">‹ 上一页</a>{{else}}<span>‹ 上一页</span>{{end}}
+      {{if .PrevURL}}<a href="{{.PrevURL}}">上一页</a>{{else}}<span>上一页</span>{{end}}
       <div>{{range .Pages}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}">{{.Number}}</a>{{end}}</div>
-      {{if .NextURL}}<a href="{{.NextURL}}">下一页 ›</a>{{else}}<span>下一页 ›</span>{{end}}
+      {{if .NextURL}}<a href="{{.NextURL}}">下一页</a>{{else}}<span>下一页</span>{{end}}
     </nav>
     {{end}}
 
     <section class="feature-card create-work">
       <div>
-        <p class="kicker">MANUAL ENTRY</p>
         <h2>新建作品</h2>
         <p class="result-count">适用于自动推导无法识别的作品。</p>
       </div>

@@ -160,6 +160,7 @@ svg.icon {
   grid-column: 1/-1;
   display: grid;
   place-items: center;
+  align-content: center;
   gap: 8px;
   min-height: 240px;
   color: var(--muted);
@@ -246,3 +247,9 @@ svg.icon {
   }
   .fade-img { opacity: 1; }
 }
+
+/* Shared admin page presentation. */
+.status-badge { display: inline-flex; align-items: center; width: max-content; border: 1px solid var(--accent-line); border-radius: 999px; padding: 4px 10px; color: var(--accent); background: var(--accent-soft); font-size: var(--fs-xs); font-weight: 600; }
+.status-badge.success { border-color: rgba(29,157,108,.35); color: var(--success); background: rgba(29,157,108,.08); }
+.status-badge.warning { border-color: rgba(185,121,6,.35); color: var(--warning); background: rgba(185,121,6,.08); }
+.status-badge.failed { border-color: rgba(214,69,93,.35); color: var(--danger); background: var(--danger-soft); }

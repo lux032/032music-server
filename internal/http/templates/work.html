@@ -20,11 +20,11 @@
     <section class="work-hero">
       <div class="hero-cover work-cover">{{if .Work.PosterURL}}<img class="fade-img" src="{{.Work.PosterURL}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}</div>
       <div class="album-heading">
-        <p class="kicker">{{.Work.Type}}</p>
         <h1>{{.Work.Title}}</h1>
         {{if .Work.TranslatedTitle}}<h2>{{.Work.TranslatedTitle}}</h2>{{end}}
         {{if .Work.ReadingTitle}}<p class="album-version">{{.Work.ReadingTitle}}</p>{{end}}
         <div class="album-facts">
+          {{if .Work.Type}}<span>{{workTypeLabel .Work.Type}}</span>{{end}}
           {{if .Work.Year}}<span>{{.Work.Year}}</span>{{end}}
           <span>{{.Work.TrackCount}} 首关联曲目</span>
           {{if .Work.ExternalID}}<span>{{.Work.ExternalID}}</span>{{end}}
@@ -44,7 +44,7 @@
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="tieup-role playable-number">
               <span class="num-text">{{.Role}}{{if .Sequence}}{{.Sequence}}{{end}}</span>
-              <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+              <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
             <div>
               <strong>{{.Title}}</strong>
@@ -67,7 +67,7 @@
       </section>
       <aside class="album-inspector">
         <section>
-          <p class="kicker">ADD TRACK</p>
+          <p class="kicker">添加歌曲</p>
           <form class="stack-form" method="get">
             <label>搜索曲目<input name="trackQ" value="{{.Query}}" placeholder="曲名、歌手或专辑"></label>
             <button class="secondary-round">搜索</button>
@@ -102,7 +102,7 @@
 
     <section id="edit" class="album-editor">
       <div class="editor-head">
-        <p class="kicker">WORK METADATA</p>
+        <p class="kicker">作品信息</p>
         <h2>编辑作品</h2>
       </div>
       <form method="post" action="/admin/works/{{.Work.ID}}">
@@ -137,7 +137,7 @@
 
     <section class="album-editor danger-zone">
       <div class="editor-head">
-        <p class="kicker">DANGER ZONE</p>
+        <p class="kicker">危险操作</p>
         <h2>删除作品</h2>
       </div>
       <form method="post" action="/admin/works/{{.Work.ID}}/delete">

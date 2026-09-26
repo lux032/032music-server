@@ -20,7 +20,6 @@
     <section class="album-hero">
       {{if .AlbumDetail.ArtworkURL}}<img class="hero-cover fade-img" src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async">{{else}}<div class="hero-cover cover-placeholder">032</div>{{end}}
       <div class="album-heading">
-        <p class="kicker">{{.AlbumDetail.AlbumType}}</p>
         <h1>{{.AlbumDetail.Title}}</h1>
         {{if .AlbumDetail.Version}}<p class="album-version">{{.AlbumDetail.Version}}</p>{{end}}
         <h2 class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</h2>
@@ -51,7 +50,7 @@
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="playable-number">
               <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
-              <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+              <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
             <div>
               <strong>{{.Title}}</strong>
@@ -70,12 +69,13 @@
           </article>
           {{end}}
         </div>
-        {{if .AlbumDetail.Review}}<div class="editorial"><p class="kicker">ALBUM NOTES</p><p>{{.AlbumDetail.Review}}</p></div>{{end}}
+        {{if .AlbumDetail.Review}}<div class="editorial"><p class="kicker">专辑介绍</p><p>{{.AlbumDetail.Review}}</p></div>{{end}}
       </section>
       <aside class="album-inspector">
         <section>
-          <p class="kicker">RELEASE</p>
+          <p class="kicker">发行信息</p>
           <dl>
+            {{if .AlbumDetail.AlbumType}}<div><dt>类型</dt><dd>{{albumTypeLabel .AlbumDetail.AlbumType}}</dd></div>{{end}}
             <div><dt>演出者</dt><dd class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</dd></div>
             {{if .AlbumDetail.ReleaseDate}}<div><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}
             {{if .AlbumDetail.OriginalReleaseDate}}<div><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}
@@ -86,7 +86,7 @@
           </dl>
         </section>
         <section>
-          <p class="kicker">MEDIA</p>
+          <p class="kicker">媒体信息</p>
           <dl>
             {{if .AlbumDetail.Formats}}<div><dt>格式</dt><dd>{{.AlbumDetail.Formats}}</dd></div>{{end}}
             {{if .AlbumDetail.TotalSize}}<div><dt>容量</dt><dd>{{.AlbumDetail.TotalSize}}</dd></div>{{end}}
@@ -98,7 +98,7 @@
     <section id="edit" class="album-editor">
       <div class="editor-head">
         <div>
-          <p class="kicker">METADATA OVERRIDES</p>
+          <p class="kicker">元数据覆盖</p>
           <h2>编辑专辑</h2>
           <p>这些值优先于文件标签，源音乐文件不会被修改。</p>
         </div>

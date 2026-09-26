@@ -18,10 +18,9 @@
     <header class="playlist-heading">
       <div class="playlist-cover large">{{if .Detail.Playlist.ArtworkURL}}<img class="fade-img" src="{{thumb .Detail.Playlist.ArtworkURL 512}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>{{end}}</div>
       <div>
-        <p class="kicker">PLAYLIST</p>
         <h1>{{.Detail.Playlist.Name}}</h1>
         <p>{{if .Detail.Playlist.Description}}{{.Detail.Playlist.Description}}{{else}}暂无说明{{end}}</p>
-        <span class="result-count">{{.Detail.Playlist.ItemCount}} 首歌曲 · 更新于 {{.Detail.Playlist.UpdatedAt}}</span>
+        <span class="result-count">{{.Detail.Playlist.ItemCount}} 首歌曲 · 更新于 {{formatTime .Detail.Playlist.UpdatedAt}}</span>
       </div>
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
@@ -31,16 +30,17 @@
         <div class="section-title"><h2>歌曲</h2><span>{{.Detail.Playlist.ItemCount}} 首</span></div>
         <div class="playlist-track-list">
           {{range .Detail.Tracks}}
-          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="FLAC" data-track-duration-ms="{{.DurationMillis}}">
+          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="drag-position playable-number">
               <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
-              <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+              <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
-            <a class="feature-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
             <div class="feature-track-copy">
               <strong>{{.Title}}</strong>
-              <small>{{.Artist}} · {{.Album}}</small>
+              <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
             </div>
+            <span class="track-format">{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}</span>
+            <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <div class="track-actions">
               <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/move">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
@@ -60,7 +60,6 @@
       </section>
       <aside class="playlist-tools">
         <section class="feature-card">
-          <p class="kicker">ADD TRACKS</p>
           <h2>添加歌曲</h2>
           <form class="playlist-search" method="get">
             <label>搜索曲名、歌手或专辑<input name="q" value="{{.Query}}" placeholder="输入关键词" required></label>
@@ -84,7 +83,6 @@
           {{end}}
         </section>
         <section class="feature-card">
-          <p class="kicker">DETAILS</p>
           <h2>歌单信息</h2>
           <form class="stack-form" method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
@@ -94,7 +92,7 @@
           </form>
         </section>
         <section class="feature-card danger-zone">
-          <p class="kicker">DANGER ZONE</p>
+          <p class="kicker">危险操作</p>
           <h2>删除歌单</h2>
           <p class="result-count">仅删除歌单“{{.Detail.Playlist.Name}}”和其中的排序，不会删除任何音乐文件。此操作不可撤销。</p>
           <details class="danger-confirm">

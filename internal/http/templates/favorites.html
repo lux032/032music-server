@@ -10,7 +10,6 @@
   <main id="app-main" class="browser-main feature-main">
     <header class="browser-header">
       <div>
-        <p class="kicker">FAVORITES</p>
         <h1>我的收藏</h1>
         <p class="result-count">{{.AlbumTotal}} 张专辑 · {{.TrackTotal}} 首歌曲</p>
       </div>
@@ -19,28 +18,30 @@
 
     <section class="feature-section">
       <div class="section-title">
-        <div><p class="kicker">ALBUMS</p><h2>收藏专辑</h2></div>
+        <div><h2>收藏专辑</h2></div>
         <span>{{.AlbumTotal}} 张</span>
       </div>
       <div class="album-browser favorite-albums">
         {{range .Albums}}
-        <article class="favorite-album">
+        <article class="favorite-album library-album-card">
           <a class="album-tile" href="/admin/albums/{{.ID}}">
             <div class="cover-wrap">
               {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 512}}" alt="{{.Title}}" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}
             </div>
-            <h2>{{.Title}}</h2>
-            <p>{{if .PerformedBy}}{{.PerformedBy}}{{else}}{{.Artist}}{{end}}</p>
-            <small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small>
           </a>
-          <form method="post" action="/admin/favorites/albums/{{.ID}}">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="favorite" value="0">
-            <input type="hidden" name="returnTo" value="/admin/favorites">
-            <button class="icon-action" title="取消收藏 {{.Title}}" aria-label="取消收藏 {{.Title}}">
-              <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart-fill"></use></svg>
-            </button>
-          </form>
+          <div class="album-card-title">
+            <a href="/admin/albums/{{.ID}}">{{.Title}}</a>
+            <form method="post" action="/admin/favorites/albums/{{.ID}}">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="favorite" value="0">
+              <input type="hidden" name="returnTo" value="/admin/favorites">
+              <button class="icon-action selected" title="取消收藏 {{.Title}}" aria-label="取消收藏 {{.Title}}">
+                <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart-fill"></use></svg>
+              </button>
+            </form>
+          </div>
+          <p>{{if .PerformedBy}}{{.PerformedBy}}{{else}}{{.Artist}}{{end}}</p>
+          <small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small>
         </article>
         {{else}}
         <div class="zero-state"><strong>还没有收藏专辑</strong><span>在专辑浏览器或专辑详情中点击收藏。</span></div>
@@ -50,7 +51,7 @@
 
     <section class="feature-section">
       <div class="section-title">
-        <div><p class="kicker">TRACKS</p><h2>收藏歌曲</h2></div>
+        <div><h2>收藏歌曲</h2></div>
         <span>{{.TrackTotal}} 首</span>
       </div>
       <div class="feature-track-list">
@@ -62,7 +63,7 @@
             <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
           </div>
           <span class="format-pill">{{.Container}}</span>
-          <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+          <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
           <form method="post" action="/admin/favorites/tracks/{{.ID}}">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
             <input type="hidden" name="favorite" value="0">

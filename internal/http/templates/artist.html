@@ -20,7 +20,6 @@
     <section class="artist-hero">
       {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait">{{.Artist.Name}}</div>{{end}}
       <div>
-        <p class="kicker">ARTIST</p>
         <h1>{{.Artist.Name}}</h1>
         <p>{{.Artist.ArtistType}} {{.Artist.Country}}</p>
         <div class="album-facts">
@@ -46,7 +45,7 @@
         {{if .Artist.BiographySource}}
         <div class="biography-origin">
           <span>{{.Artist.BiographySource}}{{if .Artist.BiographyLanguage}} · {{.Artist.BiographyLanguage}}{{end}}</span>
-          {{if .Artist.BiographyURL}}<a href="{{.Artist.BiographyURL}}" target="_blank" rel="noreferrer">查看原文 ↗</a>{{end}}
+          {{if .Artist.BiographyURL}}<a href="{{.Artist.BiographyURL}}" target="_blank" rel="noreferrer">查看原文 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
         </div>
         {{end}}
         <p class="artist-bio">{{if .Artist.Biography}}{{.Artist.Biography}}{{else}}尚无简介。确认 MusicBrainz 身份后刷新简介。{{end}}</p>
@@ -64,7 +63,7 @@
                 <input type="hidden" name="source" value="{{.Source}}">
                 <input type="hidden" name="language" value="{{.Language}}">
                 <button class="secondary-button">使用此版本</button>
-                {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">原文 ↗</a>{{end}}
+                {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">原文 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
               </form>
             </article>
             {{end}}
@@ -78,8 +77,8 @@
 
         <section class="artist-tracks-section">
           <div class="section-title">
-            <div><p class="kicker">TRACKS</p><h2>歌曲</h2></div>
-            <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.TrackCount}} 首 →</a>
+            <div><h2>歌曲</h2></div>
+            <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.TrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
           </div>
           <div class="artist-track-list">
             {{range .Tracks}}
@@ -90,7 +89,7 @@
                 <small><a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}</small>
               </div>
               {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
-              <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+              <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </article>
             {{else}}
             <div class="zero-state"><strong>暂时没有关联歌曲</strong></div>
@@ -102,7 +101,7 @@
           {{range .ReleaseGroups}}
           <section class="artist-release-group">
             <div class="section-title">
-              <div><p class="kicker">DISCOGRAPHY</p><h2>{{.Title}}</h2></div>
+              <div><p class="kicker">专辑目录</p><h2>{{.Title}}</h2></div>
               <span>{{len .Releases}} 个发行</span>
             </div>
             <div class="mini-albums">
@@ -110,7 +109,7 @@
               <a href="/admin/albums/{{.ID}}">
                 {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}
                 <strong>{{.Title}}</strong>
-                <small>{{if .Year}}{{.Year}} · {{end}}{{.AlbumType}}</small>
+                <small>{{if .Year}}{{.Year}} · {{end}}{{albumTypeLabel .AlbumType}}</small>
               </a>
               {{end}}
             </div>
@@ -122,20 +121,20 @@
       </section>
       <aside>
         <section class="identity-panel">
-          <p class="kicker">EXTERNAL IDENTITIES</p>
+          <p class="kicker">外部身份</p>
           {{range .Artist.Profiles}}
           <article>
             <strong>{{.Source}}</strong>
             <span>{{.DisplayName}}</span>
             <code>{{.ExternalID}}</code>
-            {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">查看来源 ↗</a>{{end}}
+            {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
           </article>
           {{else}}
           <p class="result-count">尚未绑定外部身份</p>
           {{end}}
         </section>
         <section class="identity-panel">
-          <p class="kicker">MATCH CANDIDATES</p>
+          <p class="kicker">匹配候选</p>
           {{range .Artist.Candidates}}
           {{if eq .Status "candidate"}}
           <article>
@@ -159,7 +158,7 @@
           {{end}}
         </section>
         <section class="identity-panel danger-panel">
-          <p class="kicker">MERGE ARTIST</p>
+          <p class="kicker">合并歌手</p>
           <p>源歌手不会删除，所有关系迁移均可从合并历史回退。</p>
           <form method="post" action="/admin/artists/{{.Artist.ID}}/merge">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">

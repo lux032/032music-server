@@ -10,19 +10,18 @@
   <main id="app-main" class="browser-main identity-main enrichment-main">
     <header class="browser-header">
       <div>
-        <p class="kicker">ENRICHMENT &amp; REVIEW</p>
         <h1>元数据自动增强</h1>
         <p class="result-count">VGMdb 唱片、MusicBrainz 关系与 Bangumi 作品对齐。</p>
       </div>
       <form class="enrichment-launch" method="post" action="/admin/enrichment/run">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <select name="scope">
+        <select name="scope" aria-label="增强范围">
           <option value="all">全部来源</option>
           <option value="album">单张专辑</option>
           <option value="work">单个作品</option>
           <option value="artist">单个艺术家</option>
         </select>
-        <input type="number" min="1" name="targetId" placeholder="目标 ID">
+        <input type="number" min="1" name="targetId" aria-label="目标 ID" placeholder="目标 ID">
         <label class="switch"><input type="checkbox" name="force"> 强制刷新</label>
         <button>启动增强</button>
       </form>
@@ -30,13 +29,13 @@
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="feature-section">
-      <div class="section-title"><div><p class="kicker">RUNS</p><h2>任务记录</h2></div></div>
+      <div class="section-title"><div><h2>任务记录</h2></div></div>
       <div class="enrichment-runs">
         {{range .Runs}}
         <article>
           <header>
             <strong>#{{.ID}} · {{enrichmentTargetLabel .}}</strong>
-            <span class="run-status status-{{.Status}}">{{.Status}}</span>
+            <span class="run-status status-{{.Status}}">{{if eq .Status "running"}}进行中{{else if eq .Status "completed"}}已完成{{else if eq .Status "failed"}}失败{{else}}{{.Status}}{{end}}</span>
           </header>
           <div class="progress"><span style="width:{{enrichmentRunProgress .}}%"></span></div>
           <p>处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
@@ -50,7 +49,7 @@
     </section>
 
     <section class="feature-section">
-      <div class="section-title"><div><p class="kicker">BANGUMI REVIEW</p><h2>作品候选</h2></div></div>
+      <div class="section-title"><div><h2>作品候选</h2></div></div>
       <div class="review-list">
         {{range $item := .Works}}
         <article>
@@ -58,7 +57,7 @@
           <div>
             {{range $item.Candidates}}
             <section>
-              <b>{{.Title}}</b>
+              <b>{{.Title}}</b><span class="status-badge warning">待审核</span>
               <span>{{.Source}} · 置信度 {{.Score}} · {{.Year}}</span>
               <small>{{.OriginalTitle}} {{.TranslatedTitle}} {{.Type}}</small>
               <div class="candidate-actions">
@@ -82,7 +81,7 @@
     </section>
 
     <section class="feature-section">
-      <div class="section-title"><div><p class="kicker">ARTIST RELATIONS</p><h2>艺术家关系候选</h2></div></div>
+      <div class="section-title"><div><h2>艺术家关系候选</h2></div></div>
       <div class="review-list">
         {{range $item := .Artists}}
         <article>
@@ -90,7 +89,7 @@
           <div>
             {{range $item.Candidates}}
             <section>
-              <b>{{.RelatedName}}</b>
+              <b>{{.RelatedName}}</b><span class="status-badge warning">待审核</span>
               <span>{{.Source}} · {{.RelationType}} · 置信度 {{.Score}}</span>
               <small>{{.Direction}} · {{.RelatedExternalID}}</small>
               <div class="candidate-actions">

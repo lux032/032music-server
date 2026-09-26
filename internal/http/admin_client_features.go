@@ -405,6 +405,50 @@ func formatAdminTime(value string) string {
 	return parsed.Local().Format("2006-01-02 15:04")
 }
 
+func formatTime(value string) string { return formatAdminTime(value) }
+
+func albumTypeLabel(value string) string {
+	switch value {
+	case "album":
+		return "专辑"
+	case "single":
+		return "单曲"
+	case "ep":
+		return "EP"
+	case "compilation":
+		return "合辑"
+	case "soundtrack":
+		return "原声"
+	case "live":
+		return "现场"
+	case "bootleg":
+		return "非官方发行"
+	case "other":
+		return "其他"
+	default:
+		return value
+	}
+}
+
+func workTypeLabel(value string) string {
+	switch value {
+	case "anime":
+		return "动画"
+	case "drama":
+		return "电视剧"
+	case "movie":
+		return "电影"
+	case "game":
+		return "游戏"
+	case "commercial":
+		return "广告"
+	case "other":
+		return "其他"
+	default:
+		return value
+	}
+}
+
 // scanStatusLabel renders the scanner job status in Chinese for the
 // dashboard first paint, matching the client-side statusMap in admin.js.
 func scanStatusLabel(value string) string {

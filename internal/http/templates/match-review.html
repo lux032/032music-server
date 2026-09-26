@@ -10,7 +10,6 @@
   <main id="app-main" class="browser-main identity-main">
     <header class="browser-header">
       <div>
-        <p class="kicker">IDENTITY REVIEW</p>
         <h1>匹配审核</h1>
         <p class="result-count">低于自动确认阈值的候选必须人工确认。</p>
       </div>
@@ -31,7 +30,7 @@
         <div>
           {{range $item.Candidates}}
           <section>
-            <b>{{.DisplayName}}</b>
+            <b>{{.DisplayName}}</b><span class="status-badge warning">待审核</span>
             <span>{{.Source}} · 置信度 {{.Score}}</span>
             <small>{{.Disambiguation}} {{.Country}} {{.ArtistType}}</small>
             <div class="candidate-actions">
