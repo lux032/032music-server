@@ -291,8 +291,9 @@ import { scrollLyricsToActive } from './lyrics.js';
       artistEl.textContent = track.artist ? `${track.artist} · ${track.album || ''}` : '';
     }
     if (formatPill) {
-      formatPill.textContent = (track.container || 'FLAC').toUpperCase();
-      formatPill.style.display = 'inline-block';
+      const container = (track.container || '').trim().toUpperCase();
+      formatPill.textContent = container;
+      formatPill.style.display = container ? 'inline-block' : 'none';
     }
 
     if (coverImg && coverPlaceholder) {

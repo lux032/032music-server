@@ -1133,8 +1133,10 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .playback-copy progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .identity-panel code, .album-inspector dd, .album-facts span, .review-list section small { overflow-wrap: anywhere; }
 .run-status.status-failed { border-color: rgba(214,69,93,.35); background: var(--danger-soft); }
-.enrichment-launch { align-items: center; }
-.enrichment-launch input[type="number"] { width: 116px; }
+@media (min-width: 641px) {
+  .enrichment-launch { align-items: center; }
+  .enrichment-launch input[type="number"] { width: 116px; }
+}
 .enrichment-launch .switch input { min-width: 17px; }
 .feature-track-list, .playback-list, .playlist-track-list, .artist-track-list { border-top: 1px solid var(--line); }
 .feature-track-list > article, .artist-track-list article { min-height: 64px; }

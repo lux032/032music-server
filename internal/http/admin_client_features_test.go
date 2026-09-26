@@ -1,11 +1,15 @@
 package httpapi
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -49,5 +53,61 @@ func TestIndexOfTrackID(t *testing.T) {
 	}
 	if got := indexOfTrackID(values, 99); got != -1 {
 		t.Fatalf("indexOfTrackID() = %d, want -1", got)
+	}
+}
+
+func TestAdminPlaybackRendersTrackContainer(t *testing.T) {
+	ctx := context.Background()
+	app, store, _ := setupTestApp(t)
+	if err := store.EnsureLibrary(ctx, "Test", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	library, err := store.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	importTrack := func(path, title, container string) {
+		t.Helper()
+		if err := store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: path, FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: title, Album: "Album " + title, Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"}, DiscNumber: 1, TrackNumber: 1, Container: container}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	importTrack("mp3-song.mp3", "MP3 Song", "mp3")
+	importTrack("unknown-song", "Unknown Song", "")
+	tracks, err := store.ListTracks(ctx, storage.Filters{})
+	if err != nil || len(tracks) != 2 {
+		t.Fatalf("tracks = %v (%v)", tracks, err)
+	}
+	for _, track := range tracks {
+		if err := store.UpdatePlayback(ctx, storage.PlaybackUpdate{TrackID: track.ID, State: "playing", PositionMillis: 1000, DurationMillis: 200000}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/playback", nil)
+	req.AddCookie(adminCookie(t, app))
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `data-track-container="FLAC"`) {
+		t.Fatalf("playback page still hardcodes FLAC container: %s", body)
+	}
+	articles := map[string]string{}
+	for _, chunk := range strings.Split(body, "<article ")[1:] {
+		tag := chunk[:strings.Index(chunk, ">")]
+		for _, title := range []string{"MP3 Song", "Unknown Song"} {
+			if strings.Contains(tag, `data-track-title="`+title+`"`) {
+				articles[title] = tag
+			}
+		}
+	}
+	if !strings.Contains(articles["MP3 Song"], `data-track-container="mp3"`) {
+		t.Fatalf("mp3 row tag = %q", articles["MP3 Song"])
+	}
+	if tag, ok := articles["Unknown Song"]; !ok || strings.Contains(tag, "data-track-container") {
+		t.Fatalf("empty-container row should omit data-track-container, tag = %q (found=%v)", tag, ok)
 	}
 }

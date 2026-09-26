@@ -18,7 +18,7 @@
 
     <section class="playback-list">
       {{range .History}}
-      <article data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}" data-track-container="FLAC" data-track-duration-ms="{{.DurationMillis}}">
+      <article data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}"{{with .Track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{.DurationMillis}}">
         <a class="feature-cover" href="/admin/albums/{{.Track.AlbumID}}">{{if .Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
         <div class="playback-copy">
           <strong>{{.Track.Title}}</strong>

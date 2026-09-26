@@ -125,7 +125,7 @@ import { updateTrackRowsUI } from './player-bar.js';
       const artist = el.getAttribute('data-track-artist') || el.querySelector('.album-artist-links, small')?.textContent.trim() || '未知歌手';
       const album = el.getAttribute('data-track-album') || el.querySelector('a[href*="/admin/albums/"]')?.textContent.trim() || '';
       const artwork = el.getAttribute('data-track-artwork') || el.querySelector('img')?.src || '';
-      const container = el.getAttribute('data-track-container') || el.querySelector('.format-pill')?.textContent.trim() || 'FLAC';
+      const container = el.getAttribute('data-track-container') || el.querySelector('.format-pill')?.textContent.trim() || '';
       const durationMs = parseInt(el.getAttribute('data-track-duration-ms') || '0', 10) || 0;
 
       tracks.push({
