@@ -2,12 +2,14 @@ package enrichment
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
-	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,9 +44,23 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 	t.Cleanup(server.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	manager := New(ctx, store, logger, t.TempDir())
-	manager.phaseEndpoints = phase4Endpoints{VGMdbSearch: server.URL + "/vgmdb/search/%s", VGMdbAlbum: server.URL + "/vgmdb/album/%s", Bangumi: server.URL + "/bangumi", MusicBrainz: server.URL + "/mb"}
+	manager.phaseEndpoints = phase4Endpoints{Bangumi: server.URL + "/bangumi"}
 	manager.client = server.Client()
-	for _, source := range []string{"vgmdb", "bangumi"} {
+	allowed, _ := url.Parse(server.URL)
+	upstream := manager.client.Transport
+	if upstream == nil {
+		upstream = http.DefaultTransport
+	}
+	manager.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != allowed.Host {
+			t.Errorf("unexpected outbound request to %s", r.URL)
+			return nil, fmt.Errorf("test forbids outbound request to %s", r.URL.Host)
+		}
+		return upstream.RoundTrip(r)
+	})
+	manager.musicBrainzBase = server.URL + "/mb"
+	manager.bangumiInterval = 0
+	for _, source := range []string{"bangumi"} {
 		setting, _ := store.MetadataSourceSetting(ctx, source)
 		setting.Enabled = true
 		setting.AutoMatch = true
@@ -55,6 +71,10 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 	}
 	return manager, store, albums[0].ID, work.ID
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func waitRun(t *testing.T, store *storage.Store, id int64) storage.EnrichmentRun {
 	t.Helper()
@@ -70,12 +90,6 @@ func waitRun(t *testing.T, store *storage.Store, id int64) storage.EnrichmentRun
 	return storage.EnrichmentRun{}
 }
 
-func TestNormalizeCatalogNumber(t *testing.T) {
-	if got := NormalizeCatalogNumber(" svwc  - 70658 "); got != "SVWC70658" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestBangumiScoreRequiresStrongEvidence(t *testing.T) {
 	work := storage.WorkEnrichmentTarget{Title: "葬送のフリーレン", Type: "anime", Year: 2023}
 	score, _ := scoreBangumi(work, "葬送のフリーレン", "Frieren", "2023-09-29", 2)
@@ -88,37 +102,35 @@ func TestBangumiScoreRequiresStrongEvidence(t *testing.T) {
 	}
 }
 
-func TestStartRunVGMdbExactMatchAndCache(t *testing.T) {
-	requests := 0
+func TestStartRunRejectsRetiredAlbumScope(t *testing.T) {
+	manager, _, albumID, _ := phase4TestManager(t, http.NotFoundHandler())
+	if _, err := manager.StartRun(context.Background(), RunRequest{Scope: "album", TargetID: albumID}); err == nil {
+		t.Fatal("album scope (VGMdb) should be rejected")
+	}
+}
+
+func TestStartRunAbortsAfterConsecutiveFailures(t *testing.T) {
+	var requests atomic.Int32
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/vgmdb/search"):
-			io.WriteString(w, `{"results":{"albums":[{"link":"album/999","catalog":"SVWC-70658","name":"Remote"}]}}`)
-		case strings.HasPrefix(r.URL.Path, "/vgmdb/album"):
-			io.WriteString(w, `{"link":"album/999","catalog":"SVWC-70658","name":"Remote","release_date":"2024-01-02","organizations":[{"names":{"en":"Label"}}],"discs":[{"tracks":[{"names":{"en":"Track"},"credits":[{"role":"composer","name":"Remote Composer"}]}]}]}`)
-		default:
-			http.NotFound(w, r)
-		}
+		requests.Add(1)
+		http.Error(w, "down", http.StatusBadGateway)
 	})
-	manager, store, albumID, _ := phase4TestManager(t, handler)
-	run, err := manager.StartRun(context.Background(), RunRequest{Scope: "album", TargetID: albumID})
+	manager, store, _, _ := phase4TestManager(t, handler)
+	for i := 0; i < maxConsecutiveFailures+5; i++ {
+		if _, err := store.CreateWork(context.Background(), storage.WorkInput{Title: fmt.Sprintf("Work %d", i), Type: "anime"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run, err := manager.StartRun(context.Background(), RunRequest{Scope: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	finished := waitRun(t, store, run.ID)
-	if finished.Succeeded != 1 || finished.Failed != 0 {
+	if finished.Status != "failed" || finished.Failed != maxConsecutiveFailures || finished.Total != maxConsecutiveFailures+6 {
 		t.Fatalf("run=%#v", finished)
 	}
-	first := requests
-	run, err = manager.StartRun(context.Background(), RunRequest{Scope: "album", TargetID: albumID, Force: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = waitRun(t, store, run.ID)
-	if requests <= first {
-		t.Fatalf("force did not request again: %d", requests)
+	if got := int(requests.Load()); got != maxConsecutiveFailures {
+		t.Fatalf("requests=%d, want %d", got, maxConsecutiveFailures)
 	}
 }
 

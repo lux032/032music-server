@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -406,5 +407,39 @@ func TestBangumiCandidateConfirmationAndArtistRelations(t *testing.T) {
 	}
 	if err := store.SetArtistRelationCandidateStatus(ctx, artistID, 999999, "rejected"); err != sql.ErrNoRows {
 		t.Fatalf("missing relation error=%v", err)
+	}
+}
+
+func TestWorksForEnrichmentIncludesBeyondThousandAndExcludesReviewed(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "works-enrichment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err = store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var reviewed int64
+	for i := 0; i < 1005; i++ {
+		work, e := store.CreateWork(ctx, WorkInput{Title: fmt.Sprintf("Enrichment work %d", i), Type: "anime"})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if i == 500 {
+			reviewed = work.ID
+		}
+	}
+	if err = store.ReplaceWorkMatchCandidates(ctx, reviewed, []WorkMatchCandidate{{Source: "bangumi", ExternalID: "1", Title: "Candidate"}}); err != nil {
+		t.Fatal(err)
+	}
+	works, err := store.WorksForEnrichment(ctx, "bangumi", false, 0)
+	if err != nil || len(works) != 1004 {
+		t.Fatalf("works=%d err=%v", len(works), err)
+	}
+	for _, work := range works {
+		if work.ID == reviewed {
+			t.Fatal("reviewed work retried")
+		}
 	}
 }

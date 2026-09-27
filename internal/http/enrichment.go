@@ -31,10 +31,12 @@ type enrichmentArtistReview struct {
 
 type enrichmentPageData struct {
 	Chrome
-	Notice  string
-	Runs    []storage.EnrichmentRun
-	Works   []enrichmentWorkReview
-	Artists []enrichmentArtistReview
+	Notice             string
+	Runs               []storage.EnrichmentRun
+	Works              []enrichmentWorkReview
+	Artists            []enrichmentArtistReview
+	PendingWorkCount   int
+	PendingArtistCount int
 }
 
 func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunRequest, error) {
@@ -45,7 +47,7 @@ func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunReques
 	switch value.Scope {
 	case "all":
 		value.TargetID = 0
-	case "album", "work", "artist":
+	case "work":
 		if value.TargetID <= 0 {
 			return value, fmt.Errorf("targetId is required for %s scope", value.Scope)
 		}
@@ -81,6 +83,28 @@ func (a *App) handleAPIStartEnrichment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, run)
+}
+
+func (a *App) handleAPICancelEnrichment(w http.ResponseWriter, r *http.Request) {
+	id := parseInt64(r.PathValue("id"))
+	run, err := a.store.EnrichmentRun(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeAPIError(w, http.StatusNotFound, "not_found", "Enrichment run not found.")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "query_failed", err.Error())
+		return
+	}
+	if run.Status != "running" || a.enrichment == nil {
+		writeAPIError(w, http.StatusConflict, "run_not_active", "Enrichment run is not active.")
+		return
+	}
+	if err = a.enrichment.CancelRun(id); err != nil {
+		writeAPIError(w, http.StatusConflict, "run_not_active", "Enrichment run is not active.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *App) handleAPIEnrichmentRuns(w http.ResponseWriter, r *http.Request) {
@@ -145,31 +169,35 @@ func writeDecisionResult(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []enrichmentArtistReview) {
-	works, _ := a.store.ListWorks(ctx, storage.WorkFilters{Limit: 100})
-	pendingWorks, _ := a.store.PendingWorkMatchCandidates(ctx)
-	workReviews := make([]enrichmentWorkReview, 0)
+func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []enrichmentArtistReview, int, int) {
+	workIDs, workCount, _ := a.store.PendingWorkReviewIDs(ctx)
+	var pendingWorks map[int64][]storage.WorkMatchCandidate
+	if len(workIDs) > 0 {
+		pendingWorks, _ = a.store.PendingWorkMatchCandidates(ctx, workIDs...)
+	}
+	works, _ := a.store.WorksByIDs(ctx, workIDs)
+	workReviews := make([]enrichmentWorkReview, 0, len(works))
 	for _, work := range works {
-		if pending := pendingWorks[work.ID]; len(pending) > 0 {
-			workReviews = append(workReviews, enrichmentWorkReview{Work: work, Candidates: pending})
-		}
+		workReviews = append(workReviews, enrichmentWorkReview{Work: work, Candidates: pendingWorks[work.ID]})
 	}
-	artists, _ := a.store.ListArtists(ctx, storage.Filters{Limit: 100})
-	pendingRelations, _ := a.store.PendingArtistRelationCandidates(ctx)
-	artistReviews := make([]enrichmentArtistReview, 0)
+	artistIDs, artistCount, _ := a.store.PendingArtistReviewIDs(ctx)
+	var pendingRelations map[int64][]storage.ArtistRelationCandidate
+	if len(artistIDs) > 0 {
+		pendingRelations, _ = a.store.PendingArtistRelationCandidates(ctx, artistIDs...)
+	}
+	artists, _ := a.store.ArtistsByIDs(ctx, artistIDs)
+	artistReviews := make([]enrichmentArtistReview, 0, len(artists))
 	for _, artist := range artists {
-		if pending := pendingRelations[artist.ID]; len(pending) > 0 {
-			artistReviews = append(artistReviews, enrichmentArtistReview{Artist: artist, Candidates: pending})
-		}
+		artistReviews = append(artistReviews, enrichmentArtistReview{Artist: artist, Candidates: pendingRelations[artist.ID]})
 	}
-	return workReviews, artistReviews
+	return workReviews, artistReviews, workCount, artistCount
 }
 
 func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	data := enrichmentPageData{Chrome: chromeFor(session, "enrichment"), Notice: r.URL.Query().Get("notice")}
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
-	data.Works, data.Artists = a.enrichmentReviews(r.Context())
+	data.Works, data.Artists, data.PendingWorkCount, data.PendingArtistCount = a.enrichmentReviews(r.Context())
 	a.render(w, http.StatusOK, "enrichment-jobs.html", data)
 }
 
@@ -187,6 +215,22 @@ func (a *App) handleAdminStartEnrichment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	redirectWithNotice(w, r, "/admin/enrichment", "元数据增强任务已启动")
+}
+
+func (a *App) handleAdminCancelEnrichment(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	message := "任务已停止"
+	if a.enrichment == nil {
+		message = "任务已结束或不存在"
+	} else if err := a.enrichment.CancelRun(parseInt64(r.PathValue("id"))); errors.Is(err, enrichment.ErrRunNotActive) {
+		message = "任务已结束或不存在"
+	} else if err != nil {
+		message = "停止任务失败：" + err.Error()
+	}
+	redirectWithNotice(w, r, "/admin/enrichment", message)
 }
 
 func (a *App) handleAdminWorkCandidateDecision(w http.ResponseWriter, r *http.Request, status string) {

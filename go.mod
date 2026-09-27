@@ -2,10 +2,13 @@ module github.com/lux032/032music-server
 
 go 1.26.0
 
-require modernc.org/sqlite v1.56.0
+require (
+	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
+	golang.org/x/text v0.42.0
+	modernc.org/sqlite v1.56.0
+)
 
 require (
-	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

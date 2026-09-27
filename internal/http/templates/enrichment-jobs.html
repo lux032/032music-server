@@ -11,15 +11,13 @@
     <header class="browser-header">
       <div>
         <h1>元数据自动增强</h1>
-        <p class="result-count">VGMdb 唱片、MusicBrainz 关系与 Bangumi 作品对齐。</p>
+        <p class="result-count">以 Bangumi 为来源，将作品对齐到日本动画、游戏条目。</p>
       </div>
       <form class="enrichment-launch" method="post" action="/admin/enrichment/run">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <select name="scope" aria-label="增强范围">
-          <option value="all">全部来源</option>
-          <option value="album">单张专辑</option>
+          <option value="all">全部作品</option>
           <option value="work">单个作品</option>
-          <option value="artist">单个艺术家</option>
         </select>
         <input type="number" min="1" name="targetId" aria-label="目标 ID" placeholder="目标 ID">
         <label class="switch"><input type="checkbox" name="force"> 强制刷新</label>
@@ -35,10 +33,11 @@
         <article>
           <header>
             <strong>#{{.ID}} · {{enrichmentTargetLabel .}}</strong>
-            <span class="run-status status-{{.Status}}">{{if eq .Status "running"}}进行中{{else if eq .Status "completed"}}已完成{{else if eq .Status "failed"}}失败{{else}}{{.Status}}{{end}}</span>
+            <span class="run-status status-{{.Status}}">{{if eq .Status "running"}}进行中{{else if eq .Status "completed"}}已完成{{else if eq .Status "failed"}}失败{{else if eq .Status "cancelled"}}已停止{{else}}{{.Status}}{{end}}</span>
           </header>
           <div class="progress"><span style="width:{{enrichmentRunProgress .}}%"></span></div>
-          <p>处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
+          <p>{{if and (eq .Status "running") (eq .Total 0) (eq .Processed 0)}}收集中 · {{end}}处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
+          {{if eq .Status "running"}}<form method="post" action="/admin/enrichment/runs/{{.ID}}/cancel"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">停止</button></form>{{end}}
           {{if .Current}}<small>当前：{{.Current}}</small>{{end}}
           {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
         </article>
@@ -49,7 +48,7 @@
     </section>
 
     <section class="feature-section">
-      <div class="section-title"><div><h2>作品候选</h2></div></div>
+      <div class="section-title"><div><h2>作品候选</h2><p>共 {{.PendingWorkCount}} 个待审核作品{{if gt .PendingWorkCount 200}}，仅显示前 200{{end}}</p></div></div>
       <div class="review-list">
         {{range $item := .Works}}
         <article>
@@ -80,8 +79,10 @@
       </div>
     </section>
 
+    {{if .Artists}}
     <section class="feature-section">
       <div class="section-title"><div><h2>艺术家关系候选</h2></div></div>
+      <p>共 {{.PendingArtistCount}} 个待审核艺术家{{if gt .PendingArtistCount 200}}，仅显示前 200{{end}}</p>
       <div class="review-list">
         {{range $item := .Artists}}
         <article>
@@ -106,11 +107,10 @@
             {{end}}
           </div>
         </article>
-        {{else}}
-        <div class="zero-state"><strong>没有待审核关系</strong><span>确认关系不会自动合并艺术家。</span></div>
         {{end}}
       </div>
     </section>
+    {{end}}
   </main>
 </body>
 </html>

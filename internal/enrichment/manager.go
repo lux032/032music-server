@@ -24,19 +24,27 @@ import (
 )
 
 type Manager struct {
-	baseCtx        context.Context
-	store          *storage.Store
-	logger         *slog.Logger
-	client         *http.Client
-	mu             sync.Mutex
-	running        bool
-	mbMu           sync.Mutex
-	mbLast         time.Time
-	phaseMu        sync.Mutex
-	phaseRunning   bool
-	phaseEndpoints phase4Endpoints
-	imageDirectory string
-	wg             sync.WaitGroup
+	baseCtx         context.Context
+	store           *storage.Store
+	logger          *slog.Logger
+	client          *http.Client
+	mu              sync.Mutex
+	running         bool
+	artistRunID     int64
+	artistCancel    context.CancelFunc
+	mbMu            sync.Mutex
+	mbLast          time.Time
+	phaseMu         sync.Mutex
+	phaseRunning    bool
+	phaseRunID      int64
+	phaseCancel     context.CancelFunc
+	phaseEndpoints  phase4Endpoints
+	musicBrainzBase string
+	bangumiMu       sync.Mutex
+	bangumiLast     time.Time
+	bangumiInterval time.Duration
+	imageDirectory  string
+	wg              sync.WaitGroup
 }
 type MatchResult struct {
 	AutoMatched    bool
@@ -44,11 +52,16 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), imageDirectory: filepath.Join(dataDirectory, "artist-images")}
+	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: 300 * time.Millisecond, imageDirectory: filepath.Join(dataDirectory, "artist-images")}
 	if recovered, err := store.FailRunningEnrichmentRuns(context.Background(), "server restarted before the enrichment run completed"); err != nil {
 		logger.Warn("recover interrupted enrichment runs", "error", err)
 	} else if recovered > 0 {
 		logger.Info("recovered interrupted enrichment runs", "count", recovered)
+	}
+	if recovered, err := store.FailRunningArtistMatchRuns(context.Background(), "server restarted before the artist matching run completed"); err != nil {
+		logger.Warn("recover interrupted artist matching runs", "error", err)
+	} else if recovered > 0 {
+		logger.Info("recovered interrupted artist matching runs", "count", recovered)
 	}
 	return manager
 }
@@ -86,7 +99,7 @@ func (m *Manager) StartAuto(ctx context.Context) {
 			continue
 		}
 		switch setting.Source {
-		case "vgmdb", "bangumi":
+		case "bangumi":
 			phaseEnabled = true
 		case "musicbrainz", "lastfm":
 			identityEnabled = true
@@ -132,17 +145,39 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	m.running = true
+	runCtx, cancel := context.WithCancel(m.baseCtx)
+	m.running, m.artistRunID, m.artistCancel = true, runID, cancel
 	m.goBackground("artist-matching", func() {
-		defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
-		ctx := m.baseCtx
+		defer func() {
+			if value := recover(); value != nil {
+				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", fmt.Sprintf("panic: %v", value))
+				m.logger.Error("artist matching panic", "panic", value)
+			}
+			cancel()
+			m.mu.Lock()
+			m.running = false
+			m.artistRunID = 0
+			m.artistCancel = nil
+			m.mu.Unlock()
+		}()
+		finishCancelled := func() {
+			if m.baseCtx.Err() != nil {
+				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", "cancelled by shutdown")
+			} else {
+				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "cancelled", "已手动停止")
+			}
+		}
 		var matched, review, failed int
 		for index, artist := range artists {
-			if ctx.Err() != nil {
-				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", "cancelled by shutdown")
+			if runCtx.Err() != nil {
+				finishCancelled()
 				return
 			}
-			result, matchErr := m.matchArtist(ctx, artist.ID, true)
+			result, matchErr := m.matchArtist(runCtx, artist.ID, true)
+			if runCtx.Err() != nil || errors.Is(matchErr, context.Canceled) || errors.Is(matchErr, context.DeadlineExceeded) {
+				finishCancelled()
+				return
+			}
 			if matchErr != nil {
 				failed++
 				m.logger.Warn("artist match failed", "artist", artist.Name, "error", matchErr)
@@ -153,9 +188,29 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 			}
 			_ = m.store.UpdateArtistMatchRun(context.Background(), runID, index+1, matched, review, failed, artist.Name)
 		}
+		if runCtx.Err() != nil {
+			finishCancelled()
+			return
+		}
 		_ = m.store.FinishArtistMatchRun(context.Background(), runID, "completed", "")
 	})
 	return runID, nil
+}
+
+var ErrRunNotActive = errors.New("run is not active")
+
+func (m *Manager) CancelArtistMatching(runID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.running || m.artistRunID != runID || m.artistCancel == nil {
+		return ErrRunNotActive
+	}
+	rows, err := m.store.ListArtistMatchRuns(context.Background(), 1)
+	if err != nil || len(rows) == 0 || rows[0].ID != runID || rows[0].Status != "running" {
+		return ErrRunNotActive
+	}
+	m.artistCancel()
+	return nil
 }
 
 func (m *Manager) MatchArtist(ctx context.Context, artistID int64) (MatchResult, error) {
@@ -333,7 +388,7 @@ type mbArtistResponse struct {
 }
 
 func (m *Manager) musicBrainzSearch(ctx context.Context, artist storage.ArtistMatchInput, setting storage.MetadataSourceSetting) ([]storage.ArtistCandidate, map[string]storage.ExternalArtistProfile, error) {
-	endpoint := "https://musicbrainz.org/ws/2/artist/?query=" + url.QueryEscape("artist:\""+artist.Name+"\"") + "&fmt=json&limit=5"
+	endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/?query=" + url.QueryEscape("artist:\""+artist.Name+"\"") + "&fmt=json&limit=5"
 	var response mbSearchResponse
 	if err := m.mbRequest(ctx, endpoint, setting, &response); err != nil {
 		return nil, nil, err
@@ -365,7 +420,7 @@ func (m *Manager) musicBrainzSearch(ctx context.Context, artist storage.ArtistMa
 
 func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting storage.MetadataSourceSetting) (storage.ArtistCandidate, storage.ExternalArtistProfile, error) {
 	var value mbArtistResponse
-	endpoint := "https://musicbrainz.org/ws/2/artist/" + url.PathEscape(mbid) + "?inc=aliases+tags+url-rels&fmt=json"
+	endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(mbid) + "?inc=aliases+tags+url-rels&fmt=json"
 	if err := m.mbRequest(ctx, endpoint, setting, &value); err != nil {
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, err
 	}
@@ -401,6 +456,25 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 	payload := profilePayload("https://musicbrainz.org/artist/"+value.ID, imageURL, "", aliases, tags)
 	profile := storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, PageURL: "https://musicbrainz.org/artist/" + value.ID, RemoteImageURL: imageURL, Country: value.Country, ArtistType: value.Type, Disambiguation: value.Disambiguation, Aliases: aliases, Tags: tags, Raw: payload}
 	return storage.ArtistCandidate{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, Disambiguation: value.Disambiguation, Country: value.Country, ArtistType: value.Type, MBID: value.ID, Payload: payload}, profile, nil
+}
+
+func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
+	m.bangumiMu.Lock()
+	defer m.bangumiMu.Unlock()
+	if wait := time.Until(m.bangumiLast.Add(m.bangumiInterval)); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.bangumiLast = time.Now()
+	return nil
 }
 
 // waitMBRateLimit enforces the MusicBrainz 1 request/second policy. Every
@@ -711,7 +785,7 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 		mbSetting, settingErr := m.store.MetadataSourceSetting(ctx, "musicbrainz")
 		if settingErr == nil {
 			var value mbArtistResponse
-			endpoint := "https://musicbrainz.org/ws/2/artist/" + url.PathEscape(mbid) + "?inc=url-rels&fmt=json"
+			endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(mbid) + "?inc=url-rels&fmt=json"
 			if lookupErr := m.mbRequest(ctx, endpoint, mbSetting, &value); lookupErr != nil {
 				m.logger.Warn("load MusicBrainz relations for biography", "artistId", artistID, "error", lookupErr)
 			} else {

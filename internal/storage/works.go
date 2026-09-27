@@ -118,12 +118,33 @@ func (s *Store) UpdateWork(ctx context.Context, id int64, input WorkInput) (Work
 	if err != nil {
 		return Work{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,reading_title=NULLIF(?,''),translated_title=NULLIF(?,''),type=?,year=NULLIF(?,0),poster_url=NULLIF(?,''),external_id=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, input.Title, metadata.Normalize(input.Title), input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Work{}, err
+	}
+	defer tx.Rollback()
+	var previousTitle, previousType string
+	if err = tx.QueryRowContext(ctx, `SELECT normalized_title,type FROM works WHERE id=?`, id).Scan(&previousTitle, &previousType); err != nil {
+		return Work{}, err
+	}
+	key := metadata.Normalize(input.Title)
+	_, err = tx.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,reading_title=NULLIF(?,''),translated_title=NULLIF(?,''),type=?,year=NULLIF(?,0),poster_url=NULLIF(?,''),external_id=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, input.Title, key, input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID, id)
 	if err != nil {
 		return Work{}, fmt.Errorf("update work: %w", err)
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return Work{}, sql.ErrNoRows
+	if previousTitle != key || previousType != input.Type {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM work_enrichment_misses WHERE work_id=? AND source='bangumi'`, id); err != nil {
+			return Work{}, err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND status='candidate'`, id); err != nil {
+			return Work{}, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO work_enrichment_retries(work_id,source,requested_at) SELECT ?,'bangumi',strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE NOT EXISTS(SELECT 1 FROM work_external_profiles WHERE work_id=? AND source='bangumi') AND NOT EXISTS(SELECT 1 FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND status='confirmed') ON CONFLICT(work_id,source) DO UPDATE SET requested_at=excluded.requested_at`, id, id, id); err != nil {
+			return Work{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return Work{}, err
 	}
 	return s.WorkByID(ctx, id)
 }

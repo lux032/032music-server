@@ -104,29 +104,6 @@
         </section>
       </div>
       {{end}}
-      {{else if eq .Source "vgmdb"}}
-      <form class="source-card-form" method="post" data-scope-form>
-        <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-        <input type="hidden" name="scope" value="vgmdb">
-        <section class="source-card">
-          <header>
-            <div><p class="kicker">唱片来源</p><h2>VGMdb</h2></div>
-            <label class="switch"><input type="checkbox" name="vgmdb_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
-          </header>
-          <p>按唱片编号精确匹配 ACG 唱片，只补充空字段和缺失演职员，不覆盖本地标签或人工修改。</p>
-          <div class="form-grid thirds">
-            <label>优先级<input type="number" name="vgmdb_priority" value="{{.Priority}}"></label>
-            <label>缓存天数<input type="number" name="vgmdb_cache_days" value="{{.CacheDays}}"></label>
-            <label>语言<input name="vgmdb_language" value="{{.Language}}"></label>
-            <input type="hidden" name="vgmdb_api_key" value="">
-            <input type="hidden" name="vgmdb_application_name" value="032 Music Server">
-            <input type="hidden" name="vgmdb_application_version" value="dev">
-            <input type="hidden" name="vgmdb_contact" value="">
-          </div>
-          <label class="switch"><input type="checkbox" name="vgmdb_auto" {{if .AutoMatch}}checked{{end}}> 扫描后自动增强</label>
-          <div class="editor-actions"><button type="submit">保存 VGMdb 设置</button></div>
-        </section>
-      </form>
       {{else if eq .Source "bangumi"}}
       <form class="source-card-form" method="post" data-scope-form>
         <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

@@ -20,6 +20,18 @@
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
+    <section class="feature-section">
+      <div class="section-title"><div><h2>匹配任务</h2></div></div>
+      <div class="enrichment-runs">
+        {{range .MatchRuns}}
+        <article><header><strong>#{{.ID}}</strong><span>{{if eq .Status "running"}}进行中{{else if eq .Status "cancelled"}}已停止{{else}}{{.Status}}{{end}}</span></header>
+          <p>处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
+          {{if eq .Status "running"}}<form method="post" action="/admin/matches/runs/{{.ID}}/cancel"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">停止</button></form>{{end}}
+          {{if .ErrorMessage}}<small>{{.ErrorMessage}}</small>{{end}}
+        </article>
+        {{end}}
+      </div>
+    </section>
     <section class="review-list">
       {{range $item := .Review}}
       <article>

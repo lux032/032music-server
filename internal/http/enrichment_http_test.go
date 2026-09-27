@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/lux032/032music-server/internal/metadata"
@@ -115,5 +117,108 @@ func TestAdminEnrichmentRouteIsRegistered(t *testing.T) {
 	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/enrichment", nil))
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin/login" {
 		t.Fatalf("admin enrichment route status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestEnrichmentAPIRejectsRetiredScopes(t *testing.T) {
+	app, _, token := setupTestApp(t)
+	for _, scope := range []string{"artist", "album"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/run", bytes.NewBufferString(`{"scope":"`+scope+`","targetId":1}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s", scope, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestEnrichmentReviewsBeyondFirstHundredWorks(t *testing.T) {
+	app, store, _ := setupTestApp(t)
+	ctx := context.Background()
+	var last int64
+	for i := 0; i < 150; i++ {
+		work, err := store.CreateWork(ctx, storage.WorkInput{Title: jsonNumber(int64(i)), Type: "anime"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = work.ID
+		if err = store.ReplaceWorkMatchCandidates(ctx, work.ID, []storage.WorkMatchCandidate{{Source: "bangumi", ExternalID: "1", Title: "Candidate"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	works, _, count, _ := app.enrichmentReviews(ctx)
+	if count != 150 || len(works) != 150 || works[149].Work.ID != last {
+		t.Fatalf("count=%d displayed=%d last=%d", count, len(works), last)
+	}
+}
+
+func TestEnrichmentCancelRoutesAndCSRF(t *testing.T) {
+	app, _, token := setupTestApp(t)
+	handler := app.Handler()
+	api := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/jobs/999/cancel", nil)
+	api.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, api)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("API cancel missing=%d %s", rec.Code, rec.Body.String())
+	}
+	finished, err := app.store.CreateEnrichmentRun(context.Background(), "all", 0, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = app.store.FinishEnrichmentRun(context.Background(), finished.ID, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+	api = httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/jobs/"+jsonNumber(finished.ID)+"/cancel", nil)
+	api.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, api)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("API cancel completed=%d %s", rec.Code, rec.Body.String())
+	}
+	login := httptest.NewRecorder()
+	if _, err := app.sessions.create(login, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	cookie := login.Result().Cookies()[0]
+	for _, path := range []string{"/admin/enrichment/runs/999/cancel", "/admin/matches/runs/999/cancel"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s missing CSRF: %d", path, rec.Code)
+		}
+		req = httptest.NewRequest(http.MethodPost, path, strings.NewReader(url.Values{"csrfToken": {csrfOf(t, app, cookie)}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookie)
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("%s CSRF: %d", path, rec.Code)
+		}
+	}
+}
+
+func TestEnrichmentReviewsCapAtTwoHundredAndCountAll(t *testing.T) {
+	app, store, _ := setupTestApp(t)
+	ctx := context.Background()
+	var lastShown int64
+	for i := 0; i < 210; i++ {
+		work, err := store.CreateWork(ctx, storage.WorkInput{Title: "Pending " + jsonNumber(int64(i)), Type: "anime"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 199 {
+			lastShown = work.ID
+		}
+		if err = store.ReplaceWorkMatchCandidates(ctx, work.ID, []storage.WorkMatchCandidate{{Source: "bangumi", ExternalID: "1", Title: "Candidate"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	works, _, count, _ := app.enrichmentReviews(ctx)
+	if count != 210 || len(works) != 200 || works[199].Work.ID != lastShown {
+		t.Fatalf("count=%d shown=%d last=%d want=%d", count, len(works), works[len(works)-1].Work.ID, lastShown)
 	}
 }

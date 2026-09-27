@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -33,6 +34,7 @@ type identityPageData struct {
 	Tracks            []storage.Track
 	Review            []matchReviewItem
 	Merges            []storage.MergeOperation
+	MatchRuns         []storage.ArtistMatchRun
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -74,8 +76,6 @@ func metadataScopeLabel(scope string) string {
 		return "MusicBrainz"
 	case "lastfm":
 		return "Last.fm"
-	case "vgmdb":
-		return "VGMdb"
 	case "bangumi":
 		return "Bangumi"
 	default:
@@ -109,7 +109,7 @@ func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request)
 	// 单卡独立保存逻辑
 	if scope != "" {
 		validScope := false
-		for _, s := range []string{"musicbrainz", "lastfm", "vgmdb", "bangumi"} {
+		for _, s := range []string{"musicbrainz", "lastfm", "bangumi"} {
 			if scope == s {
 				validScope = true
 				break
@@ -146,6 +146,22 @@ func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid scope", 400)
 		return
 	}
+}
+
+func (a *App) handleCancelArtistMatching(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	message := "任务已停止"
+	if a.enrichment == nil {
+		message = "任务已结束或不存在"
+	} else if err := a.enrichment.CancelArtistMatching(parseInt64(r.PathValue("id"))); errors.Is(err, enrichment.ErrRunNotActive) {
+		message = "任务已结束或不存在"
+	} else if err != nil {
+		message = "停止任务失败：" + err.Error()
+	}
+	redirectWithNotice(w, r, "/admin/matches", message)
 }
 
 func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
@@ -336,6 +352,7 @@ func (a *App) handleRollbackMerge(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	data := a.identityBase(r, "matches")
+	data.MatchRuns, _ = a.store.ListArtistMatchRuns(r.Context(), 30)
 	artists, err := a.store.ListArtists(r.Context(), storage.Filters{Limit: 500})
 	if err != nil {
 		http.Error(w, err.Error(), 500)

@@ -238,14 +238,19 @@ func (s *Store) AlbumsForEnrichment(ctx context.Context, source string, force bo
 	return values, rows.Err()
 }
 
-func (s *Store) WorksForEnrichment(ctx context.Context, source string, force bool, limit int) ([]WorkEnrichmentTarget, error) {
-	if limit <= 0 {
-		limit = 100
+func (s *Store) WorksForEnrichment(ctx context.Context, source string, force bool, limit int, targetID ...int64) ([]WorkEnrichmentTarget, error) {
+	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0) FROM works w WHERE (? OR (NOT EXISTS(SELECT 1 FROM work_external_profiles p WHERE p.work_id=w.id AND p.source=?) AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
+	args := []any{boolInt(force), source, source, source, source, source}
+	if len(targetID) > 0 && targetID[0] > 0 {
+		query += ` AND w.id=?`
+		args = append(args, targetID[0])
 	}
-	if limit > 1000 {
-		limit = 1000
+	query += ` ORDER BY w.id`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0) FROM works w WHERE ? OR NOT EXISTS(SELECT 1 FROM work_external_profiles p WHERE p.work_id=w.id AND p.source=?) ORDER BY w.id LIMIT ?`, boolInt(force), source, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +264,28 @@ func (s *Store) WorksForEnrichment(ctx context.Context, source string, force boo
 		values = append(values, v)
 	}
 	return values, rows.Err()
+}
+
+func (s *Store) SetWorkEnrichmentMiss(ctx context.Context, workID int64, source string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO work_enrichment_misses(work_id,source,checked_at) VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(work_id,source) DO UPDATE SET checked_at=excluded.checked_at`, workID, source)
+	return err
+}
+
+func (s *Store) DeleteWorkEnrichmentRetry(ctx context.Context, workID int64, source string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM work_enrichment_retries WHERE work_id=? AND source=?`, workID, source)
+	return err
+}
+
+func (s *Store) DeleteWorkEnrichmentMiss(ctx context.Context, workID int64, source string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM work_enrichment_misses WHERE work_id=? AND source=?`, workID, source)
+	return err
+}
+
+// WorkBangumiConfirmed protects confirmed matches even during forced runs.
+func (s *Store) WorkBangumiConfirmed(ctx context.Context, workID int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_external_profiles WHERE work_id=? AND source='bangumi') OR EXISTS(SELECT 1 FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND status='confirmed')`, workID, workID).Scan(&exists)
+	return exists, err
 }
 
 func rawOrEmpty(raw json.RawMessage) string {
@@ -570,12 +597,42 @@ func (s *Store) WorkMatchCandidates(ctx context.Context, workID int64) ([]WorkMa
 	return values, rows.Err()
 }
 
+var ErrAutoConfirmConflict = fmt.Errorf("work candidate is no longer eligible for automatic confirmation")
+
+func (s *Store) AutoConfirmWorkMatchCandidate(ctx context.Context, workID, candidateID, runID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var eligible bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_match_candidates WHERE id=? AND work_id=? AND source='bangumi' AND status='candidate') AND NOT EXISTS(SELECT 1 FROM work_external_profiles WHERE work_id=? AND source='bangumi') AND NOT EXISTS(SELECT 1 FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND status='confirmed')`, candidateID, workID, workID, workID).Scan(&eligible)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrAutoConfirmConflict
+	}
+	if err = confirmWorkMatchCandidateTx(ctx, tx, workID, candidateID, runID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ConfirmWorkMatchCandidate(ctx context.Context, workID, candidateID, runID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err = confirmWorkMatchCandidateTx(ctx, tx, workID, candidateID, runID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candidateID, runID int64) error {
+	var err error
 	var p ExternalWorkProfile
 	var raw string
 	if err = tx.QueryRowContext(ctx, `SELECT source,external_id,COALESCE(page_url,''),title,COALESCE(original_title,''),COALESCE(translated_title,''),COALESCE(type,''),COALESCE(year,0),COALESCE(poster_url,''),payload_json FROM work_match_candidates WHERE id=? AND work_id=?`, candidateID, workID).Scan(&p.Source, &p.ExternalID, &p.PageURL, &p.Title, &p.OriginalTitle, &p.TranslatedTitle, &p.Type, &p.Year, &p.PosterURL, &raw); err != nil {
@@ -620,7 +677,7 @@ func (s *Store) ConfirmWorkMatchCandidate(ctx context.Context, workID, candidate
 	if _, err = tx.ExecContext(ctx, `UPDATE work_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE work_id=?`, candidateID, workID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) ReplaceArtistRelationCandidates(ctx context.Context, artistID int64, candidates []ArtistRelationCandidate) error {
@@ -668,8 +725,17 @@ func (s *Store) ArtistRelationCandidates(ctx context.Context, artistID int64) ([
 
 // PendingWorkMatchCandidates returns all status='candidate' work matches in
 // a single query (N+1 fix for the enrichment review page).
-func (s *Store) PendingWorkMatchCandidates(ctx context.Context) (map[int64][]WorkMatchCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,work_id,source,external_id,title,COALESCE(original_title,''),COALESCE(translated_title,''),COALESCE(type,''),COALESCE(year,0),COALESCE(page_url,''),COALESCE(poster_url,''),score,evidence_json,payload_json,status FROM work_match_candidates WHERE status='candidate' ORDER BY score DESC,id`)
+func (s *Store) PendingWorkMatchCandidates(ctx context.Context, workIDs ...int64) (map[int64][]WorkMatchCandidate, error) {
+	query := `SELECT id,work_id,source,external_id,title,COALESCE(original_title,''),COALESCE(translated_title,''),COALESCE(type,''),COALESCE(year,0),COALESCE(page_url,''),COALESCE(poster_url,''),score,evidence_json,payload_json,status FROM work_match_candidates WHERE status='candidate'`
+	var args []any
+	if len(workIDs) > 0 {
+		query += ` AND work_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(workIDs)), ",") + `)`
+		for _, id := range workIDs {
+			args = append(args, id)
+		}
+	}
+	query += ` ORDER BY score DESC,id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -690,8 +756,17 @@ func (s *Store) PendingWorkMatchCandidates(ctx context.Context) (map[int64][]Wor
 
 // PendingArtistRelationCandidates returns all status='candidate' artist
 // relations in a single query (N+1 fix for the enrichment review page).
-func (s *Store) PendingArtistRelationCandidates(ctx context.Context) (map[int64][]ArtistRelationCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,related_external_id,related_name,relation_type,direction,COALESCE(target_artist_id,0),score,evidence_json,payload_json,status FROM artist_relation_candidates WHERE status='candidate' ORDER BY score DESC,id`)
+func (s *Store) PendingArtistRelationCandidates(ctx context.Context, artistIDs ...int64) (map[int64][]ArtistRelationCandidate, error) {
+	query := `SELECT id,artist_id,source,external_id,related_external_id,related_name,relation_type,direction,COALESCE(target_artist_id,0),score,evidence_json,payload_json,status FROM artist_relation_candidates WHERE status='candidate'`
+	var args []any
+	if len(artistIDs) > 0 {
+		query += ` AND artist_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(artistIDs)), ",") + `)`
+		for _, id := range artistIDs {
+			args = append(args, id)
+		}
+	}
+	query += ` ORDER BY score DESC,id`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -58,6 +58,42 @@ type MergeOperation struct {
 	Status, SourceName, TargetName, CreatedAt, RolledBackAt string
 }
 
+type ArtistMatchRun struct {
+	ID                                        int64
+	Status                                    string
+	Total, Processed, Matched, Review, Failed int
+	Current, ErrorMessage                     string
+}
+
+func (s *Store) ListArtistMatchRuns(ctx context.Context, limit int) ([]ArtistMatchRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,COALESCE(current_artist,''),COALESCE(error_message,'') FROM artist_match_runs ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []ArtistMatchRun
+	for rows.Next() {
+		var v ArtistMatchRun
+		if err = rows.Scan(&v.ID, &v.Status, &v.Total, &v.Processed, &v.Matched, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage); err != nil {
+			return nil, err
+		}
+		result = append(result, v)
+	}
+	return result, rows.Err()
+}
+
+// FailRunningArtistMatchRuns closes interrupted tasks on server startup.
+func (s *Store) FailRunningArtistMatchRuns(ctx context.Context, message string) (int64, error) {
+	if strings.TrimSpace(message) == "" {
+		message = "artist matching interrupted by process restart"
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status='failed',error_message=?,current_artist=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('running','queued')`, message)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *Store) CreateArtistMatchRun(ctx context.Context, total int) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `INSERT INTO artist_match_runs(status,total_artists) VALUES('running',?)`, total)
 	if err != nil {
