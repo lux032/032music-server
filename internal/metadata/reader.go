@@ -139,10 +139,43 @@ func Read(path string) (AudioMetadata, error) {
 	return applyFallbacks(result, path), nil
 }
 
+// maxLeadingID3Tags bounds how many stacked ID3v2 tags are skipped before the
+// FLAC stream marker; some taggers prepend more than one.
+const maxLeadingID3Tags = 4
+
+// seekFLACStream positions file at the "fLaC" marker. Some download tools
+// prepend an ID3v2 tag to FLAC files; the audio stream is intact after it, so
+// it is skipped (the same way probeFLAC already does) instead of rejecting
+// the whole file.
+func seekFLACStream(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+	var offset int64
+	for i := 0; i <= maxLeadingID3Tags; i++ {
+		var header [10]byte
+		n, _ := file.ReadAt(header[:], offset)
+		if n >= 4 && string(header[:4]) == "fLaC" {
+			_, err = file.Seek(offset+4, io.SeekStart)
+			return err
+		}
+		if n < 10 || string(header[:3]) != "ID3" || i == maxLeadingID3Tags {
+			return fmt.Errorf("invalid FLAC signature (file starts with %q at offset %d)", header[:min(n, 4)], offset)
+		}
+		next := offset + id3v2Offset(header[:], size-offset)
+		if next <= offset || next > size-4 {
+			return fmt.Errorf("invalid FLAC signature (ID3v2 tag at offset %d is malformed or truncated)", offset)
+		}
+		offset = next
+	}
+	return fmt.Errorf("invalid FLAC signature")
+}
+
 func readFLAC(file *os.File) (AudioMetadata, error) {
-	var magic [4]byte
-	if _, err := io.ReadFull(file, magic[:]); err != nil || string(magic[:]) != "fLaC" {
-		return AudioMetadata{}, fmt.Errorf("invalid FLAC signature")
+	if err := seekFLACStream(file); err != nil {
+		return AudioMetadata{}, err
 	}
 	result := AudioMetadata{Container: "flac", MIMEType: "audio/flac", Raw: map[string][]string{}}
 	for {
