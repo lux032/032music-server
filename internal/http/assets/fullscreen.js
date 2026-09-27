@@ -44,7 +44,7 @@ export function syncFullscreen() {
   }
   swapIcon(overlay.querySelector('.fs-play'), s.isPlaying ? 'icon-pause' : 'icon-play');
   overlay.querySelector('.fs-shuffle').classList.toggle('active', s.shuffleOn);
-  overlay.querySelector('.fs-loop').classList.toggle('active', s.loopMode === 'one');
+  overlay.querySelector('.fs-loop').classList.toggle('active', s.loopMode !== 'off');
   swapIcon(overlay.querySelector('.fs-loop'), s.loopMode === 'one' ? 'icon-repeat-1' : 'icon-repeat');
   const time = s.audio?.currentTime || 0, duration = s.audio?.duration || 0;
   const progress = overlay.querySelector('.fs-progress');

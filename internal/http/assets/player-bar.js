@@ -38,7 +38,7 @@ import { scrollLyricsToActive } from './lyrics.js';
           <button id="player-btn-prev" class="player-ctrl-btn" title="上一首 (Alt+Left)" aria-label="上一首"><span class="icon-slot" data-icon="icon-prev"></span></button>
           <button id="player-btn-play" class="player-ctrl-btn play-main-btn" title="播放 / 暂停 (Space)" aria-label="播放 / 暂停"><span class="icon-slot" data-icon="icon-play"></span></button>
           <button id="player-btn-next" class="player-ctrl-btn" title="下一首 (Alt+Right)" aria-label="下一首"><span class="icon-slot" data-icon="icon-next"></span></button>
-          <button id="player-btn-loop" class="player-ctrl-btn loop-btn" title="循环模式 (全部循环)" aria-label="循环模式" aria-pressed="false"><span class="icon-slot" data-icon="icon-repeat"></span></button>
+          <button id="player-btn-loop" class="player-ctrl-btn loop-btn" title="循环模式 (顺序播放)" aria-label="循环模式" aria-pressed="false"><span class="icon-slot" data-icon="icon-repeat"></span></button>
         </div>
         <div class="player-progress-row">
           <span id="player-time-cur" class="player-time">0:00</span>

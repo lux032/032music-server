@@ -214,7 +214,11 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
       }
     }
     let prevIndex = s.currentIndex - 1;
-    if (prevIndex < 0) prevIndex = s.queue.length - 1;
+    if (prevIndex < 0) {
+      // Only list-loop wraps backwards; otherwise restart the first track.
+      if (s.loopMode === 'all') prevIndex = s.queue.length - 1;
+      else { s.audio.currentTime = 0; return; }
+    }
     playTrackAtIndex(prevIndex);
   }
 
@@ -251,42 +255,44 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
       s.audio.play().catch(console.warn);
     } else if (s.shuffleOn && s.queue.length > 1) {
       playRandomNext();
-    } else if (s.queue.length <= 1) {
-      // A one-track queue never infinite-loops on its own: loop mode 'all'
-      // replays it, otherwise playback stops at the end.
-      if (s.loopMode === 'all' && s.queue.length === 1) {
+    } else if (s.currentIndex + 1 < s.queue.length) {
+      playTrackAtIndex(s.currentIndex + 1);
+    } else if (s.loopMode === 'all' && s.queue.length > 0) {
+      // List loop: wrap to the start (a one-track queue simply replays).
+      if (s.queue.length === 1) {
         s.audio.currentTime = 0;
         s.audio.play().catch(console.warn);
       } else {
-        s.isPlaying = false;
-        updatePlayButtonUI(false);
-        updateTrackRowsUI();
-        saveState();
+        playTrackAtIndex(0);
       }
     } else {
-      playNext();
+      // Default sequential mode: the queue has been played to the end.
+      s.isPlaying = false;
+      updatePlayButtonUI(false);
+      updateTrackRowsUI();
+      saveState();
+      emitPlayerState();
     }
   }
 
-  export function cycleLoopMode() {
+  // Loop modes: 'off' (play queue once, default) -> 'all' (list loop) -> 'one'.
+  const LOOP_MODES = ['off', 'all', 'one'];
+  const LOOP_TITLES = { off: '循环模式 (顺序播放)', all: '循环模式 (列表循环)', one: '循环模式 (单曲循环)' };
+
+  export function syncLoopButton() {
     const loopBtn = document.getElementById('player-btn-loop');
-    if (s.loopMode === 'all') {
-      s.loopMode = 'one';
-      if (loopBtn) {
-        swapIcon(loopBtn, 'icon-repeat-1');
-        loopBtn.title = '循环模式 (单曲循环)';
-        loopBtn.classList.add('active');
-        loopBtn.setAttribute('aria-pressed', 'true');
-      }
-    } else {
-      s.loopMode = 'all';
-      if (loopBtn) {
-        swapIcon(loopBtn, 'icon-repeat');
-        loopBtn.title = '循环模式 (全部循环)';
-        loopBtn.classList.remove('active');
-        loopBtn.setAttribute('aria-pressed', 'false');
-      }
-    }
+    if (!loopBtn) return;
+    const active = s.loopMode !== 'off';
+    swapIcon(loopBtn, s.loopMode === 'one' ? 'icon-repeat-1' : 'icon-repeat');
+    loopBtn.title = LOOP_TITLES[s.loopMode] || LOOP_TITLES.off;
+    loopBtn.classList.toggle('active', active);
+    loopBtn.setAttribute('aria-pressed', String(active));
+  }
+
+  export function cycleLoopMode() {
+    const i = LOOP_MODES.indexOf(s.loopMode);
+    s.loopMode = LOOP_MODES[(i + 1) % LOOP_MODES.length];
+    syncLoopButton();
     saveState();
     emitPlayerState();
   }
@@ -428,27 +434,15 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
         s.currentIndex = state.currentIndex === -1 ? -1 : (state.currentIndex >= 0 ? state.currentIndex : 0);
         // Legacy snapshots may still carry the combined loopMode 'shuffle'.
         if (state.loopMode === 'shuffle') {
-          s.loopMode = 'all';
+          s.loopMode = 'off';
           s.shuffleOn = true;
         } else {
-          s.loopMode = state.loopMode || 'all';
+          s.loopMode = LOOP_MODES.includes(state.loopMode) ? state.loopMode : 'off';
           s.shuffleOn = !!state.shuffle;
         }
 
-        const loopBtn = document.getElementById('player-btn-loop');
-        if (loopBtn) {
-          if (s.loopMode === 'one') {
-            swapIcon(loopBtn, 'icon-repeat-1');
-            loopBtn.classList.add('active');
-            loopBtn.title = '循环模式 (单曲循环)';
-          } else {
-            swapIcon(loopBtn, 'icon-repeat');
-            loopBtn.classList.remove('active');
-            loopBtn.title = '循环模式 (全部循环)';
-          }
-          // [P2-3] keep aria-pressed in sync on restore.
-          loopBtn.setAttribute('aria-pressed', String(s.loopMode === 'one'));
-        }
+        // [P2-3] keep icon/title/aria-pressed in sync on restore.
+        syncLoopButton();
         const shuffleBtn = document.getElementById('player-btn-shuffle');
         if (shuffleBtn) {
           shuffleBtn.classList.toggle('active', s.shuffleOn);
