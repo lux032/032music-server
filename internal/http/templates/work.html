@@ -18,7 +18,7 @@
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="work-hero">
-      <div class="hero-cover work-cover">{{if .Work.PosterURL}}<img class="fade-img" src="{{.Work.PosterURL}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}</div>
+      <div class="hero-cover work-cover">{{with workPoster .Work}}<img class="fade-img" src="{{.}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}</div>
       <div class="album-heading">
         <h1>{{.Work.Title}}</h1>
         {{if .Work.TranslatedTitle}}<h2>{{.Work.TranslatedTitle}}</h2>{{end}}

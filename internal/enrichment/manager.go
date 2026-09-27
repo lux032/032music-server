@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -24,27 +22,29 @@ import (
 )
 
 type Manager struct {
-	baseCtx         context.Context
-	store           *storage.Store
-	logger          *slog.Logger
-	client          *http.Client
-	mu              sync.Mutex
-	running         bool
-	artistRunID     int64
-	artistCancel    context.CancelFunc
-	mbMu            sync.Mutex
-	mbLast          time.Time
-	phaseMu         sync.Mutex
-	phaseRunning    bool
-	phaseRunID      int64
-	phaseCancel     context.CancelFunc
-	phaseEndpoints  phase4Endpoints
-	musicBrainzBase string
-	bangumiMu       sync.Mutex
-	bangumiLast     time.Time
-	bangumiInterval time.Duration
-	imageDirectory  string
-	wg              sync.WaitGroup
+	baseCtx           context.Context
+	store             *storage.Store
+	logger            *slog.Logger
+	client            *http.Client
+	mu                sync.Mutex
+	running           bool
+	artistRunID       int64
+	artistCancel      context.CancelFunc
+	mbMu              sync.Mutex
+	mbLast            time.Time
+	phaseMu           sync.Mutex
+	phaseRunning      bool
+	phaseRunID        int64
+	phaseCancel       context.CancelFunc
+	phaseEndpoints    phase4Endpoints
+	posterMu          sync.Mutex
+	posterBackfilling bool
+	musicBrainzBase   string
+	bangumiMu         sync.Mutex
+	bangumiLast       time.Time
+	bangumiInterval   time.Duration
+	imageDirectory    string
+	wg                sync.WaitGroup
 }
 type MatchResult struct {
 	AutoMatched    bool
@@ -115,6 +115,7 @@ func (m *Manager) StartAuto(ctx context.Context) {
 			m.logger.Warn("automatic artist matching was not started", "error", err)
 		}
 	}
+	m.StartWorkPosterBackfill()
 }
 
 func (m *Manager) StartAll(ctx context.Context) (int64, error) {
@@ -633,78 +634,15 @@ func (m *Manager) CacheArtistImage(ctx context.Context, artistID int64) error {
 	}
 	// The URL originates from upstream metadata (Last.fm, Spotify oEmbed,
 	// community-editable MusicBrainz relations), so it is untrusted input:
-	// refuse private/loopback/link-local targets to prevent SSRF against the
-	// host network or cloud metadata endpoints.
-	if err = validatePublicImageURL(remoteURL); err != nil {
-		return err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
+	// downloadPublicImage refuses private/loopback/link-local targets.
+	data, mimeType, extension, err := m.downloadPublicImage(ctx, remoteURL, "artist image")
 	if err != nil {
 		return err
-	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist image cache)")
-	client := *m.client
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("too many redirects")
-		}
-		// Redirects must not escape the public-address validation either.
-		return validatePublicImageURL(req.URL.String())
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("artist image returned %s", response.Status)
-	}
-	const maxImageBytes = 10 << 20
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxImageBytes+1))
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 || len(data) > maxImageBytes {
-		return errors.New("artist image is empty or exceeds 10 MiB")
-	}
-	mimeType := http.DetectContentType(data)
-	extension := ""
-	switch mimeType {
-	case "image/jpeg":
-		extension = ".jpg"
-	case "image/png":
-		extension = ".png"
-	case "image/webp":
-		extension = ".webp"
-	case "image/gif":
-		extension = ".gif"
-	default:
-		return fmt.Errorf("unsupported artist image type %s", mimeType)
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
-	if err = os.MkdirAll(m.imageDirectory, 0o750); err != nil {
+	cachePath, err := writeCacheFile(m.imageDirectory, hash+extension, data)
+	if err != nil {
 		return err
-	}
-	cachePath := filepath.Join(m.imageDirectory, hash+extension)
-	if _, statErr := os.Stat(cachePath); errors.Is(statErr, os.ErrNotExist) {
-		temporary, createErr := os.CreateTemp(m.imageDirectory, "artist-image-*")
-		if createErr != nil {
-			return createErr
-		}
-		temporaryPath := temporary.Name()
-		defer os.Remove(temporaryPath)
-		if _, err = temporary.Write(data); err == nil {
-			err = temporary.Chmod(0o640)
-		}
-		if closeErr := temporary.Close(); err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			return err
-		}
-		if err = os.Rename(temporaryPath, cachePath); err != nil {
-			return err
-		}
 	}
 	return m.store.SaveArtistImage(ctx, storage.ArtistImageInput{ArtistID: artistID, ByteSize: int64(len(data)), Source: source, RemoteURL: remoteURL, Hash: hash, MIMEType: mimeType, CachePath: cachePath})
 }

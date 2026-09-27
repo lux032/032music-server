@@ -228,6 +228,9 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 			}
 			return "", err
 		}
+		if posterErr := m.CacheWorkPoster(ctx, work.ID); posterErr != nil && ctx.Err() == nil {
+			m.logger.Warn("cache work poster", "workId", work.ID, "error", posterErr)
+		}
 		return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 	}
 	if pending > 0 {

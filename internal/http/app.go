@@ -159,6 +159,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
 		"thumb": thumbURL,
+		// workPoster returns the local poster URL, or "" until it is cached.
+		"workPoster": func(work storage.Work) string { return workPosterURL(enrichmentManager, work) },
 	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse admin templates: %w", err)
@@ -317,6 +319,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/works", a.requireAdmin(http.HandlerFunc(a.handleWorksPage)))
 	mux.Handle("POST /admin/works", a.requireAdmin(http.HandlerFunc(a.handleCreateWork)))
 	mux.Handle("GET /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleWorkPage)))
+	mux.Handle("GET /admin/works/{id}/poster", a.requireAdmin(http.HandlerFunc(a.handleWorkPoster)))
 	mux.Handle("POST /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateWork)))
 	mux.Handle("POST /admin/works/{id}/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteWork)))
 	mux.Handle("POST /admin/works/{id}/albums", a.requireAdmin(http.HandlerFunc(a.handleAddWorkAlbum)))

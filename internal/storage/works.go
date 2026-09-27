@@ -383,3 +383,27 @@ func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID, albumID
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_tracks(work_id,track_id,role,season,sequence,source,inferred_key) VALUES(?,?,?,?,?,'auto',?)`, id, trackID, association.Role, association.Season, association.Sequence, key)
 	return created, err
 }
+
+// WorkPosterURL pairs a work with its remote poster URL.
+type WorkPosterURL struct {
+	WorkID int64
+	URL    string
+}
+
+// WorkPosterURLs lists every work that has a poster URL.
+func (s *Store) WorkPosterURLs(ctx context.Context) ([]WorkPosterURL, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,poster_url FROM works WHERE COALESCE(poster_url,'')<>'' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var values []WorkPosterURL
+	for rows.Next() {
+		var v WorkPosterURL
+		if err = rows.Scan(&v.WorkID, &v.URL); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}

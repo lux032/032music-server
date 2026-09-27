@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -193,6 +196,7 @@ func (a *App) handleCreateWork(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	a.queueWorkPoster(value.ID)
 	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(value.ID, 10)+"?notice=作品已创建", http.StatusSeeOther)
 }
 
@@ -243,6 +247,7 @@ func (a *App) handleUpdateWork(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	a.queueWorkPoster(id)
 	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice=作品信息已保存", http.StatusSeeOther)
 }
 
@@ -313,4 +318,54 @@ func setWorksPagination(r *http.Request, data *worksPageData) {
 	for i := start; i <= end; i++ {
 		data.Pages = append(data.Pages, pageLink{Number: i, URL: makeURL(i), Current: i == data.Page})
 	}
+}
+
+// handleWorkPoster serves the locally cached copy of the work's poster so it
+// renders under the img-src 'self' CSP.
+func (a *App) handleWorkPoster(w http.ResponseWriter, r *http.Request) {
+	value, err := a.store.WorkByID(r.Context(), parseInt64(r.PathValue("id")))
+	if err != nil || value.PosterURL == "" || a.enrichment == nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Only serve the local cache; never proxy to Bangumi on page views. A
+	// missing cache entry (e.g. a failed earlier download) is re-queued.
+	path, mimeType, err := a.enrichment.CachedWorkPoster(value.PosterURL)
+	if err != nil {
+		a.enrichment.QueueWorkPoster(value.ID)
+		http.NotFound(w, r)
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+}
+
+func (a *App) queueWorkPoster(workID int64) {
+	if a.enrichment != nil {
+		a.enrichment.QueueWorkPoster(workID)
+	}
+}
+
+// workPosterURL returns the same-origin poster URL for a work, or "" when the
+// poster has not been cached locally yet (the placeholder icon is shown).
+func workPosterURL(manager *enrichment.Manager, work storage.Work) string {
+	if work.PosterURL == "" || manager == nil {
+		return ""
+	}
+	if _, _, err := manager.CachedWorkPoster(work.PosterURL); err != nil {
+		return ""
+	}
+	return "/admin/works/" + strconv.FormatInt(work.ID, 10) + "/poster?v=" + url.QueryEscape(work.UpdatedAt)
 }

@@ -53,7 +53,7 @@
       {{range .Works}}
       <a class="work-card" href="/admin/works/{{.ID}}">
         <div class="work-poster">
-          {{if .PosterURL}}<img class="fade-img" src="{{.PosterURL}}" alt="{{.Title}}" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
+          {{with workPoster .}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
           <b>{{.Type}}</b>
         </div>
         <h2>{{.Title}}</h2>

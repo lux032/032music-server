@@ -64,6 +64,7 @@ func run() error {
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
 	scannerManager.SetOnComplete(func() { enrichmentManager.StartAuto(rootCtx) })
+	enrichmentManager.StartWorkPosterBackfill()
 
 	// NewApp applies MUSIC_SERVER_RESET_CREDENTIALS and loads admin-page
 	// credential overrides, so the per-boot media token warning is only

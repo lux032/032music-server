@@ -141,6 +141,9 @@ func (a *App) handleAPIWorkCandidateDecision(w http.ResponseWriter, r *http.Requ
 	var err error
 	if status == "confirmed" {
 		err = a.store.ConfirmWorkMatchCandidate(r.Context(), workID, candidateID, 0)
+		if err == nil {
+			a.queueWorkPoster(workID)
+		}
 	} else {
 		err = a.store.SetWorkMatchCandidateStatus(r.Context(), workID, candidateID, status)
 	}
@@ -248,6 +251,9 @@ func (a *App) handleAdminWorkCandidateDecision(w http.ResponseWriter, r *http.Re
 	var err error
 	if status == "confirmed" {
 		err = a.store.ConfirmWorkMatchCandidate(r.Context(), workID, candidateID, 0)
+		if err == nil {
+			a.queueWorkPoster(workID)
+		}
 	} else {
 		err = a.store.SetWorkMatchCandidateStatus(r.Context(), workID, candidateID, status)
 	}
