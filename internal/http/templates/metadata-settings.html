@@ -79,12 +79,22 @@
             <label class="switch"><input type="checkbox" name="now_playing_enabled" {{if .NowPlaying}}checked{{end}}> 同步“正在播放”状态</label>
             <div class="editor-actions"><button type="submit">保存播放记录设置</button></div>
           </form>
+          {{if .PendingAuthURL}}
+          <p data-lastfm-pending>授权进行中：① 点击“前往 Last.fm 授权”，在新打开的 Last.fm 页面登录并允许访问；② 回到本页点“完成连接”。授权链接 1 小时内有效。</p>
+          <div class="source-card-actions">
+            <a class="secondary-button" href="{{.PendingAuthURL}}" target="_blank" rel="noopener noreferrer">前往 Last.fm 授权</a>
+            <form method="post" action="/admin/settings/lastfm-scrobble/complete">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button type="submit">完成连接</button>
+            </form>
+          </div>
+          {{end}}
           {{if or (and .HasAPIKey .HasSecret) .Connected .PendingCount}}
           <div class="source-card-actions">
             {{if and .HasAPIKey .HasSecret}}
-            <form method="post" action="/admin/settings/lastfm-scrobble/connect" data-no-pjax>
+            <form method="post" action="/admin/settings/lastfm-scrobble/connect">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <button type="submit" class="secondary">{{if .Connected}}重新连接 Last.fm 账号{{else}}连接 Last.fm 账号{{end}}</button>
+              <button type="submit" class="secondary">{{if .PendingAuthURL}}重新生成授权链接{{else if .Connected}}重新连接 Last.fm 账号{{else}}连接 Last.fm 账号{{end}}</button>
             </form>
             {{end}}
             {{if .Connected}}

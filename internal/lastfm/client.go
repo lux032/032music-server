@@ -106,13 +106,14 @@ func Sign(params url.Values, secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// AuthURL is the page where the user grants this application access. After
-// approval Last.fm redirects to callback with a token query parameter.
-func AuthURL(apiKey, callback string) string {
-	query := url.Values{"api_key": {apiKey}}
-	if callback != "" {
-		query.Set("cb", callback)
-	}
+// AuthURL is the page where the user grants this application access to the
+// request token obtained from auth.getToken (the Last.fm "desktop" flow).
+// No callback is involved: once the user has approved, the server exchanges
+// the same token for a session, so the flow neither depends on a reachable
+// callback address nor on the admin page being allowed to redirect a form
+// submission to another origin.
+func AuthURL(apiKey, token string) string {
+	query := url.Values{"api_key": {apiKey}, "token": {token}}
 	return AuthPageURL + "?" + query.Encode()
 }
 
@@ -165,6 +166,21 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, tar
 		return fmt.Errorf("decode Last.fm %s response: %w", method, err)
 	}
 	return nil
+}
+
+// GetToken requests an unauthorised token, valid for 60 minutes, that the
+// user then approves on AuthURL.
+func (c *Client) GetToken(ctx context.Context) (string, error) {
+	var response struct {
+		Token string `json:"token"`
+	}
+	if err := c.call(ctx, "auth.getToken", url.Values{}, &response); err != nil {
+		return "", err
+	}
+	if response.Token == "" {
+		return "", errors.New("Last.fm returned no token")
+	}
+	return response.Token, nil
 }
 
 // GetSession exchanges an authorised token for a permanent session key.

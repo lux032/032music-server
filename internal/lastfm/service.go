@@ -3,6 +3,7 @@ package lastfm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -277,6 +278,92 @@ func (s *Service) sendNowPlaying(ctx context.Context, trackID int64, markedAt ti
 	}
 }
 
+// AuthorizationMaxAge bounds how long a pending request token is offered.
+// Last.fm tokens expire after 60 minutes; stop a little earlier.
+const AuthorizationMaxAge = 55 * time.Minute
+
+var (
+	// ErrNoPendingAuthorization: no request token, or it is too old.
+	ErrNoPendingAuthorization = errors.New("没有进行中的授权请求（或已超过 1 小时），请重新点击“连接 Last.fm 账号”")
+	// ErrAuthorizationNotApproved: the user has not approved the token yet.
+	ErrAuthorizationNotApproved = errors.New("尚未在 Last.fm 页面允许访问，请先点“前往 Last.fm 授权”完成授权，再点“完成连接”")
+)
+
+// BeginAuthorization requests a Last.fm token, remembers it as the pending
+// authorisation and returns the page where the user approves it.
+func (s *Service) BeginAuthorization(ctx context.Context) (string, error) {
+	settings, err := s.store.LastFMScrobbleSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !settings.HasAPIKey() || !settings.HasAPISecret() {
+		return "", errors.New("请先填写 Last.fm API Key 与 Shared Secret")
+	}
+	token, err := s.newClient(settings.APIKey, settings.APISecret).GetToken(ctx)
+	if err != nil {
+		return "", describeAuthError(err)
+	}
+	if err := s.store.BeginLastFMAuthorization(ctx, token, s.now()); err != nil {
+		return "", err
+	}
+	return AuthURL(settings.APIKey, token), nil
+}
+
+// PendingAuthorizationURL returns the approval page of the pending
+// authorisation, or "" when there is none.
+func (s *Service) PendingAuthorizationURL(ctx context.Context) (string, error) {
+	settings, err := s.store.LastFMScrobbleSettings(ctx)
+	if err != nil || !settings.HasAPIKey() {
+		return "", err
+	}
+	token, err := s.store.PendingLastFMAuthorization(ctx, AuthorizationMaxAge, s.now())
+	if err != nil || token == "" {
+		return "", err
+	}
+	return AuthURL(settings.APIKey, token), nil
+}
+
+// CompleteAuthorization exchanges the pending token, once the user has
+// approved it, for a session. A token that is merely not approved yet stays
+// pending so the admin can approve it and try again.
+func (s *Service) CompleteAuthorization(ctx context.Context) (string, error) {
+	token, err := s.store.PendingLastFMAuthorization(ctx, AuthorizationMaxAge, s.now())
+	if err != nil {
+		return "", err
+	}
+	if token == "" {
+		return "", ErrNoPendingAuthorization
+	}
+	username, err := s.Connect(ctx, token)
+	var apiErr *APIError
+	switch {
+	case err == nil:
+		_ = s.store.ClearLastFMAuthorization(ctx, token)
+		return username, nil
+	case errors.As(err, &apiErr) && apiErr.Code == ErrTokenNotAuthorized:
+		return "", ErrAuthorizationNotApproved
+	case errors.As(err, &apiErr) && (apiErr.Code == ErrTokenExpired || apiErr.Code == ErrAuthFailed):
+		// The token is unusable (expired or already exchanged): start over.
+		_ = s.store.ClearLastFMAuthorization(ctx, token)
+		return "", ErrNoPendingAuthorization
+	}
+	return "", describeAuthError(err)
+}
+
+// describeAuthError adds a hint for the credential errors an admin can fix.
+func describeAuthError(err error) error {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case ErrInvalidAPIKey, ErrSuspendedAPIKey:
+			return fmt.Errorf("API Key 无效，请检查 Last.fm 卡片中的 API Key（%w）", err)
+		case ErrInvalidSignature:
+			return fmt.Errorf("签名无效，请检查 Shared Secret 是否与 API Key 属于同一个 Last.fm 应用（%w）", err)
+		}
+	}
+	return err
+}
+
 // Connect exchanges an authorised token for a session and stores it.
 func (s *Service) Connect(ctx context.Context, token string) (string, error) {
 	settings, err := s.store.LastFMScrobbleSettings(ctx)
@@ -288,7 +375,7 @@ func (s *Service) Connect(ctx context.Context, token string) (string, error) {
 	}
 	username, sessionKey, err := s.newClient(settings.APIKey, settings.APISecret).GetSession(ctx, token)
 	if err != nil {
-		return "", err
+		return "", describeAuthError(err)
 	}
 	if err := s.store.SetLastFMSession(ctx, username, sessionKey); err != nil {
 		return "", err

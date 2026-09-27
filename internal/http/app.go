@@ -294,6 +294,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleSaveMetadataSettings)))
 	mux.Handle("POST /admin/settings/lastfm-scrobble", a.requireAdmin(http.HandlerFunc(a.handleSaveLastFMScrobble)))
 	mux.Handle("POST /admin/settings/lastfm-scrobble/connect", a.requireAdmin(http.HandlerFunc(a.handleConnectLastFM)))
+	mux.Handle("POST /admin/settings/lastfm-scrobble/complete", a.requireAdmin(http.HandlerFunc(a.handleCompleteLastFM)))
 	mux.Handle("GET /admin/settings/lastfm-scrobble/callback", a.requireAdmin(http.HandlerFunc(a.handleLastFMCallback)))
 	mux.Handle("POST /admin/settings/lastfm-scrobble/disconnect", a.requireAdmin(http.HandlerFunc(a.handleDisconnectLastFM)))
 	mux.Handle("POST /admin/settings/lastfm-scrobble/retry", a.requireAdmin(http.HandlerFunc(a.handleRetryLastFM)))

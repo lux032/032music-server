@@ -1,8 +1,8 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	lastFMSettingsPath    = "/admin/settings/metadata"
-	lastFMCallbackPath    = "/admin/settings/lastfm-scrobble/callback"
-	lastFMAuthStateMaxAge = 30 * time.Minute
+	lastFMSettingsPath = "/admin/settings/metadata"
+	lastFMCallbackPath = "/admin/settings/lastfm-scrobble/callback"
 )
 
 // lastFMScrobbleView is the Last.fm scrobbling card on the data sources page.
@@ -27,6 +26,9 @@ type lastFMScrobbleView struct {
 	PendingCount           int64
 	OldestPending          string
 	ServiceRunning         bool
+	// PendingAuthURL is the Last.fm approval page of an authorisation the
+	// admin has started but not completed yet.
+	PendingAuthURL string
 }
 
 func (a *App) lastFMScrobbleView(r *http.Request) lastFMScrobbleView {
@@ -44,6 +46,13 @@ func (a *App) lastFMScrobbleView(r *http.Request) lastFMScrobbleView {
 	}
 	if settings.OldestPendingStartedAtUnix > 0 {
 		view.OldestPending = time.Unix(settings.OldestPendingStartedAtUnix, 0).Local().Format("2006-01-02 15:04")
+	}
+	if a.lastfm != nil && settings.HasAPISecret() {
+		if authURL, err := a.lastfm.PendingAuthorizationURL(r.Context()); err != nil {
+			a.logger.Warn("load pending Last.fm authorisation", "error", err)
+		} else {
+			view.PendingAuthURL = authURL
+		}
 	}
 	return view
 }
@@ -64,59 +73,55 @@ func (a *App) handleSaveLastFMScrobble(w http.ResponseWriter, r *http.Request) {
 	redirectWithNotice(w, r, lastFMSettingsPath, "Last.fm 播放记录设置已保存")
 }
 
-// handleConnectLastFM starts the Last.fm web authorisation. The callback
-// carries a single-use state so a forged callback cannot bind the server to
-// someone else's Last.fm account.
+// handleConnectLastFM starts a Last.fm authorisation (desktop flow): the
+// server requests a token and the settings page then offers a plain link to
+// the Last.fm approval page. Nothing redirects a form submission to another
+// origin (which the page's CSP form-action 'self' would block) and no
+// callback has to reach this server.
 func (a *App) handleConnectLastFM(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", 403)
-		return
-	}
-	settings, err := a.store.LastFMScrobbleSettings(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if !settings.HasAPIKey() || !settings.HasAPISecret() {
-		redirectWithNotice(w, r, lastFMSettingsPath, "请先在 Last.fm 卡片填写 API Key，并在播放记录卡片填写 Shared Secret")
-		return
-	}
-	state, err := randomToken()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if err := a.store.BeginLastFMAuthorization(r.Context(), state, time.Now()); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	callback := requestBaseURL(r) + lastFMCallbackPath + "?state=" + url.QueryEscape(state)
-	http.Redirect(w, r, lastfm.AuthURL(settings.APIKey, callback), http.StatusSeeOther)
-}
-
-func (a *App) handleLastFMCallback(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	ok, err := a.store.ConsumeLastFMAuthorization(r.Context(), query.Get("state"), lastFMAuthStateMaxAge, time.Now())
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if !ok {
-		redirectWithNotice(w, r, lastFMSettingsPath, "授权请求无效或已过期，请重新点击“连接 Last.fm 账号”")
-		return
-	}
-	token := query.Get("token")
-	if token == "" {
-		redirectWithNotice(w, r, lastFMSettingsPath, "Last.fm 没有返回授权 Token，请重新连接")
 		return
 	}
 	if a.lastfm == nil {
 		redirectWithNotice(w, r, lastFMSettingsPath, "Last.fm 服务未启动")
 		return
 	}
-	username, err := a.lastfm.Connect(r.Context(), token)
+	if _, err := a.lastfm.BeginAuthorization(r.Context()); err != nil {
+		a.logger.Warn("start Last.fm authorisation", "error", err)
+		redirectWithNotice(w, r, lastFMSettingsPath, "无法开始 Last.fm 授权："+err.Error())
+		return
+	}
+	redirectWithNotice(w, r, lastFMSettingsPath, "请点击“前往 Last.fm 授权”，在 Last.fm 页面允许访问后回到本页点“完成连接”")
+}
+
+// handleCompleteLastFM exchanges the approved pending token for a session.
+func (a *App) handleCompleteLastFM(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", 403)
+		return
+	}
+	a.completeLastFM(w, r)
+}
+
+// handleLastFMCallback serves Last.fm applications whose API account has a
+// callback URL pointing here. The token in the query is ignored: only the
+// pending token this server requested is ever exchanged, so a forged
+// callback cannot bind someone else's Last.fm account.
+func (a *App) handleLastFMCallback(w http.ResponseWriter, r *http.Request) {
+	a.completeLastFM(w, r)
+}
+
+func (a *App) completeLastFM(w http.ResponseWriter, r *http.Request) {
+	if a.lastfm == nil {
+		redirectWithNotice(w, r, lastFMSettingsPath, "Last.fm 服务未启动")
+		return
+	}
+	username, err := a.lastfm.CompleteAuthorization(r.Context())
 	if err != nil {
-		a.logger.Warn("Last.fm authorisation failed", "error", err)
+		if !errors.Is(err, lastfm.ErrAuthorizationNotApproved) && !errors.Is(err, lastfm.ErrNoPendingAuthorization) {
+			a.logger.Warn("Last.fm authorisation failed", "error", err)
+		}
 		redirectWithNotice(w, r, lastFMSettingsPath, "连接 Last.fm 失败："+err.Error())
 		return
 	}
@@ -148,22 +153,4 @@ func (a *App) handleRetryLastFM(w http.ResponseWriter, r *http.Request) {
 		a.lastfm.Wake()
 	}
 	redirectWithNotice(w, r, lastFMSettingsPath, "已安排立即重新提交待发送的播放记录")
-}
-
-// requestBaseURL reconstructs the origin the admin's browser used. Forwarded
-// headers are honoured because the result is only used as the redirect target
-// for that same browser; it grants nothing.
-func requestBaseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if proto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); proto == "https" || proto == "http" {
-		scheme = proto
-	}
-	host := r.Host
-	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwarded != "" {
-		host = forwarded
-	}
-	return scheme + "://" + host
 }

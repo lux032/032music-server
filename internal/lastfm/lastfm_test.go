@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -166,6 +167,86 @@ func TestConnectScrobbleAndNowPlaying(t *testing.T) {
 	service.Wait()
 	if calls := fake.calls("track.updateNowPlaying"); len(calls) != 1 || calls[0].Get("track") != "夜に駆ける" {
 		t.Fatalf("now playing calls: %v", calls)
+	}
+}
+
+func TestDesktopAuthorizationFlow(t *testing.T) {
+	var mu sync.Mutex
+	approved := false
+	tokens := 0
+	fake := &fakeLastFM{respond: func(values url.Values) (int, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch values.Get("method") {
+		case "auth.getToken":
+			tokens++
+			return 200, `{"token":"TOK` + strconv.Itoa(tokens) + `"}`
+		case "auth.getSession":
+			switch {
+			case values.Get("token") == "TOK1" && approved:
+				return 200, `{"session":{"name":"listener","key":"SK","subscriber":0}}`
+			case values.Get("token") == "TOK1":
+				return 403, `{"error":14,"message":"Unauthorized Token - This token has not been authorized"}`
+			}
+			return 403, `{"error":15,"message":"Token has expired"}`
+		}
+		return 400, `{"error":3,"message":"Invalid Method"}`
+	}}
+	service, store, _ := newTestService(t, fake)
+	ctx := context.Background()
+
+	if _, err := service.CompleteAuthorization(ctx); !errors.Is(err, ErrNoPendingAuthorization) {
+		t.Fatalf("complete without begin: %v", err)
+	}
+	authURL, err := service.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(authURL)
+	if parsed.Host != "www.last.fm" || parsed.Query().Get("api_key") != "key" || parsed.Query().Get("token") != "TOK1" || parsed.Query().Get("cb") != "" {
+		t.Fatalf("auth URL: %s", authURL)
+	}
+	if calls := fake.calls("auth.getToken"); len(calls) != 1 {
+		t.Fatalf("getToken calls: %v", calls)
+	} else {
+		verifySignature(t, calls[0])
+	}
+	if pending, _ := service.PendingAuthorizationURL(ctx); pending != authURL {
+		t.Fatalf("pending URL = %q", pending)
+	}
+
+	// Not approved yet: the token stays pending for another attempt.
+	if _, err := service.CompleteAuthorization(ctx); !errors.Is(err, ErrAuthorizationNotApproved) {
+		t.Fatalf("complete before approval: %v", err)
+	}
+	if pending, _ := service.PendingAuthorizationURL(ctx); pending != authURL {
+		t.Fatal("unapproved token was discarded")
+	}
+
+	mu.Lock()
+	approved = true
+	mu.Unlock()
+	username, err := service.CompleteAuthorization(ctx)
+	if err != nil || username != "listener" {
+		t.Fatalf("complete: %q %v", username, err)
+	}
+	settings, _ := store.LastFMScrobbleSettings(ctx)
+	if !settings.Ready() || settings.Username != "listener" {
+		t.Fatalf("after complete: %+v", settings)
+	}
+	if pending, _ := service.PendingAuthorizationURL(ctx); pending != "" {
+		t.Fatalf("token still pending after connect: %q", pending)
+	}
+
+	// An expired token is dropped so the admin starts over.
+	if _, err := service.BeginAuthorization(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CompleteAuthorization(ctx); !errors.Is(err, ErrNoPendingAuthorization) {
+		t.Fatalf("expired token: %v", err)
+	}
+	if pending, _ := service.PendingAuthorizationURL(ctx); pending != "" {
+		t.Fatalf("expired token kept: %q", pending)
 	}
 }
 

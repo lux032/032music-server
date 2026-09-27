@@ -18,6 +18,10 @@ func TestLastFMScrobbleAdminFlow(t *testing.T) {
 	app, store, handler := credentialTestApp(t)
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		if r.Form.Get("method") == "auth.getToken" {
+			_, _ = io.WriteString(w, `{"token":"GOOD"}`)
+			return
+		}
 		if r.Form.Get("method") == "auth.getSession" && r.Form.Get("token") == "GOOD" {
 			_, _ = io.WriteString(w, `{"session":{"name":"listener","key":"SK"}}`)
 			return
@@ -69,33 +73,36 @@ func TestLastFMScrobbleAdminFlow(t *testing.T) {
 		t.Fatal("secret echoed on the page")
 	}
 
+	// A forged callback before any authorisation was started binds nothing.
+	get(lastFMCallbackPath + "?token=GOOD")
+	if settings, _ := store.LastFMScrobbleSettings(ctx); settings.Connected() {
+		t.Fatal("callback without a pending authorisation connected an account")
+	}
+
+	// Connecting must not redirect a form submission to last.fm: the admin
+	// page's CSP (form-action 'self') makes browsers refuse that. It returns
+	// to the settings page, which offers a plain link instead.
 	response := post("/admin/settings/lastfm-scrobble/connect", url.Values{})
 	location, _ := url.Parse(response.Header().Get("Location"))
-	if response.Code != http.StatusSeeOther || location == nil || location.Host != "www.last.fm" || location.Query().Get("api_key") != "key" {
+	if response.Code != http.StatusSeeOther || location == nil || location.Host != "" || location.Path != lastFMSettingsPath {
 		t.Fatalf("connect redirect: %d %q", response.Code, response.Header().Get("Location"))
 	}
-	callback, err := url.Parse(location.Query().Get("cb"))
-	if err != nil || callback.Path != lastFMCallbackPath || callback.Query().Get("state") == "" {
-		t.Fatalf("callback URL: %q", location.Query().Get("cb"))
+	body := get(lastFMSettingsPath).Body.String()
+	if !strings.Contains(body, `href="https://www.last.fm/api/auth/?api_key=key&amp;token=GOOD"`) || !strings.Contains(body, "/admin/settings/lastfm-scrobble/complete") {
+		t.Fatalf("settings page lacks the approval link / complete form")
 	}
-	state := callback.Query().Get("state")
 
-	// A forged callback without the pending state cannot bind an account.
-	get("/admin/settings/lastfm-scrobble/callback?state=forged&token=GOOD")
-	if settings, _ := store.LastFMScrobbleSettings(ctx); settings.Connected() {
-		t.Fatal("forged callback connected an account")
-	}
-	// The forged attempt did not consume the real state.
-	response = get(lastFMCallbackPath + "?state=" + url.QueryEscape(state) + "&token=GOOD")
+	response = post("/admin/settings/lastfm-scrobble/complete", url.Values{})
 	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), url.QueryEscape("listener")) {
-		t.Fatalf("callback: %d %q", response.Code, response.Header().Get("Location"))
+		t.Fatalf("complete: %d %q", response.Code, response.Header().Get("Location"))
 	}
 	settings, _ := store.LastFMScrobbleSettings(ctx)
 	if !settings.Ready() || settings.Username != "listener" || settings.APISecret != "the-secret" {
 		t.Fatalf("after connect: %+v", settings)
 	}
-	// The state is single-use.
-	get(lastFMCallbackPath + "?state=" + url.QueryEscape(state) + "&token=GOOD")
+	if body = get(lastFMSettingsPath).Body.String(); strings.Contains(body, "/admin/settings/lastfm-scrobble/complete") {
+		t.Fatal("approval link still offered after connecting")
+	}
 
 	if response = post("/admin/settings/lastfm-scrobble/disconnect", url.Values{}); response.Code != http.StatusSeeOther {
 		t.Fatalf("disconnect: %d", response.Code)

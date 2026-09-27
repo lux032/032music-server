@@ -373,7 +373,7 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 
 1. 在 [Last.fm API 账号页](https://www.last.fm/api/account/create) 创建应用，获得 API Key 与 Shared Secret。
 2. API Key 填在上方 Last.fm 卡片（与资料补全共用），Shared Secret 填在 Scrobble 卡片，勾选“启用”并保存。
-3. 点击“连接 Last.fm 账号”，在 Last.fm 页面授权后会自动跳回并保存会话。回调地址由浏览器当前访问的地址推导（反向代理下使用 `X-Forwarded-Proto` / `X-Forwarded-Host`），授权请求 30 分钟内有效且只能使用一次。
+3. 点击“连接 Last.fm 账号”，卡片上会出现“前往 Last.fm 授权”链接；在新打开的 Last.fm 页面登录并允许访问后，回到本页点击“完成连接”即可保存会话。授权链接 1 小时内有效（Last.fm Token 有效期），过期后重新点击“连接”即可。该流程不依赖回调地址，服务器位于内网或反向代理之后也能完成授权；若 Last.fm 应用登记了指向 `/admin/settings/lastfm-scrobble/callback` 的回调地址，授权后跳回也会自动完成连接。
 
 之后网页播放器和 App（API Token 或媒体 Token）上报的播放，只要按上文规则被计数、曲长超过 30 秒、且歌手不是 “Unknown Artist”，就会以歌曲的开始播放时间提交到 Last.fm。提交通过 SQLite 发件箱异步完成：Last.fm 不可用或网络失败时按 1 分钟起、最长 1 小时的退避重试，重启不丢失；超过 14 天的记录会被丢弃（Last.fm 不再接受）。会话失效时自动断开并在卡片上提示重新连接，已排队的记录保留。Shared Secret 与会话密钥只保存在本地数据库，管理页不回显。
 

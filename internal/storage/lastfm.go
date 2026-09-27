@@ -254,25 +254,31 @@ func (s *Store) SaveLastFMScrobblePreferences(ctx context.Context, enabled, nowP
 	return err
 }
 
-// BeginLastFMAuthorization records the anti-forgery state of a pending
-// browser authorisation.
-func (s *Store) BeginLastFMAuthorization(ctx context.Context, state string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE lastfm_scrobble_settings SET pending_state=?,pending_state_at=? WHERE id=1`, state, at.Unix())
+// BeginLastFMAuthorization stores the request token of a pending Last.fm
+// authorisation (auth.getToken), replacing any earlier one. The token never
+// leaves the admin UI and only this server ever exchanges it for a session,
+// so it also serves as the anti-forgery state of the flow.
+func (s *Store) BeginLastFMAuthorization(ctx context.Context, token string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE lastfm_scrobble_settings SET pending_state=?,pending_state_at=? WHERE id=1`, token, at.Unix())
 	return err
 }
 
-// ConsumeLastFMAuthorization clears the pending state and reports whether it
-// matched and was issued within maxAge. A state can be used only once.
-func (s *Store) ConsumeLastFMAuthorization(ctx context.Context, state string, maxAge time.Duration, now time.Time) (bool, error) {
-	if state == "" {
-		return false, nil
+// PendingLastFMAuthorization returns the pending request token when it was
+// issued within maxAge, or "" when there is none.
+func (s *Store) PendingLastFMAuthorization(ctx context.Context, maxAge time.Duration, now time.Time) (string, error) {
+	var token string
+	err := s.db.QueryRowContext(ctx, `SELECT pending_state FROM lastfm_scrobble_settings WHERE id=1 AND pending_state<>'' AND pending_state_at>=?`, now.Add(-maxAge).Unix()).Scan(&token)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE lastfm_scrobble_settings SET pending_state='',pending_state_at=0 WHERE id=1 AND pending_state<>'' AND pending_state=? AND pending_state_at>=?`, state, now.Add(-maxAge).Unix())
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	return affected == 1, err
+	return token, err
+}
+
+// ClearLastFMAuthorization drops the pending request token if it is still
+// token, so finishing an old attempt never discards a newer one.
+func (s *Store) ClearLastFMAuthorization(ctx context.Context, token string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE lastfm_scrobble_settings SET pending_state='',pending_state_at=0 WHERE id=1 AND pending_state=?`, token)
+	return err
 }
 
 func (s *Store) SetLastFMSession(ctx context.Context, username, sessionKey string) error {

@@ -171,28 +171,38 @@ func TestRecordScrobbleQueuesLastFMOnlyWhenConnected(t *testing.T) {
 	}
 }
 
-func TestLastFMAuthorizationStateIsSingleUse(t *testing.T) {
+func TestLastFMPendingAuthorization(t *testing.T) {
 	s, ctx := openEnrichmentTestStore(t)
 	now := time.Now()
-	if err := s.BeginLastFMAuthorization(ctx, "state-1", now); err != nil {
+	if token, err := s.PendingLastFMAuthorization(ctx, time.Hour, now); err != nil || token != "" {
+		t.Fatalf("fresh store: %q %v", token, err)
+	}
+	if err := s.BeginLastFMAuthorization(ctx, "token-1", now); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := s.ConsumeLastFMAuthorization(ctx, "other", time.Hour, now); err != nil || ok {
-		t.Fatalf("wrong state accepted: %v %v", ok, err)
+	if token, err := s.PendingLastFMAuthorization(ctx, time.Hour, now); err != nil || token != "token-1" {
+		t.Fatalf("pending: %q %v", token, err)
 	}
-	if ok, err := s.ConsumeLastFMAuthorization(ctx, "state-1", time.Hour, now); err != nil || !ok {
-		t.Fatalf("valid state rejected: %v %v", ok, err)
-	}
-	if ok, _ := s.ConsumeLastFMAuthorization(ctx, "state-1", time.Hour, now); ok {
-		t.Fatal("state reused")
-	}
-	if err := s.BeginLastFMAuthorization(ctx, "state-2", now.Add(-2*time.Hour)); err != nil {
+	// A newer attempt replaces the token; finishing the old one keeps it.
+	if err := s.BeginLastFMAuthorization(ctx, "token-2", now); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := s.ConsumeLastFMAuthorization(ctx, "state-2", time.Hour, now); ok {
-		t.Fatal("expired state accepted")
+	if err := s.ClearLastFMAuthorization(ctx, "token-1"); err != nil {
+		t.Fatal(err)
 	}
-	if ok, _ := s.ConsumeLastFMAuthorization(ctx, "", time.Hour, now); ok {
-		t.Fatal("empty state accepted")
+	if token, _ := s.PendingLastFMAuthorization(ctx, time.Hour, now); token != "token-2" {
+		t.Fatalf("stale clear removed the newer token: %q", token)
+	}
+	if err := s.ClearLastFMAuthorization(ctx, "token-2"); err != nil {
+		t.Fatal(err)
+	}
+	if token, _ := s.PendingLastFMAuthorization(ctx, time.Hour, now); token != "" {
+		t.Fatalf("cleared token still pending: %q", token)
+	}
+	if err := s.BeginLastFMAuthorization(ctx, "token-3", now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if token, _ := s.PendingLastFMAuthorization(ctx, time.Hour, now); token != "" {
+		t.Fatalf("expired token offered: %q", token)
 	}
 }
