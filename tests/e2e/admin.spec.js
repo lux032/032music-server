@@ -284,6 +284,28 @@ test('instant search preserves the focused complete input across PJAX', async ({
   await expect(search).toHaveValue('E2E');
 });
 
+test('clearing the search settles and a pending search keeps a new sort', async ({ page }) => {
+  await page.goto('/admin/albums?sort=year&q=E2E');
+  const search = page.locator('.instant-search input[name="q"]');
+  const requests = [];
+  page.on('request', req => { if (new URL(req.url()).pathname === '/admin/albums') requests.push(req.url()); });
+  await search.fill('');
+  await expect(page).toHaveURL(/\/admin\/albums\?sort=year$/);
+  // An empty keyword must not re-submit itself over and over.
+  await page.waitForTimeout(1200);
+  expect(requests).toHaveLength(1);
+
+  // Picking a sort while a search is still debounced keeps both.
+  await search.fill('E2E');
+  await page.locator('.filter-control[data-filter=sort] .filter-trigger').click();
+  await page.locator('.filter-control[data-filter=sort] [role=option][data-value=added]').click();
+  await expect(page).toHaveURL(/sort=added/);
+  await expect(page).toHaveURL(/q=E2E/);
+  await page.waitForTimeout(800);
+  await expect(page).toHaveURL(/sort=added/);
+  await expect(page.locator('.filter-control[data-filter=sort] .filter-trigger')).toContainText('加入时间');
+});
+
 test('unfinished album search does not follow sidebar navigation', async ({ page }) => {
   await page.goto('/admin/albums');
   await page.locator('.instant-search input[name="q"]').fill('E2E');

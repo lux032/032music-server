@@ -32,6 +32,11 @@
     searchTimer = setTimeout(() => submitSearch(input), 300);
   }
   function selectOption(control, value) {
+    // A debounced search must not fire while this navigation is in flight:
+    // it would build its URL from the old location and abort the filter/sort
+    // request. The draft is kept, so the search is re-scheduled on top of the
+    // new URL once it has been applied.
+    clearTimeout(searchTimer);
     const url = filteredURL(control.dataset.filter, value);
     pendingFilter = { path: new URL(url).pathname, filter: control.dataset.filter };
     if (navigate(url) === false) pendingFilter = null;
@@ -362,7 +367,9 @@
     if (input.value !== draft.value) input.value = draft.value;
     input.focus({ preventScroll: true });
     input.setSelectionRange(draft.start, draft.end);
-    if (new URL(location.href).searchParams.get('q') !== draft.value) scheduleSearch(input);
+    // An empty keyword is removed from the URL (get() returns null), so compare
+    // against '' or clearing the box would re-submit the same search forever.
+    if ((new URL(location.href).searchParams.get('q') ?? '') !== draft.value) scheduleSearch(input);
     else clearSearchDraft();
   });
 })();
