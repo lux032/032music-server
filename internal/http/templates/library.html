@@ -40,6 +40,7 @@
         {{if eq .Section "artists"}}<button type="button" role="option" aria-selected="false" data-value="name">名称</button><button type="button" role="option" aria-selected="false" data-value="{{if eq .ArtistRole "album"}}albums{{else}}tracks{{end}}">{{if eq .ArtistRole "album"}}专辑关联数量{{else}}单曲关联数量{{end}}</button>{{else}}<button type="button" role="option" aria-selected="false" data-value="title">标题</button><button type="button" role="option" aria-selected="false" data-value="year">发行年份</button>{{if eq .Section "albums"}}<button type="button" role="option" aria-selected="false" data-value="added">加入时间</button>{{end}}{{end}}
       </div></div>
       {{if .FilterTags}}<a class="filter-clear" href="{{.ClearPath}}">清除筛选 ×</a>{{end}}
+      {{if eq .Section "albums"}}<label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}</output></label>{{end}}
     </div>
     <form class="focus-bar library-focus" method="get">
       <input type="hidden" name="q" value="{{.Query}}">
@@ -81,7 +82,7 @@
     {{end}}
 
     {{if eq .Section "albums"}}
-    <section class="album-browser">
+    <section class="album-browser"{{if .AlbumCols}} style="--album-cols: {{.AlbumCols}}"{{end}}>
       {{range .Albums}}
       <article class="library-album-card" data-album-id="{{.ID}}">
         <div class="cover-wrap"><a class="album-tile-cover" href="/admin/albums/{{.ID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 512}}" alt="{{.Title}}" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}</a><button type="button" class="play-disc album-queue-action" data-mode="play" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button></div>

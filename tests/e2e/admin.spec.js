@@ -254,6 +254,26 @@ test('track quick edit keeps the filtered list context after save', async ({ pag
   await expect(editForm.locator('input[name="composer"]')).toHaveValue('E2E Composer');
 });
 
+test('album sort and grid density are remembered across navigation', async ({ page }, testInfo) => {
+  await page.goto('/admin/albums?sort=year');
+  await page.locator('.sidebar a[href="/admin/tracks"]').click();
+  await expect(page).toHaveURL(/\/admin\/tracks$/);
+  await page.locator('.sidebar a[href="/admin/albums"]').click();
+  await expect(page).toHaveURL(/\/admin\/albums$/);
+  await expect(page.locator('.filter-control[data-filter=sort] .filter-trigger')).toContainText('发行年份');
+  await page.locator('.filter-tag', { hasText: '排序' }).click();
+  await expect(page.locator('.filter-control[data-filter=sort] .filter-trigger')).toContainText('排序');
+
+  if (testInfo.project.name !== 'desktop-chromium') return;
+  const slider = page.locator('.grid-size-control input[type=range]');
+  await slider.fill('6');
+  await expect(page.locator('.grid-size-control output')).toHaveText('6');
+  await expect(page.locator('.album-browser')).toHaveAttribute('style', /--album-cols: 6/);
+  await page.reload();
+  await expect(page.locator('.album-browser')).toHaveAttribute('style', /--album-cols: 6/);
+  await expect(slider).toHaveValue('6');
+});
+
 test('instant search preserves the focused complete input across PJAX', async ({ page }) => {
   await page.goto('/admin/albums');
   const search = page.locator('.instant-search input[name="q"]');

@@ -192,6 +192,23 @@
       optionTimer = setTimeout(() => options(control), 200);
     } else if (e.target.matches('.instant-search input[name="q"]') && !composing && !e.isComposing) scheduleSearch(e.target);
   });
+  // Album grid density: applied live and remembered in a cookie the server
+  // reads to render the chosen column count without a layout flash.
+  function applyGridCols(input) {
+    const cols = Math.min(10, Math.max(2, parseInt(input.value, 10) || 4));
+    const output = input.parentElement.querySelector('output');
+    if (output) output.textContent = String(cols);
+    document.querySelectorAll('.album-browser').forEach(grid => grid.style.setProperty('--album-cols', String(cols)));
+    return cols;
+  }
+  document.addEventListener('input', e => {
+    if (e.target instanceof HTMLInputElement && e.target.matches('[data-grid-cols]')) applyGridCols(e.target);
+  });
+  document.addEventListener('change', e => {
+    if (!(e.target instanceof HTMLInputElement) || !e.target.matches('[data-grid-cols]')) return;
+    const cols = applyGridCols(e.target);
+    document.cookie = `032_album_cols=${cols}; path=/admin; max-age=31536000; samesite=lax`;
+  });
   document.addEventListener('compositionstart', e => { if (e.target.matches?.('.instant-search input, .filter-control [role="combobox"]')) { composing = true; clearTimeout(searchTimer); clearTimeout(optionTimer); } });
   document.addEventListener('compositionend', e => { if (e.target.matches?.('.instant-search input, .filter-control [role="combobox"]')) { composing = false; e.target.dispatchEvent(new Event('input', { bubbles: true })); } });
   document.addEventListener('submit', e => {

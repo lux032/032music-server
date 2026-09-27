@@ -1052,7 +1052,11 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .index-bar .kana-links { display: flex; flex: none; gap: 4px; }
 .index-bar .kana-links[hidden] { display: none; }
 .index-bar a:first-child { padding: 0 12px; }
-.album-browser { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 24px; }
+.album-browser { grid-template-columns: repeat(var(--album-cols, 4), minmax(0, 1fr)); gap: 22px 24px; }
+.grid-size-control { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; color: var(--text-secondary); font-size: var(--fs-sm); white-space: nowrap; }
+.filter-clear ~ .grid-size-control { margin-left: 4px; }
+.grid-size-control input[type="range"] { width: 110px; min-height: 0; margin: 0; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
+.grid-size-control output { min-width: 2ch; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
 .library-album-card .cover-wrap { border-radius: 8px; margin-bottom: 7px; }
 .library-album-card .album-tile-cover { display: block; width: 100%; height: 100%; }
 .library-album-card:hover .cover-wrap, .library-album-card:focus-within .cover-wrap { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
@@ -1078,8 +1082,8 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   .feature-track-list > article { grid-template-columns: 52px minmax(190px, 1fr) 65px 40px 40px; min-width: 620px; }
   .artist-browser, .feature-track-list { overflow-x: auto; }
 }
-@media (max-width: 1200px) { .album-browser { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 900px) { .album-browser { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 12px; } .browser-header { align-items: flex-start; flex-direction: column; } .instant-search { width: 100%; margin: 0; } .browser-filters { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px; } .filter-control { flex: none; } .filter-popover { position: fixed; top: min(220px, 28vh); left: 16px; right: 16px; width: auto; max-height: min(300px, 50vh); } .filter-clear { flex: none; } }
+@media (max-width: 1200px) { .album-browser { grid-template-columns: repeat(var(--album-cols, 3), minmax(0, 1fr)); } }
+@media (max-width: 900px) { .album-browser { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 12px; } .browser-header { align-items: flex-start; flex-direction: column; } .instant-search { width: 100%; margin: 0; } .browser-filters { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px; } .filter-control { flex: none; } .filter-popover { position: fixed; top: min(220px, 28vh); left: 16px; right: 16px; width: auto; max-height: min(300px, 50vh); } .filter-clear { flex: none; } .grid-size-control { display: none; } }
 @media (prefers-reduced-motion: reduce) { .library-album-card .cover-wrap, .library-album-card .play-disc { transition: none; } }
 
 @media (scripting: none) { .focus-bar.library-focus { display: flex !important; } .browser-filters { display: none !important; } }

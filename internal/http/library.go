@@ -37,6 +37,7 @@ type libraryPageData struct {
 	SearchFields                                         []queryField
 	IndexLinks                                           []indexLink
 	KanaIndex                                            bool
+	AlbumCols                                            int
 	FilterTags                                           []filterTag
 }
 
@@ -81,7 +82,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 		return libraryPageData{}, err
 	}
 	path := "/admin/" + section
-	return libraryPageData{Chrome: chromeFor(session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: path, SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), KanaIndex: isKanaIndex(f.Index), FilterTags: filterTags(r, path)}, nil
+	return libraryPageData{Chrome: chromeFor(session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: clearPathFor(r, path), SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), KanaIndex: isKanaIndex(f.Index), FilterTags: filterTags(r, path)}, nil
 }
 
 // filterQuery rebuilds the current filter query parameters without paging or
@@ -183,6 +184,11 @@ func filterTags(r *http.Request, path string) []filterTag {
 			values[key] = append([]string(nil), list...)
 		}
 		values.Del(name)
+		if name == "sort" {
+			// An explicit empty sort resets the remembered preference;
+			// omitting it would restore the remembered sort again.
+			values.Set("sort", "")
+		}
 		removeURL := path
 		if encoded := values.Encode(); encoded != "" {
 			removeURL += "?" + encoded
@@ -343,6 +349,7 @@ func (a *App) handleTrackArtistsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, label string) {
+	rememberSort(w, r, "artists-"+role)
 	data, err := a.pageBase(r, "artists")
 	f := filters(r)
 	f.ArtistRole = role
@@ -352,6 +359,7 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	data.ClearPath = "/admin/artists/" + role
 	data.IndexLinks = indexLinks(r, data.ClearPath)
 	data.FilterTags = filterTags(r, data.ClearPath)
+	data.ClearPath = clearPathFor(r, data.ClearPath)
 	applyPage(r, &f, 60)
 	if err == nil {
 		data.Artists, err = a.store.ListArtists(r.Context(), f)
@@ -365,7 +373,9 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	a.renderLibrary(w, data, err)
 }
 func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
+	rememberSort(w, r, "albums")
 	data, err := a.pageBase(r, "albums")
+	data.AlbumCols = albumGridCols(r)
 	f := filters(r)
 	applyPage(r, &f, 48)
 	if err == nil {
@@ -388,6 +398,7 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 	a.renderLibrary(w, data, err)
 }
 func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
+	rememberSort(w, r, "tracks")
 	data, err := a.pageBase(r, "tracks")
 	f := filters(r)
 	applyPage(r, &f, 50)

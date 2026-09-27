@@ -147,6 +147,7 @@ func writeWorkResult(w http.ResponseWriter, status int, value storage.Work, err 
 }
 
 func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
+	rememberSort(w, r, "works")
 	session, _ := a.sessions.get(r)
 	filter := workFilters(r)
 	page := int(parseInt64(r.URL.Query().Get("page")))
