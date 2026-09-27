@@ -17,6 +17,8 @@ type worksPageData struct {
 	Year, Page, PageCount, PageSize  int
 	Total                            int64
 	Works                            []storage.Work
+	Unreferenced                     []storage.Work
+	UnreferencedTotal                int64
 	Years                            []int
 	PrevURL, NextURL                 string
 	Pages                            []pageLink
@@ -27,6 +29,7 @@ type workPageData struct {
 	Notice     string
 	Work       storage.Work
 	Tracks     []storage.WorkTrack
+	Albums     []storage.AlbumWork
 	Candidates []storage.Track
 	Query      string
 }
@@ -166,6 +169,11 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Works: values, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data.Unreferenced, data.UnreferencedTotal, err = a.store.UnreferencedProtectedWorks(r.Context())
+	if err != nil {
+		http.Error(w, "works unavailable", http.StatusInternalServerError)
+		return
+	}
 	data.PageCount = int((total + 35) / 36)
 	if data.PageCount < 1 {
 		data.PageCount = 1
@@ -205,9 +213,24 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "work unavailable", http.StatusInternalServerError)
 		return
 	}
+	albums, err := a.store.AlbumsForWork(r.Context(), id)
+	if err != nil {
+		http.Error(w, "work unavailable", http.StatusInternalServerError)
+		return
+	}
+	albumSet := map[int64]bool{}
+	for _, album := range albums {
+		albumSet[album.AlbumID] = true
+	}
+	standalone := make([]storage.WorkTrack, 0, len(tracks))
+	for _, track := range tracks {
+		if !albumSet[track.AlbumID] || track.Source != "album" {
+			standalone = append(standalone, track)
+		}
+	}
 	query := strings.TrimSpace(r.URL.Query().Get("trackQ"))
 	candidates, _ := a.store.ListTracks(r.Context(), storage.Filters{Query: query, Limit: 30})
-	a.render(w, http.StatusOK, "work.html", workPageData{Chrome: chromeFor(session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: tracks, Candidates: candidates, Query: query})
+	a.render(w, http.StatusOK, "work.html", workPageData{Chrome: chromeFor(session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, Candidates: candidates, Query: query})
 }
 
 func (a *App) handleUpdateWork(w http.ResponseWriter, r *http.Request) {

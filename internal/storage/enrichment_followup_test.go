@@ -72,12 +72,36 @@ func TestAutoConfirmRejectsConcurrentManualConfirmation(t *testing.T) {
 	}
 }
 
+func attachWorkForEnrichmentTest(t *testing.T, s *Store, ctx context.Context, id int64) {
+	t.Helper()
+	if err := s.EnsureLibrary(ctx, "Test", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	var lib, album int64
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM albums LIMIT 1`).Scan(&album); errors.Is(err, sql.ErrNoRows) {
+		r, e := s.db.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key) VALUES(?,'Test','Test','test')`, lib)
+		if e != nil {
+			t.Fatal(e)
+		}
+		album, _ = r.LastInsertId()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddWorkAlbum(ctx, id, album, "other"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkTitleEditClearsPendingAndMiss(t *testing.T) {
 	store, ctx := openEnrichmentTestStore(t)
 	work, err := store.CreateWork(ctx, WorkInput{Title: "Old", Type: "anime"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	attachWorkForEnrichmentTest(t, store, ctx, work.ID)
 	if err = store.SetWorkEnrichmentMiss(ctx, work.ID, "bangumi"); err != nil {
 		t.Fatal(err)
 	}
@@ -180,6 +204,7 @@ func TestWorkTypeAndYearEditRetryRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attachWorkForEnrichmentTest(t, store, ctx, work.ID)
 	if err = store.SetWorkEnrichmentMiss(ctx, work.ID, "bangumi"); err != nil {
 		t.Fatal(err)
 	}

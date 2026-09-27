@@ -29,6 +29,7 @@ type libraryPageData struct {
 	Genres                                               []string
 	Years                                                []int
 	AlbumDetail                                          *storage.Album
+	AlbumWorks                                           []storage.AlbumWorkView
 	Total                                                int64
 	TotalLabel                                           string
 	Page, PageCount, PageSize                            int
@@ -443,6 +444,9 @@ func (a *App) handleAlbumPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		data.Artists, err = a.store.ArtistsForAlbum(r.Context(), data.AlbumDetail.ID)
+	}
+	if err == nil {
+		data.AlbumWorks, err = a.store.WorksForAlbum(r.Context(), data.AlbumDetail.ID)
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

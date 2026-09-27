@@ -19,6 +19,8 @@
       </form>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    <form method="post" action="/admin/works/refresh"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button>重算自动关联</button></form>
+    {{if .Unreferenced}}<section class="feature-card"><h2>受保护但无引用的作品（待处理，共 {{.UnreferencedTotal}} 个，最多展示 200 个）</h2>{{range .Unreferenced}}<p><a href="/admin/works/{{.ID}}">{{.Title}}</a> · {{workTypeLabel .Type}}</p>{{end}}</section>{{end}}
 
     <form class="focus-bar" method="get">
       <input type="hidden" name="q" value="{{.Query}}">

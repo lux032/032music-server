@@ -38,17 +38,22 @@
 
     <div class="album-columns work-columns">
       <section id="tracks" class="album-content">
-        <div class="section-title"><h2>关联曲目</h2><span>{{.Work.TrackCount}} 首</span></div>
+        <section class="feature-card"><h2>关联专辑</h2>
+        {{range .Albums}}<article><a href="/admin/albums/{{.AlbumID}}">{{.Title}}</a> · {{workRoleLabel .Role}} · {{workSourceLabel .Source}}
+        <form method="post" action="/admin/works/{{$.Work.ID}}/albums/{{.AlbumID}}/remove"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button>解除关联</button></form></article>{{else}}<p>尚无关联专辑</p>{{end}}
+        <form method="post" action="/admin/works/{{.Work.ID}}/albums"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><label>专辑 ID<input name="albumId" type="number" min="1" required></label><label>角色<select name="role"><option value="other">相关</option><option value="ost">原声集</option><option value="op">片头曲</option><option value="ed">片尾曲</option><option value="theme">主题曲</option><option value="insert">插入歌</option><option value="character">角色歌</option><option value="image_song">印象曲</option></select></label><button>手动添加关联</button></form>
+        </section>
+        <div class="section-title"><h2>独立关联曲目及曲目级覆盖</h2><span>{{len .Tracks}} 首</span></div>
         <div class="detail-tracks work-tracks">
           {{range .Tracks}}
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="tieup-role playable-number">
-              <span class="num-text">{{.Role}}{{if .Sequence}}{{.Sequence}}{{end}}</span>
+              <span class="num-text">{{workRoleLabel .Role}}{{if .Sequence}}{{.Sequence}}{{end}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
             <div>
               <strong>{{.Title}}</strong>
-              <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Season}} · 第 {{.Season}} 季{{end}} · {{.Source}}</small>
+              <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Season}} · 第 {{.Season}} 季{{end}} · {{workSourceLabel .Source}}</small>
             </div>
             {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
@@ -80,14 +85,14 @@
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="trackId" value="{{.ID}}">
                 <select name="role">
-                  <option value="op">OP</option>
-                  <option value="ed">ED</option>
-                  <option value="insert">插曲</option>
+                  <option value="op">片头曲</option>
+                  <option value="ed">片尾曲</option>
+                  <option value="insert">插入歌</option>
                   <option value="theme">主题曲</option>
                   <option value="character">角色歌</option>
-                  <option value="ost">OST</option>
+                  <option value="ost">原声集</option>
                   <option value="image_song">印象曲</option>
-                  <option value="other">其他</option>
+                  <option value="other">相关</option>
                 </select>
                 <input type="number" name="season" min="0" value="0" title="季数">
                 <input type="number" name="sequence" min="0" value="0" title="序号">

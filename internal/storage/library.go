@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -467,13 +468,27 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			return err
 		}
 	}
+	// A changed track may change its role independently of the album title.
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET work_fingerprint=NULL WHERE id=?`, albumID); err != nil {
+		return err
+	}
 	// Rebuild only scanner-created associations. Manual links are preserved.
 	if _, err = tx.ExecContext(ctx, `DELETE FROM work_tracks WHERE track_id=? AND source='auto'`, trackID); err != nil {
 		return err
 	}
-	for _, association := range metadata.InferWorkAssociations(m.Title, m.Album, input.RelativePath, m.Raw) {
-		if err = ensureAutoWorkAssociation(ctx, tx, trackID, association); err != nil {
-			return fmt.Errorf("infer work association: %w", err)
+	for _, association := range metadata.InferTrackWorkFromTags(m.Raw, m.Title) {
+		if _, err = tx.ExecContext(ctx, `SAVEPOINT infer_work`); err != nil {
+			return err
+		}
+		_, inferErr := ensureAutoWorkAssociation(ctx, tx, trackID, albumID, association)
+		if inferErr != nil {
+			if _, err = tx.ExecContext(ctx, `ROLLBACK TO infer_work`); err != nil {
+				return err
+			}
+			slog.Error("infer work association", "trackId", trackID, "error", inferErr)
+		}
+		if _, err = tx.ExecContext(ctx, `RELEASE infer_work`); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()
@@ -840,7 +855,7 @@ func (s *Store) UpdateAlbum(ctx context.Context, id int64, edit AlbumEdit) error
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `UPDATE albums SET user_title=NULLIF(?,''),user_performed_by=NULLIF(?,''),user_album_type=NULLIF(?,''),user_version=NULLIF(?,''),user_release_year=NULLIF(?,0),user_release_date=NULLIF(?,''),user_original_release_date=NULLIF(?,''),user_label=NULLIF(?,''),user_catalog_number=NULLIF(?,''),user_country=NULLIF(?,''),user_review=NULLIF(?,''),user_is_compilation=?,user_is_live=?,user_is_bootleg=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, strings.TrimSpace(edit.Title), strings.TrimSpace(edit.PerformedBy), strings.TrimSpace(edit.AlbumType), strings.TrimSpace(edit.Version), edit.Year, strings.TrimSpace(edit.ReleaseDate), strings.TrimSpace(edit.OriginalReleaseDate), strings.TrimSpace(edit.Label), strings.TrimSpace(edit.CatalogNumber), strings.TrimSpace(edit.Country), strings.TrimSpace(edit.Review), boolInt(edit.Compilation), boolInt(edit.Live), boolInt(edit.Bootleg), id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET work_fingerprint=NULL,user_title=NULLIF(?,''),user_performed_by=NULLIF(?,''),user_album_type=NULLIF(?,''),user_version=NULLIF(?,''),user_release_year=NULLIF(?,0),user_release_date=NULLIF(?,''),user_original_release_date=NULLIF(?,''),user_label=NULLIF(?,''),user_catalog_number=NULLIF(?,''),user_country=NULLIF(?,''),user_review=NULLIF(?,''),user_is_compilation=?,user_is_live=?,user_is_bootleg=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, strings.TrimSpace(edit.Title), strings.TrimSpace(edit.PerformedBy), strings.TrimSpace(edit.AlbumType), strings.TrimSpace(edit.Version), edit.Year, strings.TrimSpace(edit.ReleaseDate), strings.TrimSpace(edit.OriginalReleaseDate), strings.TrimSpace(edit.Label), strings.TrimSpace(edit.CatalogNumber), strings.TrimSpace(edit.Country), strings.TrimSpace(edit.Review), boolInt(edit.Compilation), boolInt(edit.Live), boolInt(edit.Bootleg), id); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM album_genre_overrides WHERE album_id=?`, id); err != nil {
@@ -866,6 +881,9 @@ func (s *Store) UpdateTrack(ctx context.Context, id int64, title string, disc, n
 		return err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET work_fingerprint=NULL WHERE id=(SELECT album_id FROM tracks WHERE id=?)`, id); err != nil {
+		return err
+	}
 	if disc < 1 {
 		disc = 1
 	}

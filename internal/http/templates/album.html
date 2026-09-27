@@ -42,6 +42,9 @@
       </div>
     </section>
 
+    <section class="feature-card"><h2>关联作品</h2>
+      {{range .AlbumWorks}}<p><a href="/admin/works/{{.ID}}">{{.Title}}</a> · {{workTypeLabel .Type}} · {{workRoleLabel .Role}} · {{workSourceLabel .Source}}{{if .TrackTitle}} · 曲目：{{.TrackTitle}}{{end}}</p>{{else}}<p>暂无关联作品</p>{{end}}
+    </section>
     <div class="album-columns">
       <section class="album-content">
         <div class="section-title"><h2>曲目</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div>
@@ -112,6 +115,7 @@
             <fieldset>
               <legend>基本信息</legend>
               <label>专辑标题<input name="title" value="{{.AlbumDetail.Title}}"></label>
+              <p>作品关联将在下次扫描或手动重算后更新。</p>
               <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
               <div class="form-grid">
                 <label>专辑类型<select name="albumType">

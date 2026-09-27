@@ -126,6 +126,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"formatTime":            formatAdminTime,
 		"albumTypeLabel":        albumTypeLabel,
 		"workTypeLabel":         workTypeLabel,
+		"workRoleLabel":         workRoleLabel,
+		"workSourceLabel":       workSourceLabel,
 		"playbackStateLabel":    playbackStateLabel,
 		"enrichmentRunProgress": enrichmentRunProgress,
 		"enrichmentTargetLabel": enrichmentTargetLabel,
@@ -213,10 +215,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PATCH /api/v1/works/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateWork)))
 	mux.Handle("DELETE /api/v1/works/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDeleteWork)))
 	mux.Handle("GET /api/v1/works/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorkTracks)))
+	mux.Handle("GET /api/v1/works/{id}/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorkAlbums)))
+	mux.Handle("POST /api/v1/works/{id}/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAddWorkAlbum)))
+	mux.Handle("DELETE /api/v1/works/{id}/albums/{albumId}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRemoveWorkAlbum)))
 	mux.Handle("POST /api/v1/works/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAddWorkTrack)))
 	mux.Handle("DELETE /api/v1/works/{id}/tracks/{trackId}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRemoveWorkTrack)))
 	mux.Handle("GET /api/v1/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbums)))
 	mux.Handle("GET /api/v1/albums/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbum)))
+	mux.Handle("GET /api/v1/albums/{id}/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbumWorks)))
 	mux.Handle("GET /api/v1/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITracks)))
 	mux.Handle("GET /api/v1/tracks/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrack)))
 	mux.Handle("GET /api/v1/tracks/{id}/similar", a.requireAPIOrAdmin(a.withSimilaritySlot(http.HandlerFunc(a.handleSimilarTracks))))
@@ -313,6 +319,9 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleWorkPage)))
 	mux.Handle("POST /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateWork)))
 	mux.Handle("POST /admin/works/{id}/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteWork)))
+	mux.Handle("POST /admin/works/{id}/albums", a.requireAdmin(http.HandlerFunc(a.handleAddWorkAlbum)))
+	mux.Handle("POST /admin/works/{id}/albums/{albumId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveWorkAlbum)))
+	mux.Handle("POST /admin/works/refresh", a.requireAdmin(http.HandlerFunc(a.handleRefreshWorks)))
 	mux.Handle("POST /admin/works/{id}/tracks", a.requireAdmin(http.HandlerFunc(a.handleAddWorkTrack)))
 	mux.Handle("POST /admin/works/{id}/tracks/{trackId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveWorkTrack)))
 	mux.Handle("GET /admin/albums", a.requireAdmin(http.HandlerFunc(a.handleAlbumsPage)))

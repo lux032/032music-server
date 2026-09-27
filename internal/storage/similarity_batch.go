@@ -32,18 +32,23 @@ func (s *Store) similarityBatch(ctx context.Context, ids []int64) (map[int64]*si
 			return nil, err
 		}
 		for _, spec := range []struct {
-			q     string
-			apply func(*similarityMeta, int64)
+			q      string
+			copies int
+			apply  func(*similarityMeta, int64)
 		}{
-			{`SELECT ta.track_id,COALESCE(ar.merged_into_artist_id,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role='primary' AND ta.track_id IN (` + in + `)`, func(m *similarityMeta, n int64) { m.primary = set(m.primary, n) }},
-			{`SELECT ta.track_id,COALESCE(ar.merged_into_artist_id,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND ta.track_id IN (` + in + `)`, func(m *similarityMeta, n int64) { m.credit = set(m.credit, n) }},
-			{`SELECT track_id,genre_id FROM track_genre_overrides WHERE track_id IN (` + in + `)`, func(m *similarityMeta, n int64) { m.genre = set(m.genre, n) }},
-			{`SELECT g.track_id,g.genre_id FROM track_genres g WHERE g.track_id IN (` + in + `) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides o WHERE o.track_id=g.track_id)`, func(m *similarityMeta, n int64) { m.genre = set(m.genre, n) }},
-			{`SELECT track_id,work_id FROM work_tracks WHERE track_id IN (` + in + `)`, func(m *similarityMeta, n int64) { m.work = set(m.work, n) }},
-			{`SELECT track_id,playlist_id FROM playlist_items WHERE track_id IN (` + in + `)`, func(m *similarityMeta, n int64) { m.playlists = set(m.playlists, n) }},
-			{`SELECT track_id,1 FROM audio_files WHERE status='available' AND track_id IN (` + in + `)`, func(m *similarityMeta, _ int64) { m.available = true }},
+			{`SELECT ta.track_id,COALESCE(ar.merged_into_artist_id,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role='primary' AND ta.track_id IN (` + in + `)`, 1, func(m *similarityMeta, n int64) { m.primary = set(m.primary, n) }},
+			{`SELECT ta.track_id,COALESCE(ar.merged_into_artist_id,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND ta.track_id IN (` + in + `)`, 1, func(m *similarityMeta, n int64) { m.credit = set(m.credit, n) }},
+			{`SELECT track_id,genre_id FROM track_genre_overrides WHERE track_id IN (` + in + `)`, 1, func(m *similarityMeta, n int64) { m.genre = set(m.genre, n) }},
+			{`SELECT g.track_id,g.genre_id FROM track_genres g WHERE g.track_id IN (` + in + `) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides o WHERE o.track_id=g.track_id)`, 1, func(m *similarityMeta, n int64) { m.genre = set(m.genre, n) }},
+			{`SELECT track_id,work_id FROM work_tracks WHERE track_id IN (` + in + `) UNION SELECT t.id,aw.work_id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE t.id IN (` + in + `)`, 2, func(m *similarityMeta, n int64) { m.work = set(m.work, n) }},
+			{`SELECT track_id,playlist_id FROM playlist_items WHERE track_id IN (` + in + `)`, 1, func(m *similarityMeta, n int64) { m.playlists = set(m.playlists, n) }},
+			{`SELECT track_id,1 FROM audio_files WHERE status='available' AND track_id IN (` + in + `)`, 1, func(m *similarityMeta, _ int64) { m.available = true }},
 		} {
-			rows, err = s.db.QueryContext(ctx, spec.q, args...)
+			queryArgs := args
+			if spec.copies == 2 {
+				queryArgs = append(append([]any{}, args...), args...)
+			}
+			rows, err = s.db.QueryContext(ctx, spec.q, queryArgs...)
 			if err != nil {
 				return nil, err
 			}
@@ -155,13 +160,19 @@ func (s *Store) similarityCandidates(ctx context.Context, m similarityMeta, smal
 		}
 		add(ids)
 	}
-	collect := func(q string, keys map[int64]bool, cap int) error {
+	collect := func(q string, keys map[int64]bool, cap, copies int) error {
 		used := 0
 		for i, key := range sortedKeys(keys) {
 			if i >= 50 || used >= cap {
 				break
 			}
-			ids, e := queryIDs(ctx, s, q, key, m.track.ID, cap-used)
+			var ids []int64
+			var e error
+			if copies == 2 {
+				ids, e = queryIDs(ctx, s, q, key, key, m.track.ID, cap-used)
+			} else {
+				ids, e = queryIDs(ctx, s, q, key, m.track.ID, cap-used)
+			}
 			if e != nil {
 				return e
 			}
@@ -170,7 +181,7 @@ func (s *Store) similarityCandidates(ctx context.Context, m similarityMeta, smal
 		}
 		return nil
 	}
-	if e := collect(`SELECT DISTINCT track_id FROM work_tracks WHERE work_id=? AND track_id<>? ORDER BY track_id LIMIT ?`, m.work, caps[2]); e != nil {
+	if e := collect(`SELECT track_id FROM (SELECT track_id FROM work_tracks WHERE work_id=? UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=?) WHERE track_id<>? ORDER BY track_id LIMIT ?`, m.work, caps[2], 2); e != nil {
 		return nil, e
 	}
 	used := 0
@@ -194,7 +205,7 @@ func (s *Store) similarityCandidates(ctx context.Context, m similarityMeta, smal
 			add(ids)
 		}
 	}
-	if e := collect(`SELECT track_id FROM playlist_items WHERE playlist_id=? AND track_id<>? ORDER BY position LIMIT ?`, m.playlists, caps[4]); e != nil {
+	if e := collect(`SELECT track_id FROM playlist_items WHERE playlist_id=? AND track_id<>? ORDER BY position LIMIT ?`, m.playlists, caps[4], 1); e != nil {
 		return nil, e
 	}
 	return sortedKeys(out), nil

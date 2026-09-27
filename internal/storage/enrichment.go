@@ -238,8 +238,10 @@ func (s *Store) AlbumsForEnrichment(ctx context.Context, source string, force bo
 	return values, rows.Err()
 }
 
+// WorksForEnrichment schedules only referenced works; an unlinked manual work
+// is not automatically enriched until associated with a track or album.
 func (s *Store) WorksForEnrichment(ctx context.Context, source string, force bool, limit int, targetID ...int64) ([]WorkEnrichmentTarget, error) {
-	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0) FROM works w WHERE (? OR (NOT EXISTS(SELECT 1 FROM work_external_profiles p WHERE p.work_id=w.id AND p.source=?) AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
+	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0) FROM works w WHERE (EXISTS(SELECT 1 FROM album_works aw WHERE aw.work_id=w.id) OR EXISTS(SELECT 1 FROM work_tracks wt WHERE wt.work_id=w.id)) AND (? OR (NOT EXISTS(SELECT 1 FROM work_external_profiles p WHERE p.work_id=w.id AND p.source=?) AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
 	args := []any{boolInt(force), source, source, source, source, source}
 	if len(targetID) > 0 && targetID[0] > 0 {
 		query += ` AND w.id=?`
@@ -653,7 +655,15 @@ func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candid
 		if strings.TrimSpace(f.value) == "" {
 			continue
 		}
-		r, e := tx.ExecContext(ctx, `UPDATE works SET `+f.name+`=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND `+f.condition, f.arg, workID)
+		condition := f.condition
+		if f.name == "type" {
+			condition += ` AND NOT EXISTS(SELECT 1 FROM works other JOIN works current ON current.id=? WHERE other.id<>current.id AND other.normalized_title=current.normalized_title AND other.type=? AND IFNULL(other.year,0)=IFNULL(current.year,0))`
+		}
+		args := []any{f.arg, workID}
+		if f.name == "type" {
+			args = append(args, workID, f.arg)
+		}
+		r, e := tx.ExecContext(ctx, `UPDATE works SET `+f.name+`=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND `+condition, args...)
 		if e != nil {
 			return e
 		}

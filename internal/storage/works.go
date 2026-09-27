@@ -128,7 +128,11 @@ func (s *Store) UpdateWork(ctx context.Context, id int64, input WorkInput) (Work
 		return Work{}, err
 	}
 	key := metadata.Normalize(input.Title)
-	_, err = tx.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,reading_title=NULLIF(?,''),translated_title=NULLIF(?,''),type=?,year=NULLIF(?,0),poster_url=NULLIF(?,''),external_id=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, input.Title, key, input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID, id)
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_aliases(normalized_key,work_id) VALUES(?,?),(?,?)`, previousTitle, id, key, id)
+	if err != nil {
+		return Work{}, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,origin='manual',reading_title=NULLIF(?,''),translated_title=NULLIF(?,''),type=?,year=NULLIF(?,0),poster_url=NULLIF(?,''),external_id=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, input.Title, key, input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID, id)
 	if err != nil {
 		return Work{}, fmt.Errorf("update work: %w", err)
 	}
@@ -150,19 +154,33 @@ func (s *Store) UpdateWork(ctx context.Context, id int64, input WorkInput) (Work
 }
 
 func (s *Store) DeleteWork(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM works WHERE id=?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_work_suppressions(album_id,inferred_key) SELECT aw.album_id,aw.inferred_key FROM album_works aw JOIN works w ON w.id=aw.work_id WHERE aw.work_id=? AND aw.inferred_key IS NOT NULL`, id)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT wt.track_id,wt.inferred_key FROM work_tracks wt WHERE wt.work_id=? AND wt.source='auto' AND wt.inferred_key IS NOT NULL`, id)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM works WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) WorkByID(ctx context.Context, id int64) (Work, error) {
 	var value Work
-	err := s.db.QueryRowContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(DISTINCT track_id) FROM work_tracks WHERE work_id=works.id),created_at,updated_at FROM works WHERE id=?`, id).Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE id=?`, id).Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt)
 	return value, err
 }
 
@@ -176,7 +194,7 @@ func (s *Store) ListWorks(ctx context.Context, filter WorkFilters) ([]Work, erro
 		order = "updated_at DESC,id DESC"
 	}
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(DISTINCT track_id) FROM work_tracks WHERE work_id=works.id),created_at,updated_at FROM works WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -248,18 +266,33 @@ func (s *Store) RemoveWorkTrack(ctx context.Context, workID, trackID int64, role
 		query += ` AND role=? AND season=? AND sequence=?`
 		args = append(args, strings.ToLower(strings.TrimSpace(role)), season, sequence)
 	}
-	result, err := s.db.ExecContext(ctx, query, args...)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	suppressQuery := `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT wt.track_id,wt.inferred_key FROM work_tracks wt WHERE wt.work_id=? AND wt.track_id=? AND wt.source='auto' AND wt.inferred_key IS NOT NULL`
+	if strings.TrimSpace(role) != "" {
+		suppressQuery += ` AND wt.role=? AND wt.season=? AND wt.sequence=?`
+	}
+	if _, err = tx.ExecContext(ctx, suppressQuery, args...); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return tx.Commit()
 }
 
+// TracksForWork returns one row per track. Track-level links report their
+// stored source ('manual'/'auto'); tracks reached only through an album-level
+// album_works link report source 'album' (a virtual source, not stored).
 func (s *Store) TracksForWork(ctx context.Context, workID int64) ([]WorkTrack, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0),wt.role,wt.season,wt.sequence,wt.source FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE wt.work_id=? ORDER BY wt.season,wt.role,wt.sequence,a.sort_title,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id`, workID)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0),wt.role,wt.season,wt.sequence,wt.source FROM (SELECT track_id,role,season,sequence,source FROM (SELECT track_id,role,season,sequence,source,ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY CASE source WHEN 'manual' THEN 0 ELSE 1 END,role,season,sequence) rank FROM work_tracks WHERE work_id=?) WHERE rank=1 UNION ALL SELECT t.id,aw.role,aw.season,0,'album' FROM album_works aw JOIN tracks t ON t.album_id=aw.album_id WHERE aw.work_id=? AND NOT EXISTS(SELECT 1 FROM work_tracks wt2 WHERE wt2.work_id=aw.work_id AND wt2.track_id=t.id)) wt JOIN tracks t ON t.id=wt.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id ORDER BY wt.season,wt.role,wt.sequence,a.sort_title,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id`, workID, workID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,43 +321,65 @@ func (s *Store) TracksForWork(ctx context.Context, workID int64) ([]WorkTrack, e
 	return values, nil
 }
 
-func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID int64, association metadata.WorkAssociation) error {
-	if strings.TrimSpace(association.Title) == "" {
-		return nil
+// ensureAutoWorkAssociation writes only explicit tags that identify a work
+// different from the album's current or intentionally suppressed work.
+func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID, albumID int64, association metadata.WorkAssociation) (bool, error) {
+	key := inferredWorkKey(association)
+	trackKeys, err := suppressionKeys(ctx, tx, `SELECT inferred_key FROM track_work_suppressions WHERE track_id=?`, trackID)
+	if err != nil {
+		return false, err
 	}
-	workType := association.Type
-	if _, ok := validWorkTypes[workType]; !ok {
-		workType = "other"
-	}
-	role := association.Role
-	if _, ok := validWorkRoles[role]; !ok {
-		role = "other"
-	}
-	key := metadata.Normalize(association.Title)
-	// Work identity is (normalized_title, type, year). Auto-inference has no
-	// year, so it attaches to an existing work of the same title+type when
-	// one exists (preferring an exact NULL year, then the oldest row), and
-	// only creates a new work otherwise. Same-titled works of a different
-	// type or year are deliberately NOT merged (M4).
-	var workID int64
-	var existingType string
-	err := tx.QueryRowContext(ctx, `SELECT id,type FROM works WHERE normalized_title=? AND (type=? OR type='other') ORDER BY CASE WHEN type=? THEN 0 ELSE 1 END,CASE WHEN year IS NULL THEN 0 ELSE 1 END,id LIMIT 1`, key, workType, workType).Scan(&workID, &existingType)
-	if errors.Is(err, sql.ErrNoRows) {
-		result, insertErr := tx.ExecContext(ctx, `INSERT INTO works(title,normalized_title,type) VALUES(?,?,?)`, association.Title, key, workType)
-		if insertErr != nil {
-			return insertErr
+	for _, stored := range trackKeys {
+		if workKeysMatch(stored, key) {
+			return false, nil
 		}
-		workID, err = result.LastInsertId()
+	}
+	albumKeys, err := suppressionKeys(ctx, tx, `SELECT inferred_key FROM album_work_suppressions WHERE album_id=?`, albumID)
+	if err != nil {
+		return false, err
+	}
+	for _, stored := range albumKeys {
+		if workIdentityMatch(stored, association.Title, association.Season) {
+			return false, nil
+		}
+	}
+	input, err := loadAlbumWorkInput(ctx, tx, albumID)
+	if err != nil {
+		return false, err
+	}
+	if inferred, ok := metadata.InferAlbumWork(input.title, input.folder, input.compilation); ok && normalizedWorkIdentity(inferred.Title) == normalizedWorkIdentity(association.Title) && inferred.Season == association.Season {
+		return false, nil
+	}
+	id, created, err := resolveAutoWork(ctx, tx, association, 0)
+	if err != nil {
+		return false, err
+	}
+	var skip bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM album_works WHERE album_id=? AND work_id=?)`, albumID, id).Scan(&skip)
+	if err != nil || skip {
+		return created, err
+	}
+	if len(albumKeys) > 0 {
+		var aliases []string
+		aliases, err = suppressionKeys(ctx, tx, `SELECT normalized_key FROM work_aliases WHERE work_id=?`, id)
 		if err != nil {
-			return err
+			return created, err
 		}
-	} else if err != nil {
-		return err
-	} else if existingType == "other" && workType != "other" {
-		if _, err = tx.ExecContext(ctx, `UPDATE works SET type=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, workType, workID); err != nil {
-			return err
+		for _, stored := range albumKeys {
+			storedTitle, _, storedSeason := splitInferredKey(stored)
+			if storedSeason != association.Season {
+				continue
+			}
+			for _, alias := range aliases {
+				if aliasSeason := metadata.WorkSeasonNumber(alias); aliasSeason != 0 && aliasSeason != storedSeason {
+					continue
+				}
+				if normalizedWorkIdentity(alias) == normalizedWorkIdentity(storedTitle) {
+					return created, nil
+				}
+			}
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_tracks(work_id,track_id,role,season,sequence,source) VALUES(?,?,?,?,?,'auto') ON CONFLICT(work_id,track_id,role,season,sequence) DO NOTHING`, workID, trackID, role, association.Season, association.Sequence)
-	return err
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_tracks(work_id,track_id,role,season,sequence,source,inferred_key) VALUES(?,?,?,?,?,'auto',?)`, id, trackID, association.Role, association.Season, association.Sequence, key)
+	return created, err
 }

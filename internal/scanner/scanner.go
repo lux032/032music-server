@@ -53,6 +53,24 @@ func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, lib
 	return &Manager{baseCtx: baseCtx, store: store, logger: logger, library: library, artworkDirectory: filepath.Join(dataDirectory, "artwork")}
 }
 
+var ErrScanRunning = errors.New("a scan is already running")
+
+// RefreshAlbumWorks holds the same mutex and running flag as Start, so scans
+// and manual refreshes cannot overwrite each other's associations.
+func (m *Manager) RefreshAlbumWorks(ctx context.Context) (storage.RefreshStats, error) {
+	m.mu.Lock()
+	if m.running {
+		m.mu.Unlock()
+		return storage.RefreshStats{}, ErrScanRunning
+	}
+	m.running = true
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
+	refreshCtx, cancel := context.WithCancel(m.baseCtx)
+	defer cancel()
+	return m.store.RefreshAlbumWorks(refreshCtx, true)
+}
+
 // Wait blocks until the currently running scan (if any) has finished. Call
 // after cancelling the base context during shutdown.
 func (m *Manager) Wait() { m.wg.Wait() }
@@ -219,6 +237,9 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 	if err = m.store.CleanupOrphans(ctx); err != nil {
 		m.fail(ctx, jobID, err)
 		return
+	}
+	if _, refreshErr := m.store.RefreshAlbumWorks(ctx, false); refreshErr != nil {
+		m.logger.Error("refresh album works", "error", refreshErr)
 	}
 	if err = m.store.FinishScanJob(ctx, jobID, "completed", missing, ""); err != nil {
 		m.logger.Error("finish scan job", "error", err)

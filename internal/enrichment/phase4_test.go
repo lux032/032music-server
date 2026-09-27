@@ -40,6 +40,9 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = store.AddWorkAlbum(ctx, work.ID, albums[0].ID, "other"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -115,9 +118,13 @@ func TestStartRunAbortsAfterConsecutiveFailures(t *testing.T) {
 		requests.Add(1)
 		http.Error(w, "down", http.StatusBadGateway)
 	})
-	manager, store, _, _ := phase4TestManager(t, handler)
+	manager, store, albumID, _ := phase4TestManager(t, handler)
 	for i := 0; i < maxConsecutiveFailures+5; i++ {
-		if _, err := store.CreateWork(context.Background(), storage.WorkInput{Title: fmt.Sprintf("Work %d", i), Type: "anime"}); err != nil {
+		created, err := store.CreateWork(context.Background(), storage.WorkInput{Title: fmt.Sprintf("Work %d", i), Type: "anime"})
+		if err == nil {
+			err = store.AddWorkAlbum(context.Background(), created.ID, albumID, "other")
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
 	}

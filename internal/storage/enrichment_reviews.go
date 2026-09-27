@@ -18,7 +18,7 @@ func (s *Store) WorksByIDs(ctx context.Context, ids []int64) ([]Work, error) {
 		args[i] = id
 		marks[i] = "?"
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(DISTINCT track_id) FROM work_tracks WHERE work_id=works.id),created_at,updated_at FROM works WHERE id IN (%s) ORDER BY id`, strings.Join(marks, ",")), args...)
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE id IN (%s) ORDER BY id`, strings.Join(marks, ",")), args...)
 	if err != nil {
 		return nil, err
 	}

@@ -426,6 +426,7 @@ func TestWorksForEnrichmentIncludesBeyondThousandAndExcludesReviewed(t *testing.
 		if e != nil {
 			t.Fatal(e)
 		}
+		attachWorkForEnrichmentTest(t, store, ctx, work.ID)
 		if i == 500 {
 			reviewed = work.ID
 		}

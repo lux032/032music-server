@@ -96,6 +96,12 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 		if loadErr != nil {
 			return 0, loadErr
 		}
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_works(album_id,work_id,role,season,source,inferred_key) SELECT ?,work_id,role,season,source,inferred_key FROM album_works WHERE album_id=? AND source='manual'`, targetID, id); err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_work_suppressions(album_id,inferred_key) SELECT ?,inferred_key FROM album_work_suppressions WHERE album_id=?`, targetID, id); err != nil {
+			return 0, err
+		}
 		if _, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE album_id=?`, targetID, id); err != nil {
 			return 0, err
 		}
@@ -124,7 +130,7 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 			return 0, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE albums SET disc_count=MAX(disc_count,COALESCE((SELECT MAX(disc_number) FROM tracks WHERE album_id=?),1)),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, targetID, targetID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET work_fingerprint=NULL,disc_count=MAX(disc_count,COALESCE((SELECT MAX(disc_number) FROM tracks WHERE album_id=?),1)),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, targetID, targetID); err != nil {
 		return 0, err
 	}
 	if err = tx.Commit(); err != nil {

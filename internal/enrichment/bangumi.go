@@ -105,6 +105,11 @@ func bangumiTypes(workType string) []int {
 }
 
 func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work storage.WorkEnrichmentTarget, force bool) (string, error) {
+	if _, err := m.store.WorkByID(ctx, work.ID); errors.Is(err, sql.ErrNoRows) {
+		return "skipped", nil
+	} else if err != nil {
+		return "", err
+	}
 	types := bangumiTypes(work.Type)
 	if len(types) == 0 {
 		return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
@@ -167,6 +172,11 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		}
 		candidates = append(candidates, storage.WorkMatchCandidate{Source: "bangumi", ExternalID: strconv.FormatInt(v.ID, 10), Title: v.Name, TranslatedTitle: v.NameCN, Type: candidateType, Year: year, PageURL: "https://bgm.tv/subject/" + strconv.FormatInt(v.ID, 10), PosterURL: poster, Score: score, Evidence: evidence, Payload: raw})
 	}
+	if _, err = m.store.WorkByID(ctx, work.ID); errors.Is(err, sql.ErrNoRows) {
+		return "skipped", nil
+	} else if err != nil {
+		return "", err
+	}
 	if len(candidates) == 0 {
 		if err = m.store.SetWorkEnrichmentMiss(ctx, work.ID, "bangumi"); err != nil {
 			return "", err
@@ -177,6 +187,9 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		return "", err
 	}
 	if err = m.store.ReplaceWorkMatchCandidates(ctx, work.ID, candidates); err != nil {
+		if _, lookupErr := m.store.WorkByID(ctx, work.ID); errors.Is(lookupErr, sql.ErrNoRows) {
+			return "skipped", nil
+		}
 		return "", err
 	}
 	stored, err := m.store.WorkMatchCandidates(ctx, work.ID)
@@ -210,6 +223,9 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		if err = m.store.AutoConfirmWorkMatchCandidate(ctx, work.ID, matchID, runID); errors.Is(err, storage.ErrAutoConfirmConflict) {
 			return "review", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 		} else if err != nil {
+			if _, lookupErr := m.store.WorkByID(ctx, work.ID); errors.Is(lookupErr, sql.ErrNoRows) {
+				return "skipped", nil
+			}
 			return "", err
 		}
 		return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
