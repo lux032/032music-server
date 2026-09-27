@@ -1,3 +1,11 @@
+//go:build performance
+
+// Performance SLA tests. Excluded from ordinary and -race runs by the
+// "performance" build tag; the thresholds assume a normal optimized build.
+// Run explicitly with:
+//
+//	go test -tags=performance -count=1 ./internal/storage -run '^TestSimilarTracksSyntheticPerformance$'
+
 package storage
 
 import (

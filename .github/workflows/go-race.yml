@@ -2,8 +2,13 @@ name: Go race
 
 # Race-detector run for the concurrency-sensitive packages (credential hot
 # swap, session revocation, SQLite retry layer). -race needs cgo and a C
-# toolchain, which the Linux runner provides. Independent of the Docker
-# workflow; it does not change that workflow's jobs.
+# toolchain, which the Linux runner provides.
+#
+# Performance SLA tests are behind the "performance" build tag and are NOT
+# compiled here (no -tags=performance): -race instrumentation slows code
+# several-fold, so timing thresholds are meaningless under it. This job only
+# fails on test failures, panics, detected data races or build errors.
+# Performance SLAs run in go-performance.yml without -race.
 
 on:
   push:
@@ -21,9 +26,14 @@ concurrency:
   group: go-race-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   race:
+    name: Race detector tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -33,7 +43,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Race tests
+      - name: Race tests (excludes performance-tagged tests)
         env:
           CGO_ENABLED: "1"
         run: go test -race -count=1 ./internal/http/... ./internal/storage/...

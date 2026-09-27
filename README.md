@@ -304,6 +304,16 @@ internal/http           API、管理面板和认证
 
 项目保持模块化单体结构，适合直接在 GoLand 中单步调试，也可以使用同一份代码构建 Docker 镜像。
 
+### Go 测试分类
+
+| 类别 | 命令 | CI workflow |
+| --- | --- | --- |
+| 正确性 | `go test ./...` | `go-test.yml` |
+| 数据竞争 | `go test -race -count=1 ./internal/http/... ./internal/storage/...`（需 `CGO_ENABLED=1` 与 C 编译器） | `go-race.yml` |
+| 性能门槛 | `go test -tags=performance -count=1 ./internal/storage -run '^TestSimilarTracksSyntheticPerformance$'` | `go-performance.yml` |
+
+性能 SLA 测试（如 50000 首合成曲库的 SimilarTracks p50 ≤ 600ms）带有 `//go:build performance` 标签，默认与 `-race` 运行都不会编译它们；性能测试只在不带 `-race` 的普通构建下运行。
+
 ### 管理端浏览器交互测试
 
 浏览器测试使用 Playwright Chromium，并在 `127.0.0.1:45439` 启动独立 Go 服务。测试脚本为每次运行创建临时数据目录和合成 MP3，结束后删除；不会读取 `.env`、`.local` 或现有音乐库/数据库，外部补全也不会启用。

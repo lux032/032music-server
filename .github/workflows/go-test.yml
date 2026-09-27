@@ -1,0 +1,52 @@
+name: Go test
+
+# Correctness CI: build, vet and run the ordinary unit/integration test suite
+# in a normal (non -race) build. Performance SLA tests carry the
+# "performance" build tag and run only in go-performance.yml; data-race
+# checks run only in go-race.yml.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    name: Correctness tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Vet performance-tagged tests
+        # Keeps the tagged SLA tests compiling without running them here.
+        run: go vet -tags=performance ./internal/storage
+
+      - name: Unit and integration tests
+        run: go test -count=1 ./...

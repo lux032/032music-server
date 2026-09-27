@@ -1,0 +1,44 @@
+name: Go performance
+
+# Performance SLA CI: runs only the "performance"-tagged tests (50000-track
+# synthetic SimilarTracks / TrackPath fixture) in a normal optimized build.
+# Never combined with -race; the full suite is not re-run here.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  performance:
+    name: Synthetic performance tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: SimilarTracks synthetic performance (50000 tracks)
+        run: >-
+          go test -tags=performance -count=1 -timeout=10m -v
+          ./internal/storage
+          -run '^TestSimilarTracksSyntheticPerformance$'
