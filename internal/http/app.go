@@ -19,6 +19,7 @@ import (
 
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/enrichment"
+	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -45,7 +46,13 @@ type App struct {
 	transcoder                *transcodeManager
 	thumbnails                *thumbnailManager
 	similaritySlots           chan struct{}
+	// lastfm is the optional Last.fm scrobbler; nil disables submission
+	// (plays are still counted locally).
+	lastfm *lastfm.Service
 }
+
+// SetLastFM attaches the Last.fm scrobbling service.
+func (a *App) SetLastFM(service *lastfm.Service) { a.lastfm = service }
 
 type healthResponse struct {
 	Status        string `json:"status"`
@@ -232,8 +239,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PATCH /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUpdatePlaylist)))
 	mux.Handle("DELETE /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleDeletePlaylist)))
 	mux.Handle("PUT /api/v1/playlists/{id}/items", a.requireAPIOrAdmin(http.HandlerFunc(a.handleReplacePlaylistItems)))
-	mux.Handle("POST /api/v1/playback/timeline", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaybackTimeline)))
-	mux.Handle("POST /api/v1/playback/scrobble", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaybackScrobble)))
+	mux.Handle("POST /api/v1/playback/timeline", a.requirePlaybackReport(http.HandlerFunc(a.handlePlaybackTimeline)))
+	mux.Handle("POST /api/v1/playback/scrobble", a.requirePlaybackReport(http.HandlerFunc(a.handlePlaybackScrobble)))
 	mux.Handle("GET /api/v1/playback/history", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaybackHistory)))
 	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIOrAdmin(http.HandlerFunc(a.handleClearPlaybackHistory)))
 	mux.Handle("GET /api/v1/tracks/{id}/lyrics.lrc", a.requireMediaAccess(http.HandlerFunc(a.handleAPITrackLyricsText)))
@@ -276,6 +283,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/artists/{id}/merge", a.requireAdmin(http.HandlerFunc(a.handleMergeArtist)))
 	mux.Handle("GET /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleMetadataSettings)))
 	mux.Handle("POST /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleSaveMetadataSettings)))
+	mux.Handle("POST /admin/settings/lastfm-scrobble", a.requireAdmin(http.HandlerFunc(a.handleSaveLastFMScrobble)))
+	mux.Handle("POST /admin/settings/lastfm-scrobble/connect", a.requireAdmin(http.HandlerFunc(a.handleConnectLastFM)))
+	mux.Handle("GET /admin/settings/lastfm-scrobble/callback", a.requireAdmin(http.HandlerFunc(a.handleLastFMCallback)))
+	mux.Handle("POST /admin/settings/lastfm-scrobble/disconnect", a.requireAdmin(http.HandlerFunc(a.handleDisconnectLastFM)))
+	mux.Handle("POST /admin/settings/lastfm-scrobble/retry", a.requireAdmin(http.HandlerFunc(a.handleRetryLastFM)))
 	mux.Handle("GET /admin/settings/security", a.requireAdmin(http.HandlerFunc(a.handleSecurityPage)))
 	mux.Handle("POST /admin/settings/security/username", a.requireAdmin(http.HandlerFunc(a.handleSecurityUsername)))
 	mux.Handle("POST /admin/settings/security/password", a.requireAdmin(http.HandlerFunc(a.handleSecurityPassword)))
@@ -527,6 +539,37 @@ func (a *App) requireAPIOrAdmin(next http.Handler) http.Handler {
 			return
 		}
 		a.requireAPIToken(next).ServeHTTP(w, r)
+	})
+}
+
+// requirePlaybackReport guards the playback reporting endpoints (timeline and
+// scrobble). Besides the API token and the admin session it accepts the media
+// token — as a Bearer header or a mediaToken/token query parameter — so
+// players that only hold the media token (the one embedded in their stream
+// URLs) can still record plays. The media token grants nothing else here:
+// these endpoints only update play statistics and the Last.fm outbox.
+func (a *App) requirePlaybackReport(next http.Handler) http.Handler {
+	apiOrAdmin := a.requireAPIOrAdmin(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		creds := a.currentCredentials()
+		mediaOK := false
+		if scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
+			mediaOK = token != "" && !creds.apiTokenMatches(token) && creds.mediaTokenMatches(token)
+		} else if r.Header.Get("Authorization") == "" {
+			tokenQuery := r.URL.Query().Get("mediaToken")
+			if tokenQuery == "" {
+				tokenQuery = r.URL.Query().Get("token")
+			}
+			mediaOK = tokenQuery != "" && creds.mediaTokenMatches(tokenQuery)
+		}
+		if mediaOK {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-CSRF-Token")
+			next.ServeHTTP(w, r)
+			return
+		}
+		apiOrAdmin.ServeHTTP(w, r)
 	})
 }
 

@@ -392,14 +392,10 @@ func (s *Store) UpdatePlayback(ctx context.Context, update PlaybackUpdate) error
 	return nil
 }
 
+// Scrobble records a play reported now. See RecordScrobble for the 50%
+// threshold and duplicate rules.
 func (s *Store) Scrobble(ctx context.Context, trackID int64, positionMillis, durationMillis int64) error {
-	if trackID <= 0 || positionMillis < 0 || durationMillis < 0 {
-		return errors.New("invalid scrobble payload")
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO playback_progress(track_id,state,position_ms,duration_ms,play_count,last_played_at,last_completed_at) VALUES(?,'stopped',?,?,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(track_id) DO UPDATE SET state='stopped',position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),play_count=playback_progress.play_count+1,last_played_at=excluded.last_played_at,last_completed_at=excluded.last_completed_at,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, trackID, positionMillis, durationMillis)
-	if err == nil && plausibleClientDuration(durationMillis) {
-		_, _ = s.db.ExecContext(ctx, `UPDATE tracks SET duration_ms=? WHERE id=? AND COALESCE(duration_ms,0)=0`, durationMillis, trackID)
-	}
+	_, err := s.RecordScrobble(ctx, ScrobbleInput{TrackID: trackID, PositionMillis: positionMillis, DurationMillis: durationMillis})
 	return err
 }
 

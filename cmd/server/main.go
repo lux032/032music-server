@@ -13,6 +13,7 @@ import (
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/enrichment"
 	webhttp "github.com/lux032/032music-server/internal/http"
+	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -71,6 +72,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	lastFMService := lastfm.NewService(db, logger)
+	lastFMService.Start(rootCtx)
+	app.SetLastFM(lastFMService)
 	if cfg.MediaTokenGenerated && app.CredentialSources().MediaToken == webhttp.CredentialSourceEnv {
 		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value or set a media token on the admin security page")
 	}
@@ -127,6 +131,7 @@ func run() error {
 	go func() {
 		scannerManager.Wait()
 		enrichmentManager.Wait()
+		lastFMService.Wait()
 		app.WaitTranscodes()
 		close(workersDone)
 	}()

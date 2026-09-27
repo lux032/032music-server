@@ -87,7 +87,7 @@ func TestTrackExtrasOverrideAndArtistRoles(t *testing.T) {
 	if err != nil || needed {
 		t.Fatalf("probe already imported: %v %v", needed, err)
 	}
-	if err = s.Scrobble(ctx, id, 100, 1000); err != nil {
+	if err = s.Scrobble(ctx, id, 600, 1000); err != nil {
 		t.Fatal(err)
 	}
 	track, err = s.TrackByID(ctx, id)

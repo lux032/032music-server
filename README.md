@@ -78,7 +78,7 @@ Copy-Item .env.example .env
 - `MUSIC_SERVER_MUSIC_PATH`：宿主机音乐目录
 - `MUSIC_SERVER_ADMIN_PASSWORD`：生产环境不少于 12 个字符；本地开发配置使用 `admin`
 - `MUSIC_SERVER_API_TOKEN`：不少于 24 个字符的随机 Token
-- `MUSIC_SERVER_MEDIA_TOKEN`：另一个不少于 24 个字符的随机 Token，只允许读取音频和图片
+- `MUSIC_SERVER_MEDIA_TOKEN`：另一个不少于 24 个字符的随机 Token，只允许读取音频和图片，以及上报播放进度/播放记录
 
 随后启动：
 
@@ -272,14 +272,23 @@ Content-Type: application/json
 {"trackId":12,"state":"playing","positionMillis":30000,"durationMillis":240000,"continuing":false}
 ```
 
-`state` 允许 `playing`、`paused`、`buffering` 和 `stopped`。播放达到客户端判定阈值后可记为一次完整播放：
+`state` 允许 `playing`、`paused`、`buffering` 和 `stopped`。播放超过曲目一半后上报一次播放：
 
 ```http
 POST /api/v1/playback/scrobble
 Content-Type: application/json
 
-{"trackId":12,"positionMillis":216000,"durationMillis":240000}
+{"trackId":12,"positionMillis":120000,"durationMillis":240000,"timestamp":"2026-09-27T12:02:00Z"}
 ```
+
+服务端规则（所有客户端一致）：
+
+- **过半计数**：`positionMillis` 需达到曲长的一半（允许 1 秒误差；曲长优先取曲库，其次取上报值）。未达到时返回 `200 {"recorded":false,"reason":"threshold_not_reached"}`，不计数。省略 `positionMillis`（为 0）的旧客户端视为已自行判断。
+- **同一次播放只记一次**：服务端以“上报时间 − 播放位置”估算本次播放的开始时间；与上次计数的开始时间相差不足半首歌的上报（例如 50% 时一次、播完时又一次、客户端重试、多台设备上报同一次播放）返回 `200 {"recorded":false,"reason":"duplicate"}`。重新播放同一首歌会正常计数。
+- `timestamp` 可选，表示客户端观察到该位置的时间（RFC 3339 或 UNIX 秒/毫秒），用于离线补报；缺省为收到请求的时间。
+- 计数成功返回 `204`。启用 Last.fm Scrobble 时同时进入 Last.fm 待提交队列。
+
+**认证**：`timeline` 与 `scrobble` 除 Bearer API Token 和管理员会话外，也接受**媒体 Token**（`Authorization: Bearer <MEDIA_TOKEN>` 或 `?mediaToken=<MEDIA_TOKEN>`），因此只持有媒体 Token、用媒体 URL 播放的客户端也能记录播放。媒体 Token 在这两个接口之外仍然只读。`/api/v1/capabilities` 的 `playback.scrobble` 描述了上述规则。`timeline` 上报 `state=playing` 时，服务端会向 Last.fm 同步“正在播放”。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -299,6 +308,7 @@ internal/storage        SQLite、迁移和查询
 internal/metadata       多格式本地标签与封面解析
 internal/scanner        增量扫描、归档和封面缓存
 internal/enrichment     MusicBrainz / Last.fm 歌手匹配与资料补全
+internal/lastfm         Last.fm Scrobble 客户端与待提交队列
 internal/http           API、管理面板和认证
 ```
 
@@ -340,6 +350,16 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 歌手图片在身份确认或重新匹配时下载到数据目录的 `artist-images` 子目录，页面只通过本地 `/api/v1/artists/{id}/image` 接口读取，不会在每次浏览时请求远程站点。可用来源包括 Last.fm 返回的歌手图，以及 MusicBrainz 关联的 Wikidata/Wikimedia 图片；远端刷新失败不会覆盖已有缓存。
 
 歌手简介按“语言优先级 → 来源优先级”选择，默认顺序为 `zh,ja,en` 和 Wikipedia → Last.fm。Wikipedia 只通过已确认的 MusicBrainz MBID 与 Wikidata 站点链接定位，避免同名歌手误匹配；各来源和语言的结果（包括确实无结果的状态）都会保存在 SQLite 中。歌手页会标出当前来源和语言，也可以为单个歌手固定某个可用版本或恢复全局策略。本地人工简介始终拥有最高优先级。
+
+### Last.fm 播放记录（Scrobble）
+
+在 `/admin/settings/metadata` 的 “Last.fm Scrobble” 卡片中配置：
+
+1. 在 [Last.fm API 账号页](https://www.last.fm/api/account/create) 创建应用，获得 API Key 与 Shared Secret。
+2. API Key 填在上方 Last.fm 卡片（与资料补全共用），Shared Secret 填在 Scrobble 卡片，勾选“启用”并保存。
+3. 点击“连接 Last.fm 账号”，在 Last.fm 页面授权后会自动跳回并保存会话。回调地址由浏览器当前访问的地址推导（反向代理下使用 `X-Forwarded-Proto` / `X-Forwarded-Host`），授权请求 30 分钟内有效且只能使用一次。
+
+之后网页播放器和 App（API Token 或媒体 Token）上报的播放，只要按上文规则被计数、曲长超过 30 秒、且歌手不是 “Unknown Artist”，就会以歌曲的开始播放时间提交到 Last.fm。提交通过 SQLite 发件箱异步完成：Last.fm 不可用或网络失败时按 1 分钟起、最长 1 小时的退避重试，重启不丢失；超过 14 天的记录会被丢弃（Last.fm 不再接受）。会话失效时自动断开并在卡片上提示重新连接，已排队的记录保留。Shared Secret 与会话密钥只保存在本地数据库，管理页不回显。
 
 扫描完成后，只有同时启用“来源”和“参与自动匹配”的数据源才会进入后台匹配。文件标签携带明确 MBID，或 MusicBrainz 与 Last.fm 返回相同 MBID 时，系统才自动确认；其余结果进入审核队列。外部匹配不会自动合并两个本地歌手。
 

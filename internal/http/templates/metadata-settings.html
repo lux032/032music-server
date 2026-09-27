@@ -62,6 +62,48 @@
           <div class="editor-actions"><button type="submit">保存 Last.fm 设置</button></div>
         </section>
       </form>
+      {{with $.LastFMScrobble}}
+      <div class="source-card-form">
+        <section class="source-card" id="lastfm-scrobble">
+          <header>
+            <div><p class="kicker">播放记录</p><h2>Last.fm Scrobble</h2></div>
+            <label class="switch"><input type="checkbox" form="lastfm-scrobble-form" name="scrobble_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+          </header>
+          <p>歌曲播放超过一半时记录一次，并提交到你的 Last.fm 账号（30 秒及以下的歌曲不提交）。网页播放器、使用 API Token 或媒体 Token 上报的客户端都会记录；Last.fm 暂时不可用时会排队自动重试。</p>
+          <p>{{if .Connected}}已连接账号：<strong>{{.Username}}</strong>{{else}}尚未连接 Last.fm 账号。{{end}}{{if not .HasAPIKey}}<br>需要先在上方 Last.fm 卡片填写 API Key。{{end}}{{if .PendingCount}}<br>待提交：{{.PendingCount}} 条（最早 {{.OldestPending}}）{{end}}{{if .LastSuccessAt}}<br>最近成功提交：{{.LastSuccessAt}}{{end}}{{if .LastError}}<br><span class="danger-action">最近错误（{{.LastErrorAt}}）：{{.LastError}}</span>{{end}}</p>
+          <form id="lastfm-scrobble-form" class="source-card-body" method="post" action="/admin/settings/lastfm-scrobble" data-scope-form>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <div class="form-grid thirds">
+              <label>Shared Secret<input type="password" name="lastfm_api_secret" autocomplete="off" placeholder="{{if .HasSecret}}已配置；留空保持不变{{else}}与 API Key 一起在 Last.fm API 账号页获取{{end}}"></label>
+            </div>
+            <label class="switch"><input type="checkbox" name="now_playing_enabled" {{if .NowPlaying}}checked{{end}}> 同步“正在播放”状态</label>
+            <div class="editor-actions"><button type="submit">保存播放记录设置</button></div>
+          </form>
+          {{if or (and .HasAPIKey .HasSecret) .Connected .PendingCount}}
+          <div class="source-card-actions">
+            {{if and .HasAPIKey .HasSecret}}
+            <form method="post" action="/admin/settings/lastfm-scrobble/connect" data-no-pjax>
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button type="submit" class="secondary">{{if .Connected}}重新连接 Last.fm 账号{{else}}连接 Last.fm 账号{{end}}</button>
+            </form>
+            {{end}}
+            {{if .Connected}}
+            <form method="post" action="/admin/settings/lastfm-scrobble/disconnect">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button type="submit" class="secondary">断开账号</button>
+            </form>
+            {{end}}
+            {{if .PendingCount}}
+            <form method="post" action="/admin/settings/lastfm-scrobble/retry">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button type="submit" class="secondary">立即重试提交</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
+        </section>
+      </div>
+      {{end}}
       {{else if eq .Source "vgmdb"}}
       <form class="source-card-form" method="post" data-scope-form>
         <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

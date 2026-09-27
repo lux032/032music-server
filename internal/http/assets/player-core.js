@@ -134,6 +134,9 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     s.currentIndex = index;
     const track = s.queue[s.currentIndex];
     if (!track) return;
+    // Every explicit play is a new listen that may be scrobbled again; the
+    // server discards a repeated report of the same playback.
+    s.lastScrobbledTrackId = null;
 
     updatePlayerMetaUI(track);
     loadLyrics(track.id);
@@ -243,6 +246,7 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     if (currentTrack) scrobbleTrack(currentTrack.id);
 
     if (s.loopMode === 'one') {
+      s.lastScrobbledTrackId = null;
       s.audio.currentTime = 0;
       s.audio.play().catch(console.warn);
     } else if (s.shuffleOn && s.queue.length > 1) {

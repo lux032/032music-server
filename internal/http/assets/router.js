@@ -31,7 +31,9 @@ import { updateTrackRowsUI } from './player-bar.js';
     });
     document.addEventListener('submit', (e) => {
       const form = e.target;
-      if (!(form instanceof HTMLFormElement) || e.defaultPrevented) return;
+      // data-no-pjax forms need a real navigation (e.g. a redirect to an
+      // external authorisation page that fetch() could not follow).
+      if (!(form instanceof HTMLFormElement) || e.defaultPrevented || form.hasAttribute('data-no-pjax')) return;
       const method = (form.getAttribute('method') || 'get').toLowerCase();
       let action;
       try { action = new URL(form.getAttribute('action') || window.location.href, window.location.href); } catch (_) { return; }

@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -33,8 +36,13 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			},
 		},
 		"similarity": map[string]any{"method": "metadata", "distanceRange": []int{0, 1}},
-		"playback":   map[string]any{"skipInference": map[string]any{"thresholdMillis": 30000, "thresholdFraction": 0.5, "windowMinutes": 30, "explicitField": "skipped"}},
-		"artwork":    map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
+		"playback": map[string]any{
+			"skipInference": map[string]any{"thresholdMillis": 30000, "thresholdFraction": 0.5, "windowMinutes": 30, "explicitField": "skipped"},
+			// scrobble: counted once per playback after half of the track;
+			// timeline and scrobble also accept the media token.
+			"scrobble": map[string]any{"thresholdFraction": 0.5, "deduplicated": true, "authentication": []string{"apiToken", "mediaToken", "session"}, "queryParameter": "mediaToken", "lastfm": a.lastfm != nil},
+		},
+		"artwork": map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
 		"media": map[string]any{
 			"streaming": "original", "supportsRange": true,
 			"authentication":      []string{"bearer", "query"},
@@ -187,24 +195,67 @@ func (a *App) handlePlaybackTimeline(w http.ResponseWriter, r *http.Request) {
 		a.writeFeatureError(w, r, err, "timeline_failed")
 		return
 	}
+	if input.State == "playing" && a.lastfm != nil {
+		a.lastfm.NowPlaying(input.TrackID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *App) handlePlaybackScrobble(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		TrackID        int64  `json:"trackId"`
-		PositionMillis int64  `json:"positionMillis"`
-		DurationMillis int64  `json:"durationMillis"`
-		Timestamp      string `json:"timestamp"`
+		TrackID        int64           `json:"trackId"`
+		PositionMillis int64           `json:"positionMillis"`
+		DurationMillis int64           `json:"durationMillis"`
+		Timestamp      json.RawMessage `json:"timestamp"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
-	if err := a.store.Scrobble(r.Context(), input.TrackID, input.PositionMillis, input.DurationMillis); err != nil {
+	reportedAt, err := parseScrobbleTimestamp(input.Timestamp)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	result, err := a.store.RecordScrobble(r.Context(), storage.ScrobbleInput{TrackID: input.TrackID, PositionMillis: input.PositionMillis, DurationMillis: input.DurationMillis, ReportedAt: reportedAt})
+	if err != nil {
 		a.writeFeatureError(w, r, err, "scrobble_failed")
 		return
 	}
+	if result.QueuedForLastFM && a.lastfm != nil {
+		a.lastfm.Wake()
+	}
+	if !result.Recorded {
+		// Accepted but not counted: below the 50% threshold, or a repeated
+		// report of a play that was already counted.
+		writeJSON(w, http.StatusOK, map[string]any{"recorded": false, "reason": result.Reason})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseScrobbleTimestamp accepts the time the client observed the reported
+// position as an RFC 3339 string or UNIX seconds/milliseconds. Absent means
+// "now".
+func parseScrobbleTimestamp(raw json.RawMessage) (time.Time, error) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" || value == `""` {
+		return time.Time{}, nil
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		if parsed, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			return parsed, nil
+		}
+		value = text
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number <= 0 {
+		return time.Time{}, errors.New("timestamp must be RFC 3339 or UNIX seconds/milliseconds")
+	}
+	if number > 1e12 {
+		return time.UnixMilli(number), nil
+	}
+	return time.Unix(number, 0), nil
 }
 
 func (a *App) handlePlaybackHistory(w http.ResponseWriter, r *http.Request) {

@@ -1186,6 +1186,9 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .source-card .editor-actions { margin-top: 2px; border-top: 1px solid var(--line); padding: 16px 0 0; }
 .source-card .switch { display: flex; width: max-content; max-width: 100%; }
 .source-card .switch input { min-width: 17px; }
+.source-card-body { display: grid; gap: 16px; }
+.source-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-card-actions form { margin: 0; }
 .review-list section { gap: 8px; }
 .review-list section:hover, .merge-list article:hover, .playback-list > article:hover { background: var(--bg-soft); }
 .review-list section .candidate-actions { align-self: end; margin-top: 8px; }
