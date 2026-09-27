@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 )
 
@@ -57,6 +58,14 @@ func albumWhere(f Filters) (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
+// albumReleaseDateSort is the effective release date of album alias a as a
+// sortable string, newest first under DESC. A user-edited date wins; a
+// user-edited year that contradicts the tagged date replaces it; otherwise
+// the tagged date, then the tagged year. Tag separators vary (2004.05.12,
+// 2004/05/12), so they are unified to '-'. A bare year sorts after the full
+// dates of that year under DESC, undated albums sort last.
+const albumReleaseDateSort = "REPLACE(REPLACE(COALESCE(NULLIF(a.user_release_date,''),CASE WHEN a.user_release_year IS NOT NULL AND substr(COALESCE(a.release_date,''),1,4)<>CAST(a.user_release_year AS TEXT) THEN CAST(a.user_release_year AS TEXT) END,NULLIF(a.release_date,''),CAST(a.release_year AS TEXT),''),'.','-'),'/','-')"
+
 // albumOrder returns a stable ORDER BY for album browsing. An explicit sort
 // wins; with an active letter index and no explicit sort the historical
 // reading-title order applies. a.id always terminates the key so pagination
@@ -65,6 +74,8 @@ func albumOrder(f Filters) string {
 	switch f.Sort {
 	case "year":
 		return "COALESCE(a.user_release_year,a.release_year,0) DESC,a.sort_title,a.id"
+	case "date":
+		return albumReleaseDateSort + " DESC,a.sort_title,a.id"
 	case "added":
 		return "a.added_at DESC,a.id"
 	case "recentlyPlayed":
@@ -209,6 +220,9 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 			return nil, err
 		}
 	}
+	if err = s.hydrateAlbumArtistLinks(ctx, placeholders, args, byID); err != nil {
+		return nil, err
+	}
 
 	result := make([]Album, 0, len(ids))
 	for _, id := range ids {
@@ -220,6 +234,29 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 		result = append(result, *album)
 	}
 	return result, nil
+}
+
+// hydrateAlbumArtistLinks attaches the credited album artists (id + name,
+// credit order) so browse cards can link each name to its artist page.
+func (s *Store) hydrateAlbumArtistLinks(ctx context.Context, placeholders string, args []any, byID map[int64]*Album) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT aa.album_id,ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id IN (`+placeholders+`) ORDER BY aa.album_id,aa.position,ar.id`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var albumID int64
+		var artist Artist
+		if err = rows.Scan(&albumID, &artist.ID, &artist.Name); err != nil {
+			return err
+		}
+		if album, ok := byID[albumID]; ok {
+			if !slices.ContainsFunc(album.AlbumArtists, func(v Artist) bool { return v.ID == artist.ID }) {
+				album.AlbumArtists = append(album.AlbumArtists, artist)
+			}
+		}
+	}
+	return rows.Err()
 }
 
 // ListArtistOptions returns id+name rows for filter dropdowns without the

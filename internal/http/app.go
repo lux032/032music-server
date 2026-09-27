@@ -301,6 +301,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/works/{id}/tracks", a.requireAdmin(http.HandlerFunc(a.handleAddWorkTrack)))
 	mux.Handle("POST /admin/works/{id}/tracks/{trackId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveWorkTrack)))
 	mux.Handle("GET /admin/albums", a.requireAdmin(http.HandlerFunc(a.handleAlbumsPage)))
+	mux.Handle("POST /admin/albums/merge", a.requireAdmin(http.HandlerFunc(a.handleMergeAlbums)))
+	mux.Handle("POST /admin/albums/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteAlbums)))
 	mux.Handle("GET /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleAlbumPage)))
 	mux.Handle("POST /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateAlbum)))
 	mux.Handle("GET /admin/tracks", a.requireAdmin(http.HandlerFunc(a.handleTracksPage)))

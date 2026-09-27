@@ -240,6 +240,98 @@
     }
   });
 
+  // Album multi-select. Order matters: the first ticked album is the main
+  // album that every later pick is merged into. State lives only for the
+  // current page; any PJAX swap (including the POST result) resets it.
+  let albumSelection = [];
+  function albumCards() { return [...document.querySelectorAll('.album-browser .library-album-card[data-album-id]')]; }
+  function renderAlbumSelection() {
+    const bar = document.querySelector('.album-selection-bar');
+    const grid = document.querySelector('.album-browser');
+    const present = new Set(albumCards().map(card => card.dataset.albumId));
+    albumSelection = albumSelection.filter(item => present.has(item.id));
+    const order = new Map(albumSelection.map((item, index) => [item.id, index]));
+    albumCards().forEach(card => {
+      const index = order.get(card.dataset.albumId);
+      const selected = index !== undefined;
+      card.classList.toggle('is-selected', selected);
+      const toggle = card.querySelector('.album-select');
+      if (toggle) {
+        toggle.setAttribute('aria-pressed', String(selected));
+        toggle.title = selected ? (index === 0 ? '主专辑（点击取消选择）' : `第 ${index + 1} 张（点击取消选择）`) : '选择';
+      }
+      const badge = card.querySelector('.album-main-badge');
+      if (badge) badge.hidden = !(index === 0 && albumSelection.length > 1);
+    });
+    grid?.classList.toggle('is-selecting', albumSelection.length > 0);
+    if (!bar) return;
+    bar.hidden = albumSelection.length === 0;
+    bar.querySelector('[data-selection-count]').textContent = `已选择 ${albumSelection.length} 张专辑`;
+    bar.querySelector('[data-selection-main]').textContent = albumSelection.length > 1 ? `合并时并入主专辑《${albumSelection[0].title}》` : '再选择一张即可合并';
+    const merge = bar.querySelector('[data-album-bulk="merge"]');
+    merge.disabled = albumSelection.length < 2;
+  }
+  function toggleAlbum(card) {
+    const id = card.dataset.albumId;
+    const index = albumSelection.findIndex(item => item.id === id);
+    if (index >= 0) albumSelection.splice(index, 1);
+    else albumSelection.push({ id, title: card.dataset.albumTitle || '' });
+    renderAlbumSelection();
+  }
+  function clearAlbumSelection() {
+    albumSelection = [];
+    renderAlbumSelection();
+  }
+  function submitAlbumBulk(action) {
+    const form = document.querySelector('[data-album-bulk-form]');
+    if (!form || !albumSelection.length || form.classList.contains('is-pending')) return;
+    const count = albumSelection.length;
+    if (action === 'merge') {
+      if (count < 2) return;
+      if (!window.confirm(`将其余 ${count - 1} 张专辑的歌曲全部合并到主专辑《${albumSelection[0].title}》？\n合并后其余专辑会消失，重新扫描也会保持合并。`)) return;
+    } else if (!window.confirm(`从曲库删除选中的 ${count} 张专辑及其全部歌曲？\n磁盘上的音乐文件不会被删除，但之后重新扫描也不会再导入它们。`)) return;
+    form.querySelectorAll('input[name="album"]').forEach(input => input.remove());
+    for (const item of albumSelection) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'album';
+      input.value = item.id;
+      form.appendChild(input);
+    }
+    form.setAttribute('action', action === 'merge' ? '/admin/albums/merge' : '/admin/albums/delete');
+    form.requestSubmit();
+  }
+  // Capture phase: in selection mode a cover click must toggle instead of
+  // reaching the PJAX link handler.
+  document.addEventListener('click', e => {
+    if (!(e.target instanceof Element)) return;
+    const toggle = e.target.closest('.album-select');
+    const card = e.target.closest('.album-browser .library-album-card[data-album-id]');
+    if (toggle && card) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleAlbum(card);
+      return;
+    }
+    if (card && albumSelection.length && e.target.closest('.album-tile-cover') && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleAlbum(card);
+      return;
+    }
+    const bulk = e.target.closest('[data-album-bulk]');
+    if (bulk) {
+      e.preventDefault();
+      if (bulk.dataset.albumBulk === 'cancel') clearAlbumSelection();
+      else submitAlbumBulk(bulk.dataset.albumBulk);
+    }
+  }, true);
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !albumSelection.length || activeDrawer || e.target.closest?.('.album-card-menu[open], .filter-control')) return;
+    e.preventDefault();
+    clearAlbumSelection();
+  });
+
   // Slide-over edit drawers (F1). Row drawers are <details class="edit-drawer">
   // opened by their <summary>; page drawers are sections opened by a
   // [data-drawer-open] link to their id. Without this class every drawer
@@ -345,6 +437,7 @@
   openDrawerFromHash();
 
   document.addEventListener('032:pjax-applied', () => {
+    clearAlbumSelection();
     if (pendingDrawerClose) { clearTimeout(pendingDrawerClose.timer); pendingDrawerClose = null; }
     activeDrawer = null;
     drawerTrigger = null;

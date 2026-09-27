@@ -15,8 +15,8 @@ const browsePrefMaxAge = 365 * 24 * 60 * 60
 // librarySortOptions lists the sort values each list page accepts; the key is
 // also the cookie suffix.
 var librarySortOptions = map[string][]string{
-	"albums":        {"title", "year", "added"},
-	"tracks":        {"title", "year"},
+	"albums":        {"title", "year", "date", "added"},
+	"tracks":        {"title", "year", "date"},
 	"artists-album": {"name", "albums"},
 	"artists-track": {"name", "tracks"},
 	"works":         {"title", "year", "updated"},

@@ -360,3 +360,59 @@ test('artist typeahead Enter selects a matching artist rather than All', async (
   await expect(trigger).toBeFocused();
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
 });
+
+test('album multi-select posts albums in pick order and Escape clears', async ({ page }) => {
+  await page.goto('/admin/albums');
+  const first = page.locator('.library-album-card').first();
+  await expect(first).toBeVisible();
+  const realID = await first.getAttribute('data-album-id');
+  // The fixture has one album; a cloned card gives a second, later-picked one.
+  await page.evaluate(() => {
+    const card = document.querySelector('.library-album-card');
+    const clone = card.cloneNode(true);
+    clone.dataset.albumId = '999999';
+    clone.dataset.albumTitle = 'Clone Album';
+    card.before(clone);
+  });
+  const bar = page.locator('.album-selection-bar');
+  await expect(bar).toBeHidden();
+  const real = page.locator(`.library-album-card[data-album-id="${realID}"]`);
+  await real.hover();
+  await real.locator('.album-select').click();
+  await expect(bar).toBeVisible();
+  await expect(bar.getByRole('button', { name: '合并' })).toBeDisabled();
+  // In selection mode a cover click toggles instead of navigating.
+  await page.locator('.library-album-card[data-album-id="999999"] .album-tile-cover').click();
+  await expect(page).toHaveURL(/\/admin\/albums$/);
+  await expect(bar).toContainText('已选择 2 张专辑');
+  await expect(bar).toContainText('E2E Album');
+  await expect(real.locator('.album-main-badge')).toBeVisible();
+  await expect(page.locator('.library-album-card[data-album-id="999999"] .album-select')).toHaveAttribute('aria-pressed', 'true');
+
+  let body = null;
+  await page.route('**/admin/albums/merge', async route => {
+    body = route.request().postData();
+    await route.fulfill({ status: 500, contentType: 'text/plain', body: 'blocked in test' });
+  });
+  page.once('dialog', dialog => dialog.accept());
+  await bar.getByRole('button', { name: '合并' }).click();
+  await expect.poll(() => body).not.toBeNull();
+  expect(new URLSearchParams(body).getAll('album')).toEqual([realID, '999999']);
+
+  await page.keyboard.press('Escape');
+  await expect(bar).toBeHidden();
+  await expect(page.locator('.library-album-card.is-selected')).toHaveCount(0);
+});
+
+test('album card play icon is centred and artist name opens the artist page', async ({ page }) => {
+  await page.goto('/admin/albums');
+  const card = page.locator('.library-album-card').first();
+  await card.hover();
+  const offset = await card.locator('.play-disc').evaluate(button => {
+    const outer = button.getBoundingClientRect(), icon = button.querySelector('svg').getBoundingClientRect();
+    return Math.abs((icon.left + icon.width / 2) - (outer.left + outer.width / 2)) + Math.abs((icon.top + icon.height / 2) - (outer.top + outer.height / 2));
+  });
+  expect(offset).toBeLessThan(1);
+  await card.locator('.album-card-artists a').first().click();
+  await expect(page).toHaveURL(/\/admin\/artists\/\d+$/);
+});

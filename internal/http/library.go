@@ -159,6 +159,8 @@ func librarySortLabel(value string) string {
 		return "标题"
 	case "year":
 		return "发行年份"
+	case "date":
+		return "发行日期"
 	case "added":
 		return "加入时间"
 	case "name":

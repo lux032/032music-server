@@ -87,6 +87,9 @@ type Album struct {
 	UpdatedAt           string `json:"updatedAt"`
 	LastPlayedAt        string `json:"lastPlayedAt,omitempty"`
 	IsFavorite          bool   `json:"isFavorite"`
+	// AlbumArtists links the album credits on browse pages; only filled by
+	// the list hydration and kept out of the API payload.
+	AlbumArtists []Artist `json:"-"`
 }
 
 type AlbumEdit struct {
@@ -246,32 +249,34 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 	releaseDate := rawFirst(m.Raw, "DATE", "RELEASEDATE")
 	originalDate := rawFirst(m.Raw, "ORIGINALDATE", "ORIGINALYEAR")
 	albumType := inferAlbumType(m.Raw)
-	_, err = tx.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year,disc_count,performed_by,album_type,version,release_date,original_release_date,label,catalog_number,country,is_compilation,is_live,is_bootleg) VALUES(?,?,?,?,NULLIF(?,0),?,?,?,?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?,?) ON CONFLICT(library_id,grouping_key) DO UPDATE SET title=excluded.title,sort_title=excluded.sort_title,release_year=excluded.release_year,disc_count=MAX(albums.disc_count,excluded.disc_count),performed_by=excluded.performed_by,album_type=excluded.album_type,version=COALESCE(excluded.version,albums.version),release_date=COALESCE(excluded.release_date,albums.release_date),original_release_date=COALESCE(excluded.original_release_date,albums.original_release_date),label=COALESCE(excluded.label,albums.label),catalog_number=COALESCE(excluded.catalog_number,albums.catalog_number),country=COALESCE(excluded.country,albums.country),is_compilation=excluded.is_compilation,is_live=excluded.is_live,is_bootleg=excluded.is_bootleg,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, input.LibraryID, m.Album, metadata.Normalize(m.Album), groupKey, m.Year, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country, boolInt(albumType == "compilation"), boolInt(albumType == "live"), boolInt(albumType == "bootleg"))
+	// A merge/delete made in the library outlives rescans: the grouping key
+	// either points at the merged album or marks the files as removed.
+	rule, hasRule, err := lookupAlbumKeyRule(ctx, tx, input.LibraryID, groupKey)
 	if err != nil {
-		return fmt.Errorf("upsert album: %w", err)
+		return fmt.Errorf("album key rule: %w", err)
+	}
+	if hasRule && rule.action == "delete" {
+		return nil
 	}
 	var albumID int64
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE library_id=? AND grouping_key=?`, input.LibraryID, groupKey).Scan(&albumID); err != nil {
-		return err
-	}
-
-	albumArtistIDs, err := ensureArtists(ctx, tx, m.AlbumArtists)
-	if err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id=?`, albumID); err != nil {
-		return err
-	}
-	for i, id := range albumArtistIDs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position) VALUES(?,?,?)`, albumID, id, i); err != nil {
-			return err
+	if hasRule && rule.action == "merge" {
+		if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE id=?`, rule.target).Scan(&albumID); err != nil {
+			return fmt.Errorf("merged album %d: %w", rule.target, err)
 		}
+	} else if albumID, err = upsertScannedAlbum(ctx, tx, input.LibraryID, groupKey, m, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country); err != nil {
+		return err
 	}
 
 	// Set artist reading_name from sort tags (only when single artist to avoid misattribution)
-	if m.AlbumArtistSort != "" && len(albumArtistIDs) == 1 {
-		if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.AlbumArtistSort, albumArtistIDs[0]); err != nil {
-			return err
+	if m.AlbumArtistSort != "" && len(m.AlbumArtists) == 1 {
+		ids, idErr := ensureArtists(ctx, tx, m.AlbumArtists)
+		if idErr != nil {
+			return idErr
+		}
+		if len(ids) == 1 {
+			if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.AlbumArtistSort, ids[0]); err != nil {
+				return err
+			}
 		}
 	}
 	if m.ArtistSort != "" && len(m.Artists) == 1 {
@@ -282,6 +287,40 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 			}
 		}
 	}
+	return importTrackIntoAlbum(ctx, tx, input, albumID)
+}
+
+// upsertScannedAlbum creates or refreshes the album for a grouping key and
+// rewrites its album artists from the file tags.
+func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupKey string, m metadata.AudioMetadata, discCount int, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country string) (int64, error) {
+	_, err := tx.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year,disc_count,performed_by,album_type,version,release_date,original_release_date,label,catalog_number,country,is_compilation,is_live,is_bootleg) VALUES(?,?,?,?,NULLIF(?,0),?,?,?,?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?,?) ON CONFLICT(library_id,grouping_key) DO UPDATE SET title=excluded.title,sort_title=excluded.sort_title,release_year=excluded.release_year,disc_count=MAX(albums.disc_count,excluded.disc_count),performed_by=excluded.performed_by,album_type=excluded.album_type,version=COALESCE(excluded.version,albums.version),release_date=COALESCE(excluded.release_date,albums.release_date),original_release_date=COALESCE(excluded.original_release_date,albums.original_release_date),label=COALESCE(excluded.label,albums.label),catalog_number=COALESCE(excluded.catalog_number,albums.catalog_number),country=COALESCE(excluded.country,albums.country),is_compilation=excluded.is_compilation,is_live=excluded.is_live,is_bootleg=excluded.is_bootleg,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, libraryID, m.Album, metadata.Normalize(m.Album), groupKey, m.Year, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country, boolInt(albumType == "compilation"), boolInt(albumType == "live"), boolInt(albumType == "bootleg"))
+	if err != nil {
+		return 0, fmt.Errorf("upsert album: %w", err)
+	}
+	var albumID int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE library_id=? AND grouping_key=?`, libraryID, groupKey).Scan(&albumID); err != nil {
+		return 0, err
+	}
+	albumArtistIDs, err := ensureArtists(ctx, tx, m.AlbumArtists)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id=?`, albumID); err != nil {
+		return 0, err
+	}
+	for i, id := range albumArtistIDs {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position) VALUES(?,?,?)`, albumID, id, i); err != nil {
+			return 0, err
+		}
+	}
+	return albumID, nil
+}
+
+// importTrackIntoAlbum writes the track, its file row and its relations into
+// the resolved album and commits tx.
+func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, albumID int64) error {
+	m := input.Metadata
+	var err error
 
 	// Derive sort/reading keys
 	trackSortTitle := metadata.Normalize(m.Title)
@@ -730,6 +769,8 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 		order = "COALESCE(t.user_title,t.title) COLLATE NOCASE,t.id"
 	} else if f.Sort == "year" {
 		order = "COALESCE(a.user_release_year,a.release_year,0) DESC," + order
+	} else if f.Sort == "date" {
+		order = albumReleaseDateSort + " DESC," + order
 	} else if f.Sort == "recentlyPlayed" {
 		order = "COALESCE(pp.last_played_at,'') DESC," + order
 	}
