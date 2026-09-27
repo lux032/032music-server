@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -601,6 +602,19 @@ func (s *Store) WorkMatchCandidates(ctx context.Context, workID int64) ([]WorkMa
 
 var ErrAutoConfirmConflict = fmt.Errorf("work candidate is no longer eligible for automatic confirmation")
 
+// WorkExternalIDConflictError reports that the external subject selected for a
+// work is already bound to a different local work (UNIQUE(source,external_id)).
+type WorkExternalIDConflictError struct {
+	Source      string
+	ExternalID  string
+	OwnerWorkID int64
+	OwnerTitle  string
+}
+
+func (e *WorkExternalIDConflictError) Error() string {
+	return fmt.Sprintf("%s 条目 %s 已绑定到作品 #%d「%s」，同一外部条目只能关联一个作品；请先解除该作品的绑定或合并重复作品", e.Source, e.ExternalID, e.OwnerWorkID, e.OwnerTitle)
+}
+
 func (s *Store) AutoConfirmWorkMatchCandidate(ctx context.Context, workID, candidateID, runID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -608,7 +622,7 @@ func (s *Store) AutoConfirmWorkMatchCandidate(ctx context.Context, workID, candi
 	}
 	defer tx.Rollback()
 	var eligible bool
-	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_match_candidates WHERE id=? AND work_id=? AND source='bangumi' AND status='candidate') AND NOT EXISTS(SELECT 1 FROM work_external_profiles WHERE work_id=? AND source='bangumi') AND NOT EXISTS(SELECT 1 FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND status='confirmed')`, candidateID, workID, workID, workID).Scan(&eligible)
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_match_candidates WHERE id=? AND work_id=? AND source='bangumi' AND status='candidate') AND NOT EXISTS(SELECT 1 FROM work_external_profiles WHERE work_id=? AND source='bangumi') AND NOT EXISTS(SELECT 1 FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND status='confirmed') AND NOT EXISTS(SELECT 1 FROM work_external_profiles p JOIN work_match_candidates c ON c.id=? AND c.source=p.source AND c.external_id=p.external_id WHERE p.work_id<>?)`, candidateID, workID, workID, workID, candidateID, workID).Scan(&eligible)
 	if err != nil {
 		return err
 	}
@@ -642,6 +656,14 @@ func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candid
 	}
 	p.Raw = json.RawMessage(raw)
 	p.FetchedAt = fetchedOrNow("")
+	var ownerID int64
+	var ownerTitle string
+	err = tx.QueryRowContext(ctx, `SELECT w.id,w.title FROM work_external_profiles p JOIN works w ON w.id=p.work_id WHERE p.source=? AND p.external_id=? AND p.work_id<>?`, p.Source, p.ExternalID, workID).Scan(&ownerID, &ownerTitle)
+	if err == nil {
+		return &WorkExternalIDConflictError{Source: p.Source, ExternalID: p.ExternalID, OwnerWorkID: ownerID, OwnerTitle: ownerTitle}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO work_external_profiles(work_id,source,external_id,page_url,title,original_title,translated_title,type,year,poster_url,raw_json,fetched_at) VALUES(?,?,?,NULLIF(?,''),?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),?,?) ON CONFLICT(work_id,source) DO UPDATE SET external_id=excluded.external_id,page_url=excluded.page_url,title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,poster_url=excluded.poster_url,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, workID, p.Source, p.ExternalID, p.PageURL, p.Title, p.OriginalTitle, p.TranslatedTitle, p.Type, p.Year, p.PosterURL, raw, p.FetchedAt)
 	if err != nil {
 		return err

@@ -162,6 +162,11 @@ func writeDecisionResult(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "Candidate not found.")
 		return
 	}
+	var conflict *storage.WorkExternalIDConflictError
+	if errors.As(err, &conflict) {
+		writeAPIError(w, http.StatusConflict, "external_id_conflict", conflict.Error())
+		return
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "decision_failed", err.Error())
 		return
