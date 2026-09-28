@@ -84,7 +84,7 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 			 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),
 			'Unknown Artist'),
 		COALESCE(a.user_release_year, a.release_year, 0),
-		COALESCE((SELECT '/api/v1/artwork/' || aw.id FROM artworks aw WHERE aw.album_id=a.id ORDER BY aw.is_primary DESC, aw.id LIMIT 1), ''),
+		`+albumArtworkURLSQL+`,
 		a.added_at,
 		a.updated_at,
 		COALESCE((SELECT MAX(pp.last_played_at) FROM tracks t JOIN playback_progress pp ON pp.track_id=t.id WHERE t.album_id=a.id), ''),
@@ -147,12 +147,11 @@ func (s *Store) SyncTracks(ctx context.Context, params SyncTracksParams) (SyncTr
 		COALESCE(a.user_title, a.title),
         ` + trackArtistSQL + `,
 		COALESCE(t.duration_ms, 0),
-		CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/' || aw.id END,
+		` + albumArtworkURLSQL + `,
 		'/api/v1/tracks/' || t.id || '/stream',
 		t.is_favorite
 	FROM tracks t
 	JOIN albums a ON a.id = t.album_id
-	LEFT JOIN artworks aw ON aw.album_id = a.id AND aw.is_primary = 1
 	WHERE (? = 0 OR t.album_id = ?) AND t.id > ?
 	ORDER BY t.id ASC
 	LIMIT ?`

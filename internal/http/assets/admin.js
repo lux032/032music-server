@@ -279,4 +279,30 @@
     button.textContent = reveal ? '隐藏' : '显示';
     button.setAttribute('aria-pressed', String(reveal));
   });
+
+  // ------------------------------------------------- custom image upload guard (L6)
+  // Multipart upload forms (custom album covers / artist images) reject
+  // files over 10MB on the server; stop the submit early with a clear
+  // message instead of uploading the whole file first. form.elements
+  // includes form=-associated controls, matching the router's ownership rule.
+  const CUSTOM_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || (form.enctype || '').toLowerCase() !== 'multipart/form-data') return;
+    for (const el of Array.from(form.elements)) {
+      if (!(el instanceof HTMLInputElement) || el.type !== 'file' || !el.files || !el.files.length) continue;
+      if (el.files[0].size <= CUSTOM_IMAGE_MAX_BYTES) continue;
+      e.preventDefault();
+      const fieldset = el.closest('fieldset');
+      let error = fieldset ? fieldset.querySelector('.form-error') : null;
+      if (!error) {
+        error = document.createElement('p');
+        error.className = 'form-error';
+        (fieldset || form).append(error);
+      }
+      error.textContent = '图片不能超过 10MB，请选择更小的文件。';
+      el.focus();
+      return;
+    }
+  }, true);
 })();

@@ -252,6 +252,17 @@
               <label>专辑简介<textarea name="review" rows="5" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label>
             </fieldset>
             <fieldset>
+              <legend>封面</legend>
+              {{if .AlbumDetail.HasCustomArtwork}}<p class="field-hint">正在使用自定义封面，优先于文件内嵌封面。</p>{{end}}
+              <label for="album-artwork-file">上传自定义封面（JPEG / PNG / WebP，不超过 10MB）</label>
+              <input type="file" id="album-artwork-file" name="image" accept="image/jpeg,image/png,image/webp" form="album-artwork-upload-form" required>
+              <p class="field-hint">自定义封面只保存在数据目录，源音乐文件不会被修改；重新扫描不会覆盖。</p>
+              <div class="form-actions" style="justify-content:flex-start;">
+                <button type="submit" form="album-artwork-upload-form" class="secondary-button">上传封面</button>
+                {{if .AlbumDetail.HasCustomArtwork}}<button type="submit" form="album-artwork-reset-form" class="secondary-button danger-action">恢复默认封面</button>{{end}}
+              </div>
+            </fieldset>
+            <fieldset>
               <legend>作品关联</legend>
               <div class="drawer-tieup-list">
                 {{range .AlbumLevelWorks}}
@@ -301,6 +312,16 @@
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
         </form>
+        <form id="album-artwork-upload-form" method="post" action="/admin/albums/{{.AlbumDetail.ID}}/artwork" enctype="multipart/form-data" data-no-pjax>
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
+        </form>
+        {{if .AlbumDetail.HasCustomArtwork}}
+        <form id="album-artwork-reset-form" method="post" action="/admin/albums/{{.AlbumDetail.ID}}/artwork/reset">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
+        </form>
+        {{end}}
       </div>
     </section>
   </main>

@@ -162,7 +162,7 @@
 
 ---
 
-### Phase 4.5: Bangumi 深度整合与作品展示（下一版，已与用户确认范围）
+### Phase 4.5: Bangumi 深度整合与作品展示（✅ 已完成，含 4.5.7 自定义图片）
 > **目标**：以 Bangumi 数据能可靠支撑的范围为边界，完善“类型 → 作品 → 专辑”的浏览体验与关联精度。项目定位为**日本 ACG 优先**，普通影视不在考虑范围。
 > **实施方式**：硬交付流程（Oracle 审计 → 用户决策 → UI 效果图确认 → Worker → Reviewer），建议分批交付：①数据（4.5.1–4.5.4）②UI（4.5.5–4.5.6）③自定义图片（4.5.7）。
 
@@ -182,12 +182,13 @@
   * 右侧信息栏“关联作品”汇总（仅有关联时显示），有待审核候选时显示入口；
   * 关联编辑放入“编辑专辑”抽屉；先用 Playwright 出静态效果图给用户确认。
 * [x] **4.5.6 作品页 UI**：关联专辑封面网格；精选集中的单曲单独列入“收录于”分组；多季折叠展示。
-* [ ] **4.5.7 自定义专辑封面与歌手图片**：
+* [x] **4.5.7 自定义专辑封面与歌手图片**：
   * 编辑抽屉中上传/恢复默认，只存数据目录，绝不改写音乐文件；
   * 自定义图片优先，重扫、自动刷新（Last.fm/MusicBrainz 覆盖 `artist_image_cache`）、专辑合并都不能覆盖；把分散在 5 处 SQL 的“选封面”规则收拢为统一规则；
   * JPEG/PNG/WebP，按内容判断格式，上限 10MB 并限制像素尺寸，管理员 + CSRF，按哈希去重；
   * 缓存失效：图片地址带版本号/ETag，更新专辑 `updated_at` 以便客户端同步；
   * 不做裁剪（居中铺满显示）；专辑合并保留目标专辑的自定义封面，目标没有时沿用源专辑的。
+  * **实现**：migration 030 重建 `artworks` 为 AUTOINCREMENT（每次上传必得新 artwork id，URL 即缓存键）并新建 `artist_custom_images`；`albumArtworkURLSQL` 统一为 custom 优先并替换全部 9 处分散取封面 SQL（含 playlist、Sync 两处 `is_primary=1` JOIN），新增 `artistImageURLSQL(alias)` 统一 4 处歌手图片地址（自定义带 `?v=<哈希前12位>`）；文件存 `<数据目录>/custom-images/<sha256("custom:"+内容)>.<ext>`，临时文件 + rename 原子写入、哈希去重、引用检查 + 1 小时孤儿 GC；上传按魔数 + DecodeConfig 判格式（JPEG/PNG/WebP，x/image 解码），先查像素上限（D29：边 ≤8192、总像素 ≤4000 万）再完整解码一次；`POST /admin/albums/{id}/artwork[/reset]` 与 `/admin/artists/{id}/image[/reset]` 管理员 + CSRF + MaxBytesReader 11MB；专辑合并保留目标自定义封面、否则沿用第一张源专辑的（custom 行单独转移，非 custom 封面合并行为不变）；歌手合并按 merged-from 继承自定义图片（回滚安全）；专辑清理级联删除 custom 行（D31），重扫写入默认主图不再置 primary 于 custom 之上。Reviewer 修订：数据库只存文件名（M3）、上传全程串行 + 去重刷新 mtime（M4）、主表单文件判定改按 `form.elements`（M1）、WebP 缩略图加入允许列表（M2）、歌手合并继承规则 D50（恢复默认连同删除 merged-from 行，撤销合并不恢复源行——已知行为）、启动与扫描完成后各跑一次孤儿 GC（L2）、上传完整解码复用缩略图并发槽（L7）。
 
 ### Phase 4.6: 系列层（Phase 4.5 之后单独立项）
 * [x] 系列只做一层、一个作品只属于一个系列。
@@ -363,6 +364,23 @@
 **验证结果**：`go test ./...` 与 `go build ./...` 全部通过。
 
 ### Phase 4 修订记录（元数据增强收敛与作品关联“专辑为主”）
+
+**第九轮（批次 4 自定义图片，migration 030）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| D28 WebP | A：`golang.org/x/image` 纯 Go 解码；上传校验与缩略图都支持 WebP（缩略图允许列表含 webp，YCbCr/NYCbCrA 走 sourceRGBA 快速路径或 At() 回退，输出统一为 JPEG） | 不引入 cgo 依赖 |
+| D29 图片尺寸 | A：每边 ≤8192 且总像素 ≤4000 万；DecodeConfig 先查尺寸、超限直接拒绝，之后才完整解码一次验证完整性 | 防解码炸弹 |
+| D30 自定义图片存储 | A：专辑封面进 `artworks(source_type='custom')`（重建为 AUTOINCREMENT 保证每次上传新 artwork id），歌手图片用新表 `artist_custom_images` | URL 即缓存键，id 不复用 |
+| D31 专辑清理 | A：custom 行随专辑 ON DELETE CASCADE；磁盘文件 GC 触发时机：上传/替换/恢复默认时即时清理无引用文件 + 1 小时孤儿扫描，另在服务启动与每次扫描完成后各跑一次（覆盖合并、级联删除留下的孤儿） | 不删并发刚写入的文件 |
+| 选封面规则 | `ORDER BY (source_type='custom') DESC, is_primary DESC, id` 收拢进 `albumArtworkURLSQL`，替换全部 9 处分散位置（专辑详情/列表 hydration/曲目列表/TrackByID/歌手曲目/作品页/Sync 专辑/Sync 曲目/歌单封面） | 单一收口点，自定义封面全入口优先 |
+| 歌手图片版本 | `artistImageURLSQL(alias)`：自定义优先且带 `?v=<哈希前12位>`；歌手合并按 merged-from 继承（不改行、回滚安全），自动刷新只写 `artist_image_cache` 永远压不过自定义 | 缓存自然失效 + 合并行为与专辑一致 |
+| 上传安全 | MaxBytesReader 11MB → ParseMultipartForm → CSRF；魔数 + DecodeConfig 判格式（不信扩展名/Content-Type）；10MB 上限；仅管理员；前端在上传前检查 file.size 超 10MB 即提示并阻止提交（admin.js 外部脚本） | 伪造扩展名、GIF、超尺寸、超大文件均被拒 |
+| D50 歌手合并后的自定义图片继承 | 读取优先级：目标自己的自定义图 > 被合并进来的源歌手自定义图（多个时按 artist_id 最小者）> 目标自己的自动图（cache）；继承也算 HasCustomImage，页面注明"来自已合并的歌手 X"；在目标歌手页"恢复默认"同时删除目标与全部 merged-from 源歌手的自定义行（合并即同一人），恢复为自动图；撤销合并后源歌手的自定义图不恢复（已知行为） | 与专辑合并规则一致且回滚安全 |
+| M3 自定义图片只存文件名 | 数据库（artworks.source_path、artist_custom_images.file_path）只存 `<hash>.<ext>` 文件名，读取/GC 时按 customImagesDir() 拼接；数据目录换写法/迁移不影响引用比对 | 绝对路径入库会导致目录移动后 GC 误删 |
+| M4 上传并发 | App 级 customImageMu 串行"存文件 → 提交行 → 清理"全程；去重命中已存在文件时 os.Chtimes 刷新修改时间 | 防 GC 在提交窗口误删 |
+| M1 文件表单判定 | router.js 改用 `form.elements` 按表单归属判定（form= 外部关联的输入归属于上传表单），主编辑表单恢复 PJAX | DOM 包含 ≠ 表单归属 |
+| 文件布局 | `<数据目录>/custom-images/<sha256("custom:"+内容)>.<ext>`，临时文件 + rename 原子写入，相同内容只存一份（命名空间哈希避免与扫描缓存哈希撞唯一索引） | 绝不改写音乐文件 |
+| PJAX | 上传表单文件输入经 `form=` 外部关联，额外加 `data-no-pjax` 保证原生提交；重置表单随既有 PJAX 流程 | router 的 `querySelector('input[type=file]')` 看不到外部关联输入 |
 
 **第八轮（批次 3 UI：集中审核页 `/admin/work-review` + 4.5.5 专辑页 + 4.5.6 作品页 + 作品列表系列展开）**：
 | 决策 | 选择 | 理由 |

@@ -37,7 +37,10 @@ import { updateTrackRowsUI } from './player-bar.js';
       const method = (form.getAttribute('method') || 'get').toLowerCase();
       let action;
       try { action = new URL(form.getAttribute('action') || window.location.href, window.location.href); } catch (_) { return; }
-      if (action.origin !== window.location.origin || !action.pathname.startsWith('/admin') || action.pathname === '/admin/logout' || form.querySelector('input[type="file"]')) return;
+      // M1: check form ownership (form.elements includes form=-associated
+      // controls), not DOM containment — a file input living inside another
+      // form's markup must not mark that form as a file form.
+      if (action.origin !== window.location.origin || !action.pathname.startsWith('/admin') || action.pathname === '/admin/logout' || Array.from(form.elements).some((el) => el.type === 'file')) return;
       const submitter = e.submitter;
       const data = new FormData(form);
       if (submitter && submitter.name) data.append(submitter.name, submitter.value);

@@ -84,8 +84,8 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 	if err != nil {
 		return 0, err
 	}
-	var targetHasArtwork bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artworks WHERE album_id=?)`, targetID).Scan(&targetHasArtwork); err != nil {
+	var targetHasNonCustom, targetHasCustom bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND source_type<>'custom'),EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND source_type='custom')`, targetID, targetID).Scan(&targetHasNonCustom, &targetHasCustom); err != nil {
 		return 0, err
 	}
 	for _, id := range sources {
@@ -109,11 +109,28 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 		if _, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE album_id=?`, targetID, id); err != nil {
 			return 0, err
 		}
-		if !targetHasArtwork {
-			if _, err = tx.ExecContext(ctx, `UPDATE artworks SET album_id=? WHERE album_id=? AND track_id IS NULL`, targetID, id); err != nil {
+		// Custom covers (4.5.7): the target's own custom cover always stays;
+		// when it has none, the first source's custom cover transfers. Custom
+		// rows of later sources are cascade-deleted with their albums and
+		// their files garbage-collected.
+		if !targetHasCustom {
+			if _, err = tx.ExecContext(ctx, `UPDATE artworks SET album_id=? WHERE album_id=? AND track_id IS NULL AND source_type='custom'`, targetID, id); err != nil {
 				return 0, err
 			}
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artworks WHERE album_id=?)`, targetID).Scan(&targetHasArtwork); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND source_type='custom')`, targetID).Scan(&targetHasCustom); err != nil {
+				return 0, err
+			}
+		}
+		// Non-custom artwork keeps the historical rule, but the gate is
+		// non-custom artwork only: a transferred custom cover must not block
+		// the source's plain covers, otherwise "恢复默认" would leave the
+		// target with no cover at all (L-c). Custom rows are handled above
+		// so a later source's custom cover never slips in through this move.
+		if !targetHasNonCustom {
+			if _, err = tx.ExecContext(ctx, `UPDATE artworks SET album_id=? WHERE album_id=? AND track_id IS NULL AND source_type<>'custom'`, targetID, id); err != nil {
+				return 0, err
+			}
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND source_type<>'custom')`, targetID).Scan(&targetHasNonCustom); err != nil {
 				return 0, err
 			}
 		}

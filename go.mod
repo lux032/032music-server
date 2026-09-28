@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
+	golang.org/x/image v0.45.0
 	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.56.0
 )

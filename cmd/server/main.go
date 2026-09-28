@@ -63,7 +63,6 @@ func run() error {
 
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
-	scannerManager.SetOnComplete(func() { enrichmentManager.StartAuto(rootCtx) })
 	enrichmentManager.StartWorkPosterBackfill()
 
 	// NewApp applies MUSIC_SERVER_RESET_CREDENTIALS and loads admin-page
@@ -73,6 +72,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// L2: collect custom-image orphans at startup and after every completed
+	// scan (merges and cascading deletes leave no other trigger).
+	go app.GCCustomImages(rootCtx)
+	scannerManager.SetOnComplete(func() {
+		enrichmentManager.StartAuto(rootCtx)
+		app.GCCustomImages(rootCtx)
+	})
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
 	app.SetLastFM(lastFMService)

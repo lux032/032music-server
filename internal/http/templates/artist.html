@@ -195,12 +195,33 @@
               <label>显示名称<input name="name" value="{{.Artist.Name}}"></label>
               <p class="field-hint">留空即恢复文件标签中的名称。</p>
             </fieldset>
+            <fieldset>
+              <legend>歌手图片</legend>
+              {{if .Artist.HasCustomImage}}<p class="field-hint">正在使用自定义图片{{if .Artist.CustomImageFrom}}（来自已合并的歌手 {{.Artist.CustomImageFrom}}）{{end}}，优先于自动获取的图片。</p>{{end}}
+              <label for="artist-image-file">上传自定义图片（JPEG / PNG / WebP，不超过 10MB）</label>
+              <input type="file" id="artist-image-file" name="image" accept="image/jpeg,image/png,image/webp" form="artist-image-upload-form" required>
+              <p class="field-hint">自定义图片只保存在数据目录，自动刷新（Last.fm / MusicBrainz）不会覆盖。</p>
+              <div class="form-actions" style="justify-content:flex-start;">
+                <button type="submit" form="artist-image-upload-form" class="secondary-button">上传图片</button>
+                {{if .Artist.HasCustomImage}}<button type="submit" form="artist-image-reset-form" class="secondary-button danger-action">恢复默认图片</button>{{end}}
+              </div>
+            </fieldset>
           </div>
           <div class="form-actions editor-actions">
             <a class="secondary-button" href="/admin/artists/{{.Artist.ID}}" data-drawer-close>取消</a>
             <button>保存</button>
           </div>
         </form>
+        <form id="artist-image-upload-form" method="post" action="/admin/artists/{{.Artist.ID}}/image" enctype="multipart/form-data" data-no-pjax>
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/artists/{{.Artist.ID}}">
+        </form>
+        {{if .Artist.HasCustomImage}}
+        <form id="artist-image-reset-form" method="post" action="/admin/artists/{{.Artist.ID}}/image/reset">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/artists/{{.Artist.ID}}">
+        </form>
+        {{end}}
       </div>
     </section>
   </main>

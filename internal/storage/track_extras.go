@@ -21,7 +21,22 @@ type TrackExtras struct {
 
 const trackArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary' ORDER BY ta.position,ar.id)),(SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),a.user_performed_by,a.performed_by,'Unknown Artist')`
 
-const albumArtworkURLSQL = `COALESCE((SELECT '/api/v1/artwork/'||aw_art.id FROM artworks aw_art WHERE aw_art.album_id=a.id ORDER BY aw_art.is_primary DESC,aw_art.id LIMIT 1),'')`
+// albumArtworkURLSQL is the single cover-selection rule for every album
+// artwork projection: a user-uploaded custom cover always wins, then the
+// primary flag, then the earliest row. Requires the albums table alias `a`.
+const albumArtworkURLSQL = `COALESCE((SELECT '/api/v1/artwork/'||aw_art.id FROM artworks aw_art WHERE aw_art.album_id=a.id ORDER BY (aw_art.source_type='custom') DESC,aw_art.is_primary DESC,aw_art.id LIMIT 1),'')`
+
+// artistImageURLSQL renders the artist image URL expression for the given
+// artists table alias. A custom image wins over the Last.fm/MusicBrainz cache
+// and carries a content-hash version (?v=) so clients pick up replacements.
+// D50 inheritance: the artist's own custom image wins; with several merged-in
+// sources carrying custom images, the smallest artist id wins (deterministic);
+// the automatic cache is only a fallback.
+func artistImageURLSQL(alias string) string {
+	// Inner aliases (ma) matter: reusing the outer alias would make the
+	// merged-from subquery self-referencing and silently empty.
+	return `COALESCE((SELECT '/api/v1/artists/'||` + alias + `.id||'/image?v='||substr(ci.content_hash,1,12) FROM artist_custom_images ci WHERE ci.artist_id=` + alias + `.id OR ci.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id) ORDER BY (ci.artist_id=` + alias + `.id) DESC,ci.artist_id ASC LIMIT 1),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=` + alias + `.id OR ai.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id)) THEN '/api/v1/artists/'||` + alias + `.id||'/image' ELSE '' END)`
+}
 
 type extraTrack interface {
 	trackID() int64

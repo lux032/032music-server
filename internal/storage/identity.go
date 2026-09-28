@@ -47,10 +47,15 @@ type ArtistDetail struct {
 	Biography, BiographySource, BiographyLanguage, BiographyURL, BiographyFetchedAt string
 	Country, ArtistType                                                             string
 	MergedIntoID                                                                    int64
-	Aliases                                                                         []string
-	Profiles                                                                        []ExternalArtistProfile
-	Candidates                                                                      []ArtistCandidate
-	Biographies                                                                     []ArtistBiography
+	// HasCustomImage reports a user-uploaded custom image (4.5.7), including
+	// one inherited from a merged-in source artist (D50); CustomImageFrom
+	// holds that source artist's name when the image is inherited.
+	HasCustomImage  bool
+	CustomImageFrom string
+	Aliases         []string
+	Profiles        []ExternalArtistProfile
+	Candidates      []ArtistCandidate
+	Biographies     []ArtistBiography
 }
 
 type MergeOperation struct {
@@ -343,7 +348,7 @@ func (s *Store) ArtistExternalID(ctx context.Context, artistID int64, source str
 
 func (s *Store) ArtistImageCheckNeeded(ctx context.Context, artistID int64) (bool, error) {
 	var needed bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=? AND (p.image_checked_at IS NULL OR NOT EXISTS(SELECT 1 FROM artist_image_cache i WHERE i.artist_id=p.artist_id)))`, artistID).Scan(&needed)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=? AND (p.image_checked_at IS NULL OR NOT EXISTS(SELECT 1 FROM artist_image_cache i WHERE i.artist_id=p.artist_id)) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=p.artist_id))`, artistID).Scan(&needed)
 	return needed, err
 }
 
@@ -352,10 +357,24 @@ func (s *Store) SaveArtistImage(ctx context.Context, image ArtistImageInput) err
 	return err
 }
 
-func (s *Store) ArtistImagePath(ctx context.Context, artistID int64) (string, string, error) {
+// ArtistImagePath resolves the effective artist image. D50: the artist's own
+// custom image wins; merged-from custom images are inherited with the
+// smallest artist id winning; the automatic cache is only a fallback.
+// isCustom tells the caller the path is a bare file name under the
+// custom-images directory (M3) — the cache lookup below may return relative
+// paths when the data dir is relative, so the caller must key on this flag,
+// never on whether the path looks absolute (B1).
+func (s *Store) ArtistImagePath(ctx context.Context, artistID int64) (string, string, bool, error) {
 	var path, mimeType string
-	err := s.db.QueryRowContext(ctx, `SELECT cache_path,mime_type FROM artist_image_cache WHERE artist_id=? OR artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?) ORDER BY artist_id=? DESC,fetched_at DESC LIMIT 1`, artistID, artistID, artistID).Scan(&path, &mimeType)
-	return path, mimeType, err
+	err := s.db.QueryRowContext(ctx, `SELECT file_path,mime_type FROM artist_custom_images WHERE artist_id=? OR artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=?) ORDER BY (artist_id=?) DESC,artist_id ASC LIMIT 1`, artistID, artistID, artistID).Scan(&path, &mimeType)
+	if err == nil {
+		return path, mimeType, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT cache_path,mime_type FROM artist_image_cache WHERE artist_id=? OR artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?) ORDER BY artist_id=? DESC,fetched_at DESC LIMIT 1`, artistID, artistID, artistID).Scan(&path, &mimeType)
+	return path, mimeType, false, err
 }
 
 func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error) {
@@ -364,9 +383,20 @@ func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error
 	var hasLocalBiography bool
 	var favorite int
 	var preferredSource, preferredLanguage string
-	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(user_display_name,display_name),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=artists.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=artists.id)) THEN '/api/v1/artists/'||artists.id||'/image' ELSE '' END,COALESCE(user_biography,biography,''),COALESCE(TRIM(user_biography),'')<>'',COALESCE(country,''),COALESCE(artist_type,''),merged_into_artist_id,is_favorite,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=artists.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=artists.id),COALESCE(preferred_biography_source,''),COALESCE(preferred_biography_language,'') FROM artists WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.ImageURL, &d.Biography, &hasLocalBiography, &d.Country, &d.ArtistType, &merged, &favorite, &d.AlbumCount, &d.TrackCount, &preferredSource, &preferredLanguage)
+	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(user_display_name,display_name),`+artistImageURLSQL("artists")+`,COALESCE(user_biography,biography,''),COALESCE(TRIM(user_biography),'')<>'',COALESCE(country,''),COALESCE(artist_type,''),merged_into_artist_id,is_favorite,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=artists.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=artists.id),COALESCE(preferred_biography_source,''),COALESCE(preferred_biography_language,'') FROM artists WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.ImageURL, &d.Biography, &hasLocalBiography, &d.Country, &d.ArtistType, &merged, &favorite, &d.AlbumCount, &d.TrackCount, &preferredSource, &preferredLanguage)
 	if err != nil {
 		return d, err
+	}
+	// D50: HasCustomImage follows the same effective-image rule as the URL
+	// (own custom first, then merged-from by smallest artist id); an
+	// inherited image reports its owner so the page can note the origin.
+	var customOwner sql.NullInt64
+	if err = s.db.QueryRowContext(ctx, `SELECT ci.artist_id FROM artist_custom_images ci WHERE ci.artist_id=? OR ci.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=?) ORDER BY (ci.artist_id=?) DESC,ci.artist_id ASC LIMIT 1`, id, id, id).Scan(&customOwner); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return d, err
+	}
+	d.HasCustomImage = customOwner.Valid
+	if customOwner.Valid && customOwner.Int64 != id {
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, customOwner.Int64).Scan(&d.CustomImageFrom)
 	}
 	d.MergedIntoID = merged.Int64
 	d.IsFavorite = favorite != 0

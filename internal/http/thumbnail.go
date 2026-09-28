@@ -197,7 +197,9 @@ func (m *thumbnailManager) generate(ctx context.Context, file *os.File, name str
 	if err = ctx.Err(); err != nil {
 		return false, err
 	}
-	if format != "jpeg" && format != "png" && format != "gif" {
+	// WebP (x/image) decodes to YCbCr/NYCbCrA/NRGBA; sourceRGBA handles
+	// YCbCr directly and everything else through the At() fallback.
+	if format != "jpeg" && format != "png" && format != "gif" && format != "webp" {
 		return true, nil
 	}
 	pixels := int64(cfg.Width) * int64(cfg.Height)

@@ -45,7 +45,10 @@ type App struct {
 	assets                    *assetRegistry
 	transcoder                *transcodeManager
 	thumbnails                *thumbnailManager
-	similaritySlots           chan struct{}
+	// customImageMu serializes custom-image store file -> DB commit ->
+	// cleanup sequences (M4) so GC never races an in-flight upload.
+	customImageMu   sync.Mutex
+	similaritySlots chan struct{}
 	// lastfm is the optional Last.fm scrobbler; nil disables submission
 	// (plays are still counted locally).
 	lastfm *lastfm.Service
@@ -308,6 +311,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/artists/{id}/match", a.requireAdmin(http.HandlerFunc(a.handleMatchArtist)))
 	mux.Handle("POST /admin/artists/{id}/biographies/refresh", a.requireAdmin(http.HandlerFunc(a.handleRefreshArtistBiographies)))
 	mux.Handle("POST /admin/artists/{id}/biography", a.requireAdmin(http.HandlerFunc(a.handleSelectArtistBiography)))
+	mux.Handle("POST /admin/artists/{id}/image", a.requireAdmin(http.HandlerFunc(a.handleUploadArtistImage)))
+	mux.Handle("POST /admin/artists/{id}/image/reset", a.requireAdmin(http.HandlerFunc(a.handleResetArtistImage)))
 	mux.Handle("POST /admin/artists/{id}/confirm/{candidate}", a.requireAdmin(http.HandlerFunc(a.handleConfirmArtistMatch)))
 	mux.Handle("POST /admin/artists/{id}/reject/{candidate}", a.requireAdmin(http.HandlerFunc(a.handleRejectArtistMatch)))
 	mux.Handle("POST /admin/artists/{id}/merge", a.requireAdmin(http.HandlerFunc(a.handleMergeArtist)))
@@ -365,6 +370,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleAlbumPage)))
 	mux.Handle("POST /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateAlbum)))
 	mux.Handle("POST /admin/albums/{id}/works", a.requireAdmin(http.HandlerFunc(a.handleAddAlbumWork)))
+	mux.Handle("POST /admin/albums/{id}/artwork", a.requireAdmin(http.HandlerFunc(a.handleUploadAlbumArtwork)))
+	mux.Handle("POST /admin/albums/{id}/artwork/reset", a.requireAdmin(http.HandlerFunc(a.handleResetAlbumArtwork)))
 	mux.Handle("POST /admin/albums/{id}/works/{workId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveAlbumWork)))
 	mux.Handle("GET /admin/tracks", a.requireAdmin(http.HandlerFunc(a.handleTracksPage)))
 	mux.Handle("POST /admin/tracks/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateTrack)))

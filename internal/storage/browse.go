@@ -209,10 +209,10 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 		func() error {
 			return stringHydration(`SELECT pt.album_id, COALESCE(MAX(pp.last_played_at),'') FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id IN (`+placeholders+`) GROUP BY pt.album_id`, args, func(a *Album, v string) { a.LastPlayedAt = v })
 		},
-		// Primary artwork, falling back to the earliest artwork (same rule as
-		// the album detail view).
+		// Custom cover first, then primary, falling back to the earliest
+		// artwork (same rule as the album detail view).
 		func() error {
-			return stringHydration(`SELECT album_id, '/api/v1/artwork/'||id FROM (SELECT aw.album_id AS album_id, aw.id AS id, ROW_NUMBER() OVER (PARTITION BY aw.album_id ORDER BY aw.is_primary DESC, aw.id) AS rn FROM artworks aw WHERE aw.album_id IN (`+placeholders+`)) WHERE rn=1`, args, func(a *Album, v string) { a.ArtworkURL = v })
+			return stringHydration(`SELECT album_id, '/api/v1/artwork/'||id FROM (SELECT aw.album_id AS album_id, aw.id AS id, ROW_NUMBER() OVER (PARTITION BY aw.album_id ORDER BY (aw.source_type='custom') DESC, aw.is_primary DESC, aw.id) AS rn FROM artworks aw WHERE aw.album_id IN (`+placeholders+`)) WHERE rn=1`, args, func(a *Album, v string) { a.ArtworkURL = v })
 		},
 	}
 	for _, hydrate := range hydrations {

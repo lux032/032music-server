@@ -88,6 +88,9 @@ type Album struct {
 	UpdatedAt           string `json:"updatedAt"`
 	LastPlayedAt        string `json:"lastPlayedAt,omitempty"`
 	IsFavorite          bool   `json:"isFavorite"`
+	// HasCustomArtwork reports a user-uploaded custom cover (4.5.7); only the
+	// album detail select fills it.
+	HasCustomArtwork bool `json:"hasCustomArtwork,omitempty"`
 	// AlbumArtists links the album credits on browse pages; only filled by
 	// the list hydration and kept out of the API payload.
 	AlbumArtists []Artist `json:"-"`
@@ -464,7 +467,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	}
 	if input.Artwork != nil {
 		a := input.Artwork
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO artworks(album_id,track_id,source_type,source_path,content_hash,mime_type,byte_size,is_primary) VALUES(?,NULL,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND is_primary=1) THEN 0 ELSE 1 END)`, albumID, a.SourceType, a.CachePath, a.Hash, a.MIMEType, a.ByteSize, albumID); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO artworks(album_id,track_id,source_type,source_path,content_hash,mime_type,byte_size,is_primary) VALUES(?,NULL,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND (is_primary=1 OR source_type='custom')) THEN 0 ELSE 1 END)`, albumID, a.SourceType, a.CachePath, a.Hash, a.MIMEType, a.ByteSize, albumID); err != nil {
 			return err
 		}
 	}
@@ -556,7 +559,7 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	}
 	where, args := artistWhere(f, role)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id) track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id) track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -668,20 +671,23 @@ const albumByIDSelect = `SELECT
 	COALESCE(a.user_release_year,a.release_year,0), a.disc_count,
 	(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),
 	COALESCE((SELECT GROUP_CONCAT(g.name,',' ORDER BY ago.position) FROM album_genre_overrides ago JOIN genres g ON g.id=ago.genre_id WHERE ago.album_id=a.id),(SELECT GROUP_CONCAT(name,',' ORDER BY gid) FROM (SELECT t.album_id, g.id AS gid, g.name FROM tracks t JOIN track_genre_overrides ox ON ox.track_id=t.id JOIN genres g ON g.id=ox.genre_id WHERE t.album_id=a.id UNION SELECT t.album_id, g.id, g.name FROM tracks t JOIN track_genres tg ON tg.track_id=t.id JOIN genres g ON g.id=tg.genre_id WHERE t.album_id=a.id AND NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id))),''),
-	COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),
+	` + albumArtworkURLSQL + `,
 	COALESCE(a.user_album_type,a.album_type,'album'), COALESCE(a.user_version,a.version,''),
 	COALESCE(a.user_release_date,a.release_date,''), COALESCE(a.user_original_release_date,a.original_release_date,''),
 	COALESCE(a.user_label,a.label,''), COALESCE(a.user_catalog_number,a.catalog_number,''), COALESCE(a.user_country,a.country,''), COALESCE(a.user_review,a.review,''),
 	COALESCE(a.user_is_compilation,a.is_compilation,0), COALESCE(a.user_is_live,a.is_live,0), COALESCE(a.user_is_bootleg,a.is_bootleg,0),
 	COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),''),
 	COALESCE((SELECT SUM(af.file_size) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),0),
-	a.added_at,a.updated_at,a.is_favorite,COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),'')
+	a.added_at,a.updated_at,a.is_favorite,COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),''),
+	EXISTS(SELECT 1 FROM artworks caw WHERE caw.album_id=a.id AND caw.source_type='custom')
 	FROM albums a`
 
 func scanAlbum(row interface{ Scan(...any) error }) (Album, error) {
 	var a Album
 	var compilation, live, bootleg, favorite int
-	err := row.Scan(&a.ID, &a.Title, &a.PerformedBy, &a.Year, &a.DiscCount, &a.TrackCount, &a.Genres, &a.ArtworkURL, &a.AlbumType, &a.Version, &a.ReleaseDate, &a.OriginalReleaseDate, &a.Label, &a.CatalogNumber, &a.Country, &a.Review, &compilation, &live, &bootleg, &a.Formats, &a.TotalBytes, &a.AddedAt, &a.UpdatedAt, &favorite, &a.LastPlayedAt)
+	var customCover int
+	err := row.Scan(&a.ID, &a.Title, &a.PerformedBy, &a.Year, &a.DiscCount, &a.TrackCount, &a.Genres, &a.ArtworkURL, &a.AlbumType, &a.Version, &a.ReleaseDate, &a.OriginalReleaseDate, &a.Label, &a.CatalogNumber, &a.Country, &a.Review, &compilation, &live, &bootleg, &a.Formats, &a.TotalBytes, &a.AddedAt, &a.UpdatedAt, &favorite, &a.LastPlayedAt, &customCover)
+	a.HasCustomArtwork = customCover != 0
 	a.Artist = a.PerformedBy
 	a.Compilation = compilation != 0
 	a.Live = live != 0
@@ -743,7 +749,7 @@ func inClause(ids []int64) (string, []any) {
 }
 
 func (s *Store) ArtistsForAlbum(ctx context.Context, albumID int64) ([]Artist, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY aa.position,ar.id`, albumID)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY aa.position,ar.id`, albumID)
 	if err != nil {
 		return nil, err
 	}
@@ -760,7 +766,7 @@ func (s *Store) ArtistsForAlbum(ctx context.Context, albumID int64) ([]Artist, e
 }
 
 func (s *Store) ArtistsForAlbumTracks(ctx context.Context, albumID int64) (map[int64][]Artist, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=ar.id OR ai.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=ar.id)) THEN '/api/v1/artists/'||ar.id||'/image' ELSE '' END,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists ar ON ar.id=ta.artist_id WHERE t.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, albumID)
+	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists ar ON ar.id=ta.artist_id WHERE t.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, albumID)
 	if err != nil {
 		return nil, err
 	}
@@ -791,7 +797,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	}
 	where, args := trackWhere(f)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),CASE WHEN aw.id IS NULL THEN '' ELSE '/api/v1/artwork/'||aw.id END,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN artworks aw ON aw.album_id=a.id AND aw.is_primary=1 LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -943,10 +949,16 @@ func (s *Store) TrackLyrics(ctx context.Context, trackID int64) (string, error) 
 	}
 	return lyrics.String, nil
 }
-func (s *Store) ArtworkPath(ctx context.Context, id int64) (string, string, error) {
-	var path, mime string
-	err := s.db.QueryRowContext(ctx, `SELECT source_path,mime_type FROM artworks WHERE id=?`, id).Scan(&path, &mime)
-	return path, mime, err
+
+// ArtworkPath returns the stored path, mime type and source_type of one
+// artwork row. Custom covers store only a bare file name (M3) which the
+// caller resolves against the custom-images directory — keyed on
+// source_type, never on whether the path looks absolute (B1): scanner
+// artwork paths may legitimately be relative when the data dir is relative.
+func (s *Store) ArtworkPath(ctx context.Context, id int64) (string, string, string, error) {
+	var path, mime, sourceType string
+	err := s.db.QueryRowContext(ctx, `SELECT source_path,mime_type,source_type FROM artworks WHERE id=?`, id).Scan(&path, &mime, &sourceType)
+	return path, mime, sourceType, err
 }
 
 func page(f Filters) (int, int) {

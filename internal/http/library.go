@@ -1005,10 +1005,16 @@ func (a *App) handleArtwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	path, mimeType, err := a.store.ArtworkPath(r.Context(), id)
+	path, mimeType, sourceType, err := a.store.ArtworkPath(r.Context(), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	// Only custom covers store a bare file name to resolve against the
+	// custom-images directory (B1); scanner artwork paths are used as-is —
+	// they may be relative when the data dir is relative.
+	if sourceType == "custom" {
+		path = filepath.Join(a.customImagesDir(), path)
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -1041,10 +1047,16 @@ func (a *App) handleArtistImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	path, mimeType, err := a.store.ArtistImagePath(r.Context(), id)
+	path, mimeType, isCustom, err := a.store.ArtistImagePath(r.Context(), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	// Only custom images store a bare file name to resolve against the
+	// custom-images directory (B1); cache paths are used as-is — they may
+	// be relative when the data dir is relative.
+	if isCustom {
+		path = filepath.Join(a.customImagesDir(), path)
 	}
 	file, err := os.Open(path)
 	if err != nil {
