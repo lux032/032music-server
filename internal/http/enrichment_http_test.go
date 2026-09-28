@@ -149,7 +149,10 @@ func TestEnrichmentReviewsBeyondFirstHundredWorks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	works, _, count, _ := app.enrichmentReviews(ctx)
+	works, _, count, _, err := app.enrichmentReviews(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if count != 150 || len(works) != 150 || works[149].Work.ID != last {
 		t.Fatalf("count=%d displayed=%d last=%d", count, len(works), last)
 	}
@@ -219,7 +222,10 @@ func TestEnrichmentReviewsCapAtTwoHundredAndCountAll(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	works, _, count, _ := app.enrichmentReviews(ctx)
+	works, _, count, _, err := app.enrichmentReviews(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if count != 210 || len(works) != 200 || works[199].Work.ID != lastShown {
 		t.Fatalf("count=%d shown=%d last=%d want=%d", count, len(works), works[len(works)-1].Work.ID, lastShown)
 	}
@@ -341,7 +347,7 @@ func TestRVL2PendingAlbumReviewLimitedAndPayloadTrimmed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pending, err := store.PendingAlbumSubjectCandidates(ctx, 200)
+	pending, err := store.PendingAlbumSubjectCandidates(ctx, 0, 200)
 	if err != nil || len(pending) != 200 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
@@ -435,7 +441,7 @@ func TestF4AdminAlbumBangumiAcceptRejectFormsAndList(t *testing.T) {
 	if rec := form(acceptPath, false); rec.Code != http.StatusForbidden {
 		t.Fatalf("no csrf %d", rec.Code)
 	}
-	if rec := form(acceptPath, true); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/admin/enrichment") {
+	if rec := form(acceptPath, true); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/admin/work-review") {
 		t.Fatalf("accept %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 	items, _ = store.AlbumSubjectCandidates(ctx, acceptedAlbum)
@@ -477,7 +483,7 @@ func TestF4AdminAlbumBangumiAcceptRejectFormsAndList(t *testing.T) {
 	if err := store.SaveAlbumSubjectCandidates(ctx, reviewAlbum, []storage.AlbumSubjectCandidate{{ExternalID: "198229", Title: "人間開花", Score: 72}}); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/admin/enrichment", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/work-review?tab=albums", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)

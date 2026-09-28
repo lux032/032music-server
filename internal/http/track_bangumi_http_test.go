@@ -130,7 +130,7 @@ func TestTrackSubjectAdminFormCSRFAndPage(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("missing csrf=%d", rec.Code)
 	}
-	page := httptest.NewRequest(http.MethodGet, "/admin/enrichment", nil)
+	page := httptest.NewRequest(http.MethodGet, "/admin/work-review?tab=tracks", nil)
 	page.AddCookie(cookie)
 	rec = httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, page)

@@ -11,15 +11,20 @@
     <header class="browser-header">
       <div>
         <h1>作品</h1>
-        <p class="result-count">{{.Total}} 个动画、影视或游戏作品</p>
+        <p class="result-count">共 {{.Total}} 个动画、影视或游戏作品（同一系列已折叠）</p>
       </div>
-      <form class="instant-search" method="get">
-        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
-        <input name="q" value="{{.Query}}" placeholder="原文、译名、假名或罗马音…">
-      </form>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <form class="instant-search" method="get">
+          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+          <input name="q" value="{{.Query}}" placeholder="原文、译名、假名或罗马音…">
+        </form>
+        <form method="post" action="/admin/works/refresh" style="margin:0;">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button type="submit" class="secondary-button" style="white-space:nowrap;">重算自动关联</button>
+        </form>
+      </div>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
-    <form method="post" action="/admin/works/refresh"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button>重算自动关联</button></form>
     {{if .Unreferenced}}<section class="feature-card"><h2>受保护但无引用的作品（待处理，共 {{.UnreferencedTotal}} 个，最多展示 200 个）</h2>{{range .Unreferenced}}<p><a href="/admin/works/{{.ID}}">{{.Title}}</a> · {{workTypeLabel .Type}}</p>{{end}}</section>{{end}}
 
     <form class="focus-bar" method="get">
@@ -43,8 +48,9 @@
       <a class="clear-focus" href="/admin/works">清除</a>
     </form>
 
-    <nav class="index-bar" aria-label="首字母索引">
+    <nav class="index-bar works-index-bar" aria-label="首字母索引">
       {{$current := .Index}}
+      <a class="{{if eq $current ""}}active{{end}}" href="/admin/works">全部</a>
       {{range $v := (indexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}">{{$v}}</a>{{end}}
       <button type="button" class="kana-toggle" aria-expanded="{{.KanaIndex}}">かな</button><span class="kana-links" {{if not .KanaIndex}}hidden{{end}}>{{range $v := (kanaIndexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}">{{$v}}</a>{{end}}</span>
     </nav>
@@ -52,26 +58,46 @@
     <section class="works-grid">
       {{range .Rows}}
       {{if .Series}}
-      <div class="work-card series-card">
-        <a class="work-poster" href="/admin/works/{{.Representative.ID}}">
-          {{with workPoster .Representative}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
-          <b>系列</b>
-        </a>
-        <h2>{{.Series.Title}}</h2>
-        {{if .Representative.TranslatedTitle}}<p>{{.Representative.TranslatedTitle}}</p>{{end}}
-        <small>共 {{.Series.MemberCount}} 部</small>
-        <details class="series-members">
-          <summary>展开系列作品</summary>
-          <ul>
-            {{range .Members}}<li><a href="/admin/works/{{.Work.ID}}">{{.Work.Title}}</a>{{if .Work.Year}} · {{.Work.Year}}{{end}}</li>{{end}}
-          </ul>
-        </details>
-      </div>
+      <details class="works-series-row">
+        <summary class="works-series-bar">
+          <div class="works-series-stack">
+            {{with workPoster .Representative}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg></div>{{end}}
+          </div>
+          <div class="works-series-info">
+            <div class="title-line">
+              <span class="series-badge">系列</span>
+              <h2>{{.Series.Title}}</h2>
+              <span class="works-series-count">共 {{.Series.MemberCount}} 部作品</span>
+            </div>
+            <p>代表作：{{.Representative.Title}}{{if .Representative.Year}} ({{.Representative.Year}}){{end}}{{if .Representative.TranslatedTitle}} · {{.Representative.TranslatedTitle}}{{end}} · {{workTypeLabel .Representative.Type}}</p>
+          </div>
+          <div></div>
+          <span class="series-toggle-btn">
+            <span class="toggle-text-collapsed">展开系列成员 ({{.Series.MemberCount}})</span>
+            <span class="toggle-text-expanded">收起系列成员</span>
+            <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg>
+          </span>
+        </summary>
+        <div class="works-series-expanded-drawer">
+          <div class="works-series-members-grid">
+            {{range .Members}}
+            <a href="/admin/works/{{.Work.ID}}" class="works-member-card">
+              {{with workPoster .Work}}<img class="works-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="works-member-poster cover-placeholder">作</div>{{end}}
+              <div>
+                <strong>{{.Work.Title}}</strong>
+                {{if .Work.TranslatedTitle}}<span>{{.Work.TranslatedTitle}}</span>{{end}}
+                <small>{{if .Work.Year}}{{.Work.Year}} · {{end}}{{workTypeLabel .Work.Type}} · {{.Work.TrackCount}} 首曲目</small>
+              </div>
+            </a>
+            {{end}}
+          </div>
+        </div>
+      </details>
       {{else}}
       <a class="work-card" href="/admin/works/{{.Work.ID}}">
         <div class="work-poster">
           {{with workPoster .Work}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
-          <b>{{.Work.Type}}</b>
+          <b>{{workTypeLabel .Work.Type}}</b>
         </div>
         <h2>{{.Work.Title}}</h2>
         {{if .Work.TranslatedTitle}}<p>{{.Work.TranslatedTitle}}</p>{{else if .Work.ReadingTitle}}<p>{{.Work.ReadingTitle}}</p>{{end}}

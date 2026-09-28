@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -48,12 +49,42 @@ type RefreshStats struct {
 	AlbumsFailed          int
 }
 type AlbumWork struct {
-	AlbumID int64  `json:"albumId"`
-	WorkID  int64  `json:"workId"`
-	Title   string `json:"title"`
-	Role    string `json:"role"`
-	Source  string `json:"source"`
-	Season  int    `json:"season"`
+	AlbumID    int64    `json:"albumId"`
+	WorkID     int64    `json:"workId"`
+	Title      string   `json:"title"`
+	Role       string   `json:"role"`
+	Source     string   `json:"source"`
+	Season     int      `json:"season"`
+	Artist     string   `json:"artist,omitempty"`
+	Year       int      `json:"year,omitempty"`
+	AlbumType  string   `json:"albumType,omitempty"`
+	DiscCount  int      `json:"discCount,omitempty"`
+	TrackCount int      `json:"trackCount,omitempty"`
+	ArtworkURL string   `json:"artworkUrl,omitempty"`
+	AlbumRole  string   `json:"albumRole,omitempty"`
+	TrackRoles []string `json:"trackRoles,omitempty"`
+}
+
+// WorkRoleRank 是曲目级用途的展示优先级（与 TrackWorksForAlbum 的 CASE 顺序一致）。
+func WorkRoleRank(role string) int {
+	switch role {
+	case "op":
+		return 0
+	case "ed":
+		return 1
+	case "insert":
+		return 2
+	case "theme":
+		return 3
+	case "character":
+		return 4
+	case "image_song":
+		return 5
+	case "ost":
+		return 6
+	default:
+		return 7
+	}
 }
 
 func inferredWorkKey(a metadata.WorkAssociation) string {
@@ -362,7 +393,7 @@ func resolveSeasonCandidate(ctx context.Context, tx *sql.Tx, a metadata.WorkAsso
 }
 
 func (s *Store) AlbumsForWork(ctx context.Context, workID int64) ([]AlbumWork, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT aw.album_id,aw.work_id,COALESCE(a.user_title,a.title),COALESCE((SELECT wt.role FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id=aw.work_id AND t.album_id=aw.album_id ORDER BY CASE wt.source WHEN 'manual' THEN 0 WHEN 'bangumi' THEN 1 ELSE 2 END,wt.track_id,wt.role LIMIT 1),aw.role),aw.source,aw.season FROM album_works aw JOIN albums a ON a.id=aw.album_id WHERE aw.work_id=? ORDER BY aw.album_id`, workID)
+	rows, err := s.db.QueryContext(ctx, `SELECT aw.album_id,aw.work_id,COALESCE(a.user_title,a.title),COALESCE((SELECT wt.role FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id=aw.work_id AND t.album_id=aw.album_id ORDER BY CASE wt.source WHEN 'manual' THEN 0 WHEN 'bangumi' THEN 1 ELSE 2 END,wt.track_id,wt.role LIMIT 1),aw.role),aw.source,aw.season,COALESCE(a.user_performed_by,a.performed_by,`+bangumiAlbumArtistSQL+`,''),COALESCE(a.user_release_year,a.release_year,0),COALESCE(a.user_album_type,a.album_type,'album'),a.disc_count,(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),`+albumArtworkURLSQL+`,aw.role,COALESCE((SELECT GROUP_CONCAT(DISTINCT wt.role) FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id=aw.work_id AND t.album_id=aw.album_id),'') FROM album_works aw JOIN albums a ON a.id=aw.album_id WHERE aw.work_id=? ORDER BY aw.album_id`, workID)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +401,22 @@ func (s *Store) AlbumsForWork(ctx context.Context, workID int64) ([]AlbumWork, e
 	out := []AlbumWork{}
 	for rows.Next() {
 		var v AlbumWork
-		if err = rows.Scan(&v.AlbumID, &v.WorkID, &v.Title, &v.Role, &v.Source, &v.Season); err != nil {
+		var rolesStr string
+		if err = rows.Scan(&v.AlbumID, &v.WorkID, &v.Title, &v.Role, &v.Source, &v.Season, &v.Artist, &v.Year, &v.AlbumType, &v.DiscCount, &v.TrackCount, &v.ArtworkURL, &v.AlbumRole, &rolesStr); err != nil {
 			return nil, err
+		}
+		if rolesStr != "" {
+			for _, r := range strings.Split(rolesStr, ",") {
+				r = strings.TrimSpace(r)
+				if r != "" {
+					v.TrackRoles = append(v.TrackRoles, r)
+				}
+			}
+			// GROUP_CONCAT(DISTINCT role) 不保证顺序：在 Go 里按用途优先级排序（与
+			// TrackWorksForAlbum 的 CASE 顺序一致），保证多用途合并展示稳定。
+			sort.SliceStable(v.TrackRoles, func(i, j int) bool {
+				return WorkRoleRank(v.TrackRoles[i]) < WorkRoleRank(v.TrackRoles[j])
+			})
 		}
 		out = append(out, v)
 	}

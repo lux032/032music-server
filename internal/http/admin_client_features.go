@@ -60,7 +60,7 @@ func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, http.StatusOK, "favorites.html", favoritesPageData{
-		Chrome: chromeFor(session, "favorites"), Notice: r.URL.Query().Get("notice"),
+		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"),
 		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal,
 	})
 }
@@ -99,7 +99,7 @@ func (a *App) handleAdminPlaylists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, http.StatusOK, "playlists.html", playlistsPageData{
-		Chrome: chromeFor(session, "playlists"), Notice: r.URL.Query().Get("notice"),
+		Chrome: a.chromeFor(r.Context(), session, "playlists"), Notice: r.URL.Query().Get("notice"),
 		Playlists: playlists, Total: total,
 	})
 }
@@ -149,7 +149,7 @@ func (a *App) handleAdminPlaylist(w http.ResponseWriter, r *http.Request) {
 		candidates = filtered
 	}
 	a.render(w, http.StatusOK, "playlist.html", playlistPageData{
-		Chrome: chromeFor(session, "playlists"), Notice: r.URL.Query().Get("notice"),
+		Chrome: a.chromeFor(r.Context(), session, "playlists"), Notice: r.URL.Query().Get("notice"),
 		Query: query, Detail: detail, Candidates: candidates,
 	})
 }
@@ -273,7 +273,7 @@ func (a *App) handleAdminPlayback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := playbackPageData{
-		Chrome: chromeFor(session, "playback"), Notice: r.URL.Query().Get("notice"),
+		Chrome: a.chromeFor(r.Context(), session, "playback"), Notice: r.URL.Query().Get("notice"),
 		History: history, Total: total, Page: page,
 	}
 	data.PageCount = int((total + adminFeaturePageSize - 1) / adminFeaturePageSize)

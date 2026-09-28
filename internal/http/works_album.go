@@ -60,7 +60,16 @@ func (a *App) handleAddWorkAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	err := a.store.AddWorkAlbum(r.Context(), id, parseInt64(r.FormValue("albumId")), r.FormValue("role"))
+	role := r.FormValue("role")
+	if role == "" {
+		role = "other"
+	}
+	// D1：专辑级关系类型只接受 ost / other。
+	if role != "ost" && role != "other" {
+		http.Error(w, "专辑级关系类型只支持 ost / other", http.StatusBadRequest)
+		return
+	}
+	err := a.store.AddWorkAlbum(r.Context(), id, parseInt64(r.FormValue("albumId")), role)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "作品或专辑不存在", http.StatusNotFound)
@@ -69,7 +78,8 @@ func (a *App) handleAddWorkAlbum(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "无法添加专辑关联", http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("专辑关联已添加"), http.StatusSeeOther)
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(id, 10))
+	redirectWithNotice(w, r, target, "专辑关联已添加")
 }
 func (a *App) handleRemoveWorkAlbum(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
@@ -86,7 +96,57 @@ func (a *App) handleRemoveWorkAlbum(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), status)
 		return
 	}
-	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("专辑关联已解除"), http.StatusSeeOther)
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(id, 10))
+	redirectWithNotice(w, r, target, "专辑关联已解除")
+}
+
+func (a *App) handleAddAlbumWork(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	albumID := parseInt64(r.PathValue("id"))
+	workID := parseInt64(r.FormValue("workId"))
+	role := r.FormValue("role")
+	if role == "" {
+		role = "other"
+	}
+	// D1：专辑级关系类型只接受 ost / other。
+	if role != "ost" && role != "other" {
+		http.Error(w, "专辑级关系类型只支持 ost / other", http.StatusBadRequest)
+		return
+	}
+	err := a.store.AddWorkAlbum(r.Context(), workID, albumID, role)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "作品或专辑不存在", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "无法添加作品关联", http.StatusBadRequest)
+		return
+	}
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums/"+strconv.FormatInt(albumID, 10)+"#edit")
+	redirectWithNotice(w, r, target, "作品关联已添加")
+}
+
+func (a *App) handleRemoveAlbumWork(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	albumID := parseInt64(r.PathValue("id"))
+	workID := parseInt64(r.PathValue("workId"))
+	err := a.store.RemoveWorkAlbum(r.Context(), workID, albumID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums/"+strconv.FormatInt(albumID, 10)+"#edit")
+	redirectWithNotice(w, r, target, "作品关联已解除")
 }
 func (a *App) handleRefreshWorks(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {

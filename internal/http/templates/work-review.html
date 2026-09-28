@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>作品关联审核 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main identity-main work-review-main">
+    <header class="browser-header">
+      <div>
+        <h1>作品关联审核</h1>
+        <p class="result-count">集中审核来自 Bangumi 的专辑、曲目及作品对齐建议，永久保留人工决策意图。</p>
+      </div>
+      {{if ne .ActiveTab "works"}}
+      <div class="review-controls">
+        <div class="group-segmented">
+          <a href="/admin/work-review?tab={{.ActiveTab}}&group=album{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}" class="{{if eq .Group "album"}}active{{end}}">按专辑分组</a>
+          <a href="/admin/work-review?tab={{.ActiveTab}}&group=work{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}" class="{{if eq .Group "work"}}active{{end}}">按作品分组</a>
+        </div>
+      </div>
+      {{end}}
+    </header>
+
+    <nav class="work-review-toolbar" aria-label="审核类型">
+      <div class="review-tabs">
+        <a href="/admin/work-review?tab=albums{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&group={{.Group}}" class="review-tab {{if eq .ActiveTab "albums"}}active{{end}}">
+          <span>专辑候选</span>
+          <span class="review-tab-badge">{{.AlbumSubjectCount}}</span>
+        </a>
+        <a href="/admin/work-review?tab=tracks{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&group={{.Group}}" class="review-tab {{if eq .ActiveTab "tracks"}}active{{end}}">
+          <span>曲目候选</span>
+          <span class="review-tab-badge">{{.TrackSubjectCount}}</span>
+        </a>
+        <a href="/admin/work-review?tab=works" class="review-tab {{if eq .ActiveTab "works"}}active{{end}}">
+          <span>作品对齐候选</span>
+          <span class="review-tab-badge">{{.WorkCandidateCount}}</span>
+        </a>
+      </div>
+      {{if .AlbumID}}
+      <div class="review-filter-indicator">
+        <span>当前按专辑 #{{.AlbumID}} 过滤，专辑/曲目 Tab 计数为过滤后数量</span>
+        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}" class="secondary-button">查看全部</a>
+      </div>
+      {{end}}
+    </nav>
+    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+
+    {{if eq .ActiveTab "albums"}}
+    <section class="review-group-list">
+      {{if eq .Group "album"}}
+      {{range .AlbumGroups}}
+      <article class="review-group-card">
+        <header class="review-group-head">
+          <div class="review-subject-summary">
+            {{if .ArtworkURL}}<img class="review-cover-thumb fade-img" src="{{thumb .ArtworkURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="review-cover-thumb cover-placeholder">032</div>{{end}}
+            <div class="review-subject-meta">
+              <h2><a href="/admin/albums/{{.AlbumID}}">{{.AlbumTitle}}</a></h2>
+              <p>{{if .Artist}}{{.Artist}} · {{end}}{{if .Year}}{{.Year}} · {{end}}{{if .TrackCount}}{{.TrackCount}} 首曲目 · {{end}}本地专辑 #{{.AlbumID}}</p>
+            </div>
+          </div>
+          <span class="score-pill">{{len .AlbumCards}} 条候选</span>
+        </header>
+        {{range .AlbumCards}}{{template "wrAlbumCandCard" .}}{{end}}
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>暂无待审专辑候选</strong><span>当自动增强发现需要人工确认的专辑时，将在此列出。</span></div>
+      {{end}}
+      {{else}}
+      {{range .WorkGroups}}
+      <article class="review-group-card">
+        <header class="review-group-head">
+          <div class="review-subject-summary">
+            <div class="review-subject-meta">
+              <h2>{{.WorkTitle}}</h2>
+              <p>关联作品 · {{len .AlbumCards}} 条专辑候选</p>
+            </div>
+          </div>
+        </header>
+        {{range .AlbumCards}}{{template "wrAlbumCandCard" .}}{{end}}
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>暂无待审专辑候选</strong><span>当自动增强发现需要人工确认的专辑时，将在此列出。</span></div>
+      {{end}}
+      {{end}}
+    </section>
+    {{else if eq .ActiveTab "tracks"}}
+    <section class="review-group-list">
+      {{if eq .Group "album"}}
+      {{range .AlbumGroups}}
+      <article class="review-group-card">
+        <header class="review-group-head">
+          <div class="review-subject-summary">
+            {{if .ArtworkURL}}<img class="review-cover-thumb fade-img" src="{{thumb .ArtworkURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="review-cover-thumb cover-placeholder">032</div>{{end}}
+            <div class="review-subject-meta">
+              <h2><a href="/admin/albums/{{.AlbumID}}">{{.AlbumTitle}}</a></h2>
+              <p>{{if .Artist}}{{.Artist}} · {{end}}{{if .Year}}{{.Year}} · {{end}}{{if .TrackCount}}{{.TrackCount}} 首曲目 · {{end}}本地专辑 #{{.AlbumID}}</p>
+            </div>
+          </div>
+          <span class="score-pill">{{len .TrackCards}} 条候选</span>
+        </header>
+        {{range .TrackCards}}{{template "wrTrackCandCard" .}}{{end}}
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>暂无待审曲目候选</strong><span>当多曲名条目或需要核对角色的单曲反查结果产生时，将在此列出。</span></div>
+      {{end}}
+      {{else}}
+      {{range .WorkGroups}}
+      <article class="review-group-card">
+        <header class="review-group-head">
+          <div class="review-subject-summary">
+            <div class="review-subject-meta">
+              <h2>{{.WorkTitle}}</h2>
+              <p>关联作品 · {{len .TrackCards}} 条曲目候选</p>
+            </div>
+          </div>
+        </header>
+        {{range .TrackCards}}{{template "wrTrackCandCard" .}}{{end}}
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>暂无待审曲目候选</strong><span>当多曲名条目或需要核对角色的单曲反查结果产生时，将在此列出。</span></div>
+      {{end}}
+      {{end}}
+    </section>
+    {{else if eq .ActiveTab "works"}}
+    {{/* 作品对齐候选与专辑无关，按专辑分组没有意义：本 Tab 始终是平铺列表，忽略 group/albumId。 */}}
+    <section class="review-group-list">
+      {{range $item := .WorkReviews}}
+      <article class="review-group-card">
+        <header class="review-group-head">
+          <div class="review-subject-summary">
+            {{with workPoster $item.Work}}<img class="review-poster-thumb fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="review-poster-thumb cover-placeholder">作</div>{{end}}
+            <div class="review-subject-meta">
+              <h2><a href="/admin/works/{{$item.Work.ID}}">{{$item.Work.Title}}</a></h2>
+              <p>本地作品 #{{$item.Work.ID}} · 当前类型：{{workTypeLabel $item.Work.Type}} · 关联 {{$item.Work.TrackCount}} 首曲目 · 来源：{{workSourceLabel $item.Work.Origin}}</p>
+            </div>
+          </div>
+          <span class="score-pill">待审核</span>
+        </header>
+        <div class="review-candidate-body">
+          <p class="muted" style="margin:0;font-size:var(--fs-sm);">为未绑定 Bangumi 的本地作品选择对应的权威番组条目，以补全海报、译名、播出年份及系列信息：</p>
+          <div class="work-align-candidates">
+            {{range $item.Candidates}}
+            <div class="work-align-option">
+              {{if .PosterURL}}<img class="work-align-poster fade-img" src="{{thumb .PosterURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="work-align-poster cover-placeholder">作</div>{{end}}
+              <div class="work-align-info">
+                <strong>{{.Title}}</strong>
+                {{if .TranslatedTitle}}<span class="cn-title">{{.TranslatedTitle}}</span>{{end}}
+                <div class="meta-line">
+                  <span class="score-pill">置信度 {{.Score}}</span>
+                  <span>{{if .Year}}{{.Year}}年 · {{end}}{{workTypeLabel .Type}}</span>
+                  <a href="https://bgm.tv/subject/{{.ExternalID}}" target="_blank" rel="noopener noreferrer" class="bgm-id-pill">bgm.tv/subject/{{.ExternalID}} ↗</a>
+                </div>
+                <div class="candidate-btn-group">
+                  <form method="post" action="/admin/enrichment/works/{{$item.Work.ID}}/candidates/{{.ID}}/accept">
+                    <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
+                    <button type="submit" class="primary-button">确认对齐</button>
+                  </form>
+                  <form method="post" action="/admin/enrichment/works/{{$item.Work.ID}}/candidates/{{.ID}}/reject">
+                    <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
+                    <button type="submit" class="secondary-button" style="color:var(--danger);">忽略条目</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+            {{end}}
+          </div>
+        </div>
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>没有待审核作品</strong><span>未绑定的作品若在 Bangumi 查到高置信候选，将在此等待对齐。</span></div>
+      {{end}}
+    </section>
+    {{end}}
+  </main>
+</body>
+</html>
+
+{{define "wrAlbumCandCard"}}
+<div class="review-candidate-body">
+  <div class="bgm-candidate-bar">
+    <div class="bgm-candidate-title">
+      <a class="bgm-link" href="https://bgm.tv/subject/{{.Cand.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Cand.Title}} ↗</a>
+      <span class="bgm-id-pill">bgm.tv/subject/{{.Cand.ExternalID}}</span>
+      {{if .Cand.Artist}}<span class="muted">{{.Cand.Artist}}</span>{{end}}
+      <span class="score-pill {{if lt .Cand.Score 85}}medium{{end}}">置信度 {{.Cand.Score}}</span>
+    </div>
+    {{if .Cand.Evidence}}
+    <div class="evidence-pills">
+      {{range .Cand.Evidence}}<span class="evidence-pill">{{.}}</span>{{end}}
+    </div>
+    {{end}}
+  </div>
+
+  <form id="album-accept-{{.Cand.ID}}" method="post" action="/admin/enrichment/albums/{{.Cand.AlbumID}}/subjects/{{.Cand.ID}}/accept">
+    <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
+    <input type="hidden" name="returnTo" value="/admin/work-review?tab=albums&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
+    <div class="candidate-tieup-list">
+      {{range .Cand.Tieups}}
+      <div class="candidate-tieup-row">
+        <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked title="勾选以接受">
+        {{if .PosterURL}}<img class="tieup-mini-poster fade-img" src="{{thumb .PosterURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="tieup-mini-poster cover-placeholder">作</div>{{end}}
+        <div class="tieup-work-info">
+          <strong>{{.Title}}</strong>
+          <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
+        </div>
+        <span class="format-pill">{{workTypeLabel .Type}}</span>
+        <span class="role-badge {{if eq .Role "ost"}}ost{{end}}">{{workRoleBadgeLabel .Role}}</span>
+      </div>
+      {{end}}
+    </div>
+  </form>
+
+  <form id="album-reject-{{.Cand.ID}}" method="post" action="/admin/enrichment/albums/{{.Cand.AlbumID}}/subjects/{{.Cand.ID}}/reject">
+    <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
+    <input type="hidden" name="returnTo" value="/admin/work-review?tab=albums&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
+  </form>
+
+  <footer class="candidate-footer-actions">
+    <span class="action-hint">接受后写入专辑关联与同名曲目具体角色，未同名曲目不标用途。</span>
+    <div class="candidate-btn-group">
+      <button type="submit" form="album-accept-{{.Cand.ID}}" name="acceptAll" value="1" class="primary-button">接受全部</button>
+      <button type="submit" form="album-accept-{{.Cand.ID}}" name="onlySelected" value="1" class="secondary-button" data-selected-count-for="album-accept-{{.Cand.ID}}">只接受勾选作品 (<span class="selected-count">…</span>)</button>
+      <button type="submit" form="album-reject-{{.Cand.ID}}" class="secondary-button" style="color:var(--danger);">拒绝并抑制</button>
+    </div>
+  </footer>
+</div>
+{{end}}
+
+{{define "wrTrackCandCard"}}
+<div class="review-candidate-body">
+  <div class="review-track-line">
+    <strong>{{.Cand.TrackTitle}}</strong>
+    <span class="muted">{{if .Cand.TrackArtist}}{{.Cand.TrackArtist}} · {{end}}专辑《<a href="/admin/albums/{{.Cand.AlbumID}}">{{.Cand.AlbumTitle}}</a>》{{if .Cand.TrackNumber}} · 曲目 {{.Cand.DiscNumber}}.{{.Cand.TrackNumber}}{{end}}{{if .Cand.DurationMillis}} · {{formatDurationMillis .Cand.DurationMillis}}{{end}}</span>
+    <span class="match-kind-badge {{matchKindClass .Cand.MatchKind}}">{{matchKindLabel .Cand.MatchKind}}</span>
+  </div>
+  <div class="bgm-candidate-bar">
+    <div class="bgm-candidate-title">
+      <a class="bgm-link" href="https://bgm.tv/subject/{{.Cand.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Cand.Title}} ↗</a>
+      <span class="bgm-id-pill">bgm.tv/subject/{{.Cand.ExternalID}}</span>
+      {{if .Cand.Artist}}<span class="muted">{{.Cand.Artist}}</span>{{end}}
+    </div>
+    {{if .Cand.Evidence}}
+    <div class="evidence-pills">
+      {{range .Cand.Evidence}}<span class="evidence-pill">{{.}}</span>{{end}}
+    </div>
+    {{end}}
+  </div>
+
+  <form id="track-accept-{{.Cand.ID}}" method="post" action="/admin/enrichment/tracks/{{.Cand.TrackID}}/subjects/{{.Cand.ID}}/accept">
+    <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
+    <input type="hidden" name="returnTo" value="/admin/work-review?tab=tracks&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
+    <div class="candidate-tieup-list">
+      {{range .Cand.Tieups}}
+      <div class="candidate-tieup-row">
+        <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked title="选择关联此作品">
+        {{if .PosterURL}}<img class="tieup-mini-poster fade-img" src="{{thumb .PosterURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="tieup-mini-poster cover-placeholder">作</div>{{end}}
+        <div class="tieup-work-info">
+          <strong>{{.Title}}</strong>
+          <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
+        </div>
+        <span class="format-pill">{{workTypeLabel .Type}}</span>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;">
+          <span class="muted" style="font-size:var(--fs-xs);">角色：</span>
+          <select name="role-{{.SubjectID}}" class="role-select" aria-label="角色用途">
+            <option value="op" {{if eq .Role "op"}}selected{{end}}>片头曲 (OP)</option>
+            <option value="ed" {{if eq .Role "ed"}}selected{{end}}>片尾曲 (ED)</option>
+            <option value="insert" {{if eq .Role "insert"}}selected{{end}}>插入歌</option>
+            <option value="theme" {{if eq .Role "theme"}}selected{{end}}>主题曲</option>
+            <option value="character" {{if eq .Role "character"}}selected{{end}}>角色歌</option>
+            <option value="image_song" {{if eq .Role "image_song"}}selected{{end}}>印象曲</option>
+            <option value="ost" {{if eq .Role "ost"}}selected{{end}}>原声集 (OST)</option>
+            <option value="other" {{if eq .Role "other"}}selected{{end}}>相关</option>
+          </select>
+        </label>
+      </div>
+      {{end}}
+    </div>
+  </form>
+
+  <form id="track-reject-{{.Cand.ID}}" method="post" action="/admin/enrichment/tracks/{{.Cand.TrackID}}/subjects/{{.Cand.ID}}/reject">
+    <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
+    <input type="hidden" name="returnTo" value="/admin/work-review?tab=tracks&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
+  </form>
+
+  <footer class="candidate-footer-actions">
+    <span class="action-hint">修改过用途的关联会记为人工关联；未修改用途的关联会记为 Bangumi 关联。</span>
+    <div class="candidate-btn-group">
+      <button type="submit" form="track-accept-{{.Cand.ID}}" class="primary-button">接受候选</button>
+      <button type="submit" form="track-reject-{{.Cand.ID}}" class="secondary-button" style="color:var(--danger);">拒绝</button>
+    </div>
+  </footer>
+</div>
+{{end}}

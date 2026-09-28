@@ -23,6 +23,22 @@
         <h1>{{.AlbumDetail.Title}}</h1>
         {{if .AlbumDetail.Version}}<p class="album-version">{{.AlbumDetail.Version}}</p>{{end}}
         <h2 class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</h2>
+
+        {{if .AlbumCapsules}}
+        <div class="album-work-capsules">
+          {{range $index, $cap := .AlbumCapsules}}
+          <a href="/admin/works/{{$cap.Work.ID}}" class="work-capsule {{if ge $index 2}}is-extra{{end}}" {{if ge $index 2}}hidden{{end}} title="查看作品：{{$cap.Work.Title}}">
+            {{with workPoster $cap.Work}}<img class="work-capsule-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<span class="work-capsule-poster cover-placeholder">作</span>{{end}}
+            <span class="work-capsule-title">{{$cap.Work.Title}}</span>
+            {{if $cap.RoleLabel}}<span class="work-capsule-role {{if $cap.IsOST}}ost{{end}}">{{$cap.RoleLabel}}</span>{{end}}
+          </a>
+          {{end}}
+          {{if gt .HiddenCapsuleCount 0}}
+          <a href="#inspector-works" class="work-capsule-more" data-capsule-expand title="展开其余关联作品">+{{.HiddenCapsuleCount}}</a>
+          {{end}}
+        </div>
+        {{end}}
+
         <div class="album-facts">
           {{if .AlbumDetail.Year}}<span>{{.AlbumDetail.Year}}</span>{{end}}
           <span>{{.AlbumDetail.DiscCount}} 碟</span>
@@ -42,24 +58,51 @@
       </div>
     </section>
 
-    <section class="feature-card"><h2>关联作品</h2>
-      {{range .AlbumWorks}}<p><a href="/admin/works/{{.ID}}">{{.Title}}</a> · {{workTypeLabel .Type}} · {{workRoleLabel .Role}} · {{workSourceLabel .Source}}{{if .TrackTitle}} · 曲目：{{.TrackTitle}}{{end}}</p>{{else}}<p>暂无关联作品</p>{{end}}{{if .CanSearchBangumi}}<form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button class="secondary-button">从 Bangumi 查找</button></form>{{else if eq .BangumiSearchBlockReason "unlinked"}}<p>已解除 Bangumi 关联，请在作品页手动关联。</p>{{else if eq .BangumiSearchBlockReason "rejected"}}<p>已拒绝 Bangumi 候选，请在作品页手动关联。</p>{{end}}
-    </section>
     <div class="album-columns">
       <section class="album-content">
-        <div class="section-title"><h2>曲目</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div>
-        <div class="detail-tracks">
+        <div class="section-title"><h2>曲目列表</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div>
+        <div class="detail-tracks has-tieup-col">
           {{range .Tracks}}
+          {{$tieups := index $.TrackTieups .ID}}
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="playable-number">
               <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
             <div>
-              <strong>{{.Title}}</strong>
-              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}</small>
+              <div class="track-title-line">
+                <strong>{{.Title}}</strong>
+              </div>
+              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{if .Lyricist}} · 作词 {{.Lyricist}}{{end}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}{{if .Arranger}} · 编曲 {{.Arranger}}{{end}}</small>
             </div>
-            {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
+            <div class="track-tieup-cell">
+              {{if $tieups}}
+              {{$first := index $tieups 0}}
+              <button type="button" class="track-tieup-trigger" aria-expanded="false" aria-haspopup="dialog" title="关联作品：{{$first.Work.Title}} ({{$first.RoleShort}})">
+                <span class="tieup-diamond" aria-hidden="true">◆</span>
+                <span>{{$first.RoleShort}}</span>
+                {{if gt (len $tieups) 1}}<span class="track-tieup-count">{{len $tieups}}</span>{{end}}
+              </button>
+              <div class="work-hover-popover" role="dialog" aria-label="作品详情" hidden>
+                {{range $tieups}}
+                <a href="/admin/works/{{.Work.ID}}" class="popover-work-item">
+                  {{with workPoster .Work}}<img class="popover-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="popover-poster cover-placeholder">作</div>{{end}}
+                  <div class="popover-work-meta">
+                    <strong class="jp-title">{{.Work.Title}}</strong>
+                    {{if .Work.TranslatedTitle}}<span class="cn-title">{{.Work.TranslatedTitle}}</span>{{end}}
+                    <div class="badge-line">
+                      <span class="role-badge {{if eq .Role "ost"}}ost{{end}}">{{.RoleBadge}}</span>
+                      <span>{{.TypeLabel}}</span>
+                      {{if .Year}}<span>{{.Year}}年</span>{{end}}
+                    </div>
+                    <span class="jump-hint">查看作品详情 →</span>
+                  </div>
+                </a>
+                {{end}}
+              </div>
+              {{end}}
+            </div>
+            {{if .Container}}<span class="format-pill">{{.Container}}</span>{{else}}<span></span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <form class="inline-favorite" method="post" action="/admin/favorites/tracks/{{.ID}}">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
@@ -74,7 +117,63 @@
         </div>
         {{if .AlbumDetail.Review}}<div class="editorial"><p class="kicker">专辑介绍</p><p>{{.AlbumDetail.Review}}</p></div>{{end}}
       </section>
+
       <aside class="album-inspector">
+        {{if .InspectorWorks}}
+        <section id="inspector-works">
+          <p class="kicker">关联作品 ({{len .InspectorWorks}})</p>
+          <div class="inspector-works-list">
+            {{range .InspectorWorks}}
+            <a href="/admin/works/{{.Work.ID}}" class="inspector-work-card">
+              {{with workPoster .Work}}<img class="inspector-work-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="inspector-work-poster cover-placeholder">作</div>{{end}}
+              <div class="inspector-work-info">
+                <strong>{{.Work.Title}}</strong>
+                <span>{{.TypeAndYear}}</span>
+                <small>{{.RoleSummary}}</small>
+              </div>
+            </a>
+            {{end}}
+          </div>
+          {{if gt .PendingReviewTotal 0}}
+          <div class="pending-review-banner">
+            <span>有 {{.PendingReviewTotal}} 条待审核</span>
+            <a href="/admin/work-review?tab={{.PendingReviewTab}}&albumId={{.AlbumDetail.ID}}">去审核 →</a>
+          </div>
+          {{end}}
+          {{if .CanSearchBangumi}}
+          <form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search" style="margin-top:8px;">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
+            <button class="secondary-button" style="width:100%;">从 Bangumi 查找</button>
+          </form>
+          {{else if eq .BangumiSearchBlockReason "unlinked"}}
+          <p class="field-hint" style="margin-top:8px;">已解除 Bangumi 关联，请在作品页手动关联。</p>
+          {{else if eq .BangumiSearchBlockReason "rejected"}}
+          <p class="field-hint" style="margin-top:8px;">已拒绝 Bangumi 候选，请在作品页手动关联。</p>
+          {{end}}
+        </section>
+        {{else if or (gt .PendingReviewTotal 0) .CanSearchBangumi (ne .BangumiSearchBlockReason "")}}
+        <section id="inspector-works">
+          {{if gt .PendingReviewTotal 0}}
+          <div class="pending-review-banner">
+            <span>有 {{.PendingReviewTotal}} 条待审核</span>
+            <a href="/admin/work-review?tab={{.PendingReviewTab}}&albumId={{.AlbumDetail.ID}}">去审核 →</a>
+          </div>
+          {{end}}
+          {{if .CanSearchBangumi}}
+          <form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search" style="margin-top:8px;">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
+            <button class="secondary-button" style="width:100%;">从 Bangumi 查找</button>
+          </form>
+          {{else if eq .BangumiSearchBlockReason "unlinked"}}
+          <p class="field-hint" style="margin-top:8px;">已解除 Bangumi 关联，请在作品页手动关联。</p>
+          {{else if eq .BangumiSearchBlockReason "rejected"}}
+          <p class="field-hint" style="margin-top:8px;">已拒绝 Bangumi 候选，请在作品页手动关联。</p>
+          {{end}}
+        </section>
+        {{end}}
+
         <section>
           <p class="kicker">发行信息</p>
           <dl>
@@ -115,7 +214,7 @@
             <fieldset>
               <legend>基本信息</legend>
               <label>专辑标题<input name="title" value="{{.AlbumDetail.Title}}"></label>
-              <p>作品关联将在下次扫描或手动重算后更新。</p>
+              <p class="field-hint">作品关联将在下次扫描或手动重算后更新。</p>
               <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
               <div class="form-grid">
                 <label>专辑类型<select name="albumType">
@@ -150,13 +249,57 @@
                 <label><input type="checkbox" name="live" {{if .AlbumDetail.Live}}checked{{end}}> 现场录音</label>
                 <label><input type="checkbox" name="bootleg" {{if .AlbumDetail.Bootleg}}checked{{end}}> Bootleg</label>
               </div>
-              <label>专辑简介<textarea name="review" rows="8" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label>
+              <label>专辑简介<textarea name="review" rows="5" placeholder="专辑介绍、版本备注或内页信息…">{{.AlbumDetail.Review}}</textarea></label>
+            </fieldset>
+            <fieldset>
+              <legend>作品关联</legend>
+              <div class="drawer-tieup-list">
+                {{range .AlbumLevelWorks}}
+                <div class="drawer-tieup-row">
+                  <div class="drawer-tieup-info">
+                    <strong><a href="/admin/works/{{.Work.ID}}">{{.Work.Title}}</a></strong>
+                    <small>{{workTypeLabel .Work.Type}} · {{workRoleLabel .Role}} · {{workSourceLabel .Source}}</small>
+                  </div>
+                  <button type="submit" form="album-unlink-work-{{.Work.ID}}" class="secondary-button danger-action" style="min-height:30px;padding:2px 10px;font-size:var(--fs-xs);">解除关联</button>
+                </div>
+                {{else}}
+                <p class="field-hint">暂无关联作品</p>
+                {{end}}
+              </div>
+              <div class="drawer-add-tieup" data-work-picker="/admin/options/works">
+                <label>搜索作品
+                  <input type="text" data-work-search placeholder="输入作品名搜索…" autocomplete="off">
+                </label>
+                <div class="work-picker-results" data-work-results hidden></div>
+                <div class="form-grid">
+                  <label>作品 ID
+                    <input type="number" name="workId" form="album-add-work-form" data-work-id-input min="1" placeholder="作品 ID" required>
+                  </label>
+                  <label>关联类型
+                    <select name="role" form="album-add-work-form">
+                      <option value="other" selected>相关</option>
+                      <option value="ost">原声集</option>
+                    </select>
+                  </label>
+                </div>
+                <button type="submit" form="album-add-work-form" class="secondary-button" style="justify-self:start;">添加专辑关联</button>
+              </div>
             </fieldset>
           </div>
           <div class="form-actions editor-actions">
             <a class="secondary-button" href="/admin/albums/{{.AlbumDetail.ID}}" data-drawer-close>取消</a>
-            <button>保存覆盖信息</button>
+            <button type="submit">保存覆盖信息</button>
           </div>
+        </form>
+        {{range .AlbumLevelWorks}}
+        <form id="album-unlink-work-{{.Work.ID}}" method="post" action="/admin/albums/{{$.AlbumDetail.ID}}/works/{{.Work.ID}}/remove">
+          <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/albums/{{$.AlbumDetail.ID}}">
+        </form>
+        {{end}}
+        <form id="album-add-work-form" method="post" action="/admin/albums/{{.AlbumDetail.ID}}/works">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
         </form>
       </div>
     </section>

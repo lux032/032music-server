@@ -29,7 +29,15 @@ type libraryPageData struct {
 	Genres                                               []string
 	Years                                                []int
 	AlbumDetail                                          *storage.Album
-	AlbumWorks                                           []storage.AlbumWorkView
+	AlbumCapsules                                        []AlbumWorkCapsule
+	HiddenCapsuleCount                                   int
+	TrackTieups                                          map[int64][]TrackTieupView
+	InspectorWorks                                       []AlbumInspectorWork
+	AlbumLevelWorks                                      []storage.AlbumLevelWorkView
+	PendingAlbumCandidates                               int
+	PendingTrackCandidates                               int
+	PendingReviewTotal                                   int
+	PendingReviewTab                                     string
 	CanSearchBangumi                                     bool
 	BangumiSearchBlockReason                             string
 	Total                                                int64
@@ -42,6 +50,134 @@ type libraryPageData struct {
 	KanaIndex                                            bool
 	AlbumCols                                            int
 	FilterTags                                           []filterTag
+}
+
+type AlbumWorkCapsule struct {
+	Work       storage.Work
+	RoleLabel  string
+	IsOST      bool
+	TrackCount int
+}
+
+type TrackTieupView struct {
+	Work      storage.Work
+	Role      string
+	RoleShort string // D49：这首曲目对这部作品的合并用途（如 "OP · ED"）
+	RoleBadge string
+	TypeLabel string
+	Year      int
+}
+
+type AlbumInspectorWork struct {
+	Work        storage.Work
+	TypeAndYear string
+	RoleSummary string
+}
+
+func (data *libraryPageData) buildAlbumWorkViews(albumLevel []storage.AlbumLevelWorkView, trackLevel []storage.AlbumTrackWorkView) {
+	data.TrackTieups = make(map[int64][]TrackTieupView)
+	trackRolesByWork := make(map[int64][]string)
+	trackCountByWork := make(map[int64]int)
+	trackTitlesByWork := make(map[int64][]string)
+
+	for _, tw := range trackLevel {
+		// D49：tw.Roles 带全部用途；显示来源仍取代表行（tw.Role/tw.Source）。
+		roles := tw.Roles
+		if len(roles) == 0 {
+			roles = []string{tw.Role}
+		}
+		item := TrackTieupView{
+			Work:      tw.Work,
+			Role:      tw.Role,
+			RoleShort: workAlbumUsageLabel("", roles),
+			RoleBadge: workRoleBadgeLabel(tw.Role),
+			TypeLabel: workTypeLabel(tw.Work.Type),
+			Year:      tw.Work.Year,
+		}
+		data.TrackTieups[tw.TrackID] = append(data.TrackTieups[tw.TrackID], item)
+
+		trackCountByWork[tw.Work.ID]++
+		for _, r := range roles {
+			exists := false
+			for _, seen := range trackRolesByWork[tw.Work.ID] {
+				if seen == r {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				trackRolesByWork[tw.Work.ID] = append(trackRolesByWork[tw.Work.ID], r)
+			}
+		}
+		if len(trackTitlesByWork[tw.Work.ID]) < 2 {
+			trackTitlesByWork[tw.Work.ID] = append(trackTitlesByWork[tw.Work.ID], tw.TrackTitle)
+		}
+	}
+
+	workOrder := make([]int64, 0)
+	workMap := make(map[int64]storage.Work)
+	albumRoleByWork := make(map[int64]string)
+
+	for _, al := range albumLevel {
+		workOrder = append(workOrder, al.Work.ID)
+		workMap[al.Work.ID] = al.Work
+		albumRoleByWork[al.Work.ID] = al.Role
+	}
+	for _, tw := range trackLevel {
+		if _, seen := workMap[tw.Work.ID]; !seen {
+			workOrder = append(workOrder, tw.Work.ID)
+			workMap[tw.Work.ID] = tw.Work
+		}
+	}
+
+	for _, workID := range workOrder {
+		w := workMap[workID]
+		tRoles := trackRolesByWork[workID]
+		aRole := albumRoleByWork[workID]
+		tCount := trackCountByWork[workID]
+
+		var roleLabel string
+		var isOST bool
+		// D47/D48：专辑级 ost 与曲目级用途合并显示；OST 高亮只看专辑级 role。
+		roleLabel = workAlbumUsageLabel(aRole, tRoles)
+		isOST = workAlbumIsOST(aRole)
+
+		data.AlbumCapsules = append(data.AlbumCapsules, AlbumWorkCapsule{
+			Work:       w,
+			RoleLabel:  roleLabel,
+			IsOST:      isOST,
+			TrackCount: tCount,
+		})
+
+		typeYear := workTypeLabel(w.Type)
+		if w.Year > 0 {
+			typeYear += fmt.Sprintf(" · %d", w.Year)
+		}
+		var roleSummary string
+		if len(tRoles) > 0 {
+			titles := trackTitlesByWork[workID]
+			titlesStr := strings.Join(titles, ", ")
+			if tCount > len(titles) {
+				titlesStr += " 等"
+			}
+			// L4/D47：与胶囊同一口径，专辑级 ost 与曲目级用途合并显示。
+			roleSummary = fmt.Sprintf("%s · %s", workAlbumUsageLabel(aRole, tRoles), titlesStr)
+		} else if aRole == "ost" {
+			roleSummary = "原声集 OST"
+		} else {
+			roleSummary = "整张专辑关联"
+		}
+		data.InspectorWorks = append(data.InspectorWorks, AlbumInspectorWork{
+			Work:        w,
+			TypeAndYear: typeYear,
+			RoleSummary: roleSummary,
+		})
+	}
+
+	data.HiddenCapsuleCount = 0
+	if len(data.AlbumCapsules) > 2 {
+		data.HiddenCapsuleCount = len(data.AlbumCapsules) - 2
+	}
 }
 
 // queryField is a hidden form field that keeps the current filter state when
@@ -85,7 +221,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 		return libraryPageData{}, err
 	}
 	path := "/admin/" + section
-	return libraryPageData{Chrome: chromeFor(session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: clearPathFor(r, path), SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), KanaIndex: isKanaIndex(f.Index), FilterTags: filterTags(r, path)}, nil
+	return libraryPageData{Chrome: a.chromeFor(r.Context(), session, section), Section: section, Query: f.Query, Genre: f.Genre, Sort: f.Sort, Index: f.Index, Year: f.Year, ArtistID: f.ArtistID, AlbumID: f.AlbumID, Genres: genres, Years: years, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(), ClearPath: clearPathFor(r, path), SearchFields: searchFields(r), IndexLinks: indexLinks(r, path), KanaIndex: isKanaIndex(f.Index), FilterTags: filterTags(r, path)}, nil
 }
 
 // filterQuery rebuilds the current filter query parameters without paging or
@@ -309,6 +445,26 @@ func (a *App) handleAdminAlbumOptions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, items)
 }
 
+func (a *App) handleAdminWorkOptions(w http.ResponseWriter, r *http.Request) {
+	works, err := a.store.ListWorkOptions(r.Context(), r.URL.Query().Get("q"), optionsLimit(r))
+	if err != nil {
+		writeAPIError(w, 500, "query_failed", err.Error())
+		return
+	}
+	items := make([]optionItem, 0, len(works))
+	for _, work := range works {
+		label := work.Title
+		if work.TranslatedTitle != "" && work.TranslatedTitle != work.Title {
+			label += " (" + work.TranslatedTitle + ")"
+		}
+		if work.Year > 0 {
+			label += fmt.Sprintf(" [%d]", work.Year)
+		}
+		items = append(items, optionItem{ID: work.ID, Label: label})
+	}
+	writeJSON(w, 200, items)
+}
+
 // resolveFilterTagNames replaces raw ID placeholders in filter chips with the
 // display names of the selected artist and album.
 func (data *libraryPageData) resolveFilterTagNames() {
@@ -447,8 +603,28 @@ func (a *App) handleAlbumPage(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		data.Artists, err = a.store.ArtistsForAlbum(r.Context(), data.AlbumDetail.ID)
 	}
+	var albumLevelWorks []storage.AlbumLevelWorkView
 	if err == nil {
-		data.AlbumWorks, err = a.store.WorksForAlbum(r.Context(), data.AlbumDetail.ID)
+		albumLevelWorks, err = a.store.AlbumLevelWorks(r.Context(), data.AlbumDetail.ID)
+		data.AlbumLevelWorks = albumLevelWorks
+	}
+	var trackWorks []storage.AlbumTrackWorkView
+	if err == nil {
+		trackWorks, err = a.store.TrackWorksForAlbum(r.Context(), data.AlbumDetail.ID)
+	}
+	if err == nil {
+		data.buildAlbumWorkViews(albumLevelWorks, trackWorks)
+	}
+	if err == nil {
+		albumCands, trackCands, _ := a.store.PendingAlbumReviewCounts(r.Context(), data.AlbumDetail.ID)
+		data.PendingAlbumCandidates = albumCands
+		data.PendingTrackCandidates = trackCands
+		data.PendingReviewTotal = albumCands + trackCands
+		if trackCands > 0 {
+			data.PendingReviewTab = "tracks"
+		} else {
+			data.PendingReviewTab = "albums"
+		}
 	}
 	if err == nil {
 		data.CanSearchBangumi, err = a.store.AlbumEligibleForBangumiSearch(r.Context(), data.AlbumDetail.ID)

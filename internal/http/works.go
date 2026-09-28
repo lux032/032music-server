@@ -29,16 +29,19 @@ type worksPageData struct {
 
 type workPageData struct {
 	Chrome
-	Notice        string
-	Work          storage.Work
-	Tracks        []storage.WorkTrack
-	Albums        []storage.AlbumWork
-	Candidates    []storage.Track
-	Query         string
-	Series        *storage.WorkSeries
-	SeriesMembers []storage.WorkSeriesMember
-	SeriesLocked  bool
-	AllSeries     []storage.WorkSeries
+	Notice              string
+	Work                storage.Work
+	Tracks              []storage.WorkTrack
+	Albums              []storage.AlbumWork
+	TrackUsages         map[int64][]storage.WorkTrack // D46：专辑 ID → 该专辑中本作品的曲目级关联
+	Candidates          []storage.Track
+	Query               string
+	Series              *storage.WorkSeries
+	SeriesMembers       []storage.WorkSeriesMember
+	CurrentMemberIndex  int
+	CurrentMemberSource string
+	SeriesLocked        bool
+	AllSeries           []storage.WorkSeries
 }
 
 func workFilters(r *http.Request) storage.WorkFilters {
@@ -175,7 +178,7 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Rows: rows, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data := worksPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Rows: rows, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
 	data.Unreferenced, data.UnreferencedTotal, err = a.store.UnreferencedProtectedWorks(r.Context())
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
@@ -230,19 +233,31 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 	for _, album := range albums {
 		albumSet[album.AlbumID] = true
 	}
+	// "收录于精选集 / 原创专辑": ONLY tracks where the album itself does NOT have an album-level association!
 	standalone := make([]storage.WorkTrack, 0, len(tracks))
+	// D46：整张关联专辑下的曲目级用途（只取真实曲目级行，排除专辑级摊下来的 source='album' 行）。
+	trackUsages := make(map[int64][]storage.WorkTrack)
 	for _, track := range tracks {
-		if !albumSet[track.AlbumID] || track.Source != "album" {
+		if !albumSet[track.AlbumID] {
 			standalone = append(standalone, track)
+		} else if track.Source != "album" {
+			trackUsages[track.AlbumID] = append(trackUsages[track.AlbumID], track)
 		}
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("trackQ"))
 	candidates, _ := a.store.ListTracks(r.Context(), storage.Filters{Query: query, Limit: 30})
-	data := workPageData{Chrome: chromeFor(session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, Candidates: candidates, Query: query}
+	data := workPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, TrackUsages: trackUsages, Candidates: candidates, Query: query}
 	if series, members, seriesErr := a.store.SeriesForWork(r.Context(), id); seriesErr == nil {
 		seriesCopy := series
 		data.Series = &seriesCopy
 		data.SeriesMembers = members
+		for idx, m := range members {
+			if m.Work.ID == id {
+				data.CurrentMemberIndex = idx + 1
+				data.CurrentMemberSource = m.Source
+				break
+			}
+		}
 	} else if !errors.Is(seriesErr, sql.ErrNoRows) {
 		http.Error(w, "work unavailable", http.StatusInternalServerError)
 		return
@@ -305,7 +320,9 @@ func (a *App) handleRemoveWorkTrack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice=曲目关联已移除", http.StatusSeeOther)
+	// L5：支持站内 returnTo；默认回到作品页的关联专辑锚点。
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(id, 10)+"#albums")
+	redirectWithNotice(w, r, target, "曲目关联已移除")
 }
 
 // handleDetachWorkSeries removes the work from its series and locks it

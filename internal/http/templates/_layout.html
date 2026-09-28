@@ -30,14 +30,15 @@
   <button type="button" class="sidebar-more" id="sidebar-more" aria-expanded="false" aria-controls="sidebar-more-sheet" aria-label="更多导航">
     <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg> 更多
   </button>
-  <div class="sidebar-group{{if .Nav}}{{if or (eq .Nav "console") (eq .Nav "matches") (eq .Nav "enrichment") (eq .Nav "merges") (eq .Nav "settings") (eq .Nav "security")}} open{{end}}{{end}}" id="sidebar-admin-group">
-    <button type="button" class="sidebar-group-toggle" id="sidebar-group-toggle" aria-expanded="{{if .Nav}}{{if or (eq .Nav "console") (eq .Nav "matches") (eq .Nav "enrichment") (eq .Nav "merges") (eq .Nav "settings") (eq .Nav "security")}}true{{else}}false{{end}}{{else}}false{{end}}" aria-controls="sidebar-admin-items">
+  <div class="sidebar-group{{if .Nav}}{{if or (eq .Nav "console") (eq .Nav "matches") (eq .Nav "work-review") (eq .Nav "enrichment") (eq .Nav "merges") (eq .Nav "settings") (eq .Nav "security")}} open{{end}}{{end}}" id="sidebar-admin-group">
+    <button type="button" class="sidebar-group-toggle" id="sidebar-group-toggle" aria-expanded="{{if .Nav}}{{if or (eq .Nav "console") (eq .Nav "matches") (eq .Nav "work-review") (eq .Nav "enrichment") (eq .Nav "merges") (eq .Nav "settings") (eq .Nav "security")}}true{{else}}false{{end}}{{else}}false{{end}}" aria-controls="sidebar-admin-items">
       <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-gear"></use></svg> 管理
       <svg class="icon group-chevron" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg>
     </button>
     <nav id="sidebar-admin-items" class="group-items" aria-label="管理">
       <a href="/admin" data-nav="console" class="{{if eq .Nav "console"}}active{{end}}"{{if eq .Nav "console"}} aria-current="page"{{end}} title="控制台" aria-label="控制台"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 控制台</a>
       <a href="/admin/matches" data-nav="matches" class="{{if eq .Nav "matches"}}active{{end}}"{{if eq .Nav "matches"}} aria-current="page"{{end}} title="匹配审核" aria-label="匹配审核"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg> 匹配审核</a>
+      <a href="/admin/work-review" data-nav="work-review" class="{{if eq .Nav "work-review"}}active{{end}}"{{if eq .Nav "work-review"}} aria-current="page"{{end}} title="作品关联审核" aria-label="作品关联审核"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品关联审核{{with .PendingReviewCount}}<span class="nav-badge">{{.}}</span>{{end}}</a>
       <a href="/admin/enrichment" data-nav="enrichment" class="{{if eq .Nav "enrichment"}}active{{end}}"{{if eq .Nav "enrichment"}} aria-current="page"{{end}} title="自动增强" aria-label="自动增强"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-enrichment"></use></svg> 自动增强</a>
       <a href="/admin/merges" data-nav="merges" class="{{if eq .Nav "merges"}}active{{end}}"{{if eq .Nav "merges"}} aria-current="page"{{end}} title="合并历史" aria-label="合并历史"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-merges"></use></svg> 合并历史</a>
       <a href="/admin/settings/metadata" data-nav="settings" class="{{if eq .Nav "settings"}}active{{end}}"{{if eq .Nav "settings"}} aria-current="page"{{end}} title="数据来源" aria-label="数据来源"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-settings"></use></svg> 数据来源</a>
@@ -72,6 +73,7 @@
       <p>管理</p>
       <a href="/admin" data-nav="console" class="{{if eq .Nav "console"}}active{{end}}"{{if eq .Nav "console"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 控制台</a>
       <a href="/admin/matches" data-nav="matches" class="{{if eq .Nav "matches"}}active{{end}}"{{if eq .Nav "matches"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg> 匹配审核</a>
+      <a href="/admin/work-review" data-nav="work-review" class="{{if eq .Nav "work-review"}}active{{end}}"{{if eq .Nav "work-review"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品关联审核{{with .PendingReviewCount}}<span class="nav-badge">{{.}}</span>{{end}}</a>
       <a href="/admin/enrichment" data-nav="enrichment" class="{{if eq .Nav "enrichment"}}active{{end}}"{{if eq .Nav "enrichment"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-enrichment"></use></svg> 自动增强</a>
       <a href="/admin/merges" data-nav="merges" class="{{if eq .Nav "merges"}}active{{end}}"{{if eq .Nav "merges"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-merges"></use></svg> 合并历史</a>
       <a href="/admin/settings/metadata" data-nav="settings" class="{{if eq .Nav "settings"}}active{{end}}"{{if eq .Nav "settings"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-settings"></use></svg> 数据来源</a>

@@ -39,18 +39,22 @@ type BangumiTieup struct {
 var ErrBangumiWorkIdentityConflict = errors.New("bangumi work identity conflicts with another local work")
 
 type AlbumSubjectCandidate struct {
-	ID          int64           `json:"id"`
-	AlbumID     int64           `json:"albumId"`
-	ExternalID  string          `json:"externalId"`
-	AlbumTitle  string          `json:"albumTitle"`
-	Title       string          `json:"title"`
-	ReleaseDate string          `json:"releaseDate"`
-	Artist      string          `json:"artist"`
-	Score       int             `json:"score"`
-	Evidence    []string        `json:"evidence"`
-	Tieups      []BangumiTieup  `json:"tieups"`
-	Payload     json.RawMessage `json:"payload"`
-	Status      string          `json:"status"`
+	ID              int64           `json:"id"`
+	AlbumID         int64           `json:"albumId"`
+	ExternalID      string          `json:"externalId"`
+	AlbumTitle      string          `json:"albumTitle"`
+	AlbumArtist     string          `json:"albumArtist"`
+	AlbumYear       int             `json:"albumYear"`
+	AlbumTrackCount int             `json:"albumTrackCount"`
+	AlbumArtworkURL string          `json:"albumArtworkUrl"`
+	Title           string          `json:"title"`
+	ReleaseDate     string          `json:"releaseDate"`
+	Artist          string          `json:"artist"`
+	Score           int             `json:"score"`
+	Evidence        []string        `json:"evidence"`
+	Tieups          []BangumiTieup  `json:"tieups"`
+	Payload         json.RawMessage `json:"payload"`
+	Status          string          `json:"status"`
 }
 
 func albumBangumiFingerprint(title, artist, date string) string {
@@ -165,7 +169,7 @@ func (s *Store) AlbumSubjectCandidates(ctx context.Context, albumID int64) ([]Al
 			return nil, err
 		}
 	}
-	query := `SELECT c.id,c.album_id,c.external_id,COALESCE(a.user_title,a.title),c.title,COALESCE(c.release_date,''),COALESCE(c.artist,''),c.score,c.evidence_json,c.tieups_json,c.payload_json,c.status FROM album_subject_candidates c JOIN albums a ON a.id=c.album_id WHERE (?=0 OR c.album_id=?) ORDER BY c.score DESC,c.id`
+	query := `SELECT c.id,c.album_id,c.external_id,COALESCE(a.user_title,a.title),COALESCE(a.user_performed_by,a.performed_by,` + bangumiAlbumArtistSQL + `,''),COALESCE(a.user_release_year,a.release_year,0),(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),` + albumArtworkURLSQL + `,c.title,COALESCE(c.release_date,''),COALESCE(c.artist,''),c.score,c.evidence_json,c.tieups_json,c.payload_json,c.status FROM album_subject_candidates c JOIN albums a ON a.id=c.album_id WHERE (?=0 OR c.album_id=?) ORDER BY c.score DESC,c.id`
 	rows, err := s.db.QueryContext(ctx, query, albumID, albumID)
 	if err != nil {
 		return nil, err
@@ -175,7 +179,7 @@ func (s *Store) AlbumSubjectCandidates(ctx context.Context, albumID int64) ([]Al
 	for rows.Next() {
 		var v AlbumSubjectCandidate
 		var ev, tie, raw string
-		if err = rows.Scan(&v.ID, &v.AlbumID, &v.ExternalID, &v.AlbumTitle, &v.Title, &v.ReleaseDate, &v.Artist, &v.Score, &ev, &tie, &raw, &v.Status); err != nil {
+		if err = rows.Scan(&v.ID, &v.AlbumID, &v.ExternalID, &v.AlbumTitle, &v.AlbumArtist, &v.AlbumYear, &v.AlbumTrackCount, &v.AlbumArtworkURL, &v.Title, &v.ReleaseDate, &v.Artist, &v.Score, &ev, &tie, &raw, &v.Status); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ev), &v.Evidence)
@@ -185,11 +189,12 @@ func (s *Store) AlbumSubjectCandidates(ctx context.Context, albumID int64) ([]Al
 	}
 	return out, rows.Err()
 }
-func (s *Store) PendingAlbumSubjectCandidates(ctx context.Context, limit int) ([]AlbumSubjectCandidate, error) {
+func (s *Store) PendingAlbumSubjectCandidates(ctx context.Context, albumID int64, limit int) ([]AlbumSubjectCandidate, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.album_id,c.external_id,COALESCE(a.user_title,a.title),c.title,COALESCE(c.release_date,''),COALESCE(c.artist,''),c.score,c.evidence_json,c.tieups_json,'{}',c.status FROM album_subject_candidates c JOIN albums a ON a.id=c.album_id WHERE c.status='candidate' ORDER BY c.score DESC,c.id LIMIT ?`, limit)
+	// albumID > 0 时在 SQL 层按专辑过滤（M3），而不是拉全量再在 Go 里筛。
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.album_id,c.external_id,COALESCE(a.user_title,a.title),COALESCE(a.user_performed_by,a.performed_by,`+bangumiAlbumArtistSQL+`,''),COALESCE(a.user_release_year,a.release_year,0),(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),`+albumArtworkURLSQL+`,c.title,COALESCE(c.release_date,''),COALESCE(c.artist,''),c.score,c.evidence_json,c.tieups_json,'{}',c.status FROM album_subject_candidates c JOIN albums a ON a.id=c.album_id WHERE c.status='candidate' AND (?=0 OR c.album_id=?) ORDER BY c.score DESC,c.id LIMIT ?`, albumID, albumID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +203,7 @@ func (s *Store) PendingAlbumSubjectCandidates(ctx context.Context, limit int) ([
 	for rows.Next() {
 		var v AlbumSubjectCandidate
 		var ev, tie, raw string
-		if err = rows.Scan(&v.ID, &v.AlbumID, &v.ExternalID, &v.AlbumTitle, &v.Title, &v.ReleaseDate, &v.Artist, &v.Score, &ev, &tie, &raw, &v.Status); err != nil {
+		if err = rows.Scan(&v.ID, &v.AlbumID, &v.ExternalID, &v.AlbumTitle, &v.AlbumArtist, &v.AlbumYear, &v.AlbumTrackCount, &v.AlbumArtworkURL, &v.Title, &v.ReleaseDate, &v.Artist, &v.Score, &ev, &tie, &raw, &v.Status); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ev), &v.Evidence)

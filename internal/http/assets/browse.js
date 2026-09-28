@@ -436,7 +436,234 @@
   });
   openDrawerFromHash();
 
+  // ------------------------------------------------ Work Hover Popover (4.5.5)
+  let hoverOpenTimer = null;
+  let hoverCloseTimer = null;
+  let activeHoverCell = null;
+  let suppressFocusOpen = false;
+
+  function clearHoverTimers() {
+    if (hoverOpenTimer) { clearTimeout(hoverOpenTimer); hoverOpenTimer = null; }
+    if (hoverCloseTimer) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; }
+  }
+
+  function closeHoverPopover(restoreFocus = false) {
+    clearHoverTimers();
+    if (!activeHoverCell) return;
+    const cell = activeHoverCell;
+    activeHoverCell = null;
+    const trigger = cell.querySelector('.track-tieup-trigger');
+    const popover = cell.querySelector('.work-hover-popover');
+    if (trigger) {
+      trigger.classList.remove('is-active');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+    if (popover) {
+      popover.hidden = true;
+      popover.classList.remove('flip-up');
+      popover.style.removeProperty('right');
+      popover.style.removeProperty('left');
+    }
+    if (restoreFocus && trigger?.isConnected) {
+      // Esc 关闭后把焦点还给触发器，但不能因此重新打开卡片。
+      suppressFocusOpen = true;
+      trigger.focus({ preventScroll: true });
+      setTimeout(() => { suppressFocusOpen = false; }, 0);
+    }
+  }
+
+  function positionHoverPopover(cell, popover) {
+    popover.classList.remove('flip-up');
+    popover.style.removeProperty('right');
+    popover.style.removeProperty('left');
+    const main = document.getElementById('app-main');
+    const player = document.querySelector('.global-player');
+    const mainRect = main ? main.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+    const bottomLimit = player ? player.getBoundingClientRect().top - 10 : window.innerHeight - 16;
+    const popRect = popover.getBoundingClientRect();
+    if (popRect.bottom > bottomLimit && cell.getBoundingClientRect().top - popRect.height - 12 > mainRect.top) {
+      popover.classList.add('flip-up');
+    }
+    const updatedRect = popover.getBoundingClientRect();
+    if (updatedRect.left < mainRect.left + 12) {
+      const shift = (mainRect.left + 12) - updatedRect.left;
+      popover.style.right = `${-shift}px`;
+    } else if (updatedRect.right > mainRect.right - 12) {
+      const shift = updatedRect.right - (mainRect.right - 12);
+      popover.style.right = `${shift}px`;
+    }
+  }
+
+  function openHoverPopover(cell) {
+    if (!cell || !cell.isConnected) return;
+    clearHoverTimers();
+    if (activeHoverCell && activeHoverCell !== cell) {
+      closeHoverPopover(false);
+    }
+    const trigger = cell.querySelector('.track-tieup-trigger');
+    const popover = cell.querySelector('.work-hover-popover');
+    if (!trigger || !popover) return;
+    activeHoverCell = cell;
+    trigger.classList.add('is-active');
+    trigger.setAttribute('aria-expanded', 'true');
+    popover.hidden = false;
+    positionHoverPopover(cell, popover);
+  }
+
+  document.addEventListener('mouseover', e => {
+    if (!(e.target instanceof Element)) return;
+    const cell = e.target.closest('.track-tieup-cell');
+    if (!cell) return;
+    if (activeHoverCell === cell) {
+      if (hoverCloseTimer) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; }
+      return;
+    }
+    clearHoverTimers();
+    hoverOpenTimer = setTimeout(() => openHoverPopover(cell), 150);
+  });
+
+  document.addEventListener('mouseout', e => {
+    if (!(e.target instanceof Element)) return;
+    const cell = e.target.closest('.track-tieup-cell');
+    if (!cell) return;
+    if (e.relatedTarget instanceof Node && cell.contains(e.relatedTarget)) return;
+    if (hoverOpenTimer) { clearTimeout(hoverOpenTimer); hoverOpenTimer = null; }
+    if (activeHoverCell === cell) {
+      if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = setTimeout(() => closeHoverPopover(false), 300);
+    }
+  });
+
+  document.addEventListener('focusin', e => {
+    if (!(e.target instanceof Element)) return;
+    const trigger = e.target.closest('.track-tieup-trigger');
+    if (trigger) {
+      if (suppressFocusOpen) return;
+      const cell = trigger.closest('.track-tieup-cell');
+      if (cell) openHoverPopover(cell);
+      return;
+    }
+    if (activeHoverCell && !activeHoverCell.contains(e.target)) {
+      closeHoverPopover(false);
+    }
+  });
+
+  document.addEventListener('focusout', e => {
+    if (!activeHoverCell) return;
+    if (e.relatedTarget instanceof Node && activeHoverCell.contains(e.relatedTarget)) return;
+    closeHoverPopover(false);
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && activeHoverCell) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeHoverPopover(true);
+    }
+  });
+
+  // -------------------------------------- Album Capsule "+N" Expand & Drawer Picker
+  document.addEventListener('click', e => {
+    if (!(e.target instanceof Element)) return;
+    const expandBtn = e.target.closest('[data-capsule-expand]');
+    if (expandBtn) {
+      const container = expandBtn.closest('.album-work-capsules');
+      if (container) {
+        const extras = container.querySelectorAll('.work-capsule.is-extra[hidden]');
+        if (extras.length > 0) {
+          e.preventDefault();
+          extras.forEach(el => { el.hidden = false; });
+          expandBtn.hidden = true;
+          return;
+        }
+      }
+    }
+    const workOpt = e.target.closest('[data-work-option-id]');
+    if (workOpt) {
+      const picker = workOpt.closest('[data-work-picker]');
+      if (picker) {
+        const idInput = picker.querySelector('[data-work-id-input]');
+        const searchInput = picker.querySelector('[data-work-search]');
+        const results = picker.querySelector('[data-work-results]');
+        if (idInput) idInput.value = workOpt.dataset.workOptionId;
+        if (searchInput) searchInput.value = workOpt.textContent || '';
+        if (results) results.hidden = true;
+      }
+    }
+  });
+
+  let workPickerTimer = null;
+  let workPickerAbort = null;
+  // M5：搜索框内按 Enter 不提交外层“保存覆盖信息”表单。
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target instanceof HTMLInputElement && e.target.matches('[data-work-search]')) {
+      e.preventDefault();
+    }
+  });
+  document.addEventListener('input', e => {
+    if (!(e.target instanceof HTMLInputElement) || !e.target.matches('[data-work-search]')) return;
+    const picker = e.target.closest('[data-work-picker]');
+    if (!picker) return;
+    // M5：搜索内容变化时清空已选作品 ID，避免提交错误的作品。
+    const idInput = picker.querySelector('[data-work-id-input]');
+    if (idInput) idInput.value = '';
+    const results = picker.querySelector('[data-work-results]');
+    if (!results) return;
+    clearTimeout(workPickerTimer);
+    if (workPickerAbort) workPickerAbort.abort();
+    const q = e.target.value.trim();
+    if (!q) {
+      results.replaceChildren();
+      results.hidden = true;
+      return;
+    }
+    workPickerTimer = setTimeout(async () => {
+      const ctrl = new AbortController();
+      workPickerAbort = ctrl;
+      try {
+        const url = new URL(picker.dataset.workPicker || '/admin/options/works', location.origin);
+        url.searchParams.set('q', q);
+        url.searchParams.set('limit', '10');
+        const res = await fetch(url, { credentials: 'same-origin', signal: ctrl.signal });
+        if (!res.ok) return;
+        const items = await res.json();
+        if (ctrl.signal.aborted) return;
+        results.replaceChildren();
+        if (!items.length) {
+          results.hidden = true;
+          return;
+        }
+        for (const item of items) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.workOptionId = String(item.id);
+          btn.textContent = `#${item.id} · ${item.label}`;
+          results.appendChild(btn);
+        }
+        results.hidden = false;
+      } catch (_) {}
+    }, 200);
+  });
+
+  // -------------------------------------- 审核页“只接受勾选作品 (已选/总数)”计数
+  function updateSelectedCounts() {
+    document.querySelectorAll('[data-selected-count-for]').forEach(btn => {
+      const form = document.getElementById(btn.dataset.selectedCountFor);
+      const span = btn.querySelector('.selected-count');
+      if (!form || !span) return;
+      const boxes = form.querySelectorAll('input[name="workSubjectIds"]');
+      const checked = form.querySelectorAll('input[name="workSubjectIds"]:checked');
+      span.textContent = `${checked.length}/${boxes.length}`;
+    });
+  }
+  document.addEventListener('change', e => {
+    if (e.target instanceof HTMLInputElement && e.target.name === 'workSubjectIds') updateSelectedCounts();
+  });
+  updateSelectedCounts();
+
   document.addEventListener('032:pjax-applied', () => {
+    closeHoverPopover(false);
+    updateSelectedCounts();
     clearAlbumSelection();
     if (pendingDrawerClose) { clearTimeout(pendingDrawerClose.timer); pendingDrawerClose = null; }
     activeDrawer = null;

@@ -39,7 +39,7 @@ type identityPageData struct {
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
 	session, _ := a.sessions.get(r)
-	return identityPageData{Chrome: chromeFor(session, identityNavKey(section)), Section: section, Notice: r.URL.Query().Get("notice")}
+	return identityPageData{Chrome: a.chromeFor(r.Context(), session, identityNavKey(section)), Section: section, Notice: r.URL.Query().Get("notice")}
 }
 
 // identityNavKey maps the identity section to the sidebar navigation key.
@@ -372,9 +372,15 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func redirectWithNotice(w http.ResponseWriter, r *http.Request, path, message string) {
+	// L1：fragment 必须在 query 之后，否则 notice 会被拼进 fragment 里丢失。
+	fragment := ""
+	if idx := strings.IndexByte(path, '#'); idx >= 0 {
+		fragment = path[idx:]
+		path = path[:idx]
+	}
 	separator := "?"
 	if strings.Contains(path, "?") {
 		separator = "&"
 	}
-	http.Redirect(w, r, path+separator+"notice="+url.QueryEscape(message), 303)
+	http.Redirect(w, r, path+separator+"notice="+url.QueryEscape(message)+fragment, 303)
 }

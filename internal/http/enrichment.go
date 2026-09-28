@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -38,13 +40,187 @@ type enrichmentPageData struct {
 	Chrome
 	Notice             string
 	Runs               []storage.EnrichmentRun
-	Works              []enrichmentWorkReview
 	Artists            []enrichmentArtistReview
+	PendingArtistCount int
+	TotalPendingCount  int
+	AlbumCount         int
+	TrackCount         int
+	WorkCount          int
+}
+
+// workReviewCtx 是候选卡片子模板需要的页面级上下文（CSRF、当前分组与过滤）。
+type workReviewCtx struct {
+	CSRFToken string
+	Group     string
+	AlbumID   int64
+}
+
+type albumCandCard struct {
+	Ctx  workReviewCtx
+	Cand storage.AlbumSubjectCandidate
+}
+
+type trackCandCard struct {
+	Ctx  workReviewCtx
+	Cand storage.TrackSubjectCandidate
+}
+
+type workReviewAlbumGroup struct {
+	AlbumID    int64
+	AlbumTitle string
+	Artist     string
+	Year       int
+	TrackCount int
+	ArtworkURL string
+	AlbumCards []albumCandCard
+	TrackCards []trackCandCard
+}
+
+type workReviewWorkGroup struct {
+	WorkTitle  string
+	WorkType   string
+	AlbumCards []albumCandCard
+	TrackCards []trackCandCard
+}
+
+type workReviewPageData struct {
+	Chrome
+	ActiveTab          string // "albums" | "tracks" | "works"
+	Group              string // "album" | "work"
+	AlbumID            int64  // optional filter
+	Notice             string
+	AlbumSubjectCount  int
+	TrackSubjectCount  int
+	WorkCandidateCount int
+	TotalPendingCount  int
 	AlbumSubjects      []storage.AlbumSubjectCandidate
 	TrackSubjects      []storage.TrackSubjectCandidate
-	TrackArtists       map[int64]string
-	PendingWorkCount   int
-	PendingArtistCount int
+	WorkReviews        []enrichmentWorkReview
+	AlbumGroups        []workReviewAlbumGroup
+	WorkGroups         []workReviewWorkGroup
+}
+
+func safeAdminReturnTo(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, "/\\") || strings.ContainsAny(raw, "\r\n\\") {
+		return fallback
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/admin") {
+		return fallback
+	}
+	return raw
+}
+
+func (data *workReviewPageData) buildGroups() {
+	ctx := workReviewCtx{CSRFToken: data.CSRFToken, Group: data.Group, AlbumID: data.AlbumID}
+	wrapAlbum := func(c storage.AlbumSubjectCandidate) albumCandCard {
+		return albumCandCard{Ctx: ctx, Cand: c}
+	}
+	wrapTrack := func(c storage.TrackSubjectCandidate) trackCandCard {
+		return trackCandCard{Ctx: ctx, Cand: c}
+	}
+	if data.Group == "work" {
+		workMap := map[string]*workReviewWorkGroup{}
+		var order []string
+		for _, c := range data.AlbumSubjects {
+			title := c.AlbumTitle
+			typ := "album"
+			if len(c.Tieups) > 0 {
+				title = c.Tieups[0].Title
+				typ = c.Tieups[0].Type
+			}
+			g, ok := workMap[title]
+			if !ok {
+				g = &workReviewWorkGroup{WorkTitle: title, WorkType: typ}
+				workMap[title] = g
+				order = append(order, title)
+			}
+			g.AlbumCards = append(g.AlbumCards, wrapAlbum(c))
+		}
+		for _, c := range data.TrackSubjects {
+			title := c.TrackTitle
+			typ := "track"
+			if len(c.Tieups) > 0 {
+				title = c.Tieups[0].Title
+				typ = c.Tieups[0].Type
+			}
+			g, ok := workMap[title]
+			if !ok {
+				g = &workReviewWorkGroup{WorkTitle: title, WorkType: typ}
+				workMap[title] = g
+				order = append(order, title)
+			}
+			g.TrackCards = append(g.TrackCards, wrapTrack(c))
+		}
+		data.WorkGroups = make([]workReviewWorkGroup, 0, len(order))
+		for _, name := range order {
+			data.WorkGroups = append(data.WorkGroups, *workMap[name])
+		}
+		// 不原地修改排序用的 slice：先复制再排序。
+		sortedAlbums := append([]storage.AlbumSubjectCandidate(nil), data.AlbumSubjects...)
+		sort.Slice(sortedAlbums, func(i, j int) bool {
+			ti, tj := sortedAlbums[i].AlbumTitle, sortedAlbums[j].AlbumTitle
+			if len(sortedAlbums[i].Tieups) > 0 {
+				ti = sortedAlbums[i].Tieups[0].Title
+			}
+			if len(sortedAlbums[j].Tieups) > 0 {
+				tj = sortedAlbums[j].Tieups[0].Title
+			}
+			return ti < tj
+		})
+		data.AlbumSubjects = sortedAlbums
+		sortedTracks := append([]storage.TrackSubjectCandidate(nil), data.TrackSubjects...)
+		sort.Slice(sortedTracks, func(i, j int) bool {
+			ti, tj := sortedTracks[i].TrackTitle, sortedTracks[j].TrackTitle
+			if len(sortedTracks[i].Tieups) > 0 {
+				ti = sortedTracks[i].Tieups[0].Title
+			}
+			if len(sortedTracks[j].Tieups) > 0 {
+				tj = sortedTracks[j].Tieups[0].Title
+			}
+			return ti < tj
+		})
+		data.TrackSubjects = sortedTracks
+		return
+	}
+
+	albumMap := map[int64]*workReviewAlbumGroup{}
+	var albumOrder []int64
+	for _, c := range data.AlbumSubjects {
+		g, ok := albumMap[c.AlbumID]
+		if !ok {
+			g = &workReviewAlbumGroup{
+				AlbumID:    c.AlbumID,
+				AlbumTitle: c.AlbumTitle,
+				Artist:     c.AlbumArtist,
+				Year:       c.AlbumYear,
+				TrackCount: c.AlbumTrackCount,
+				ArtworkURL: c.AlbumArtworkURL,
+			}
+			albumMap[c.AlbumID] = g
+			albumOrder = append(albumOrder, c.AlbumID)
+		}
+		g.AlbumCards = append(g.AlbumCards, wrapAlbum(c))
+	}
+	for _, c := range data.TrackSubjects {
+		g, ok := albumMap[c.AlbumID]
+		if !ok {
+			g = &workReviewAlbumGroup{
+				AlbumID:    c.AlbumID,
+				AlbumTitle: c.AlbumTitle,
+				Artist:     c.TrackArtist,
+				ArtworkURL: c.AlbumArtworkURL,
+			}
+			albumMap[c.AlbumID] = g
+			albumOrder = append(albumOrder, c.AlbumID)
+		}
+		g.TrackCards = append(g.TrackCards, wrapTrack(c))
+	}
+	data.AlbumGroups = make([]workReviewAlbumGroup, 0, len(albumOrder))
+	for _, id := range albumOrder {
+		data.AlbumGroups = append(data.AlbumGroups, *albumMap[id])
+	}
 }
 
 func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunRequest, error) {
@@ -185,48 +361,134 @@ func writeDecisionResult(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []enrichmentArtistReview, int, int) {
-	workIDs, workCount, _ := a.store.PendingWorkReviewIDs(ctx)
+func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []enrichmentArtistReview, int, int, error) {
+	workIDs, workCount, err := a.store.PendingWorkReviewIDs(ctx)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
 	var pendingWorks map[int64][]storage.WorkMatchCandidate
 	if len(workIDs) > 0 {
-		pendingWorks, _ = a.store.PendingWorkMatchCandidates(ctx, workIDs...)
+		if pendingWorks, err = a.store.PendingWorkMatchCandidates(ctx, workIDs...); err != nil {
+			return nil, nil, 0, 0, err
+		}
 	}
-	works, _ := a.store.WorksByIDs(ctx, workIDs)
+	works, err := a.store.WorksByIDs(ctx, workIDs)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
 	workReviews := make([]enrichmentWorkReview, 0, len(works))
 	for _, work := range works {
 		workReviews = append(workReviews, enrichmentWorkReview{Work: work, Candidates: pendingWorks[work.ID]})
 	}
-	artistIDs, artistCount, _ := a.store.PendingArtistReviewIDs(ctx)
+	artistIDs, artistCount, err := a.store.PendingArtistReviewIDs(ctx)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
 	var pendingRelations map[int64][]storage.ArtistRelationCandidate
 	if len(artistIDs) > 0 {
-		pendingRelations, _ = a.store.PendingArtistRelationCandidates(ctx, artistIDs...)
+		if pendingRelations, err = a.store.PendingArtistRelationCandidates(ctx, artistIDs...); err != nil {
+			return nil, nil, 0, 0, err
+		}
 	}
-	artists, _ := a.store.ArtistsByIDs(ctx, artistIDs)
+	artists, err := a.store.ArtistsByIDs(ctx, artistIDs)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
 	artistReviews := make([]enrichmentArtistReview, 0, len(artists))
 	for _, artist := range artists {
 		artistReviews = append(artistReviews, enrichmentArtistReview{Artist: artist, Candidates: pendingRelations[artist.ID]})
 	}
-	return workReviews, artistReviews, workCount, artistCount
+	return workReviews, artistReviews, workCount, artistCount, nil
 }
 
 func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
-	data := enrichmentPageData{Chrome: chromeFor(session, "enrichment"), Notice: r.URL.Query().Get("notice")}
+	data := enrichmentPageData{Chrome: a.chromeFor(r.Context(), session, "enrichment"), Notice: r.URL.Query().Get("notice")}
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
-	data.Works, data.Artists, data.PendingWorkCount, data.PendingArtistCount = a.enrichmentReviews(r.Context())
-	data.AlbumSubjects, _ = a.store.PendingAlbumSubjectCandidates(r.Context(), 200)
-	data.TrackSubjects, _ = a.store.PendingTrackSubjectCandidates(r.Context(), 200)
-	data.TrackArtists = map[int64]string{}
-	for _, candidate := range data.TrackSubjects {
-		if _, seen := data.TrackArtists[candidate.TrackID]; seen {
-			continue
-		}
-		track, err := a.store.TrackByID(r.Context(), candidate.TrackID)
-		if err == nil {
-			data.TrackArtists[candidate.TrackID] = track.Artist
-		}
+	albumCount, trackCount, workCount, _ := a.store.PendingWorkReviewCounts(r.Context())
+	data.AlbumCount = albumCount
+	data.TrackCount = trackCount
+	data.WorkCount = workCount
+	data.TotalPendingCount = albumCount + trackCount + workCount
+	// D44：艺术家关系候选的审核保留在 /admin/enrichment，不迁到作品关联审核页。
+	var reviewErr error
+	_, data.Artists, _, data.PendingArtistCount, reviewErr = a.enrichmentReviews(r.Context())
+	if reviewErr != nil {
+		// 艺术家关系候选是该页的附属区块：查询失败记日志，页面其余部分照常渲染。
+		a.logger.Error("enrichment artist reviews", "error", reviewErr)
 	}
 	a.render(w, http.StatusOK, "enrichment-jobs.html", data)
+}
+
+func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
+	session, _ := a.sessions.get(r)
+	tab := r.URL.Query().Get("tab")
+	if tab != "tracks" && tab != "works" {
+		tab = "albums"
+	}
+	group := r.URL.Query().Get("group")
+	if group != "work" {
+		group = "album"
+	}
+	albumID := parseInt64(r.URL.Query().Get("albumId"))
+
+	data := workReviewPageData{
+		Chrome:    a.chromeFor(r.Context(), session, "work-review"),
+		ActiveTab: tab,
+		Group:     group,
+		AlbumID:   albumID,
+		Notice:    r.URL.Query().Get("notice"),
+	}
+
+	var err error
+	data.AlbumSubjectCount, data.TrackSubjectCount, data.WorkCandidateCount, err = a.store.PendingWorkReviewCounts(r.Context())
+	if err != nil {
+		a.logger.Error("work review counts", "error", err)
+		http.Error(w, "work review unavailable", http.StatusInternalServerError)
+		return
+	}
+	if albumID > 0 {
+		// M3：过滤状态下 Tab 计数显示过滤后的数量（专辑/曲目两个 Tab）。
+		data.AlbumSubjectCount, data.TrackSubjectCount, err = a.store.PendingAlbumReviewCounts(r.Context(), albumID)
+		if err != nil {
+			a.logger.Error("work review album counts", "error", err)
+			http.Error(w, "work review unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+	data.TotalPendingCount = data.AlbumSubjectCount + data.TrackSubjectCount + data.WorkCandidateCount
+
+	switch tab {
+	case "albums":
+		cands, err := a.store.PendingAlbumSubjectCandidates(r.Context(), albumID, 200)
+		if err != nil {
+			a.logger.Error("work review album candidates", "error", err)
+			http.Error(w, "work review unavailable", http.StatusInternalServerError)
+			return
+		}
+		data.AlbumSubjects = cands
+		data.buildGroups()
+	case "tracks":
+		cands, err := a.store.PendingTrackSubjectCandidates(r.Context(), albumID, 200)
+		if err != nil {
+			a.logger.Error("work review track candidates", "error", err)
+			http.Error(w, "work review unavailable", http.StatusInternalServerError)
+			return
+		}
+		data.TrackSubjects = cands
+		data.buildGroups()
+	case "works":
+		// 作品对齐候选与专辑无关，按专辑分组/过滤没有意义：忽略 group 与 albumId。
+		var err error
+		data.WorkReviews, _, _, _, err = a.enrichmentReviews(r.Context())
+		if err != nil {
+			a.logger.Error("work review work candidates", "error", err)
+			http.Error(w, "work review unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	a.render(w, http.StatusOK, "work-review.html", data)
 }
 
 func (a *App) handleAdminStartEnrichment(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +543,8 @@ func (a *App) handleAdminWorkCandidateDecision(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		message = err.Error()
 	}
-	redirectWithNotice(w, r, "/admin/enrichment", message)
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/work-review?tab=works")
+	redirectWithNotice(w, r, returnTo, message)
 }
 
 func (a *App) handleAdminArtistRelationDecision(w http.ResponseWriter, r *http.Request, status string) {
@@ -390,7 +653,23 @@ func (a *App) handleAdminAlbumSubjectDecision(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	err := a.decideAlbumSubject(r.Context(), parseInt64(r.PathValue("albumId")), parseInt64(r.PathValue("candidateId")), accept, nil)
+	albumID := parseInt64(r.PathValue("albumId"))
+	candidateID := parseInt64(r.PathValue("candidateId"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/work-review?tab=albums")
+	var selected []int64
+	if accept && r.FormValue("onlySelected") == "1" {
+		for _, val := range r.Form["workSubjectIds"] {
+			id := parseInt64(val)
+			if id > 0 {
+				selected = append(selected, id)
+			}
+		}
+		if len(selected) == 0 {
+			redirectWithNotice(w, r, returnTo, "请至少选择一部作品")
+			return
+		}
+	}
+	err := a.decideAlbumSubject(r.Context(), albumID, candidateID, accept, selected)
 	message := "专辑候选已拒绝"
 	if accept {
 		message = "专辑候选已确认"
@@ -398,7 +677,7 @@ func (a *App) handleAdminAlbumSubjectDecision(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		message = err.Error()
 	}
-	redirectWithNotice(w, r, "/admin/enrichment", message)
+	redirectWithNotice(w, r, returnTo, message)
 }
 func (a *App) handleAPITrackSubjectCandidates(w http.ResponseWriter, r *http.Request) {
 	trackID, err := positivePathID(r.PathValue("trackId"))
@@ -488,6 +767,7 @@ func (a *App) handleAdminTrackSubjectDecision(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/work-review?tab=tracks")
 	var selected []int64
 	var roles map[int64]string
 	if accept {
@@ -498,7 +778,7 @@ func (a *App) handleAdminTrackSubjectDecision(w http.ResponseWriter, r *http.Req
 			}
 		}
 		if len(selected) == 0 {
-			redirectWithNotice(w, r, "/admin/enrichment", "请至少选择一部作品")
+			redirectWithNotice(w, r, returnTo, "请至少选择一部作品")
 			return
 		}
 		roles = map[int64]string{}
@@ -513,14 +793,14 @@ func (a *App) handleAdminTrackSubjectDecision(w http.ResponseWriter, r *http.Req
 		}
 	}
 	err := a.decideTrackSubject(r.Context(), parseInt64(r.PathValue("trackId")), parseInt64(r.PathValue("candidateId")), accept, selected, roles)
-	message := "\u66f2\u76ee\u5019\u9009\u5df2\u62d2\u7edd"
+	message := "曲目候选已拒绝"
 	if accept {
-		message = "\u66f2\u76ee\u5019\u9009\u5df2\u786e\u8ba4"
+		message = "曲目候选已确认"
 	}
 	if err != nil {
 		message = err.Error()
 	}
-	redirectWithNotice(w, r, "/admin/enrichment", message)
+	redirectWithNotice(w, r, returnTo, message)
 }
 
 func (a *App) handleAdminAlbumSubjectSearch(w http.ResponseWriter, r *http.Request) {
@@ -534,5 +814,6 @@ func (a *App) handleAdminAlbumSubjectSearch(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		message = "任务正在运行或无法启动：" + err.Error()
 	}
-	redirectWithNotice(w, r, "/admin/albums/"+strconv.FormatInt(albumID, 10), message)
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums/"+strconv.FormatInt(albumID, 10))
+	redirectWithNotice(w, r, returnTo, message)
 }

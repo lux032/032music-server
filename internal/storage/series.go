@@ -772,7 +772,7 @@ func (s *Store) ListSeries(ctx context.Context) ([]WorkSeries, error) {
 // SeriesMembers lists a series' members ordered like the representative rule:
 // earliest first (year, then Bangumi date, then id).
 func (s *Store) SeriesMembers(ctx context.Context, seriesID int64) ([]WorkSeriesMember, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.title,COALESCE(w.reading_title,''),COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0),COALESCE(w.poster_url,''),COALESCE(w.external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=w.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=w.id)),w.created_at,w.updated_at,m.source FROM work_series_members m JOIN works w ON w.id=m.work_id LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' WHERE m.series_id=? ORDER BY COALESCE(NULLIF(w.year,0),9999),COALESCE(CASE WHEN json_valid(p.raw_json) THEN NULLIF(json_extract(p.raw_json,'$.date'),'') END,'9999'),w.id`, seriesID)
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.title,COALESCE(w.reading_title,''),COALESCE(w.translated_title,''),w.type,w.type_locked,w.origin,COALESCE(w.year,0),COALESCE(w.poster_url,''),COALESCE(w.external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=w.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=w.id)),w.created_at,w.updated_at,m.source FROM work_series_members m JOIN works w ON w.id=m.work_id LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' WHERE m.series_id=? ORDER BY COALESCE(NULLIF(w.year,0),9999),COALESCE(CASE WHEN json_valid(p.raw_json) THEN NULLIF(json_extract(p.raw_json,'$.date'),'') END,'9999'),w.id`, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -780,10 +780,12 @@ func (s *Store) SeriesMembers(ctx context.Context, seriesID int64) ([]WorkSeries
 	var values []WorkSeriesMember
 	for rows.Next() {
 		var value WorkSeriesMember
+		var typeLocked int
 		value.SeriesID = seriesID
-		if err = rows.Scan(&value.Work.ID, &value.Work.Title, &value.Work.ReadingTitle, &value.Work.TranslatedTitle, &value.Work.Type, &value.Work.Year, &value.Work.PosterURL, &value.Work.ExternalID, &value.Work.TrackCount, &value.Work.CreatedAt, &value.Work.UpdatedAt, &value.Source); err != nil {
+		if err = rows.Scan(&value.Work.ID, &value.Work.Title, &value.Work.ReadingTitle, &value.Work.TranslatedTitle, &value.Work.Type, &typeLocked, &value.Work.Origin, &value.Work.Year, &value.Work.PosterURL, &value.Work.ExternalID, &value.Work.TrackCount, &value.Work.CreatedAt, &value.Work.UpdatedAt, &value.Source); err != nil {
 			return nil, err
 		}
+		value.Work.TypeLocked = typeLocked != 0
 		values = append(values, value)
 	}
 	return values, rows.Err()
@@ -1018,16 +1020,18 @@ func querySeriesMembersByIDs(ctx context.Context, q sqlQuerier, ids []int64) (ma
 		return out, nil
 	}
 	placeholders, args := int64Placeholders(ids)
-	rows, err := q.QueryContext(ctx, `SELECT m.series_id,w.id,w.title,COALESCE(w.reading_title,''),COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0),COALESCE(w.poster_url,''),COALESCE(w.external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=w.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=w.id)),w.created_at,w.updated_at,m.source FROM work_series_members m JOIN works w ON w.id=m.work_id LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' WHERE m.series_id IN (`+placeholders+`) ORDER BY m.series_id,COALESCE(NULLIF(w.year,0),9999),COALESCE(CASE WHEN json_valid(p.raw_json) THEN NULLIF(json_extract(p.raw_json,'$.date'),'') END,'9999'),w.id`, args...)
+	rows, err := q.QueryContext(ctx, `SELECT m.series_id,w.id,w.title,COALESCE(w.reading_title,''),COALESCE(w.translated_title,''),w.type,w.type_locked,w.origin,COALESCE(w.year,0),COALESCE(w.poster_url,''),COALESCE(w.external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=w.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=w.id)),w.created_at,w.updated_at,m.source FROM work_series_members m JOIN works w ON w.id=m.work_id LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' WHERE m.series_id IN (`+placeholders+`) ORDER BY m.series_id,COALESCE(NULLIF(w.year,0),9999),COALESCE(CASE WHEN json_valid(p.raw_json) THEN NULLIF(json_extract(p.raw_json,'$.date'),'') END,'9999'),w.id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var value WorkSeriesMember
-		if err = rows.Scan(&value.SeriesID, &value.Work.ID, &value.Work.Title, &value.Work.ReadingTitle, &value.Work.TranslatedTitle, &value.Work.Type, &value.Work.Year, &value.Work.PosterURL, &value.Work.ExternalID, &value.Work.TrackCount, &value.Work.CreatedAt, &value.Work.UpdatedAt, &value.Source); err != nil {
+		var typeLocked int
+		if err = rows.Scan(&value.SeriesID, &value.Work.ID, &value.Work.Title, &value.Work.ReadingTitle, &value.Work.TranslatedTitle, &value.Work.Type, &typeLocked, &value.Work.Origin, &value.Work.Year, &value.Work.PosterURL, &value.Work.ExternalID, &value.Work.TrackCount, &value.Work.CreatedAt, &value.Work.UpdatedAt, &value.Source); err != nil {
 			return nil, err
 		}
+		value.Work.TypeLocked = typeLocked != 0
 		out[value.SeriesID] = append(out[value.SeriesID], value)
 	}
 	return out, rows.Err()
@@ -1044,16 +1048,18 @@ func queryWorksByIDs(ctx context.Context, q sqlQuerier, ids []int64) (map[int64]
 		return out, nil
 	}
 	placeholders, args := int64Placeholders(ids)
-	rows, err := q.QueryContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE id IN (`+placeholders+`)`, args...)
+	rows, err := q.QueryContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,type_locked,origin,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var value Work
-		if err = rows.Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt); err != nil {
+		var typeLocked int
+		if err = rows.Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &typeLocked, &value.Origin, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			return nil, err
 		}
+		value.TypeLocked = typeLocked != 0
 		out[value.ID] = value
 	}
 	return out, rows.Err()

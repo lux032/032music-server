@@ -176,12 +176,12 @@
   * 以可停止的后台任务运行，结果缓存，沿用 Bangumi 节流；
   * 单曲 A 面 / c/w 的精确角色由此提供（替代已放弃的曲名推断，见修订记录“选项 B”）。
   * **实现**：migration 027 只新建 `track_subject_candidates` 与 `track_enrichment_misses`（不重建 work_tracks，026 已放开 bangumi 来源）。搜索关键词把 `-` 换成空格（H1，缓存键 `music-search:v2:`），专辑级请求同样处理，打分仍用原标题；专辑级与曲目级共用抑制与落地；确认后删掉该曲目的 auto 行，本地推导遇到 bangumi/manual 行跳过（D9）。审核接口 `GET/POST /api/v1/enrichment/tracks/{trackId}/subjects...` 与 `/admin/enrichment` 曲目候选区：接受时改过用途的作品写 `source=manual`，没改的写 `source=bangumi`（D10）；拒绝写 `track_work_suppressions` 的 `bangumi:<m>`。扫描后全量任务包含曲目级（D11），未命中重查间隔 max(cacheDays,90) 天、发售 180 天内为 7 天（D12），只跳过 manual/bangumi 的 ost 专辑（D13）。
-* [ ] **4.5.5 专辑页 UI（仅 PC）**：
+* [x] **4.5.5 专辑页 UI（仅 PC）**：
   * OST/单曲类：标题区作品胶囊（小海报 + 作品名 + 角色），多作品收成“+N”；
   * 精选集：曲目行显示关联图标（多作品带数字角标），悬停 ~150ms 弹出卡片（海报、原名、中文译名、类型·角色·年份，可点击跳转），移开 ~300ms 关闭，鼠标可移入卡片；键盘 Tab 聚焦显示、Esc 关闭；做成通用组件；
   * 右侧信息栏“关联作品”汇总（仅有关联时显示），有待审核候选时显示入口；
   * 关联编辑放入“编辑专辑”抽屉；先用 Playwright 出静态效果图给用户确认。
-* [ ] **4.5.6 作品页 UI**：关联专辑封面网格；精选集中的单曲单独列入“收录于”分组；多季折叠展示。
+* [x] **4.5.6 作品页 UI**：关联专辑封面网格；精选集中的单曲单独列入“收录于”分组；多季折叠展示。
 * [ ] **4.5.7 自定义专辑封面与歌手图片**：
   * 编辑抽屉中上传/恢复默认，只存数据目录，绝不改写音乐文件；
   * 自定义图片优先，重扫、自动刷新（Last.fm/MusicBrainz 覆盖 `artist_image_cache`）、专辑合并都不能覆盖；把分散在 5 处 SQL 的“选封面”规则收拢为统一规则；
@@ -214,7 +214,7 @@
 | D-14 | 专辑级搜索由 limit=25 改为每页 20 条加分页，翻页条件是条目名完全一致，专辑名很少满足，第 21～25 条会丢失 | 已解决（批次 1） | 分页大小参数化；专辑 25、曲目 20 |
 | D-15 | album scope 还会刷新该专辑已关联作品的资料 | 超出设计 8.2 第 9 条的描述，但行为合理（专辑页一键补齐） | 已在设计文档 8.2 补说明；如要收窄可单独提案 |
 | D-16 | 本地推导遇到曲目上任何 manual 或 bangumi 行就整首跳过，纯手动行也会挡住本地推导去关联其他作品 | 符合 R1 和 D9，是有意为之，只作记录 | 无需处理 |
-| D-17 | `/admin/enrichment` 待审曲目每条都单独调一次 `TrackByID`（最多 200 次查询） | 审核页渲染偏慢 | 在 `trackCandidateSelect` 里直接带出歌手，省掉逐条查询 |
+| D-17 | `/admin/enrichment` 待审曲目每条都单独调一次 `TrackByID`（最多 200 次查询） | 已解决（批次 3） | 在 `trackCandidateSelect` 里直接带出歌手，省掉逐条查询 |
 | D-18 | 曲目 Bangumi 未命中指纹不包含抑制状态；解除抑制后仍可能命中旧 miss | 解除后要等重查间隔到期才重新查询 | 后续把抑制状态纳入 miss 指纹或解除时清理 miss |
 
 ---
@@ -363,6 +363,31 @@
 **验证结果**：`go test ./...` 与 `go build ./...` 全部通过。
 
 ### Phase 4 修订记录（元数据增强收敛与作品关联“专辑为主”）
+
+**第八轮（批次 3 UI：集中审核页 `/admin/work-review` + 4.5.5 专辑页 + 4.5.6 作品页 + 作品列表系列展开）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| D27 审核页路径 | A：审核区整体迁到 `/admin/work-review`，`/admin/enrichment` 只保留任务列表、“待审数量 → 去审核”链接以及艺术家关系候选（D44） | R6：所有作品关联审核集中在一页，与任务监控解耦 |
+| D42 作品列表系列展开 | A：在系列折叠行下方就地展开成员卡片（效果图 10），非系列作品保持原卡片样式 | 保持单层系列直观浏览，列表页与作品页系列名一致（D25） |
+| D43 悬停卡片只读 | A：悬停卡片仅用于查看，不提供解除或修改用途操作；管理操作统一放在“编辑专辑”抽屉和作品页 | 避免悬停态误操作，保持管理入口清晰 |
+| R4 胶囊与列表用途展示 | 专辑标题区胶囊用途取自曲目级 `work_tracks`（多用途合并），OST 专辑显示 `OST`，仅专辑级 `other` 不显示用途；曲目行显示 `◆ 用途` 图标与多作品数字角标；D47 专辑级 ost 与曲目级用途合并显示（如 "OST · OP"），D48 OST 身份只认 `album_works.role='ost'`，D49 同一（曲目，作品）的全部用途合并显示 | 严格遵循角色记在曲目上、专辑级仅表示关联与 OST |
+| 通用悬停卡片组件 | 服务端直出 DOM，外部 JS 事件委托（兼容 PJAX）；悬停 ~150ms 打开、移开 ~300ms 关闭、鼠标可移入、Tab 聚焦打开、Esc 关闭，定位限制在主内容区 | 满足 CSP 无内联脚本约束与零额外请求 |
+| D-17 消除曲目候选 N+1 | `trackCandidateSelect` 直接通过 `bangumiTrackArtistSQL` 和 `albumArtworkURLSQL` 带出歌手与封面 | 省去审核页逐条 `TrackByID` 查询 |
+| 封面公共 SQL 片段 | 新增 `albumArtworkURLSQL`，统一专辑页、作品页、审核页新增查询的取封面逻辑 | 为批次 4 自定义封面预留单一收口点 |
+
+**第八轮修复（批次 3 UI reviewer 清单）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| D44 艺术家关系候选 | 审核区保留在 `/admin/enrichment`（不迁到 `/admin/work-review`） | 艺术家关系不属于作品关联（P1=A） |
+| D45 OST 口径 | 只认 `album_works.role='ost'`；`album_type=soundtrack` 不推出 OST（胶囊与作品页角标一致） | R4 + P2=A |
+| D46 整张关联专辑的曲目用途 | 作品页“关联专辑”卡片下新增“曲目用途”区（曲名/用途/来源），可解除（RemoveWorkTrack 写抑制） | P3=A + R3 |
+| R2 单曲口径 | “单曲”只看 `album_type='single'`，去掉 `TrackCount<=4` 推测 | 不加本地推测启发式 |
+| 分组渲染 | work-review 模板按 AlbumGroups/WorkGroups 渲染分组卡片；排序前先复制 slice；作品对齐 Tab 始终平铺（与专辑无关） | 分组真正生效 |
+| 导航角标 | 每请求在 `App.chromeFor` 用请求 context 查询一次写入 Chrome；删除模板函数里的 `context.Background()` 查询 | 不吞错误、不脱离请求生命周期 |
+| 专辑过滤 | `albumId` 过滤下推到 SQL（`status='candidate' AND album_id=?`）；过滤状态下 Tab 计数显示过滤后的数量并在页面标注 | 不再 LIMIT 200 后在 Go 里筛 |
+| D1 手工添加 role | 作品页/专辑抽屉的专辑级表单只提供 other/ost；`handleAddAlbumWork`/`handleAddWorkAlbum` 服务端只接受 ost\|other，其他值 400 | 专辑级只有 ost/other |
+| 抽屉搜索框 | Enter 拦截（JS preventDefault）不提交“保存覆盖信息”；搜索内容变化清空已选 workId | 防误提交 |
+| e2e 可移植 | 种子移到 `e2e-global-setup.mjs`（env GO → PATH → 平台兜底，失败即报错）；双 fixture 实例隔离：45439 共享（20 轨 1 专辑原始假设）、45441 批次 3 独立（种子只写入该实例）；spec 仅桌面项目运行；截图用 `E2E_SCREENSHOTS=1` 门控；删除 `scripts/run_batch3_e2e.js` | 不硬编码本机路径，种子不污染其他 spec |
 
 **第四轮（Bangumi 音乐条目反查，migration 026，实施中）**：
 | 决策 | 选择 | 理由 |

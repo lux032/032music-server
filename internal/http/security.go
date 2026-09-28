@@ -85,7 +85,7 @@ func (a *App) handleSecurityPage(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	creds := a.currentCredentials()
 	data := securityPageData{
-		Chrome:                   chromeFor(session, "security"),
+		Chrome:                   a.chromeFor(r.Context(), session, "security"),
 		CurrentUsername:          creds.username,
 		Sources:                  creds.sources,
 		ResetMode:                a.config.ResetCredentials,

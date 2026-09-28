@@ -26,6 +26,8 @@ type Work struct {
 	ReadingTitle    string `json:"readingTitle"`
 	TranslatedTitle string `json:"translatedTitle"`
 	Type            string `json:"type"`
+	TypeLocked      bool   `json:"typeLocked"`
+	Origin          string `json:"origin,omitempty"`
 	Year            int    `json:"year"`
 	PosterURL       string `json:"posterUrl"`
 	ExternalID      string `json:"externalId"`
@@ -224,7 +226,9 @@ func (s *Store) DeleteWork(ctx context.Context, id int64) error {
 
 func (s *Store) WorkByID(ctx context.Context, id int64) (Work, error) {
 	var value Work
-	err := s.db.QueryRowContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE id=?`, id).Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt)
+	var typeLocked int
+	err := s.db.QueryRowContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,type_locked,origin,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE id=?`, id).Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &typeLocked, &value.Origin, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt)
+	value.TypeLocked = typeLocked != 0
 	return value, err
 }
 
@@ -238,7 +242,7 @@ func (s *Store) ListWorks(ctx context.Context, filter WorkFilters) ([]Work, erro
 		order = "updated_at DESC,id DESC"
 	}
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title,COALESCE(reading_title,''),COALESCE(translated_title,''),type,type_locked,origin,COALESCE(year,0),COALESCE(poster_url,''),COALESCE(external_id,''),(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=works.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=works.id)),created_at,updated_at FROM works WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -246,9 +250,47 @@ func (s *Store) ListWorks(ctx context.Context, filter WorkFilters) ([]Work, erro
 	values := make([]Work, 0)
 	for rows.Next() {
 		var value Work
-		if err := rows.Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt); err != nil {
+		var typeLocked int
+		if err := rows.Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &typeLocked, &value.Origin, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			return nil, err
 		}
+		value.TypeLocked = typeLocked != 0
+		values = append(values, value)
+	}
+	return values, rows.Err()
+}
+
+func (s *Store) ListWorkOptions(ctx context.Context, query string, limit int) ([]Work, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	where := "1=1"
+	args := make([]any, 0, 6)
+	if variants := SearchVariants(query); len(variants) > 0 {
+		parts := make([]string, 0, len(variants)*3)
+		for _, variant := range variants {
+			parts = append(parts, "w.title LIKE '%'||?||'%'", "COALESCE(w.reading_title,'') LIKE '%'||?||'%'", "COALESCE(w.translated_title,'') LIKE '%'||?||'%'")
+			args = append(args, variant, variant, variant)
+		}
+		where = "(" + strings.Join(parts, " OR ") + ")"
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id,w.title,COALESCE(w.reading_title,''),COALESCE(w.translated_title,''),w.type,w.type_locked,w.origin,COALESCE(w.year,0),COALESCE(w.poster_url,''),COALESCE(w.external_id,''),0,w.created_at,w.updated_at FROM works w WHERE `+where+` ORDER BY COALESCE(NULLIF(w.reading_title,''),w.title) COLLATE NOCASE, w.id LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]Work, 0)
+	for rows.Next() {
+		var value Work
+		var typeLocked int
+		if err := rows.Scan(&value.ID, &value.Title, &value.ReadingTitle, &value.TranslatedTitle, &value.Type, &typeLocked, &value.Origin, &value.Year, &value.PosterURL, &value.ExternalID, &value.TrackCount, &value.CreatedAt, &value.UpdatedAt); err != nil {
+			return nil, err
+		}
+		value.TypeLocked = typeLocked != 0
 		values = append(values, value)
 	}
 	return values, rows.Err()
@@ -373,7 +415,7 @@ func (s *Store) RemoveWorkTrack(ctx context.Context, workID, trackID int64, role
 // stored source ('manual'/'auto'); tracks reached only through an album-level
 // album_works link report source 'album' (a virtual source, not stored).
 func (s *Store) TracksForWork(ctx context.Context, workID int64) ([]WorkTrack, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),COALESCE((SELECT '/api/v1/artwork/'||id FROM artworks aw WHERE aw.album_id=a.id ORDER BY is_primary DESC,id LIMIT 1),''),COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0),wt.role,wt.season,wt.sequence,wt.source FROM (SELECT track_id,role,season,sequence,source FROM (SELECT track_id,role,season,sequence,source,ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY CASE source WHEN 'manual' THEN 0 WHEN 'bangumi' THEN 1 ELSE 2 END,role,season,sequence) rank FROM work_tracks WHERE work_id=?) WHERE rank=1 UNION ALL SELECT t.id,aw.role,aw.season,0,'album' FROM album_works aw JOIN tracks t ON t.album_id=aw.album_id WHERE aw.work_id=? AND NOT EXISTS(SELECT 1 FROM work_tracks wt2 WHERE wt2.work_id=aw.work_id AND wt2.track_id=t.id)) wt JOIN tracks t ON t.id=wt.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id ORDER BY wt.season,wt.role,wt.sequence,a.sort_title,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id`, workID, workID)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0),wt.role,wt.season,wt.sequence,wt.source FROM (SELECT track_id,role,season,sequence,source FROM (SELECT track_id,role,season,sequence,source,ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY CASE source WHEN 'manual' THEN 0 WHEN 'bangumi' THEN 1 ELSE 2 END,role,season,sequence) rank FROM work_tracks WHERE work_id=?) WHERE rank=1 UNION ALL SELECT t.id,aw.role,aw.season,0,'album' FROM album_works aw JOIN tracks t ON t.album_id=aw.album_id WHERE aw.work_id=? AND NOT EXISTS(SELECT 1 FROM work_tracks wt2 WHERE wt2.work_id=aw.work_id AND wt2.track_id=t.id)) wt JOIN tracks t ON t.id=wt.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id ORDER BY wt.season,wt.role,wt.sequence,a.sort_title,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id`, workID, workID)
 	if err != nil {
 		return nil, err
 	}

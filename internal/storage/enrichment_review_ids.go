@@ -44,3 +44,31 @@ func (s *Store) PendingArtistReviewIDs(ctx context.Context) ([]int64, int, error
 	}
 	return ids, count, rows.Err()
 }
+
+func (s *Store) PendingWorkReviewCounts(ctx context.Context) (albumCount, trackCount, workCount int, err error) {
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM album_subject_candidates WHERE status='candidate'`).Scan(&albumCount); err != nil {
+		return 0, 0, 0, err
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM track_subject_candidates WHERE status='candidate'`).Scan(&trackCount); err != nil {
+		return 0, 0, 0, err
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT work_id) FROM work_match_candidates WHERE status='candidate'`).Scan(&workCount); err != nil {
+		return 0, 0, 0, err
+	}
+	return albumCount, trackCount, workCount, nil
+}
+
+func (s *Store) PendingWorkReviewTotal(ctx context.Context) (int, error) {
+	albumCount, trackCount, workCount, err := s.PendingWorkReviewCounts(ctx)
+	return albumCount + trackCount + workCount, err
+}
+
+func (s *Store) PendingAlbumReviewCounts(ctx context.Context, albumID int64) (albumCandidates, trackCandidates int, err error) {
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM album_subject_candidates WHERE album_id=? AND status='candidate'`, albumID).Scan(&albumCandidates); err != nil {
+		return 0, 0, err
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM track_subject_candidates c JOIN tracks t ON t.id=c.track_id WHERE t.album_id=? AND c.status='candidate'`, albumID).Scan(&trackCandidates); err != nil {
+		return 0, 0, err
+	}
+	return albumCandidates, trackCandidates, nil
+}

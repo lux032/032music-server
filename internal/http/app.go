@@ -79,10 +79,19 @@ type Chrome struct {
 	Username  string
 	CSRFToken string
 	Nav       string
+	// PendingReviewCount 是“作品关联审核”导航角标，每个请求在 chromeFor
+	// 里用请求 context 查询一次（不在模板函数里用 context.Background() 查）。
+	PendingReviewCount int
 }
 
-func chromeFor(session adminSession, nav string) Chrome {
-	return Chrome{Username: session.Username, CSRFToken: session.CSRFToken, Nav: nav}
+func (a *App) chromeFor(ctx context.Context, session adminSession, nav string) Chrome {
+	chrome := Chrome{Username: session.Username, CSRFToken: session.CSRFToken, Nav: nav}
+	total, err := a.store.PendingWorkReviewTotal(ctx)
+	if err != nil {
+		a.logger.Warn("pending work review count", "error", err)
+	}
+	chrome.PendingReviewCount = total
+	return chrome
 }
 
 // indexLetters is the shared letter index used by the library index bar and
@@ -120,18 +129,23 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	}
 
 	templates, err := template.New("admin").Funcs(template.FuncMap{
-		"formatDurationMillis":  formatDurationMillis,
-		"firstGenre":            firstGenre,
-		"formatAdminTime":       formatAdminTime,
-		"formatTime":            formatAdminTime,
-		"albumTypeLabel":        albumTypeLabel,
-		"workTypeLabel":         workTypeLabel,
-		"workRoleLabel":         workRoleLabel,
-		"workSourceLabel":       workSourceLabel,
-		"playbackStateLabel":    playbackStateLabel,
-		"enrichmentRunProgress": enrichmentRunProgress,
-		"enrichmentTargetLabel": enrichmentTargetLabel,
-		"scanStatusLabel":       scanStatusLabel,
+		"formatDurationMillis":   formatDurationMillis,
+		"firstGenre":             firstGenre,
+		"formatAdminTime":        formatAdminTime,
+		"formatTime":             formatAdminTime,
+		"albumTypeLabel":         albumTypeLabel,
+		"workTypeLabel":          workTypeLabel,
+		"workRoleLabel":          workRoleLabel,
+		"workRoleShortLabel":     workRoleShortLabel,
+		"workRoleBadgeLabel":     workRoleBadgeLabel,
+		"workAlbumRelationLabel": workAlbumRelationLabel,
+		"workSourceLabel":        workSourceLabel,
+		"matchKindLabel":         matchKindLabel,
+		"matchKindClass":         matchKindClass,
+		"playbackStateLabel":     playbackStateLabel,
+		"enrichmentRunProgress":  enrichmentRunProgress,
+		"enrichmentTargetLabel":  enrichmentTargetLabel,
+		"scanStatusLabel":        scanStatusLabel,
 		// indexValues and kanaIndexValues split indexLetters the same way the
 		// library index bar does: "#" stays with the always-visible Latin
 		// letters, only kana go behind the かな toggle.
@@ -284,6 +298,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/status", a.requireAdmin(http.HandlerFunc(a.handleAdminStatus)))
 	mux.Handle("GET /admin/options/artists", a.requireAdminJSON(http.HandlerFunc(a.handleAdminArtistOptions)))
 	mux.Handle("GET /admin/options/albums", a.requireAdminJSON(http.HandlerFunc(a.handleAdminAlbumOptions)))
+	mux.Handle("GET /admin/options/works", a.requireAdminJSON(http.HandlerFunc(a.handleAdminWorkOptions)))
 	mux.Handle("POST /admin/scan", a.requireAdmin(http.HandlerFunc(a.handleStartScan)))
 	mux.Handle("GET /admin/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistsPage)))
 	mux.Handle("GET /admin/artists/album", a.requireAdmin(http.HandlerFunc(a.handleAlbumArtistsPage)))
@@ -314,6 +329,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/matches/run", a.requireAdmin(http.HandlerFunc(a.handleRunArtistMatching)))
 	mux.Handle("POST /admin/matches/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistMatching)))
 	mux.Handle("GET /admin/matches", a.requireAdmin(http.HandlerFunc(a.handleMatchReview)))
+	mux.Handle("GET /admin/work-review", a.requireAdmin(http.HandlerFunc(a.handleAdminWorkReview)))
 	mux.Handle("GET /admin/enrichment", a.requireAdmin(http.HandlerFunc(a.handleAdminEnrichment)))
 	mux.Handle("POST /admin/enrichment/run", a.requireAdmin(http.HandlerFunc(a.handleAdminStartEnrichment)))
 	mux.Handle("POST /admin/enrichment/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleAdminCancelEnrichment)))
@@ -348,6 +364,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/albums/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteAlbums)))
 	mux.Handle("GET /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleAlbumPage)))
 	mux.Handle("POST /admin/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateAlbum)))
+	mux.Handle("POST /admin/albums/{id}/works", a.requireAdmin(http.HandlerFunc(a.handleAddAlbumWork)))
+	mux.Handle("POST /admin/albums/{id}/works/{workId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveAlbumWork)))
 	mux.Handle("GET /admin/tracks", a.requireAdmin(http.HandlerFunc(a.handleTracksPage)))
 	mux.Handle("POST /admin/tracks/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateTrack)))
 	mux.Handle("GET /admin/favorites", a.requireAdmin(http.HandlerFunc(a.handleAdminFavorites)))
@@ -518,7 +536,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.render(w, http.StatusOK, "dashboard.html", dashboardPageData{
-		Chrome:         chromeFor(session, "console"),
+		Chrome:         a.chromeFor(r.Context(), session, "console"),
 		Version:        a.version,
 		Uptime:         time.Since(a.startedAt).Round(time.Second).String(),
 		DatabaseStatus: "正常",

@@ -21,6 +21,8 @@ type TrackExtras struct {
 
 const trackArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary' ORDER BY ta.position,ar.id)),(SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),a.user_performed_by,a.performed_by,'Unknown Artist')`
 
+const albumArtworkURLSQL = `COALESCE((SELECT '/api/v1/artwork/'||aw_art.id FROM artworks aw_art WHERE aw_art.album_id=a.id ORDER BY aw_art.is_primary DESC,aw_art.id LIMIT 1),'')`
+
 type extraTrack interface {
 	trackID() int64
 	extras() *TrackExtras

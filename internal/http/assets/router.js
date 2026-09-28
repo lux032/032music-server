@@ -214,7 +214,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     } catch (_) { sessionStorage.removeItem(draftStorageKey); }
   }
 
-  const ADMIN_NAV_KEYS = ['console', 'matches', 'enrichment', 'merges', 'settings', 'security'];
+  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'enrichment', 'merges', 'settings', 'security'];
 
   // syncChrome copies just the per-page bits of the persistent shell from
   // the freshly fetched document: the navigation highlight, the admin
@@ -252,6 +252,22 @@ import { updateTrackRowsUI } from './player-bar.js';
     if (incomingCsrfField) {
       document.querySelectorAll('.sidebar input[name="csrfToken"]').forEach((field) => { field.value = incomingCsrfField.value; });
     }
+    const incomingBadge = doc.querySelector('.sidebar a[data-nav="work-review"] .nav-badge');
+    document.querySelectorAll('.sidebar a[data-nav="work-review"], .sidebar-more-sheet a[data-nav="work-review"]').forEach((link) => {
+      const existing = link.querySelector('.nav-badge');
+      if (incomingBadge && incomingBadge.textContent.trim()) {
+        if (existing) {
+          existing.textContent = incomingBadge.textContent;
+        } else {
+          const span = document.createElement('span');
+          span.className = 'nav-badge';
+          span.textContent = incomingBadge.textContent;
+          link.appendChild(span);
+        }
+      } else if (existing) {
+        existing.remove();
+      }
+    });
   }
 
   function applyPage(html, url, push, restoreState) {

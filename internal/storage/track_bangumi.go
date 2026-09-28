@@ -28,19 +28,24 @@ type TrackBangumiTarget struct {
 
 // TrackSubjectCandidate is one Bangumi music entry proposed for a track.
 type TrackSubjectCandidate struct {
-	ID         int64           `json:"id"`
-	TrackID    int64           `json:"trackId"`
-	AlbumID    int64           `json:"albumId"`
-	TrackTitle string          `json:"trackTitle"`
-	AlbumTitle string          `json:"albumTitle"`
-	ExternalID string          `json:"externalId"`
-	Title      string          `json:"title"`
-	Artist     string          `json:"artist"`
-	MatchKind  string          `json:"matchKind"`
-	Evidence   []string        `json:"evidence"`
-	Tieups     []BangumiTieup  `json:"tieups"`
-	Payload    json.RawMessage `json:"payload"`
-	Status     string          `json:"status"`
+	ID              int64           `json:"id"`
+	TrackID         int64           `json:"trackId"`
+	AlbumID         int64           `json:"albumId"`
+	TrackTitle      string          `json:"trackTitle"`
+	AlbumTitle      string          `json:"albumTitle"`
+	TrackArtist     string          `json:"trackArtist"`
+	AlbumArtworkURL string          `json:"albumArtworkUrl"`
+	DiscNumber      int             `json:"discNumber"`
+	TrackNumber     int             `json:"trackNumber"`
+	DurationMillis  int64           `json:"durationMillis"`
+	ExternalID      string          `json:"externalId"`
+	Title           string          `json:"title"`
+	Artist          string          `json:"artist"`
+	MatchKind       string          `json:"matchKind"`
+	Evidence        []string        `json:"evidence"`
+	Tieups          []BangumiTieup  `json:"tieups"`
+	Payload         json.RawMessage `json:"payload"`
+	Status          string          `json:"status"`
 }
 
 const bangumiTrackArtistSQL = `COALESCE((SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ' ORDER BY ta.position,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary'),'')`
@@ -184,14 +189,14 @@ func (s *Store) SaveTrackSubjectCandidates(ctx context.Context, trackID int64, c
 	return tx.Commit()
 }
 
-const trackCandidateSelect = `SELECT c.id,c.track_id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),c.external_id,c.title,COALESCE(c.artist,''),c.match_kind,c.evidence_json,c.tieups_json,c.payload_json,c.status FROM track_subject_candidates c JOIN tracks t ON t.id=c.track_id JOIN albums a ON a.id=t.album_id`
+const trackCandidateSelect = `SELECT c.id,c.track_id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),` + bangumiTrackArtistSQL + `,` + albumArtworkURLSQL + `,COALESCE(t.user_disc_number,t.disc_number,0),COALESCE(t.user_track_number,t.track_number,0),COALESCE(t.duration_ms,0),c.external_id,c.title,COALESCE(c.artist,''),c.match_kind,c.evidence_json,c.tieups_json,c.payload_json,c.status FROM track_subject_candidates c JOIN tracks t ON t.id=c.track_id JOIN albums a ON a.id=t.album_id`
 
 func scanTrackCandidates(rows *sql.Rows) ([]TrackSubjectCandidate, error) {
 	out := []TrackSubjectCandidate{}
 	for rows.Next() {
 		var v TrackSubjectCandidate
 		var ev, tie, raw string
-		if err := rows.Scan(&v.ID, &v.TrackID, &v.AlbumID, &v.TrackTitle, &v.AlbumTitle, &v.ExternalID, &v.Title, &v.Artist, &v.MatchKind, &ev, &tie, &raw, &v.Status); err != nil {
+		if err := rows.Scan(&v.ID, &v.TrackID, &v.AlbumID, &v.TrackTitle, &v.AlbumTitle, &v.TrackArtist, &v.AlbumArtworkURL, &v.DiscNumber, &v.TrackNumber, &v.DurationMillis, &v.ExternalID, &v.Title, &v.Artist, &v.MatchKind, &ev, &tie, &raw, &v.Status); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ev), &v.Evidence)
@@ -220,11 +225,12 @@ func (s *Store) TrackSubjectCandidates(ctx context.Context, trackID int64) ([]Tr
 	return scanTrackCandidates(rows)
 }
 
-func (s *Store) PendingTrackSubjectCandidates(ctx context.Context, limit int) ([]TrackSubjectCandidate, error) {
+func (s *Store) PendingTrackSubjectCandidates(ctx context.Context, albumID int64, limit int) ([]TrackSubjectCandidate, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, trackCandidateSelect+` WHERE c.status='candidate' ORDER BY c.id LIMIT ?`, limit)
+	// albumID > 0 时在 SQL 层按专辑过滤（M3）。
+	rows, err := s.db.QueryContext(ctx, trackCandidateSelect+` WHERE c.status='candidate' AND (?=0 OR t.album_id=?) ORDER BY c.id LIMIT ?`, albumID, albumID, limit)
 	if err != nil {
 		return nil, err
 	}
