@@ -103,11 +103,16 @@ func normalizeWorkTrackInput(input WorkTrackInput) (WorkTrackInput, error) {
 }
 
 func (s *Store) CreateWork(ctx context.Context, input WorkInput) (Work, error) {
+	// D38: a manually created work with an explicit type is locked against
+	// automatic Bangumi type correction; works created by automatic flows
+	// (resolveAutoWork) keep type_locked=0. An omitted type defaults to
+	// 'other' without locking.
+	explicitType := strings.TrimSpace(input.Type) != ""
 	input, err := normalizeWorkInput(input)
 	if err != nil {
 		return Work{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO works(title,normalized_title,reading_title,translated_title,type,year,poster_url,external_id) VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,NULLIF(?,0),NULLIF(?,''),NULLIF(?,''))`, input.Title, metadata.Normalize(input.Title), input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID)
+	result, err := s.db.ExecContext(ctx, `INSERT INTO works(title,normalized_title,reading_title,translated_title,type,year,poster_url,external_id,type_locked) VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,NULLIF(?,0),NULLIF(?,''),NULLIF(?,''),?)`, input.Title, metadata.Normalize(input.Title), input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID, boolInt(explicitType))
 	if err != nil {
 		return Work{}, fmt.Errorf("create work: %w", err)
 	}
@@ -209,6 +214,11 @@ func (s *Store) DeleteWork(ctx context.Context, id int64) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	// Series membership cascaded away; drop degenerate series and recompute
+	// representatives that pointed at the deleted work (ON DELETE SET NULL).
+	if err = cleanupSeriesAfterWorkRemoval(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -252,18 +262,31 @@ func (s *Store) CountWorks(ctx context.Context, filter WorkFilters) (int64, erro
 }
 
 func workWhere(filter WorkFilters) (string, []any) {
-	clauses := []string{"(?='' OR type=?)", "(?=0 OR year=?)"}
+	return workWherePrefix(filter, "", "COALESCE(NULLIF(reading_title,''),title)", "")
+}
+
+// workWherePrefix qualifies works columns with a table prefix so the folded
+// series query can join work_series without ambiguous column names. indexExpr
+// is the expression the leading-letter index filter applies to; extraQueryExpr
+// (when non-empty) is OR-ed into the keyword match so folded rows also match
+// the series title.
+func workWherePrefix(filter WorkFilters, prefix, indexExpr, extraQueryExpr string) (string, []any) {
+	clauses := []string{"(?='' OR " + prefix + "type=?)", "(?=0 OR " + prefix + "year=?)"}
 	args := []any{filter.Type, filter.Type, filter.Year, filter.Year}
 	variants := SearchVariants(filter.Query)
 	if len(variants) > 0 {
-		parts := make([]string, 0, len(variants)*3)
+		parts := make([]string, 0, len(variants)*4)
 		for _, variant := range variants {
-			parts = append(parts, "title LIKE '%'||?||'%'", "COALESCE(reading_title,'') LIKE '%'||?||'%'", "COALESCE(translated_title,'') LIKE '%'||?||'%'")
+			parts = append(parts, prefix+"title LIKE '%'||?||'%'", "COALESCE("+prefix+"reading_title,'') LIKE '%'||?||'%'", "COALESCE("+prefix+"translated_title,'') LIKE '%'||?||'%'")
 			args = append(args, variant, variant, variant)
+			if extraQueryExpr != "" {
+				parts = append(parts, extraQueryExpr+" LIKE '%'||?||'%'")
+				args = append(args, variant)
+			}
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
-	if condition, indexArgs := IndexCondition("COALESCE(NULLIF(reading_title,''),title)", filter.Index); condition != "" {
+	if condition, indexArgs := IndexCondition(indexExpr, filter.Index); condition != "" {
 		clauses = append(clauses, condition)
 		args = append(args, indexArgs...)
 	}

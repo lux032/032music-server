@@ -53,7 +53,7 @@ func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunReques
 		value.Scope = "all"
 	}
 	switch value.Scope {
-	case "all", "albums", "tracks":
+	case "all", "albums", "tracks", "works":
 		value.TargetID = 0
 	case "work", "album":
 		if value.TargetID <= 0 {

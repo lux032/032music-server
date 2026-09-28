@@ -2,7 +2,6 @@ package enrichment
 
 import (
 	"context"
-	"database/sql"
 	"io"
 	"net/http"
 	"strings"
@@ -179,13 +178,9 @@ func TestPhase4ForceMemoFetchesEachKeyOnce(t *testing.T) {
 
 func phase4Count(t *testing.T, store *storage.Store, query string, args ...any) int {
 	t.Helper()
-	db, err := sql.Open("sqlite", phase4DBPath[store]+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := readOnlyDB(t, store)
 	var n int
-	if err = db.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
+	if err := db.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n

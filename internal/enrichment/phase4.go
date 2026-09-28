@@ -37,7 +37,7 @@ func normalizeRunRequest(value RunRequest) (RunRequest, error) {
 		value.Scope = "all"
 	}
 	switch value.Scope {
-	case "all", "albums", "tracks":
+	case "all", "albums", "tracks", "works":
 		value.TargetID = 0
 	case "work", "album":
 		if value.TargetID <= 0 {
@@ -217,9 +217,13 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 		items = nil
 	}
 	wantTracks := request.Scope == "all" || request.Scope == "tracks" || request.Scope == "album"
-	// Work-level search is the last stage. A single-album run still refreshes
-	// that album's linked works after its tracks (S3 includes the track stage).
-	wantWorks := request.Scope == "all" || request.Scope == "album"
+	// Work-level search is the last item stage. A single-album run still
+	// refreshes that album's linked works after its tracks (S3 includes the
+	// track stage). The "works" scope runs the work stage plus series grouping.
+	wantWorks := request.Scope == "all" || request.Scope == "album" || request.Scope == "works"
+	// Series grouping (4.5.3) runs after the work alignment stage so freshly
+	// bound works are grouped in the same run.
+	wantSeries := request.Scope == "all" || request.Scope == "works"
 	// Stages are appended only after the previous stage is fully processed, so
 	// a growing slice is safe. Collecting inside the same loop used to skip the
 	// items just appended (the index had already moved past them).
@@ -313,10 +317,37 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 		finishCancelled()
 		return
 	}
+	if wantSeries && bangumiEnabled {
+		counts.Current = "作品系列归组"
+		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+		_, seriesErr := m.enrichBangumiSeries(ctx, runID, request.Force)
+		if ctx.Err() != nil {
+			finishCancelled()
+			return
+		}
+		if seriesErr != nil {
+			counts.Failed++
+			counts.ErrorMessage = seriesErr.Error()
+			m.logger.Warn("bangumi series grouping failed", "runId", runID, "error", seriesErr)
+		} else {
+			counts.Succeeded++
+		}
+		counts.Total++
+		counts.Processed++
+		counts.Current = ""
+		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+	}
 	status := "completed"
 	message := ""
-	if len(queue) > 0 && counts.Failed == len(queue) {
+	// Total counts every processed unit, including the series stage: a run is
+	// failed only when everything failed, not when one stage out of many did.
+	if counts.Total > 0 && counts.Failed == counts.Total {
 		status, message = "failed", counts.ErrorMessage
+	}
+	// A completed run with failures keeps the last error message so a failed
+	// stage (e.g. series grouping) stays visible in the run record.
+	if status == "completed" && counts.Failed > 0 {
+		message = counts.ErrorMessage
 	}
 	_ = m.store.FinishEnrichmentRun(context.Background(), runID, status, message)
 }

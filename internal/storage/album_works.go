@@ -744,5 +744,10 @@ func (s *Store) CleanupAutoWorks(ctx context.Context, stats *RefreshStats) error
 	}
 	n, _ := result.RowsAffected()
 	stats.WorksDeleted = int(n)
+	// Deleted works cascaded out of their series; clean up series that became
+	// empty or single-member and recompute orphaned representatives.
+	if err = cleanupSeriesAfterWorkRemoval(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

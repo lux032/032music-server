@@ -17,11 +17,13 @@ import (
 func TestWorkFormOriginalTypePreservesConcurrentCorrectionAndLocksChange(t *testing.T) {
 	app, cookie, token := csrfSessionApp(t)
 	ctx := context.Background()
-	work, err := app.store.CreateWork(ctx, storage.WorkInput{Title: "Show", Type: "anime"})
+	// The work stands in for an automatically created one: a user-typed work
+	// would be type-locked against automatic correction (D38).
+	work, err := app.store.CreateWork(ctx, storage.WorkInput{Title: "Show"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed, correctionErr := app.store.CorrectBangumiWorkType(ctx, work.ID, "anime", "movie", "5", 0); correctionErr != nil || !changed {
+	if changed, correctionErr := app.store.CorrectBangumiWorkType(ctx, work.ID, "other", "movie", "5", 0); correctionErr != nil || !changed {
 		t.Fatalf("automatic correction changed=%v err=%v", changed, correctionErr)
 	}
 	post := func(values url.Values) *httptest.ResponseRecorder {
@@ -47,6 +49,44 @@ func TestWorkFormOriginalTypePreservesConcurrentCorrectionAndLocksChange(t *test
 	got, _ = app.store.WorkByID(ctx, work.ID)
 	if got.Type != "game" {
 		t.Fatalf("type change not applied=%s", got.Type)
+	}
+}
+
+// D40: creating a work from the web form without choosing a type (the
+// default "未指定" option submits an empty value) leaves it unlocked for
+// automatic correction; an explicit choice locks it (D38).
+func TestWebCreateWorkTypeSelectionControlsLock(t *testing.T) {
+	app, _, _ := credentialTestApp(t)
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+	ctx := context.Background()
+	create := func(title, typ string) storage.Work {
+		t.Helper()
+		rec := postSecurity(t, app, handler, cookie, "/admin/works", url.Values{"title": {title}, "type": {typ}})
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		location := rec.Header().Get("Location")
+		id, err := strconv.ParseInt(strings.TrimPrefix(strings.Split(location, "?")[0], "/admin/works/"), 10, 64)
+		if err != nil {
+			t.Fatalf("redirect %q: %v", location, err)
+		}
+		work, err := app.store.WorkByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return work
+	}
+	untyped := create("Form Untyped", "")
+	if untyped.Type != "other" {
+		t.Fatalf("default type=%s", untyped.Type)
+	}
+	if changed, err := app.store.CorrectBangumiWorkType(ctx, untyped.ID, "other", "anime", "5", 0); err != nil || !changed {
+		t.Fatalf("untyped work must stay correctable: changed=%v err=%v", changed, err)
+	}
+	typed := create("Form Typed", "anime")
+	if changed, err := app.store.CorrectBangumiWorkType(ctx, typed.ID, "anime", "movie", "6", 0); err != nil || changed {
+		t.Fatalf("typed work must be locked: changed=%v err=%v", changed, err)
 	}
 }
 

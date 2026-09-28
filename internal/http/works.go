@@ -19,7 +19,7 @@ type worksPageData struct {
 	KanaIndex                        bool
 	Year, Page, PageCount, PageSize  int
 	Total                            int64
-	Works                            []storage.Work
+	Rows                             []storage.WorkListRow
 	Unreferenced                     []storage.Work
 	UnreferencedTotal                int64
 	Years                            []int
@@ -29,12 +29,16 @@ type worksPageData struct {
 
 type workPageData struct {
 	Chrome
-	Notice     string
-	Work       storage.Work
-	Tracks     []storage.WorkTrack
-	Albums     []storage.AlbumWork
-	Candidates []storage.Track
-	Query      string
+	Notice        string
+	Work          storage.Work
+	Tracks        []storage.WorkTrack
+	Albums        []storage.AlbumWork
+	Candidates    []storage.Track
+	Query         string
+	Series        *storage.WorkSeries
+	SeriesMembers []storage.WorkSeriesMember
+	SeriesLocked  bool
+	AllSeries     []storage.WorkSeries
 }
 
 func workFilters(r *http.Request) storage.WorkFilters {
@@ -161,17 +165,17 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	filter.Limit, filter.Offset = 36, (page-1)*36
-	values, err := a.store.ListWorks(r.Context(), filter)
+	rows, err := a.store.ListWorksFolded(r.Context(), filter)
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	total, err := a.store.CountWorks(r.Context(), filter)
+	total, err := a.store.CountWorksFolded(r.Context(), filter)
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Works: values, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data := worksPageData{Chrome: chromeFor(session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Rows: rows, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
 	data.Unreferenced, data.UnreferencedTotal, err = a.store.UnreferencedProtectedWorks(r.Context())
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
@@ -234,7 +238,20 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("trackQ"))
 	candidates, _ := a.store.ListTracks(r.Context(), storage.Filters{Query: query, Limit: 30})
-	a.render(w, http.StatusOK, "work.html", workPageData{Chrome: chromeFor(session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, Candidates: candidates, Query: query})
+	data := workPageData{Chrome: chromeFor(session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, Candidates: candidates, Query: query}
+	if series, members, seriesErr := a.store.SeriesForWork(r.Context(), id); seriesErr == nil {
+		seriesCopy := series
+		data.Series = &seriesCopy
+		data.SeriesMembers = members
+	} else if !errors.Is(seriesErr, sql.ErrNoRows) {
+		http.Error(w, "work unavailable", http.StatusInternalServerError)
+		return
+	}
+	data.SeriesLocked, _ = a.store.WorkSeriesLocked(r.Context(), id)
+	if data.Series == nil {
+		data.AllSeries, _ = a.store.ListSeries(r.Context())
+	}
+	a.render(w, http.StatusOK, "work.html", data)
 }
 
 func (a *App) handleUpdateWork(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +306,87 @@ func (a *App) handleRemoveWorkTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice=曲目关联已移除", http.StatusSeeOther)
+}
+
+// handleDetachWorkSeries removes the work from its series and locks it
+// against automatic grouping (R3).
+func (a *App) handleDetachWorkSeries(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	if err := a.store.DetachWorkFromSeries(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("作品不在任何系列中"), http.StatusSeeOther)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("已从系列中拆出，自动归组不会再把它加回来"), http.StatusSeeOther)
+}
+
+// handleAddWorkSeries manually places the work into an existing series,
+// clearing any detach lock.
+func (a *App) handleAddWorkSeries(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	seriesID := parseInt64(r.FormValue("seriesId"))
+	if err := a.store.AddWorkToSeries(r.Context(), id, seriesID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "series or work not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("已手动加入系列"), http.StatusSeeOther)
+}
+
+// handleRenameWorkSeries records a user-chosen series title; the automatic
+// pass keeps manual titles (D25).
+func (a *App) handleRenameWorkSeries(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	seriesID := parseInt64(r.PathValue("id"))
+	if err := a.store.RenameWorkSeries(r.Context(), seriesID, r.FormValue("title")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	redirect := "/admin/works"
+	if series, err := a.store.WorkSeriesByID(r.Context(), seriesID); err == nil && series.RepresentativeWorkID != 0 {
+		redirect = "/admin/works/" + strconv.FormatInt(series.RepresentativeWorkID, 10)
+	}
+	http.Redirect(w, r, redirect+"?notice="+url.QueryEscape("系列已重命名"), http.StatusSeeOther)
+}
+
+// handleDissolveWorkSeries removes the series and locks every member so the
+// automatic pass never rebuilds it.
+func (a *App) handleDissolveWorkSeries(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	seriesID := parseInt64(r.PathValue("id"))
+	if err := a.store.DissolveWorkSeries(r.Context(), seriesID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin/works?notice="+url.QueryEscape("系列已解散，成员不会再被自动归组"), http.StatusSeeOther)
 }
 
 func workInputFromForm(r *http.Request) storage.WorkInput {

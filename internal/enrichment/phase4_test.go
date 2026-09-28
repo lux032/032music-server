@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -47,6 +48,17 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 	work, err := store.CreateWork(ctx, storage.WorkInput{Title: "葬送のフリーレン", Type: "anime", Year: 2023})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The fixture work stands in for an automatically aligned work: D38 locks
+	// manually typed works against automatic type correction, which several
+	// phase4 tests exercise, so the fixture unlocks it explicitly.
+	if unlock, unlockErr := sql.Open("sqlite", dbPath); unlockErr != nil {
+		t.Fatal(unlockErr)
+	} else {
+		defer unlock.Close()
+		if _, unlockErr = unlock.ExecContext(ctx, `UPDATE works SET type_locked=0 WHERE id=?`, work.ID); unlockErr != nil {
+			t.Fatal(unlockErr)
+		}
 	}
 	if err = store.AddWorkAlbum(ctx, work.ID, albums[0].ID, "other"); err != nil {
 		t.Fatal(err)
