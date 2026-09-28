@@ -39,6 +39,7 @@ type WorkInput struct {
 	ReadingTitle    string `json:"readingTitle"`
 	TranslatedTitle string `json:"translatedTitle"`
 	Type            string `json:"type"`
+	OriginalType    string `json:"originalType,omitempty"`
 	Year            int    `json:"year"`
 	PosterURL       string `json:"posterUrl"`
 	ExternalID      string `json:"externalId"`
@@ -69,6 +70,7 @@ func normalizeWorkInput(input WorkInput) (WorkInput, error) {
 	input.ReadingTitle = strings.TrimSpace(input.ReadingTitle)
 	input.TranslatedTitle = strings.TrimSpace(input.TranslatedTitle)
 	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
+	input.OriginalType = strings.ToLower(strings.TrimSpace(input.OriginalType))
 	input.PosterURL = strings.TrimSpace(input.PosterURL)
 	input.ExternalID = strings.TrimSpace(input.ExternalID)
 	if input.Title == "" {
@@ -127,16 +129,31 @@ func (s *Store) UpdateWork(ctx context.Context, id int64, input WorkInput) (Work
 	if err = tx.QueryRowContext(ctx, `SELECT normalized_title,type FROM works WHERE id=?`, id).Scan(&previousTitle, &previousType); err != nil {
 		return Work{}, err
 	}
+	effectiveType := input.Type
+	typeChangedByUser := input.Type != previousType
+	if input.OriginalType != "" {
+		if input.Type == input.OriginalType {
+			effectiveType = previousType
+			typeChangedByUser = false
+		} else {
+			typeChangedByUser = true
+		}
+	}
 	key := metadata.Normalize(input.Title)
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_aliases(normalized_key,work_id) VALUES(?,?),(?,?)`, previousTitle, id, key, id)
 	if err != nil {
 		return Work{}, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,origin='manual',reading_title=NULLIF(?,''),translated_title=NULLIF(?,''),type=?,year=NULLIF(?,0),poster_url=NULLIF(?,''),external_id=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, input.Title, key, input.ReadingTitle, input.TranslatedTitle, input.Type, input.Year, input.PosterURL, input.ExternalID, id)
+	_, err = tx.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,origin='manual',reading_title=NULLIF(?,''),translated_title=NULLIF(?,''),type=?,type_locked=CASE WHEN ? THEN 1 ELSE type_locked END,year=NULLIF(?,0),poster_url=NULLIF(?,''),external_id=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, input.Title, key, input.ReadingTitle, input.TranslatedTitle, effectiveType, boolInt(typeChangedByUser), input.Year, input.PosterURL, input.ExternalID, id)
 	if err != nil {
 		return Work{}, fmt.Errorf("update work: %w", err)
 	}
-	if previousTitle != key || previousType != input.Type {
+	if previousTitle != key || previousType != effectiveType {
+		if previousType != effectiveType {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM enrichment_provenance WHERE entity_type='work' AND entity_id=? AND field_name='type_correction_skipped' AND source='bangumi'`, id); err != nil {
+				return Work{}, err
+			}
+		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM work_enrichment_misses WHERE work_id=? AND source='bangumi'`, id); err != nil {
 			return Work{}, err
 		}
@@ -180,6 +197,9 @@ func (s *Store) DeleteWork(ctx context.Context, id int64) error {
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT track_id,? FROM work_tracks WHERE work_id=? AND (source='bangumi' OR source='manual' AND inferred_key LIKE 'bangumi:%')`, workTitleSuppressionKey(identity.Title, identity.Type), id); err != nil {
 			return err
 		}
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM enrichment_provenance WHERE entity_type='work' AND entity_id=?`, id); err != nil {
+		return err
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM works WHERE id=?`, id)
 	if err != nil {

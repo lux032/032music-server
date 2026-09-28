@@ -91,6 +91,20 @@ func scoreBangumi(work storage.WorkEnrichmentTarget, name, translated, date stri
 	return score, evidence
 }
 
+func bangumiWorkType(subjectType int, platform string) string {
+	switch subjectType {
+	case 4:
+		return "game"
+	case 2:
+		if strings.Contains(platform, "剧场版") || strings.Contains(platform, "劇場版") {
+			return "movie"
+		}
+		return "anime"
+	default:
+		return ""
+	}
+}
+
 func bangumiTypes(workType string) []int {
 	switch workType {
 	case "anime", "movie":
@@ -110,13 +124,67 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 	} else if err != nil {
 		return "", err
 	}
-	types := bangumiTypes(work.Type)
-	if len(types) == 0 {
-		return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
-	}
 	setting, err := m.store.MetadataSourceSetting(ctx, "bangumi")
 	if err != nil || !setting.Enabled {
 		return "skipped", err
+	}
+	if work.BangumiExternalID != "" {
+		var raw struct {
+			Type     int    `json:"type"`
+			Platform string `json:"platform"`
+		}
+		_ = json.Unmarshal(work.BangumiRaw, &raw)
+		corrected := bangumiWorkType(raw.Type, raw.Platform)
+		if raw.Type == 0 || raw.Type == 2 && raw.Platform == "" {
+			base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
+			if base == "" {
+				base = "https://api.bgm.tv"
+			}
+			var subject map[string]any
+			_, fetchErr := m.cachedJSON(ctx, "bangumi", "subject:"+work.BangumiExternalID, base+"/v0/subjects/"+work.BangumiExternalID, setting, force, nil, &subject)
+			if errors.Is(fetchErr, sql.ErrNoRows) {
+				if evidenceErr := m.store.RecordBangumiTypeCorrectionEvidence(ctx, work.ID, work.BangumiExternalID, "Bangumi subject detail not found", runID); evidenceErr != nil {
+					return "", evidenceErr
+				}
+				return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
+			}
+			if fetchErr != nil {
+				return "", fetchErr
+			}
+			detailRaw, marshalErr := json.Marshal(subject)
+			if marshalErr != nil {
+				return "", marshalErr
+			}
+			if updateErr := m.store.UpdateBangumiWorkProfileRaw(ctx, work.ID, detailRaw); updateErr != nil {
+				return "", updateErr
+			}
+			var detail struct {
+				Type     int    `json:"type"`
+				Platform string `json:"platform"`
+			}
+			if unmarshalErr := json.Unmarshal(detailRaw, &detail); unmarshalErr != nil {
+				return "", unmarshalErr
+			}
+			corrected = bangumiWorkType(detail.Type, detail.Platform)
+		}
+		if corrected == "" {
+			return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
+		}
+		if work.Type == corrected {
+			return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
+		}
+		changed, correctionErr := m.store.CorrectBangumiWorkType(ctx, work.ID, work.Type, corrected, work.BangumiExternalID, runID)
+		if correctionErr != nil {
+			return "", correctionErr
+		}
+		if changed {
+			return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
+		}
+		return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
+	}
+	types := bangumiTypes(work.Type)
+	if len(types) == 0 {
+		return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 	}
 	confirmed, err := m.store.WorkBangumiConfirmed(ctx, work.ID)
 	if err != nil {
@@ -164,12 +232,7 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		if len(date) >= 4 {
 			year, _ = strconv.Atoi(date[:4])
 		}
-		candidateType := ""
-		if v.Type == 2 {
-			candidateType = "anime"
-		} else if v.Type == 4 {
-			candidateType = "game"
-		}
+		candidateType := bangumiWorkType(v.Type, v.Platform)
 		candidates = append(candidates, storage.WorkMatchCandidate{Source: "bangumi", ExternalID: strconv.FormatInt(v.ID, 10), Title: v.Name, TranslatedTitle: v.NameCN, Type: candidateType, Year: year, PageURL: "https://bgm.tv/subject/" + strconv.FormatInt(v.ID, 10), PosterURL: poster, Score: score, Evidence: evidence, Payload: raw})
 	}
 	if _, err = m.store.WorkByID(ctx, work.ID); errors.Is(err, sql.ErrNoRows) {

@@ -112,6 +112,7 @@
       </div>
       <form method="post" action="/admin/works/{{.Work.ID}}">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="originalType" value="{{.Work.Type}}">
         <fieldset>
           <legend>多语言标题</legend>
           <label>原文标题<input name="title" value="{{.Work.Title}}" required></label>

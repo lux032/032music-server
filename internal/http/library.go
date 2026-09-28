@@ -31,6 +31,7 @@ type libraryPageData struct {
 	AlbumDetail                                          *storage.Album
 	AlbumWorks                                           []storage.AlbumWorkView
 	CanSearchBangumi                                     bool
+	BangumiSearchBlockReason                             string
 	Total                                                int64
 	TotalLabel                                           string
 	Page, PageCount, PageSize                            int
@@ -451,6 +452,9 @@ func (a *App) handleAlbumPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		data.CanSearchBangumi, err = a.store.AlbumEligibleForBangumiSearch(r.Context(), data.AlbumDetail.ID)
+	}
+	if err == nil && !data.CanSearchBangumi {
+		data.BangumiSearchBlockReason, err = a.store.AlbumBangumiBlockReason(r.Context(), data.AlbumDetail.ID)
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -53,6 +53,9 @@ type WorkEnrichmentTarget struct {
 	Title, TranslatedTitle string
 	Type                   string
 	Year                   int
+	BangumiExternalID      string
+	BangumiProfileType     string
+	BangumiRaw             json.RawMessage
 }
 
 type ExternalAlbumProfile struct {
@@ -242,8 +245,8 @@ func (s *Store) AlbumsForEnrichment(ctx context.Context, source string, force bo
 // WorksForEnrichment schedules only referenced works; an unlinked manual work
 // is not automatically enriched until associated with a track or album.
 func (s *Store) WorksForEnrichment(ctx context.Context, source string, force bool, limit int, targetID ...int64) ([]WorkEnrichmentTarget, error) {
-	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0) FROM works w WHERE (EXISTS(SELECT 1 FROM album_works aw WHERE aw.work_id=w.id) OR EXISTS(SELECT 1 FROM work_tracks wt WHERE wt.work_id=w.id)) AND (? OR (NOT EXISTS(SELECT 1 FROM work_external_profiles p WHERE p.work_id=w.id AND p.source=?) AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
-	args := []any{boolInt(force), source, source, source, source, source}
+	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0),COALESCE(p.external_id,''),COALESCE(p.type,''),COALESCE(p.raw_json,'{}') FROM works w LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source=? WHERE (EXISTS(SELECT 1 FROM album_works aw WHERE aw.work_id=w.id) OR EXISTS(SELECT 1 FROM work_tracks wt WHERE wt.work_id=w.id)) AND (? OR (p.work_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM enrichment_provenance ep WHERE ep.entity_type='work' AND ep.entity_id=w.id AND ep.field_name='type_correction_skipped' AND ep.source='bangumi') AND CASE WHEN json_valid(p.raw_json) THEN (json_extract(p.raw_json,'$.type') IS NULL AND json_extract(p.raw_json,'$.id') IS NOT NULL OR json_extract(p.raw_json,'$.type')=4 AND w.type<>'game' OR json_extract(p.raw_json,'$.type')=2 AND (json_extract(p.raw_json,'$.platform') IS NULL OR w.type<>CASE WHEN json_extract(p.raw_json,'$.platform') LIKE '%剧场版%' OR json_extract(p.raw_json,'$.platform') LIKE '%劇場版%' THEN 'movie' ELSE 'anime' END)) ELSE 0 END) OR (p.work_id IS NULL AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
+	args := []any{source, boolInt(force), source, source, source, source}
 	if len(targetID) > 0 && targetID[0] > 0 {
 		query += ` AND w.id=?`
 		args = append(args, targetID[0])
@@ -261,12 +264,41 @@ func (s *Store) WorksForEnrichment(ctx context.Context, source string, force boo
 	var values []WorkEnrichmentTarget
 	for rows.Next() {
 		var v WorkEnrichmentTarget
-		if err := rows.Scan(&v.ID, &v.Title, &v.TranslatedTitle, &v.Type, &v.Year); err != nil {
+		var raw string
+		if err := rows.Scan(&v.ID, &v.Title, &v.TranslatedTitle, &v.Type, &v.Year, &v.BangumiExternalID, &v.BangumiProfileType, &raw); err != nil {
 			return nil, err
 		}
+		v.BangumiRaw = json.RawMessage(raw)
 		values = append(values, v)
 	}
 	return values, rows.Err()
+}
+
+func (s *Store) UpdateBangumiWorkProfileRaw(ctx context.Context, workID int64, raw json.RawMessage) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE work_external_profiles SET raw_json=? WHERE work_id=? AND source='bangumi' AND raw_json<>?`, rawOrEmpty(raw), workID, rawOrEmpty(raw))
+	return err
+}
+
+func (s *Store) RecordBangumiTypeCorrectionEvidence(ctx context.Context, workID int64, externalID, reason string, runID int64) error {
+	// Enrichment runs are optional in direct/provider tests. Preserve the
+	// evidence without violating the provenance run foreign key.
+	if runID > 0 {
+		var exists bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM enrichment_runs WHERE id=?)`, runID).Scan(&exists); err != nil {
+			return err
+		} else if !exists {
+			runID = 0
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = putProvenance(ctx, tx, "work", workID, "type_correction_skipped", "bangumi", externalID, runID, map[string]string{"reason": reason}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SetWorkEnrichmentMiss(ctx context.Context, workID int64, source string) error {
@@ -666,6 +698,44 @@ func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candid
 }
 
 // M2: shared binding and provenance for work and album confirmations.
+func (s *Store) CorrectBangumiWorkType(ctx context.Context, workID int64, oldType, correctedType, externalID string, runID int64) (bool, error) {
+	if correctedType != "anime" && correctedType != "movie" && correctedType != "game" {
+		return false, ErrInvalidWork
+	}
+	if oldType == correctedType {
+		return false, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE work_external_profiles SET type=? WHERE work_id=? AND source='bangumi' AND COALESCE(type,'')<>?`, correctedType, workID, correctedType); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE works SET type=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND type=? AND type<>? AND type_locked=0 AND NOT EXISTS(SELECT 1 FROM works other JOIN works current ON current.id=? WHERE other.id<>current.id AND other.normalized_title=current.normalized_title AND other.type=? AND IFNULL(other.year,0)=IFNULL(current.year,0))`, correctedType, workID, oldType, correctedType, workID, correctedType)
+	if err != nil {
+		return false, err
+	}
+	changed, _ := result.RowsAffected()
+	if changed > 0 {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM enrichment_provenance WHERE entity_type='work' AND entity_id=? AND field_name='type_correction_skipped' AND source='bangumi'`, workID); err != nil {
+			return false, err
+		}
+		if err = putProvenance(ctx, tx, "work", workID, "type", "bangumi", externalID, runID, correctedType); err != nil {
+			return false, err
+		}
+	} else if oldType != correctedType {
+		if err = putProvenance(ctx, tx, "work", workID, "type_correction_skipped", "bangumi", externalID, runID, map[string]string{"from": oldType, "to": correctedType, "reason": "type locked, changed concurrently, or identity conflict"}); err != nil {
+			return false, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return changed > 0, nil
+}
+
 func applyWorkExternalProfileTx(ctx context.Context, tx *sql.Tx, workID int64, p ExternalWorkProfile, runID int64) error {
 	var err error
 	var ownerID int64
@@ -684,7 +754,7 @@ func applyWorkExternalProfileTx(ctx context.Context, tx *sql.Tx, workID int64, p
 		name, value, condition string
 		arg                    any
 	}
-	fields := []wf{{"translated_title", p.TranslatedTitle, `COALESCE(translated_title,'')=''`, p.TranslatedTitle}, {"type", p.Type, `type='other'`, p.Type}, {"poster_url", p.PosterURL, `COALESCE(poster_url,'')=''`, p.PosterURL}}
+	fields := []wf{{"translated_title", p.TranslatedTitle, `COALESCE(translated_title,'')=''`, p.TranslatedTitle}, {"type", p.Type, `type='other' AND type_locked=0`, p.Type}, {"poster_url", p.PosterURL, `COALESCE(poster_url,'')=''`, p.PosterURL}}
 	for _, f := range fields {
 		if strings.TrimSpace(f.value) == "" {
 			continue

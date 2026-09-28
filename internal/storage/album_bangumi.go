@@ -325,7 +325,7 @@ func (s *Store) ConfirmAlbumSubjectCandidate(ctx context.Context, albumID, candi
 		if err != nil {
 			return "", nil, err
 		}
-		if suppressed {
+		if suppressed && automatic {
 			return "review", nil, nil
 		}
 		var rejected bool
@@ -375,29 +375,16 @@ func (s *Store) ConfirmAlbumSubjectCandidate(ctx context.Context, albumID, candi
 		if e != nil {
 			return "", nil, e
 		}
-		var matchedTitleKeys []string
 		for _, stored := range keys {
-			storedParts := strings.Split(stored, "|")
 			for _, identity := range identities {
-				identityKey := workTitleSuppressionKey(identity.Title, identity.Type)
-				if workTitleKeysMatch(stored, identityKey) {
-					if automatic {
-						return "review", nil, nil
-					}
-					// Manual acceptance only reverses a typed removal for the type
-					// being accepted. Legacy non-three-part keys have no reliable
-					// type segment, so retain their historical title-only behavior.
-					if len(storedParts) != 3 || storedParts[1] == identity.Type {
-						matchedTitleKeys = append(matchedTitleKeys, stored)
-					}
+				if workTitleKeysMatch(stored, workTitleSuppressionKey(identity.Title, identity.Type)) && automatic {
+					return "review", nil, nil
 				}
 			}
 		}
 		if !automatic {
-			for _, stored := range matchedTitleKeys {
-				if _, e = tx.ExecContext(ctx, `DELETE FROM album_work_suppressions WHERE album_id=? AND inferred_key=?`, albumID, stored); e != nil {
-					return "", nil, e
-				}
+			if e = clearManualSuppressions(ctx, tx, "album_work_suppressions", "album_id", albumID, id, workID); e != nil {
+				return "", nil, e
 			}
 		}
 		albumRole := "other"
@@ -408,8 +395,14 @@ func (s *Store) ConfirmAlbumSubjectCandidate(ctx context.Context, albumID, candi
 		if e != nil {
 			return "", nil, e
 		}
+		// A pre-existing manual album link remains manual (R1), but recording
+		// the confirmed Bangumi key lets a later album unlink remove only the
+		// track rows landed by this confirmation (D15).
+		if _, e = tx.ExecContext(ctx, `UPDATE album_works SET inferred_key=? WHERE album_id=? AND work_id=? AND source='manual' AND inferred_key IS NULL`, key, albumID, id); e != nil {
+			return "", nil, e
+		}
 		if tie.Role != "ost" && tie.Role != "other" {
-			if e = linkBangumiAlbumTracks(ctx, tx, albumID, id, musicTitle, tie.Role, key); e != nil {
+			if e = linkBangumiAlbumTracks(ctx, tx, albumID, id, musicTitle, tie.Role, key, !automatic); e != nil {
 				return "", nil, e
 			}
 		}
@@ -469,7 +462,7 @@ func bangumiTrackTitleMatches(trackTitle, trackType, musicTitle string) bool {
 	return base != trackTitle && matches(base, musicTitle)
 }
 
-func linkBangumiAlbumTracks(ctx context.Context, tx *sql.Tx, albumID, workID int64, musicTitle, role, inferredKey string) error {
+func linkBangumiAlbumTracks(ctx context.Context, tx *sql.Tx, albumID, workID int64, musicTitle, role, inferredKey string, manualAccept ...bool) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id,COALESCE(user_title,title),COALESCE(user_track_type,track_type,'regular') FROM tracks WHERE album_id=? ORDER BY id`, albumID)
 	if err != nil {
 		return err
@@ -500,6 +493,22 @@ func linkBangumiAlbumTracks(ctx context.Context, tx *sql.Tx, albumID, workID int
 		if err != nil {
 			return err
 		}
+		if suppressed && len(manualAccept) > 0 && manualAccept[0] {
+			external, e := workBangumiExternalID(ctx, tx, workID)
+			if e != nil {
+				return e
+			}
+			if e = clearManualSuppressions(ctx, tx, "track_work_suppressions", "track_id", v.id, workID, external); e != nil {
+				return e
+			}
+			// Album-level title keys of other media types remain as history but
+			// do not block this explicit acceptance. A track-level whole-entry
+			// rejection still does.
+			music := strings.Split(inferredKey, ":")[1]
+			if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM track_work_suppressions WHERE track_id=? AND inferred_key=?)`, v.id, "bangumi:"+music).Scan(&suppressed); e != nil {
+				return e
+			}
+		}
 		if suppressed {
 			continue
 		}
@@ -529,6 +538,11 @@ func bangumiTrackLinkSuppressed(ctx context.Context, tx *sql.Tx, trackID, albumI
 	albumKeys, err := suppressionKeys(ctx, tx, `SELECT inferred_key FROM album_work_suppressions WHERE album_id=?`, albumID)
 	if err != nil {
 		return false, err
+	}
+	for _, stored := range albumKeys {
+		if stored == "bangumi:"+music {
+			return true, nil
+		}
 	}
 	keys := append(trackKeys, albumKeys...)
 	if workID != 0 {
@@ -624,7 +638,7 @@ func resolveBangumiWork(ctx context.Context, tx *sql.Tx, tie BangumiTieup, runID
 			if e = rows.Scan(&candidate, &title, &typ, &alias); e != nil {
 				break
 			}
-			if metadata.WorkSeasonNumber(title) != metadata.WorkSeasonNumber(tie.Title) {
+			if (typ != tie.Type && typ != "other") || metadata.WorkSeasonNumber(title) != metadata.WorkSeasonNumber(tie.Title) {
 				continue
 			}
 			for _, remote := range []string{tie.Title, tie.NameCN} {

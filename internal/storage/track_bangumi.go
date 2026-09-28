@@ -124,9 +124,33 @@ func (s *Store) TrackBangumiLink(ctx context.Context, trackID int64) (role, exte
 	return role, externalID, key, err
 }
 
+func (s *Store) BangumiTrackTieupSuppressed(ctx context.Context, trackID, albumID int64, music string, tie BangumiTieup) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	return bangumiTrackLinkSuppressed(ctx, tx, trackID, albumID, music, tie, 0)
+}
+
 func (s *Store) SetTrackBangumiMiss(ctx context.Context, t TrackBangumiTarget, reason string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO track_enrichment_misses(track_id,source,fingerprint,reason) VALUES(?,'bangumi',?,?) ON CONFLICT(track_id,source) DO UPDATE SET fingerprint=excluded.fingerprint,reason=excluded.reason,checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, t.ID, t.Fingerprint, reason)
 	return err
+}
+
+func (s *Store) SetSuppressedTrackBangumiMiss(ctx context.Context, t TrackBangumiTarget) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM track_subject_candidates WHERE track_id=? AND status='candidate'`, t.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO track_enrichment_misses(track_id,source,fingerprint,reason) VALUES(?,'bangumi',?,'all matching entries suppressed') ON CONFLICT(track_id,source) DO UPDATE SET fingerprint=excluded.fingerprint,reason=excluded.reason,checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, t.ID, t.Fingerprint); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SaveTrackSubjectCandidates(ctx context.Context, trackID int64, candidates []TrackSubjectCandidate) error {
@@ -233,12 +257,13 @@ func (s *Store) RejectTrackSubjectCandidate(ctx context.Context, trackID, candid
 
 var validBangumiTrackRoles = map[string]bool{"op": true, "ed": true, "insert": true, "theme": true, "character": true, "ost": true, "image_song": true, "other": true}
 
-// clearManualTrackSuppressions drops the suppressions a manual acceptance is
-// allowed to reverse: every known title identity of the work, and every
-// bangumi:<music>:<work subject> key for that work. The two-part bangumi:<music>
-// rejection of the whole entry is left in place and still blocks the write.
-func clearManualTrackSuppressions(ctx context.Context, tx *sql.Tx, trackID, workID int64, workSubject string) error {
-	keys, err := suppressionKeys(ctx, tx, `SELECT inferred_key FROM track_work_suppressions WHERE track_id=?`, trackID)
+// clearManualSuppressions drops title identities a manual acceptance may
+// reverse and bangumi:*:<work>. Bound Bangumi anime/movie works use their
+// shared media class; unbound works remain strict. Legacy title keys retain
+// their historical title-only behavior. Whole-entry bangumi:<music> remains.
+func clearManualSuppressions(ctx context.Context, tx *sql.Tx, table, idColumn string, ownerID, workID int64, workSubject string) error {
+	query := `SELECT inferred_key FROM ` + table + ` WHERE ` + idColumn + `=?`
+	keys, err := suppressionKeys(ctx, tx, query, ownerID)
 	if err != nil {
 		return err
 	}
@@ -246,17 +271,19 @@ func clearManualTrackSuppressions(ctx context.Context, tx *sql.Tx, trackID, work
 	if err != nil {
 		return err
 	}
+	boundExternal, err := workBangumiExternalID(ctx, tx, workID)
+	if err != nil {
+		return err
+	}
 	drop := map[string]bool{}
 	for _, stored := range keys {
-		storedParts := strings.Split(stored, "|")
+		_, storedType, _ := splitInferredKey(stored)
 		for _, identity := range identities {
-			if workTitleKeysMatch(stored, workTitleSuppressionKey(identity.Title, identity.Type)) {
-				// Manual acceptance only reverses a typed removal for the type
-				// being accepted. Legacy non-three-part keys have no reliable
-				// type segment, so retain their historical title-only behavior.
-				if len(storedParts) != 3 || storedParts[1] == identity.Type {
-					drop[stored] = true
-				}
+			if !workTitleKeysMatch(stored, workTitleSuppressionKey(identity.Title, identity.Type)) {
+				continue
+			}
+			if storedType == "" || storedType == identity.Type || storedType == "other" || boundExternal != "" && bangumiTypeCompatible(storedType, identity.Type) {
+				drop[stored] = true
 			}
 		}
 		parts := strings.Split(stored, ":")
@@ -265,11 +292,15 @@ func clearManualTrackSuppressions(ctx context.Context, tx *sql.Tx, trackID, work
 		}
 	}
 	for stored := range drop {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM track_work_suppressions WHERE track_id=? AND inferred_key=?`, trackID, stored); err != nil {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE `+idColumn+`=? AND inferred_key=?`, ownerID, stored); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func clearManualTrackSuppressions(ctx context.Context, tx *sql.Tx, trackID, workID int64, workSubject string) error {
+	return clearManualSuppressions(ctx, tx, "track_work_suppressions", "track_id", trackID, workID, workSubject)
 }
 
 // ConfirmTrackSubjectCandidate lands the selected works for one track candidate.

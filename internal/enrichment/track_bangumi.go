@@ -26,13 +26,13 @@ func bangumiSearchKeyword(s string) string {
 // It reads the next page only while the last result of the current page is
 // still an exact name match, and never past the third page (M2).
 func (m *Manager) searchMusicSubjects(ctx context.Context, setting storage.MetadataSourceSetting, keyword string, force bool) ([]musicSubject, error) {
-	return m.searchMusicSubjectsQuery(ctx, setting, keyword, bangumiSearchKeyword(keyword), force)
+	return m.searchMusicSubjectsQuery(ctx, setting, keyword, bangumiSearchKeyword(keyword), force, 20)
 }
 
 // searchMusicSubjectsQuery searches with an already-chosen keyword. Both album
 // and track lookup pass bangumiSearchKeyword so a leading "-" is not an exclusion
 // (H1). Scoring and title comparison still use the original title.
-func (m *Manager) searchMusicSubjectsQuery(ctx context.Context, setting storage.MetadataSourceSetting, title, query string, force bool) ([]musicSubject, error) {
+func (m *Manager) searchMusicSubjectsQuery(ctx context.Context, setting storage.MetadataSourceSetting, title, query string, force bool, pageSize int) ([]musicSubject, error) {
 	base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
 	if base == "" {
 		base = "https://api.bgm.tv"
@@ -40,11 +40,14 @@ func (m *Manager) searchMusicSubjectsQuery(ctx context.Context, setting storage.
 	if strings.TrimSpace(query) == "" {
 		return nil, sql.ErrNoRows
 	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
 	var all []musicSubject
 	for page := 0; page < 3; page++ {
 		var result musicSearchResponse
-		endpoint := base + "/v0/search/subjects?limit=20&offset=" + strconv.Itoa(page*20)
-		_, err := m.cachedJSON(ctx, "bangumi", "music-search:v2:"+query+":"+strconv.Itoa(page), endpoint, setting, force, map[string]any{"keyword": query, "filter": map[string]any{"type": []int{3}}}, &result)
+		endpoint := base + "/v0/search/subjects?limit=" + strconv.Itoa(pageSize) + "&offset=" + strconv.Itoa(page*pageSize)
+		_, err := m.cachedJSON(ctx, "bangumi", "music-search:v3:"+query+":"+strconv.Itoa(pageSize)+":"+strconv.Itoa(page), endpoint, setting, force, map[string]any{"keyword": query, "filter": map[string]any{"type": []int{3}}}, &result)
 		if errors.Is(err, sql.ErrNoRows) {
 			if page == 0 {
 				return nil, err
@@ -55,7 +58,7 @@ func (m *Manager) searchMusicSubjectsQuery(ctx context.Context, setting storage.
 			return nil, err
 		}
 		all = append(all, result.Data...)
-		if len(result.Data) < 20 {
+		if len(result.Data) < pageSize {
 			break
 		}
 		last := result.Data[len(result.Data)-1]
@@ -199,15 +202,6 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 	if err != nil {
 		return "", err
 	}
-	// A hit that only has generic relations is already a review candidate.
-	// Do not keep searching version suffixes or multi-title entries.
-	genericOnly := false
-	for _, hit := range hits {
-		if len(hit.specific) == 0 {
-			genericOnly = true
-			break
-		}
-	}
 	if len(hits) == 0 && (track.TrackType == "tv_size" || track.TrackType == "instrumental" || track.TrackType == "off_vocal") {
 		base := metadata.StripTrackTypeSuffix(track.Title, track.TrackType)
 		if base != track.Title && storage.BangumiTrackTitleKey(base, false) != "" {
@@ -218,7 +212,7 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 		}
 	}
 	multi := false
-	if len(hits) == 0 && !genericOnly {
+	if len(hits) == 0 {
 		multi = true
 		hits, err = m.multiTitleHits(ctx, setting, track, force || track.Recheck)
 		if err != nil {
@@ -227,6 +221,36 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 	}
 	if len(hits) == 0 {
 		return "skipped", m.store.SetTrackBangumiMiss(ctx, track, "no matching music entry")
+	}
+	unsuppressed := hits[:0]
+	for _, hit := range hits {
+		keep := false
+		for _, tie := range hit.tieups {
+			suppressed, e := m.store.BangumiTrackTieupSuppressed(ctx, track.ID, track.AlbumID, strconv.FormatInt(hit.subject.ID, 10), tie)
+			if e != nil {
+				return "", e
+			}
+			if !suppressed {
+				keep = true
+				break
+			}
+		}
+		if keep {
+			unsuppressed = append(unsuppressed, hit)
+		}
+	}
+	hits = unsuppressed
+	if len(hits) == 0 {
+		return "skipped", m.store.SetSuppressedTrackBangumiMiss(ctx, track)
+	}
+	// Generic-only is evaluated after suppression filtering: a suppressed
+	// generic hit must not force surviving specific hits into review.
+	genericOnly := false
+	for _, hit := range hits {
+		if len(hit.specific) == 0 {
+			genericOnly = true
+			break
+		}
 	}
 	candidates := make([]storage.TrackSubjectCandidate, 0, len(hits))
 	for _, hit := range hits {

@@ -328,7 +328,7 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 	}
 	// H1 applies to album search too: the request keyword replaces hyphens so a
 	// leading "-" is not a Bangumi exclusion. Scoring still uses album.Title.
-	hits, err := m.searchMusicSubjectsQuery(ctx, setting, album.Title, bangumiSearchKeyword(album.Title), force || album.Recheck)
+	hits, err := m.searchMusicSubjectsQuery(ctx, setting, album.Title, bangumiSearchKeyword(album.Title), force || album.Recheck, 25)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "skipped", m.store.SetAlbumBangumiMiss(ctx, album)
 	}

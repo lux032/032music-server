@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -264,16 +266,36 @@ func TestTrackBangumiMultiTitleWithoutWorksIsMiss(t *testing.T) {
 	}
 }
 
-func mustCount(t *testing.T, store *storage.Store, query string, args ...any) int {
+// readOnlyDB opens a read-only connection to the test store's database file
+// so assertions cannot mutate state through the store's write connection. The
+// path is registered by newTrackManager and phase4TestManager.
+func readOnlyDB(t *testing.T, store *storage.Store) *sql.DB {
 	t.Helper()
 	path := trackTestDBPath[store]
-	db, err := sql.Open("sqlite", path+"?mode=ro")
+	if path == "" {
+		path = phase4DBPath[store]
+	}
+	if path == "" {
+		t.Fatal("test store has no registered database path")
+	}
+	databasePath := filepath.ToSlash(path)
+	if runtime.GOOS == "windows" {
+		databasePath = "/" + databasePath
+	}
+	dsn := (&url.URL{Scheme: "file", Path: databasePath, RawQuery: "mode=ro"}).String()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func mustCount(t *testing.T, store *storage.Store, query string, args ...any) int {
+	t.Helper()
+	db := readOnlyDB(t, store)
 	var n int
-	if err = db.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
+	if err := db.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n

@@ -293,7 +293,7 @@ func (a *App) handleRemoveWorkTrack(w http.ResponseWriter, r *http.Request) {
 
 func workInputFromForm(r *http.Request) storage.WorkInput {
 	_ = r.ParseForm()
-	return storage.WorkInput{Title: r.FormValue("title"), ReadingTitle: r.FormValue("readingTitle"), TranslatedTitle: r.FormValue("translatedTitle"), Type: r.FormValue("type"), Year: int(parseInt64(r.FormValue("year"))), PosterURL: r.FormValue("posterUrl"), ExternalID: r.FormValue("externalId")}
+	return storage.WorkInput{Title: r.FormValue("title"), ReadingTitle: r.FormValue("readingTitle"), TranslatedTitle: r.FormValue("translatedTitle"), Type: r.FormValue("type"), OriginalType: r.FormValue("originalType"), Year: int(parseInt64(r.FormValue("year"))), PosterURL: r.FormValue("posterUrl"), ExternalID: r.FormValue("externalId")}
 }
 
 func setWorksPagination(r *http.Request, data *worksPageData) {

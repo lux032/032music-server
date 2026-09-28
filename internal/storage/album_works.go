@@ -65,12 +65,24 @@ func inferredWorkKey(a metadata.WorkAssociation) string {
 }
 
 func splitInferredKey(key string) (title, typ string, season int) {
-	parts := strings.Split(key, "|")
-	if len(parts) != 3 {
+	last := strings.LastIndex(key, "|")
+	if last < 0 {
 		return key, "", 0
 	}
-	season, _ = strconv.Atoi(parts[2])
-	return parts[0], parts[1], season
+	parsedSeason, err := strconv.Atoi(key[last+1:])
+	if err != nil {
+		return key, "", 0
+	}
+	before := key[:last]
+	secondLast := strings.LastIndex(before, "|")
+	if secondLast < 0 {
+		return key, "", 0
+	}
+	parsedType := before[secondLast+1:]
+	if _, ok := validWorkTypes[parsedType]; !ok {
+		return key, "", 0
+	}
+	return before[:secondLast], parsedType, parsedSeason
 }
 
 func normalizedWorkIdentity(title string) string {
@@ -125,6 +137,19 @@ func workSuppressionIdentities(ctx context.Context, tx *sql.Tx, workID int64) ([
 		out = append(out, value)
 	}
 	return out, nil
+}
+
+func bangumiTypeCompatible(local, inferred string) bool {
+	if local == inferred {
+		return true
+	}
+	if local == "other" || inferred == "other" {
+		return true
+	}
+	if local == "game" || inferred == "game" {
+		return local == inferred
+	}
+	return (local == "anime" || local == "movie") && (inferred == "anime" || inferred == "movie")
 }
 
 func bangumiExternalSuppressed(keys []string, externalID string) bool {
@@ -197,16 +222,16 @@ func resolveAutoWork(ctx context.Context, tx *sql.Tx, a metadata.WorkAssociation
 	// B2: resolve the bound identity first, including legacy aliases and
 	// distinct season spellings; never let an unrelated season absorb it.
 	var boundID int64
-	boundRows, e := tx.QueryContext(ctx, `SELECT DISTINCT w.id,w.title,COALESCE(x.normalized_key,'') FROM works w JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' LEFT JOIN work_aliases x ON x.work_id=w.id WHERE (w.type=? OR w.type='other' OR ?='other') ORDER BY w.id`, a.Type, a.Type)
+	boundRows, e := tx.QueryContext(ctx, `SELECT DISTINCT w.id,w.title,w.type,COALESCE(x.normalized_key,'') FROM works w JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' LEFT JOIN work_aliases x ON x.work_id=w.id ORDER BY w.id`)
 	if e != nil {
 		return 0, false, e
 	}
 	for boundRows.Next() {
-		var candidateTitle, alias string
-		if e = boundRows.Scan(&boundID, &candidateTitle, &alias); e != nil {
+		var candidateTitle, candidateType, alias string
+		if e = boundRows.Scan(&boundID, &candidateTitle, &candidateType, &alias); e != nil {
 			break
 		}
-		if metadata.WorkSeasonNumber(candidateTitle) != a.Season {
+		if !bangumiTypeCompatible(candidateType, a.Type) || metadata.WorkSeasonNumber(candidateTitle) != a.Season {
 			continue
 		}
 		if norm.NFKC.String(key) == norm.NFKC.String(metadata.Normalize(candidateTitle)) || norm.NFKC.String(key) == norm.NFKC.String(alias) || bangumiStrictKey(a.Title) == bangumiStrictKey(candidateTitle) || alias != "" && bangumiStrictKey(a.Title) == bangumiStrictKey(alias) || a.Season > 0 && (norm.NFKC.String(normalizedWorkIdentity(a.Title)) == norm.NFKC.String(normalizedWorkIdentity(candidateTitle)) || alias != "" && norm.NFKC.String(normalizedWorkIdentity(a.Title)) == norm.NFKC.String(normalizedWorkIdentity(alias)) && metadata.WorkSeasonNumber(alias) == a.Season) {
@@ -402,9 +427,17 @@ func (s *Store) RemoveWorkAlbum(ctx context.Context, workID, albumID int64) erro
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_work_suppressions(album_id,inferred_key) SELECT album_id,inferred_key FROM album_works WHERE album_id=? AND work_id=? AND inferred_key IS NOT NULL`, albumID, workID)
-	if err != nil {
+	var albumInferredKey sql.NullString
+	if err = tx.QueryRowContext(ctx, `SELECT inferred_key FROM album_works WHERE album_id=? AND work_id=?`, albumID, workID).Scan(&albumInferredKey); err != nil {
 		return err
+	}
+	if albumInferredKey.Valid {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_work_suppressions(album_id,inferred_key) VALUES(?,?)`, albumID, albumInferredKey.String); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM work_tracks WHERE work_id=? AND source='bangumi' AND inferred_key=? AND track_id IN (SELECT id FROM tracks WHERE album_id=?)`, workID, albumInferredKey.String, albumID); err != nil {
+			return err
+		}
 	}
 	// Removed automatic links suppress every known title identity. The original
 	// inferred_key above is retained for exact rule-version compatibility.
@@ -509,6 +542,7 @@ albumLoop:
 		compilation = input.compilation
 		fingerprint = fmt.Sprintf("%x", sha1.Sum([]byte(fmt.Sprintf("%s|%s|%s|%t", albumWorkRuleVersion, a.title, folder, compilation))))
 		assoc, ok := metadata.InferAlbumWork(a.title, folder, compilation)
+		createdInAlbum := 0
 		var hasBangumiAlbum bool
 		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM album_works WHERE album_id=? AND source='bangumi')`, a.id).Scan(&hasBangumiAlbum); e != nil {
 			tx.Rollback()
@@ -541,8 +575,17 @@ albumLoop:
 				var created bool
 				id, created, e = resolveAutoWork(ctx, tx, assoc, a.id)
 				if e != nil {
-					tx.Rollback()
-					return stats, fmt.Errorf("infer album work %d: %w", a.id, e)
+					if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO album_refresh`); rollbackErr != nil {
+						tx.Rollback()
+						return stats, rollbackErr
+					}
+					if _, releaseErr := tx.ExecContext(ctx, `RELEASE album_refresh`); releaseErr != nil {
+						tx.Rollback()
+						return stats, releaseErr
+					}
+					stats.AlbumsFailed++
+					slog.Error("infer album work", "albumId", a.id, "error", e)
+					continue albumLoop
 				} else {
 					external, externalErr := workBangumiExternalID(ctx, tx, id)
 					if externalErr != nil {
@@ -554,13 +597,22 @@ albumLoop:
 					}
 					if !suppressed {
 						if created {
-							stats.WorksCreated++
+							createdInAlbum++
 						}
 						_, e = tx.ExecContext(ctx, `INSERT INTO album_works(album_id,work_id,role,season,source,inferred_key) VALUES(?,?,?,?,'auto',?) ON CONFLICT(album_id,work_id) DO UPDATE SET role=excluded.role,season=excluded.season,inferred_key=excluded.inferred_key WHERE album_works.source='auto'`, a.id, id, assoc.Role, assoc.Season, key)
 					}
 					if e != nil {
-						tx.Rollback()
-						return stats, fmt.Errorf("link album work %d: %w", a.id, e)
+						if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO album_refresh`); rollbackErr != nil {
+							tx.Rollback()
+							return stats, rollbackErr
+						}
+						if _, releaseErr := tx.ExecContext(ctx, `RELEASE album_refresh`); releaseErr != nil {
+							tx.Rollback()
+							return stats, releaseErr
+						}
+						stats.AlbumsFailed++
+						slog.Error("link album work", "albumId", a.id, "error", e)
+						continue albumLoop
 					}
 				}
 			}
@@ -606,7 +658,6 @@ albumLoop:
 			tx.Rollback()
 			return stats, e
 		}
-		createdInAlbum := 0
 		for _, t := range tracks {
 			raw := map[string][]string{}
 			tagRows, te := tx.QueryContext(ctx, `SELECT tag.field_name,tag.value FROM audio_file_tags tag JOIN audio_files af ON af.id=tag.audio_file_id WHERE af.track_id=? ORDER BY tag.position`, t.id)

@@ -164,10 +164,10 @@ func TestTRM2ManualAcceptOverridesTitleSuppression(t *testing.T) {
 	if n := f.count(t, `SELECT COUNT(*) FROM album_works WHERE album_id=? AND source='bangumi'`, albumID); n != 1 {
 		t.Fatalf("bangumi links=%d", n)
 	}
-	// The previous auto association was type other; manual anime acceptance
-	// succeeds but only clears same-type typed suppressions.
-	if n := f.count(t, `SELECT COUNT(*) FROM album_work_suppressions WHERE album_id=? AND inferred_key='x|other|0'`, albumID); n != 1 {
-		t.Fatalf("different-type suppression count=%d", n)
+	// D35/D36: other is a wildcard for manual acceptance, so the prior
+	// title suppression is cleared while whole-entry refusals remain guarded.
+	if n := f.count(t, `SELECT COUNT(*) FROM album_work_suppressions WHERE album_id=? AND inferred_key='x|other|0'`, albumID); n != 0 {
+		t.Fatalf("wildcard suppression count=%d", n)
 	}
 }
 
