@@ -1,0 +1,32 @@
+{
+ "data": [
+  {
+   "id": 262860,
+   "type": 3,
+   "name": "赤い罠(who loves it?)/ADAMAS",
+   "name_cn": "",
+   "date": "2018-12-12",
+   "platform": "",
+   "infobox": [
+    {
+     "key": "艺术家",
+     "value": "LiSA"
+    }
+   ],
+   "tags": [],
+   "meta_tags": []
+  },
+  {
+   "id": 138580,
+   "type": 3,
+   "name": "機神飛翔デモンベイン オリジナルサウンドトラック",
+   "name_cn": "",
+   "date": "2006-07-28",
+   "platform": "",
+   "infobox": [],
+   "tags": [],
+   "meta_tags": []
+  }
+ ],
+ "total": 2
+}

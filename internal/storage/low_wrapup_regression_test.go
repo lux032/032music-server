@@ -136,6 +136,10 @@ func TestLW3IdentityOnlySuppressionPaths(t *testing.T) {
 	}
 }
 
+// TestLW4ExternalSuppressionDoesNotCountCreatedWork covers a defensive path only.
+// A work created by this refresh has no Bangumi profile, so "works created" and an
+// external-id suppression can never both be true. The assertion is that the work
+// count stays unchanged.
 func TestLW4ExternalSuppressionDoesNotCountCreatedWork(t *testing.T) {
 	f := newAlbumMergeFixture(t)
 	f.importFile(t, "A/01.flac", "Alias Original Soundtrack", "Song", 1, 1)
@@ -148,12 +152,16 @@ func TestLW4ExternalSuppressionDoesNotCountCreatedWork(t *testing.T) {
 	if _, err := f.store.db.ExecContext(f.ctx, `INSERT INTO album_work_suppressions(album_id,inferred_key) VALUES(?,'bangumi:1:555')`, albumID); err != nil {
 		t.Fatal(err)
 	}
+	before := f.count(t, `SELECT COUNT(*) FROM works`)
 	stats, err := f.store.RefreshAlbumWorks(f.ctx, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stats.WorksCreated != 0 {
 		t.Fatalf("works created=%d", stats.WorksCreated)
+	}
+	if after := f.count(t, `SELECT COUNT(*) FROM works`); after != before {
+		t.Fatalf("works before=%d after=%d", before, after)
 	}
 	if n := f.count(t, `SELECT COUNT(*) FROM album_works WHERE album_id=?`, albumID); n != 0 {
 		t.Fatalf("suppressed association=%d", n)

@@ -301,6 +301,8 @@ func (s *Store) ConfirmAlbumSubjectCandidate(ctx context.Context, albumID, candi
 		chosen[v] = true
 	}
 	if !automatic && selected == nil {
+		// Album review keeps its designed "accept every specific work" action.
+		// (The empty-selection error is a track-level rule, M-2.)
 		for _, tie := range ties {
 			if isSpecificBangumiRole(tie.Role) {
 				chosen[tie.SubjectID] = true
@@ -436,6 +438,10 @@ func isSpecificBangumiRole(role string) bool {
 	return false
 }
 
+// BangumiTrackTitleKey compares a track title with a Bangumi music entry name.
+// The loose form keeps only letters and numbers so punctuation cannot hide a match.
+func BangumiTrackTitleKey(s string, loose bool) string { return bangumiTrackTitleKey(s, loose) }
+
 func bangumiTrackTitleKey(s string, loose bool) string {
 	s = strings.ToLower(norm.NFKC.String(strings.TrimSpace(s)))
 	if !loose {
@@ -490,39 +496,108 @@ func linkBangumiAlbumTracks(ctx context.Context, tx *sql.Tx, albumID, workID int
 		if !bangumiTrackTitleMatches(v.title, v.trackType, musicTitle) {
 			continue
 		}
-		var suppressed bool
-		var workTitle, workType string
-		if err = tx.QueryRowContext(ctx, `SELECT title,type FROM works WHERE id=?`, workID).Scan(&workTitle, &workType); err != nil {
+		suppressed, err := bangumiTrackLinkSuppressed(ctx, tx, v.id, albumID, strings.Split(inferredKey, ":")[1], BangumiTieup{}, workID)
+		if err != nil {
 			return err
-		}
-		trackKeys, keyErr := suppressionKeys(ctx, tx, `SELECT inferred_key FROM track_work_suppressions WHERE track_id=?`, v.id)
-		if keyErr != nil {
-			return keyErr
-		}
-		for _, stored := range trackKeys {
-			if stored == inferredKey || workTitleKeysMatch(stored, workTitleSuppressionKey(workTitle, workType)) {
-				suppressed = true
-				break
-			}
 		}
 		if suppressed {
 			continue
 		}
-		var manual bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_tracks WHERE work_id=? AND track_id=? AND source='manual')`, workID, v.id).Scan(&manual); err != nil {
-			return err
-		}
-		if manual {
-			continue
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM work_tracks WHERE work_id=? AND track_id=? AND source='auto'`, workID, v.id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO work_tracks(work_id,track_id,role,source,inferred_key) VALUES(?,?,?,'bangumi',?) ON CONFLICT(work_id,track_id,role,season,sequence) DO UPDATE SET source='bangumi',inferred_key=excluded.inferred_key`, workID, v.id, role, inferredKey); err != nil {
+		if _, err = landBangumiTrack(ctx, tx, v.id, workID, role, inferredKey); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// bangumiTrackLinkSuppressed reports whether a Bangumi track link would revive a
+// user decision. It checks the exact bangumi:<music>:<work> key, any external-id
+// key, and every known title identity of the resolved work (or, before a work is
+// resolved, the remote title and translation). Type is ignored, matching 025.
+func bangumiTrackLinkSuppressed(ctx context.Context, tx *sql.Tx, trackID, albumID int64, music string, tie BangumiTieup, workID int64) (bool, error) {
+	trackKeys, err := suppressionKeys(ctx, tx, `SELECT inferred_key FROM track_work_suppressions WHERE track_id=?`, trackID)
+	if err != nil {
+		return false, err
+	}
+	// RejectTrackSubjectCandidate writes the two-part key bangumi:<music>.
+	// That refusal covers every work of the entry, including album-level landing.
+	for _, stored := range trackKeys {
+		if stored == "bangumi:"+music {
+			return true, nil
+		}
+	}
+	albumKeys, err := suppressionKeys(ctx, tx, `SELECT inferred_key FROM album_work_suppressions WHERE album_id=?`, albumID)
+	if err != nil {
+		return false, err
+	}
+	keys := append(trackKeys, albumKeys...)
+	if workID != 0 {
+		external, e := workBangumiExternalID(ctx, tx, workID)
+		if e != nil {
+			return false, e
+		}
+		if bangumiWorkKey(music, external) != "bangumi:"+music+":" {
+			for _, stored := range keys {
+				if stored == bangumiWorkKey(music, external) {
+					return true, nil
+				}
+			}
+		}
+		if bangumiExternalSuppressed(keys, external) {
+			return true, nil
+		}
+		identities, e := workSuppressionIdentities(ctx, tx, workID)
+		if e != nil {
+			return false, e
+		}
+		for _, stored := range keys {
+			for _, identity := range identities {
+				if workTitleKeysMatch(stored, workTitleSuppressionKey(identity.Title, identity.Type)) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	workKey := strconv.FormatInt(tie.SubjectID, 10)
+	for _, stored := range keys {
+		if stored == bangumiWorkKey(music, workKey) {
+			return true, nil
+		}
+	}
+	if bangumiExternalSuppressed(keys, workKey) {
+		return true, nil
+	}
+	for _, stored := range keys {
+		for _, title := range []string{tie.Title, tie.NameCN} {
+			if title != "" && workTitleKeysMatch(stored, workTitleSuppressionKey(title, tie.Type)) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// landBangumiTrack writes one Bangumi track association. A manual row for the same
+// work and track is never overwritten. Local auto rows for that pair are removed
+// so Bangumi replaces inference (D9). The conflict update also refuses a manual row.
+func landBangumiTrack(ctx context.Context, tx *sql.Tx, trackID, workID int64, role, key string) (bool, error) {
+	var manual bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_tracks WHERE work_id=? AND track_id=? AND source='manual')`, workID, trackID).Scan(&manual); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM work_tracks WHERE work_id=? AND track_id=? AND source='auto'`, workID, trackID); err != nil {
+		return false, err
+	}
+	if manual {
+		return false, nil
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO work_tracks(work_id,track_id,role,source,inferred_key) VALUES(?,?,?,'bangumi',?) ON CONFLICT(work_id,track_id,role,season,sequence) DO UPDATE SET source='bangumi',inferred_key=excluded.inferred_key WHERE work_tracks.source<>'manual'`, workID, trackID, role, key)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // B1/B2: only typed anime/movie/game entries reach this resolver. External ID

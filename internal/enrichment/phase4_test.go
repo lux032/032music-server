@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,14 +18,21 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
+var phase4DBPath = map[*storage.Store]string{}
+
 func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.Store, int64, int64) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := storage.Open(filepath.Join(t.TempDir(), "phase4.db"))
+	dbPath := filepath.Join(t.TempDir(), "phase4.db")
+	store, err := storage.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	phase4DBPath[store] = dbPath
+	t.Cleanup(func() {
+		delete(phase4DBPath, store)
+		_ = store.Close()
+	})
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +55,7 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 	t.Cleanup(server.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	manager := New(ctx, store, logger, t.TempDir())
-	manager.phaseEndpoints = phase4Endpoints{Bangumi: server.URL + "/bangumi"}
+	manager.phaseEndpoints = phase4Endpoints{Bangumi: server.URL + "/bangumi", BangumiAPI: server.URL}
 	manager.client = server.Client()
 	allowed, _ := url.Parse(server.URL)
 	upstream := manager.client.Transport
@@ -135,11 +143,63 @@ func TestStartRunAbortsAfterConsecutiveFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished := waitRun(t, store, run.ID)
-	if finished.Status != "failed" || finished.Failed != maxConsecutiveFailures || finished.Total != maxConsecutiveFailures+6 {
+	// The fixture album is already linked, so the album stage is empty. The track
+	// stage contributes the one fixture track; its failure is the first. The work
+	// stage is collected only after the track stage returns, so Total grows to
+	// one track plus every eligible work before the breaker trips.
+	wantTotal := 1 + 1 + maxConsecutiveFailures + 5 // fixture track + fixture work + added works
+	if finished.Status != "failed" || finished.Failed != maxConsecutiveFailures || finished.Total != wantTotal {
 		t.Fatalf("run=%#v", finished)
 	}
 	if got := int(requests.Load()); got != maxConsecutiveFailures {
 		t.Fatalf("requests=%d, want %d", got, maxConsecutiveFailures)
+	}
+}
+
+func TestWorkStageBreakerStopsFetching(t *testing.T) {
+	var requests atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Error(w, "down", http.StatusBadGateway)
+	})
+	manager, store, albumID, workID := phase4TestManager(t, handler)
+	ctx := context.Background()
+	for i := 0; i < maxConsecutiveFailures+2; i++ {
+		created, err := store.CreateWork(ctx, storage.WorkInput{Title: fmt.Sprintf("Linked %d", i), Type: "anime"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.AddWorkAlbum(ctx, created.ID, albumID, "other"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run, err := store.CreateEnrichmentRun(ctx, "all", 0, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.executePhase4Run(ctx, run.ID, RunRequest{Scope: "work", TargetID: workID, Force: true})
+	finished, err := store.EnrichmentRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The single targeted work failed once and the breaker did not trip, so the
+	// run ends with that one failed item rather than an abort message.
+	if finished.Status != "failed" || finished.Failed != 1 || strings.Contains(finished.ErrorMessage, "consecutive failures") {
+		t.Fatalf("single-work run=%+v", finished)
+	}
+	// work scope only fetches the requested work, so one failure does not trip
+	// the breaker. An all-scope run with the extra linked works does.
+	run, err = store.CreateEnrichmentRun(ctx, "all", 0, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.executePhase4Run(ctx, run.ID, RunRequest{Scope: "all", Force: true})
+	finished, err = store.EnrichmentRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != "failed" || finished.Failed != maxConsecutiveFailures {
+		t.Fatalf("run=%+v requests=%d", finished, requests.Load())
 	}
 }
 

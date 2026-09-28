@@ -32,6 +32,7 @@ type enrichmentArtistReview struct {
 }
 
 var errAlbumCandidateConflict = errors.New("album subject candidate conflict")
+var errTrackCandidateConflict = errors.New("track subject candidate conflict")
 
 type enrichmentPageData struct {
 	Chrome
@@ -40,6 +41,8 @@ type enrichmentPageData struct {
 	Works              []enrichmentWorkReview
 	Artists            []enrichmentArtistReview
 	AlbumSubjects      []storage.AlbumSubjectCandidate
+	TrackSubjects      []storage.TrackSubjectCandidate
+	TrackArtists       map[int64]string
 	PendingWorkCount   int
 	PendingArtistCount int
 }
@@ -50,7 +53,7 @@ func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunReques
 		value.Scope = "all"
 	}
 	switch value.Scope {
-	case "all", "albums":
+	case "all", "albums", "tracks":
 		value.TargetID = 0
 	case "work", "album":
 		if value.TargetID <= 0 {
@@ -212,6 +215,17 @@ func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
 	data.Works, data.Artists, data.PendingWorkCount, data.PendingArtistCount = a.enrichmentReviews(r.Context())
 	data.AlbumSubjects, _ = a.store.PendingAlbumSubjectCandidates(r.Context(), 200)
+	data.TrackSubjects, _ = a.store.PendingTrackSubjectCandidates(r.Context(), 200)
+	data.TrackArtists = map[int64]string{}
+	for _, candidate := range data.TrackSubjects {
+		if _, seen := data.TrackArtists[candidate.TrackID]; seen {
+			continue
+		}
+		track, err := a.store.TrackByID(r.Context(), candidate.TrackID)
+		if err == nil {
+			data.TrackArtists[candidate.TrackID] = track.Artist
+		}
+	}
 	a.render(w, http.StatusOK, "enrichment-jobs.html", data)
 }
 
@@ -386,6 +400,129 @@ func (a *App) handleAdminAlbumSubjectDecision(w http.ResponseWriter, r *http.Req
 	}
 	redirectWithNotice(w, r, "/admin/enrichment", message)
 }
+func (a *App) handleAPITrackSubjectCandidates(w http.ResponseWriter, r *http.Request) {
+	trackID, err := positivePathID(r.PathValue("trackId"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	values, err := a.store.TrackSubjectCandidates(r.Context(), trackID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeAPIError(w, http.StatusNotFound, "not_found", "Track not found.")
+		return
+	}
+	apiResult(w, values, err)
+}
+
+func (a *App) decideTrackSubject(ctx context.Context, trackID, candidateID int64, accept bool, selected []int64, roles map[int64]string) error {
+	if !accept {
+		return a.store.RejectTrackSubjectCandidate(ctx, trackID, candidateID)
+	}
+	if len(selected) == 0 {
+		return fmt.Errorf("%w: select at least one work", storage.ErrInvalidWork)
+	}
+	outcome, ids, err := a.store.ConfirmTrackSubjectCandidate(ctx, trackID, candidateID, 0, "", false, selected, roles)
+	if err == nil && outcome != "succeeded" {
+		return errTrackCandidateConflict
+	}
+	if err == nil {
+		for _, id := range ids {
+			a.queueWorkPoster(id)
+		}
+	}
+	return err
+}
+
+func (a *App) handleAPITrackSubjectDecision(w http.ResponseWriter, r *http.Request, accept bool) {
+	var selected []int64
+	var roles map[int64]string
+	if accept && r.Body != nil {
+		var body struct {
+			WorkSubjectIDs []int64           `json:"workSubjectIds"`
+			Roles          map[string]string `json:"roles"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			selected = body.WorkSubjectIDs
+			roles = map[int64]string{}
+			for key, role := range body.Roles {
+				id, e := strconv.ParseInt(key, 10, 64)
+				if e != nil || id <= 0 {
+					writeAPIError(w, http.StatusBadRequest, "invalid_request", "roles keys must be work subject ids")
+					return
+				}
+				roles[id] = role
+			}
+		} else if !errors.Is(err, io.EOF) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	trackID, err := positivePathID(r.PathValue("trackId"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	candidateID, err := positivePathID(r.PathValue("candidateId"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	err = a.decideTrackSubject(r.Context(), trackID, candidateID, accept, selected, roles)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeAPIError(w, http.StatusNotFound, "not_found", "Candidate not found.")
+		return
+	}
+	if errors.Is(err, errTrackCandidateConflict) || errors.Is(err, storage.ErrCandidateNotPending) {
+		writeAPIError(w, http.StatusConflict, "candidate_conflict", err.Error())
+		return
+	}
+	if errors.Is(err, storage.ErrInvalidWork) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_work", err.Error())
+		return
+	}
+	writeDecisionResult(w, err)
+}
+
+func (a *App) handleAdminTrackSubjectDecision(w http.ResponseWriter, r *http.Request, accept bool) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	var selected []int64
+	var roles map[int64]string
+	if accept {
+		for _, value := range r.Form["workSubjectIds"] {
+			id := parseInt64(value)
+			if id > 0 {
+				selected = append(selected, id)
+			}
+		}
+		if len(selected) == 0 {
+			redirectWithNotice(w, r, "/admin/enrichment", "请至少选择一部作品")
+			return
+		}
+		roles = map[int64]string{}
+		for key, values := range r.Form {
+			if !strings.HasPrefix(key, "role-") || len(values) == 0 {
+				continue
+			}
+			id := parseInt64(strings.TrimPrefix(key, "role-"))
+			if id > 0 {
+				roles[id] = values[0]
+			}
+		}
+	}
+	err := a.decideTrackSubject(r.Context(), parseInt64(r.PathValue("trackId")), parseInt64(r.PathValue("candidateId")), accept, selected, roles)
+	message := "\u66f2\u76ee\u5019\u9009\u5df2\u62d2\u7edd"
+	if accept {
+		message = "\u66f2\u76ee\u5019\u9009\u5df2\u786e\u8ba4"
+	}
+	if err != nil {
+		message = err.Error()
+	}
+	redirectWithNotice(w, r, "/admin/enrichment", message)
+}
+
 func (a *App) handleAdminAlbumSubjectSearch(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)

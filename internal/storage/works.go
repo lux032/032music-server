@@ -172,12 +172,12 @@ func (s *Store) DeleteWork(ctx context.Context, id int64) error {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT wt.track_id,wt.inferred_key FROM work_tracks wt WHERE wt.work_id=? AND wt.source IN ('auto','bangumi') AND wt.inferred_key IS NOT NULL`, id)
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT wt.track_id,wt.inferred_key FROM work_tracks wt WHERE wt.work_id=? AND (wt.source IN ('auto','bangumi') OR wt.source='manual' AND wt.inferred_key LIKE 'bangumi:%') AND wt.inferred_key IS NOT NULL`, id)
 	if err != nil {
 		return err
 	}
 	for _, identity := range identities {
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT track_id,? FROM work_tracks WHERE work_id=? AND source='bangumi'`, workTitleSuppressionKey(identity.Title, identity.Type), id); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT track_id,? FROM work_tracks WHERE work_id=? AND (source='bangumi' OR source='manual' AND inferred_key LIKE 'bangumi:%')`, workTitleSuppressionKey(identity.Title, identity.Type), id); err != nil {
 			return err
 		}
 	}
@@ -285,16 +285,18 @@ func (s *Store) RemoveWorkTrack(ctx context.Context, workID, trackID int64, role
 		return err
 	}
 	defer tx.Rollback()
-	suppressQuery := `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT wt.track_id,wt.inferred_key FROM work_tracks wt WHERE wt.work_id=? AND wt.track_id=? AND wt.source IN ('auto','bangumi') AND wt.inferred_key IS NOT NULL`
+	suppressQuery := `INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) SELECT wt.track_id,wt.inferred_key FROM work_tracks wt WHERE wt.work_id=? AND wt.track_id=? AND (wt.source IN ('auto','bangumi') OR wt.source='manual' AND wt.inferred_key LIKE 'bangumi:%') AND wt.inferred_key IS NOT NULL`
 	if strings.TrimSpace(role) != "" {
 		suppressQuery += ` AND wt.role=? AND wt.season=? AND wt.sequence=?`
 	}
 	if _, err = tx.ExecContext(ctx, suppressQuery, args...); err != nil {
 		return err
 	}
-	// A removed Bangumi row also suppresses every known title identity.
+	// A removed Bangumi row, including a D10 manual row that still carries
+	// inferred_key bangumi:<m>:<w>, also suppresses every known title identity.
+	// A plain manual row (no bangumi key) does not.
 	var bangumiID int64
-	bangumiQuery := `SELECT wt.work_id FROM work_tracks wt WHERE wt.work_id=? AND wt.track_id=? AND wt.source='bangumi'`
+	bangumiQuery := `SELECT wt.work_id FROM work_tracks wt WHERE wt.work_id=? AND wt.track_id=? AND (wt.source='bangumi' OR wt.source='manual' AND wt.inferred_key LIKE 'bangumi:%')`
 	bangumiArgs := []any{workID, trackID}
 	if strings.TrimSpace(role) != "" {
 		bangumiQuery += ` AND wt.role=? AND wt.season=? AND wt.sequence=?`
@@ -386,6 +388,13 @@ func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID, albumID
 	if inferred, ok := metadata.InferAlbumWork(input.title, input.folder, input.compilation); ok && normalizedWorkIdentity(inferred.Title) == normalizedWorkIdentity(association.Title) && inferred.Season == association.Season {
 		return false, nil
 	}
+	// D9: once Bangumi (or the user) has decided this track's associations, local
+	// inference never adds another one back. Check before resolveAutoWork so a
+	// skip does not leave an orphan auto work or inflate WorksCreated.
+	var authoritative bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_tracks WHERE track_id=? AND source IN ('manual','bangumi'))`, trackID).Scan(&authoritative); err != nil || authoritative {
+		return false, err
+	}
 	id, created, err := resolveAutoWork(ctx, tx, association, 0)
 	if err != nil {
 		return false, err
@@ -416,10 +425,6 @@ func ensureAutoWorkAssociation(ctx context.Context, tx *sql.Tx, trackID, albumID
 	var skip bool
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM album_works WHERE album_id=? AND work_id=?)`, albumID, id).Scan(&skip)
 	if err != nil || skip {
-		return created, err
-	}
-	var authoritative bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_tracks WHERE work_id=? AND track_id=? AND source IN ('manual','bangumi'))`, id, trackID).Scan(&authoritative); err != nil || authoritative {
 		return created, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_tracks(work_id,track_id,role,season,sequence,source,inferred_key) VALUES(?,?,?,?,?,'auto',?)`, id, trackID, association.Role, association.Season, association.Sequence, key)

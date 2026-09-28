@@ -16,14 +16,21 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
+var httpTestDBPath = map[*storage.Store]string{}
+
 func setupTestApp(t *testing.T) (*App, *storage.Store, string) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := storage.Open(filepath.Join(t.TempDir(), "http-sync.db"))
+	dbPath := filepath.Join(t.TempDir(), "http-sync.db")
+	store, err := storage.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { store.Close() })
+	httpTestDBPath[store] = dbPath
+	t.Cleanup(func() {
+		delete(httpTestDBPath, store)
+		store.Close()
+	})
 
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)

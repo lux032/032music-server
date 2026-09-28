@@ -16,8 +16,9 @@
       <form class="enrichment-launch" method="post" action="/admin/enrichment/run">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <select name="scope" aria-label="增强范围">
-          <option value="all">全部（专辑及作品）</option>
+          <option value="all">全部（专辑、曲目及作品）</option>
           <option value="albums">动画专辑</option>
+          <option value="tracks">曲目</option>
           <option value="album">单个专辑</option>
           <option value="work">单个作品</option>
         </select>
@@ -61,6 +62,33 @@
           <form method="post" action="/admin/enrichment/albums/{{.AlbumID}}/subjects/{{.ID}}/reject"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">拒绝</button></form>
         </div>
       </article>{{else}}<div class="zero-state">暂无待审专辑候选</div>{{end}}</div>
+    </section>
+
+    <section class="feature-section">
+      <div class="section-title"><div><h2>曲目候选</h2></div></div>
+      <div class="review-list">{{range .TrackSubjects}}<article>
+        <header><strong>{{.TrackTitle}}</strong><span>曲目 #{{.TrackID}}</span></header>
+        <p>{{index $.TrackArtists .TrackID}} · {{.AlbumTitle}}</p>
+        <p><a href="https://bgm.tv/subject/{{.ExternalID}}" rel="noopener noreferrer">{{.Title}}</a> · {{.MatchKind}} · {{.Artist}}</p>
+        <form method="post" action="/admin/enrichment/tracks/{{.TrackID}}/subjects/{{.ID}}/accept">
+          <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+          {{range .Tieups}}<p>
+            <label><input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked> {{.Title}} {{.NameCN}} · {{.Type}} · {{workRoleLabel .Role}}</label>
+            <select name="role-{{.SubjectID}}" aria-label="用途">
+              <option value="op" {{if eq .Role "op"}}selected{{end}}>片头曲</option>
+              <option value="ed" {{if eq .Role "ed"}}selected{{end}}>片尾曲</option>
+              <option value="insert" {{if eq .Role "insert"}}selected{{end}}>插入歌</option>
+              <option value="theme" {{if eq .Role "theme"}}selected{{end}}>主题曲</option>
+              <option value="character" {{if eq .Role "character"}}selected{{end}}>角色歌</option>
+              <option value="image_song" {{if eq .Role "image_song"}}selected{{end}}>印象曲</option>
+              <option value="ost" {{if eq .Role "ost"}}selected{{end}}>原声集</option>
+              <option value="other" {{if eq .Role "other"}}selected{{end}}>其他</option>
+            </select>
+          </p>{{end}}
+          <div class="candidate-actions"><button>接受</button></div>
+        </form>
+        <form method="post" action="/admin/enrichment/tracks/{{.TrackID}}/subjects/{{.ID}}/reject"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">拒绝</button></form>
+      </article>{{else}}<div class="zero-state">暂无待审曲目候选</div>{{end}}</div>
     </section>
     <section class="feature-section">
       <div class="section-title"><div><h2>作品候选</h2><p>共 {{.PendingWorkCount}} 个待审核作品{{if gt .PendingWorkCount 200}}，仅显示前 200{{end}}</p></div></div>

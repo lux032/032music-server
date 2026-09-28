@@ -233,6 +233,17 @@ func scoreMusicSubject(local storage.AlbumBangumiTarget, remote musicSubject, pe
 	}
 	return score, evidence, matched
 }
+
+// specificBangumiRole is a concrete song role. Album-level ost and the generic
+// other/theme/image_song relations are not unique enough to auto-confirm a track.
+func specificBangumiRole(role string) bool {
+	switch role {
+	case "op", "ed", "insert", "character":
+		return true
+	}
+	return false
+}
+
 func relationRole(s string) string {
 	switch s {
 	case "片头曲":
@@ -315,21 +326,21 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 	if err != nil || !setting.Enabled {
 		return "skipped", err
 	}
-	base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
-	if base == "" {
-		base = "https://api.bgm.tv"
-	}
-	endpoint := base + "/v0/search/subjects?limit=25"
-	var result musicSearchResponse
-	_, err = m.cachedJSON(ctx, "bangumi", "music-search:v1:"+album.Title, endpoint, setting, force || album.Recheck, map[string]any{"keyword": album.Title, "filter": map[string]any{"type": []int{3}}}, &result)
+	// H1 applies to album search too: the request keyword replaces hyphens so a
+	// leading "-" is not a Bangumi exclusion. Scoring still uses album.Title.
+	hits, err := m.searchMusicSubjectsQuery(ctx, setting, album.Title, bangumiSearchKeyword(album.Title), force || album.Recheck)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "skipped", m.store.SetAlbumBangumiMiss(ctx, album)
 	}
 	if err != nil {
 		return "", err
 	}
+	base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
+	if base == "" {
+		base = "https://api.bgm.tv"
+	}
 	ranked := []musicSubject{}
-	for _, v := range result.Data {
+	for _, v := range hits {
 		score, _ := musicTitleScore(album.Title, v.Name)
 		if v.Type == 3 && score >= 30 {
 			ranked = append(ranked, v)
@@ -435,20 +446,17 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 // BUSY/LOCKED errors are classified by their primary SQLite result code.
 var errBangumiConfirmBusy = errors.New("bangumi confirmation busy")
 
-// H6: a contested SQLite writer is a skipped album, not a provider failure.
-func (m *Manager) confirmMusicWithRetry(ctx context.Context, runID int64, album storage.AlbumBangumiTarget, candidateID int64, selected []int64) (string, []int64, error) {
-	confirm := m.confirmAlbumSubject
-	if confirm == nil {
-		confirm = m.store.ConfirmAlbumSubjectCandidate
-	}
+// retryBusy retries a confirmation that lost the SQLite writer. A contested
+// writer is reported as skipped, never as a provider failure.
+func (m *Manager) retryBusy(ctx context.Context, label string, fn func() (string, []int64, error)) (string, []int64, error) {
 	for attempt := 0; ; attempt++ {
-		outcome, ids, err := confirm(ctx, album.ID, candidateID, runID, album.Fingerprint, true, selected)
+		outcome, ids, err := fn()
 		var sqliteErr *sqlite.Error
 		if err == nil || !errors.Is(err, errBangumiConfirmBusy) && (!errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 && sqliteErr.Code()&0xff != 6) {
 			return outcome, ids, err
 		}
 		if attempt >= 2 {
-			m.logger.Warn("bangumi album confirmation busy; skipping", "albumId", album.ID, "error", err)
+			m.logger.Warn("bangumi confirmation busy; skipping", "label", label, "error", err)
 			return "skipped", nil, nil
 		}
 		wait := []time.Duration{200 * time.Millisecond, 500 * time.Millisecond}[attempt]
@@ -458,4 +466,15 @@ func (m *Manager) confirmMusicWithRetry(ctx context.Context, runID int64, album 
 		case <-time.After(wait):
 		}
 	}
+}
+
+// H6: a contested SQLite writer is a skipped album, not a provider failure.
+func (m *Manager) confirmMusicWithRetry(ctx context.Context, runID int64, album storage.AlbumBangumiTarget, candidateID int64, selected []int64) (string, []int64, error) {
+	confirm := m.confirmAlbumSubject
+	if confirm == nil {
+		confirm = m.store.ConfirmAlbumSubjectCandidate
+	}
+	return m.retryBusy(ctx, "album "+strconv.FormatInt(album.ID, 10), func() (string, []int64, error) {
+		return confirm(ctx, album.ID, candidateID, runID, album.Fingerprint, true, selected)
+	})
 }

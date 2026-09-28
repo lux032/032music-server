@@ -37,7 +37,7 @@ func normalizeRunRequest(value RunRequest) (RunRequest, error) {
 		value.Scope = "all"
 	}
 	switch value.Scope {
-	case "all", "albums":
+	case "all", "albums", "tracks":
 		value.TargetID = 0
 	case "work", "album":
 		if value.TargetID <= 0 {
@@ -89,6 +89,30 @@ func (m *Manager) CancelRun(runID int64) error {
 type phase4Item struct {
 	work  storage.WorkEnrichmentTarget
 	album storage.AlbumBangumiTarget
+	track storage.TrackBangumiTarget
+}
+
+// worksLinkedToAlbum keeps only works already associated with one album, so an
+// album-scoped run does not search the whole library's works.
+func worksLinkedToAlbum(ctx context.Context, store *storage.Store, albumID int64, works []storage.WorkEnrichmentTarget) []storage.WorkEnrichmentTarget {
+	if albumID <= 0 || len(works) == 0 {
+		return nil
+	}
+	linked, err := store.WorksForAlbum(ctx, albumID)
+	if err != nil {
+		return nil
+	}
+	keep := map[int64]bool{}
+	for _, work := range linked {
+		keep[work.ID] = true
+	}
+	var out []storage.WorkEnrichmentTarget
+	for _, work := range works {
+		if keep[work.ID] {
+			out = append(out, work)
+		}
+	}
+	return out
 }
 
 func (m *Manager) phase4Items(ctx context.Context, request RunRequest) ([]phase4Item, error) {
@@ -163,89 +187,125 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	counts := storage.EnrichmentRunUpdate{Total: len(items)}
 	_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 	consecutiveFailures := 0
-	worksCollected := request.Scope != "all"
 	bangumiEnabled := false
 	if setting, e := m.store.MetadataSourceSetting(ctx, "bangumi"); e == nil {
 		bangumiEnabled = setting.Enabled
 	}
-	if request.Scope == "all" && len(items) == 0 {
-		worksCollected = true
-		var works []storage.WorkEnrichmentTarget
-		var e error
-		if bangumiEnabled {
-			works, e = m.store.WorksForEnrichment(ctx, "bangumi", request.Force, 0)
-		}
-		if e != nil {
-			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", e.Error())
-			return
-		}
-		for _, work := range works {
-			items = append(items, phase4Item{work: work})
-		}
-		counts.Total = len(items)
-		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+	// M4: one forced run reuses a response it already fetched instead of
+	// bypassing the cache for the same key over and over.
+	m.runMemo = map[string]bool{}
+	defer func() { m.runMemo = nil }()
+	albumTarget := int64(0)
+	if request.Scope == "album" {
+		albumTarget = request.TargetID
 	}
-	for index := 0; index < len(items); index++ {
-		item := items[index]
-		if request.Scope == "all" && !worksCollected && item.album.ID == 0 {
-			worksCollected = true
+	next := func() ([]phase4Item, error) {
+		if !bangumiEnabled {
+			return nil, nil
 		}
+		tracks, e := m.store.TracksForBangumiTieup(ctx, request.Force, albumTarget)
+		if e != nil {
+			return nil, e
+		}
+		out := make([]phase4Item, 0, len(tracks))
+		for _, track := range tracks {
+			out = append(out, phase4Item{track: track})
+		}
+		return out, nil
+	}
+	if request.Scope == "tracks" {
+		items = nil
+	}
+	wantTracks := request.Scope == "all" || request.Scope == "tracks" || request.Scope == "album"
+	// Work-level search is the last stage. A single-album run still refreshes
+	// that album's linked works after its tracks (S3 includes the track stage).
+	wantWorks := request.Scope == "all" || request.Scope == "album"
+	// Stages are appended only after the previous stage is fully processed, so
+	// a growing slice is safe. Collecting inside the same loop used to skip the
+	// items just appended (the index had already moved past them).
+	stages := []func() ([]phase4Item, error){func() ([]phase4Item, error) { return items, nil }}
+	if wantTracks {
+		stages = append(stages, next)
+	}
+	if wantWorks {
+		stages = append(stages, func() ([]phase4Item, error) {
+			if !bangumiEnabled {
+				return nil, nil
+			}
+			works, e := m.store.WorksForEnrichment(ctx, "bangumi", request.Force, 0)
+			if e != nil {
+				return nil, e
+			}
+			if request.Scope == "album" {
+				works = worksLinkedToAlbum(ctx, m.store, request.TargetID, works)
+			}
+			out := make([]phase4Item, 0, len(works))
+			for _, work := range works {
+				out = append(out, phase4Item{work: work})
+			}
+			return out, nil
+		})
+	}
+	var queue []phase4Item
+	for _, stage := range stages {
 		if ctx.Err() != nil {
 			finishCancelled()
 			return
 		}
-		var outcome string
-		if item.album.ID != 0 {
-			counts.Current = item.album.Title
-			outcome, err = m.enrichBangumiAlbum(ctx, runID, item.album, request.Force)
-		} else {
-			counts.Current = item.work.Title
-			outcome, err = m.enrichBangumiWork(ctx, runID, item.work, request.Force)
-		}
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			finishCancelled()
+		batch, e := stage()
+		if e != nil {
+			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", e.Error())
 			return
 		}
-		counts.Processed++
-		if err != nil {
-			counts.Failed++
-			counts.ErrorMessage = err.Error()
-			m.logger.Warn("metadata enrichment item failed", "current", counts.Current, "error", err)
-			consecutiveFailures++
-			if consecutiveFailures >= maxConsecutiveFailures {
-				message := fmt.Sprintf("aborted after %d consecutive failures: %v", consecutiveFailures, err)
-				m.logger.Warn("metadata enrichment aborted", "runId", runID, "error", message)
-				_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
-				_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", message)
-				return
-			}
-		} else {
-			consecutiveFailures = 0
-			switch outcome {
-			case "review":
-				counts.Review++
-			case "skipped":
-				counts.Skipped++
-			default:
-				counts.Succeeded++
-			}
-		}
+		queue = append(queue, batch...)
+		counts.Total = len(queue)
 		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
-		if request.Scope == "all" && !worksCollected && index == len(items)-1 {
-			worksCollected = true
-			var works []storage.WorkEnrichmentTarget
-			var e error
-			if bangumiEnabled {
-				works, e = m.store.WorksForEnrichment(ctx, "bangumi", request.Force, 0)
+		for _, item := range queue[len(queue)-len(batch):] {
+			var outcome string
+			switch {
+			case item.album.ID != 0:
+				counts.Current = item.album.Title
+				outcome, err = m.enrichBangumiAlbum(ctx, runID, item.album, request.Force)
+			case item.track.ID != 0:
+				counts.Current = item.track.Title + " — " + item.track.AlbumTitle
+				outcome, err = m.enrichBangumiTrack(ctx, runID, item.track, request.Force)
+			default:
+				counts.Current = item.work.Title
+				outcome, err = m.enrichBangumiWork(ctx, runID, item.work, request.Force)
 			}
-			if e != nil {
-				_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", e.Error())
+			// A provider error that arrived together with cancellation is a stop, not
+			// one more failure toward the circuit breaker.
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				finishCancelled()
 				return
 			}
-			for _, work := range works {
-				items = append(items, phase4Item{work: work})
+			counts.Processed++
+			if err != nil {
+				counts.Failed++
+				counts.ErrorMessage = err.Error()
+				m.logger.Warn("metadata enrichment item failed", "current", counts.Current, "error", err)
+				consecutiveFailures++
+				if consecutiveFailures >= maxConsecutiveFailures {
+					message := fmt.Sprintf("aborted after %d consecutive failures: %v", consecutiveFailures, err)
+					m.logger.Warn("metadata enrichment aborted", "runId", runID, "error", message)
+					_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+					_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", message)
+					return
+				}
+			} else {
+				consecutiveFailures = 0
+				switch outcome {
+				case "review":
+					counts.Review++
+				case "skipped":
+					counts.Skipped++
+				default:
+					counts.Succeeded++
+				}
 			}
-			counts.Total = len(items)
 			_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 		}
 	}
@@ -255,13 +315,18 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	}
 	status := "completed"
 	message := ""
-	if len(items) > 0 && counts.Failed == len(items) {
+	if len(queue) > 0 && counts.Failed == len(queue) {
 		status, message = "failed", counts.ErrorMessage
 	}
 	_ = m.store.FinishEnrichmentRun(context.Background(), runID, status, message)
 }
 
 func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, setting storage.MetadataSourceSetting, force bool, body any, target any) (int, error) {
+	// M4: force skips the persistent cache, but a key already fetched in this run
+	// is reused so one refresh does not repeat the same request.
+	if force && m.runMemo != nil && m.runMemo[source+"\x00"+key] {
+		force = false
+	}
 	if !force {
 		if cached, err := m.store.GetHTTPResponseCache(ctx, source, key); err == nil {
 			if expires, e := time.Parse(time.RFC3339Nano, cached.ExpiresAt); e == nil && time.Now().UTC().Before(expires) {
@@ -310,6 +375,9 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 	}
 	resp, err := m.client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
 		return 0, err
 	}
 	defer resp.Body.Close()
@@ -326,6 +394,9 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 		}
 	}
 	if (resp.StatusCode >= 200 && resp.StatusCode < 300) || resp.StatusCode == http.StatusNotFound {
+		if m.runMemo != nil {
+			m.runMemo[source+"\x00"+key] = true
+		}
 		now := time.Now().UTC()
 		ttl := setting.CacheDays
 		if ttl < 1 {

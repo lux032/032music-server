@@ -163,8 +163,12 @@ func workTitleKeysMatch(stored, current string) bool {
 	return storedSeason == season && norm.NFKC.String(normalizedWorkIdentity(storedTitle)) == norm.NFKC.String(normalizedWorkIdentity(title))
 }
 
-func suppressionKeys(ctx context.Context, tx *sql.Tx, query string, id int64) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, query, id)
+func suppressionKeys(ctx context.Context, tx *sql.Tx, query string, ids ...int64) ([]string, error) {
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

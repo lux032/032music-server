@@ -40,7 +40,8 @@ func fixtureBangumiServer(t *testing.T) *httptest.Server {
 				ids = []int{507031, 660542}
 			case "結束バンド":
 				ids = []int{406604}
-			case "結束バンドLIVE-恒星":
+			case "結束バンドLIVE 恒星":
+				// M-3: the request keyword replaces ASCII hyphens with spaces.
 				ids = []int{512098}
 			case "人間開花":
 				ids = []int{198229}

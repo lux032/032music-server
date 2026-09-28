@@ -46,6 +46,9 @@ type Manager struct {
 	bangumiInterval     time.Duration
 	imageDirectory      string
 	wg                  sync.WaitGroup
+	// runMemo remembers request keys already fetched during the current run so a
+	// forced refresh still hits the network only once per key (M4).
+	runMemo map[string]bool
 }
 type MatchResult struct {
 	AutoMatched    bool
