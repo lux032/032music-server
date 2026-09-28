@@ -16,7 +16,9 @@
       <form class="enrichment-launch" method="post" action="/admin/enrichment/run">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <select name="scope" aria-label="增强范围">
-          <option value="all">全部作品</option>
+          <option value="all">全部（专辑及作品）</option>
+          <option value="albums">动画专辑</option>
+          <option value="album">单个专辑</option>
           <option value="work">单个作品</option>
         </select>
         <input type="number" min="1" name="targetId" aria-label="目标 ID" placeholder="目标 ID">
@@ -47,6 +49,19 @@
       </div>
     </section>
 
+    <section class="feature-section">
+      <div class="section-title"><div><h2>专辑 → 作品</h2></div></div>
+      <div class="review-list">{{range .AlbumSubjects}}<article>
+        <header><strong>{{.AlbumTitle}}</strong><span>专辑 #{{.AlbumID}}</span></header>
+        <p><a href="https://bgm.tv/subject/{{.ExternalID}}" rel="noopener noreferrer">{{.Title}}</a> · 置信度 {{.Score}} · {{.Artist}}</p>
+        <p>{{range .Evidence}}{{.}} · {{end}}</p>
+        {{range .Tieups}}<p>{{.Title}} {{.NameCN}} · {{.Type}} · {{workRoleLabel .Role}}</p>{{end}}
+        <div class="candidate-actions">
+          <form method="post" action="/admin/enrichment/albums/{{.AlbumID}}/subjects/{{.ID}}/accept"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button>确认</button></form>
+          <form method="post" action="/admin/enrichment/albums/{{.AlbumID}}/subjects/{{.ID}}/reject"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">拒绝</button></form>
+        </div>
+      </article>{{else}}<div class="zero-state">暂无待审专辑候选</div>{{end}}</div>
+    </section>
     <section class="feature-section">
       <div class="section-title"><div><h2>作品候选</h2><p>共 {{.PendingWorkCount}} 个待审核作品{{if gt .PendingWorkCount 200}}，仅显示前 200{{end}}</p></div></div>
       <div class="review-list">

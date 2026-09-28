@@ -656,6 +656,18 @@ func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candid
 	}
 	p.Raw = json.RawMessage(raw)
 	p.FetchedAt = fetchedOrNow("")
+	if err = applyWorkExternalProfileTx(ctx, tx, workID, p, runID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE work_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE work_id=?`, candidateID, workID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// M2: shared binding and provenance for work and album confirmations.
+func applyWorkExternalProfileTx(ctx context.Context, tx *sql.Tx, workID int64, p ExternalWorkProfile, runID int64) error {
+	var err error
 	var ownerID int64
 	var ownerTitle string
 	err = tx.QueryRowContext(ctx, `SELECT w.id,w.title FROM work_external_profiles p JOIN works w ON w.id=p.work_id WHERE p.source=? AND p.external_id=? AND p.work_id<>?`, p.Source, p.ExternalID, workID).Scan(&ownerID, &ownerTitle)
@@ -664,7 +676,7 @@ func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candid
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_external_profiles(work_id,source,external_id,page_url,title,original_title,translated_title,type,year,poster_url,raw_json,fetched_at) VALUES(?,?,?,NULLIF(?,''),?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),?,?) ON CONFLICT(work_id,source) DO UPDATE SET external_id=excluded.external_id,page_url=excluded.page_url,title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,poster_url=excluded.poster_url,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, workID, p.Source, p.ExternalID, p.PageURL, p.Title, p.OriginalTitle, p.TranslatedTitle, p.Type, p.Year, p.PosterURL, raw, p.FetchedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_external_profiles(work_id,source,external_id,page_url,title,original_title,translated_title,type,year,poster_url,raw_json,fetched_at) VALUES(?,?,?,NULLIF(?,''),?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),?,?) ON CONFLICT(work_id,source) DO UPDATE SET external_id=excluded.external_id,page_url=excluded.page_url,title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,poster_url=excluded.poster_url,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, workID, p.Source, p.ExternalID, p.PageURL, p.Title, p.OriginalTitle, p.TranslatedTitle, p.Type, p.Year, p.PosterURL, rawOrEmpty(p.Raw), p.FetchedAt)
 	if err != nil {
 		return err
 	}
@@ -705,9 +717,6 @@ func confirmWorkMatchCandidateTx(ctx context.Context, tx *sql.Tx, workID, candid
 				return e
 			}
 		}
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE work_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE work_id=?`, candidateID, workID); err != nil {
-		return err
 	}
 	return nil
 }

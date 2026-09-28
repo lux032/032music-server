@@ -731,6 +731,77 @@ func applyFallbacks(result AudioMetadata, path string) AudioMetadata {
 	return result
 }
 
+var trackTypeTitlePatterns = []struct {
+	trackType string
+	patterns  []string
+}{
+	{"off_vocal", []string{
+		"(off vocal)", "(off-vocal)", "(offvocal)",
+		"[off vocal]", "[off-vocal]", "[offvocal]",
+		"(backing track)", "[backing track]",
+		"(minus one)", "[minus one]",
+		"(カラオケ)", "[カラオケ]", "(からおけ)",
+		"(off vo)", "[off vo]",
+	}},
+	{"instrumental", []string{
+		"(instrumental)", "[instrumental]",
+		"(inst)", "[inst]",
+		"(inst.)", "[inst.]",
+		" instrumental",
+	}},
+	{"tv_size", []string{
+		"(tv size)", "[tv size]",
+		"(tv ver.)", "[tv ver.]",
+		"(tv ver)", "[tv ver]",
+		"(tv version)", "[tv version]",
+		"(tv edit)", "[tv edit]",
+		"(anime ver.)", "[anime ver.]",
+		"(anime ver)", "[anime ver]",
+		"(anime version)", "[anime version]",
+		"(short ver.)", "[short ver.]",
+		"(short ver)", "[short ver]",
+		"(short version)", "[short version]",
+		"(tvサイズ)", "[tvサイズ]",
+	}},
+	{"drama_track", []string{
+		"(drama)", "[drama]",
+		"(ドラマ)", "[ドラマ]",
+		"(skit)", "[skit]",
+		"(寸劇)", "[寸劇]",
+	}},
+	{"remix", []string{
+		"(remix)", "[remix]",
+		"(remixed)", "[remixed]",
+		" remix",
+	}},
+}
+
+// StripTrackTypeSuffix removes only suffixes used by InferTrackType for
+// tv_size/instrumental/off_vocal. It intentionally leaves re-recording names
+// such as -ver.2022- and -version2020- intact.
+func StripTrackTypeSuffix(title, trackType string) string {
+	if trackType != "tv_size" && trackType != "instrumental" && trackType != "off_vocal" {
+		return title
+	}
+	trimmed := strings.TrimSpace(title)
+	for _, group := range trackTypeTitlePatterns {
+		if group.trackType != trackType {
+			continue
+		}
+		for _, pattern := range group.patterns {
+			patternRunes := []rune(pattern)
+			titleRunes := []rune(trimmed)
+			if len(patternRunes) <= len(titleRunes) {
+				suffix := string(titleRunes[len(titleRunes)-len(patternRunes):])
+				if strings.EqualFold(suffix, pattern) {
+					return strings.TrimSpace(string(titleRunes[:len(titleRunes)-len(patternRunes)]))
+				}
+			}
+		}
+	}
+	return title
+}
+
 // InferTrackType determines the track type from the title, file path, and raw tags.
 // Returns one of: regular, instrumental, off_vocal, tv_size, drama_track, remix.
 func InferTrackType(title, path string, raw map[string][]string) string {
@@ -755,53 +826,8 @@ func InferTrackType(title, path string, raw map[string][]string) string {
 		}
 	}
 
-	// Title-based patterns (order matters: more specific first)
-	titlePatterns := []struct {
-		trackType string
-		patterns  []string
-	}{
-		{"off_vocal", []string{
-			"(off vocal)", "(off-vocal)", "(offvocal)",
-			"[off vocal]", "[off-vocal]", "[offvocal]",
-			"(backing track)", "[backing track]",
-			"(minus one)", "[minus one]",
-			"(カラオケ)", "[カラオケ]", "(からおけ)",
-			"(off vo)", "[off vo]",
-		}},
-		{"instrumental", []string{
-			"(instrumental)", "[instrumental]",
-			"(inst)", "[inst]",
-			"(inst.)", "[inst.]",
-			" instrumental", // trailing
-		}},
-		{"tv_size", []string{
-			"(tv size)", "[tv size]",
-			"(tv ver.)", "[tv ver.]",
-			"(tv ver)", "[tv ver]",
-			"(tv version)", "[tv version]",
-			"(tv edit)", "[tv edit]",
-			"(anime ver.)", "[anime ver.]",
-			"(anime ver)", "[anime ver]",
-			"(anime version)", "[anime version]",
-			"(short ver.)", "[short ver.]",
-			"(short ver)", "[short ver]",
-			"(short version)", "[short version]",
-			"(tvサイズ)", "[tvサイズ]",
-		}},
-		{"drama_track", []string{
-			"(drama)", "[drama]",
-			"(ドラマ)", "[ドラマ]",
-			"(skit)", "[skit]",
-			"(寸劇)", "[寸劇]",
-		}},
-		{"remix", []string{
-			"(remix)", "[remix]",
-			"(remixed)", "[remixed]",
-			" remix",
-		}},
-	}
-
-	for _, group := range titlePatterns {
+	// Title-based patterns (order matters: more specific first).
+	for _, group := range trackTypeTitlePatterns {
 		for _, pattern := range group.patterns {
 			if strings.Contains(lower, pattern) {
 				return group.trackType

@@ -1,0 +1,112 @@
+[
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/76/6d/1014_nqAH8.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/76/6d/1014_nqAH8.jpg"
+    },
+    "name": "とある魔術の禁書目録",
+    "name_cn": "魔法禁书目录",
+    "relation": "动画",
+    "type": 2,
+    "id": 1014
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/f1/1b/3559_rrwkw.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/f1/1b/3559_rrwkw.jpg"
+    },
+    "name": "とある魔術の禁書目録",
+    "name_cn": "魔法禁书目录",
+    "relation": "书籍",
+    "type": 1,
+    "id": 3559
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/8d/91/7843_KPkpp.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/8d/91/7843_KPkpp.jpg"
+    },
+    "name": "とある魔術の禁書目録Ⅱ",
+    "name_cn": "魔法禁书目录 第二季",
+    "relation": "动画",
+    "type": 2,
+    "id": 7843
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/22/f2/26804_yV6qZ.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/22/f2/26804_yV6qZ.jpg"
+    },
+    "name": "とある魔術の禁書目録―エンデュミオンの奇蹟―",
+    "name_cn": "魔法禁书目录 恩底弥翁的奇迹",
+    "relation": "动画",
+    "type": 2,
+    "id": 26804
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/a3/56/45251_sjdPP.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/a3/56/45251_sjdPP.jpg"
+    },
+    "name": "新約 とある魔術の禁書目録",
+    "name_cn": "新约 魔法禁书目录",
+    "relation": "书籍",
+    "type": 1,
+    "id": 45251
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/ea/8b/137588_634EA.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/ea/8b/137588_634EA.jpg"
+    },
+    "name": "NieR: Automata",
+    "name_cn": "尼尔 自动人形",
+    "relation": "联动",
+    "type": 4,
+    "id": 137588
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/be/35/226540_664yS.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/be/35/226540_664yS.jpg"
+    },
+    "name": "とある魔術の禁書目録Ⅲ",
+    "name_cn": "魔法禁书目录 第三季",
+    "relation": "动画",
+    "type": 2,
+    "id": 226540
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/27/79/291461_E585R.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/27/79/291461_E585R.jpg"
+    },
+    "name": "とある魔術の禁書目録外伝 とある科学の未元物質",
+    "name_cn": "某科学的未元物质",
+    "relation": "书籍",
+    "type": 1,
+    "id": 291461
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/da/1c/342490_24Xwz.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/da/1c/342490_24Xwz.jpg"
+    },
+    "name": "JUNCTION",
+    "name_cn": "",
+    "relation": "片头曲",
+    "type": 3,
+    "id": 342490
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/1a/5c/375293_wJC8B.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/1a/5c/375293_wJC8B.jpg"
+    },
+    "name": "infinite synthesis 6",
+    "name_cn": "",
+    "relation": "片头曲",
+    "type": 3,
+    "id": 375293
+  }
+]

@@ -1,0 +1,116 @@
+{
+  "id": 269645,
+  "type": 4,
+  "name": "とある魔術の禁書目録 幻想収束",
+  "name_cn": "魔法禁书目录 幻想收束",
+  "date": "2019-07-12",
+  "platform": "游戏",
+  "infobox": [
+    {
+      "key": "中文名",
+      "value": "魔法禁书目录 幻想收束"
+    },
+    {
+      "key": "别名",
+      "value": [
+        {
+          "v": "とあるIF"
+        }
+      ]
+    },
+    {
+      "key": "平台",
+      "value": [
+        {
+          "v": "iOS / Android"
+        }
+      ]
+    },
+    {
+      "key": "游戏类型",
+      "value": "学園異能バトルRPG"
+    },
+    {
+      "key": "发行日期",
+      "value": "2019年7月12日"
+    },
+    {
+      "key": "停运日期",
+      "value": "2024年12月2日"
+    },
+    {
+      "key": "website",
+      "value": "https://www.jp.square-enix.com/index-if/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "手游",
+      "count": 9,
+      "total_count": 31336
+    },
+    {
+      "name": "魔法禁书目录",
+      "count": 5,
+      "total_count": 56
+    },
+    {
+      "name": "RPG",
+      "count": 5,
+      "total_count": 90429
+    },
+    {
+      "name": "游戏",
+      "count": 5,
+      "total_count": 142401
+    },
+    {
+      "name": "IP向",
+      "count": 4,
+      "total_count": 4
+    },
+    {
+      "name": "动画相关",
+      "count": 4,
+      "total_count": 17
+    },
+    {
+      "name": "镰池和马",
+      "count": 3,
+      "total_count": 15
+    },
+    {
+      "name": "魔禁",
+      "count": 2,
+      "total_count": 7
+    },
+    {
+      "name": "Android",
+      "count": 2,
+      "total_count": 19339
+    },
+    {
+      "name": "2019",
+      "count": 1,
+      "total_count": 9693
+    },
+    {
+      "name": "iOS",
+      "count": 1,
+      "total_count": 18283
+    }
+  ],
+  "meta_tags": [
+    "RPG",
+    "游戏",
+    "iOS",
+    "Android"
+  ],
+  "images": {
+    "small": "https://lain.bgm.tv/r/200/pic/cover/l/60/38/269645_e99GQ.jpg",
+    "grid": "https://lain.bgm.tv/r/100/pic/cover/l/60/38/269645_e99GQ.jpg",
+    "large": "https://lain.bgm.tv/pic/cover/l/60/38/269645_e99GQ.jpg",
+    "medium": "https://lain.bgm.tv/r/800/pic/cover/l/60/38/269645_e99GQ.jpg",
+    "common": "https://lain.bgm.tv/r/400/pic/cover/l/60/38/269645_e99GQ.jpg"
+  }
+}

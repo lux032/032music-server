@@ -1,0 +1,101 @@
+{
+  "id": 512098,
+  "type": 3,
+  "name": "結束バンドLIVE-恒星",
+  "name_cn": "",
+  "date": "2023-11-22",
+  "platform": "",
+  "infobox": [
+    {
+      "key": "别名",
+      "value": [
+        {
+          "v": "Kessoku Band Live -Kosei- [Limited Edition]"
+        }
+      ]
+    },
+    {
+      "key": "版本特性",
+      "value": "Live Event"
+    },
+    {
+      "key": "发售日期",
+      "value": "2023年11月22日"
+    },
+    {
+      "key": "价格",
+      "value": "JP¥8,800"
+    },
+    {
+      "key": "碟片数量",
+      "value": "3"
+    }
+  ],
+  "tags": [
+    {
+      "name": "孤独摇滚",
+      "count": 10,
+      "total_count": 1183
+    },
+    {
+      "name": "青山吉能",
+      "count": 4,
+      "total_count": 107
+    },
+    {
+      "name": "live",
+      "count": 4,
+      "total_count": 306
+    },
+    {
+      "name": "OST",
+      "count": 3,
+      "total_count": 79529
+    },
+    {
+      "name": "ED",
+      "count": 3,
+      "total_count": 57278
+    },
+    {
+      "name": "鈴代紗弓",
+      "count": 3,
+      "total_count": 44
+    },
+    {
+      "name": "2023",
+      "count": 3,
+      "total_count": 6225
+    },
+    {
+      "name": "長谷川育美",
+      "count": 3,
+      "total_count": 363
+    },
+    {
+      "name": "OP",
+      "count": 3,
+      "total_count": 55811
+    },
+    {
+      "name": "铃代纱弓",
+      "count": 1,
+      "total_count": 12
+    },
+    {
+      "name": "水野朔",
+      "count": 1,
+      "total_count": 57
+    },
+    {
+      "name": "长谷川育美",
+      "count": 1,
+      "total_count": 35
+    }
+  ],
+  "meta_tags": [],
+  "images": {
+    "large": "https://lain.bgm.tv/pic/cover/l/39/a3/512098_y8Aq1.jpg",
+    "common": "https://lain.bgm.tv/r/400/pic/cover/l/39/a3/512098_y8Aq1.jpg"
+  }
+}

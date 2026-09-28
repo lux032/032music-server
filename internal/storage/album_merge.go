@@ -96,10 +96,14 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 		if loadErr != nil {
 			return 0, loadErr
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_works(album_id,work_id,role,season,source,inferred_key) SELECT ?,work_id,role,season,source,inferred_key FROM album_works WHERE album_id=? AND source='manual'`, targetID, id); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO album_works(album_id,work_id,role,season,source,inferred_key) SELECT ?,work_id,role,season,source,inferred_key FROM album_works WHERE album_id=? AND source IN ('manual','bangumi') ON CONFLICT(album_id,work_id) DO UPDATE SET source=excluded.source,role=excluded.role,season=excluded.season,inferred_key=excluded.inferred_key,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE CASE album_works.source WHEN 'manual' THEN 3 WHEN 'bangumi' THEN 2 ELSE 1 END < CASE excluded.source WHEN 'manual' THEN 3 WHEN 'bangumi' THEN 2 ELSE 1 END`, targetID, id); err != nil {
 			return 0, err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_work_suppressions(album_id,inferred_key) SELECT ?,inferred_key FROM album_work_suppressions WHERE album_id=?`, targetID, id); err != nil {
+			return 0, err
+		}
+		// B3: preserve reviewed status on collisions; pending candidates may move.
+		if _, err = tx.ExecContext(ctx, `INSERT INTO album_subject_candidates(album_id,source,external_id,title,release_date,artist,score,evidence_json,tieups_json,payload_json,status,created_at,updated_at) SELECT ?,source,external_id,title,release_date,artist,score,evidence_json,tieups_json,payload_json,status,created_at,updated_at FROM album_subject_candidates WHERE album_id=? ON CONFLICT(album_id,source,external_id) DO UPDATE SET status=excluded.status WHERE album_subject_candidates.status='candidate' AND excluded.status IN ('confirmed','rejected')`, targetID, id); err != nil {
 			return 0, err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE album_id=?`, targetID, id); err != nil {

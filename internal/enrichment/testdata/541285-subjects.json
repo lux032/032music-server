@@ -1,0 +1,90 @@
+[
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/49/28/254437_V0nL4.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/49/28/254437_V0nL4.jpg"
+    },
+    "name": "きみが死ぬまで恋をしたい",
+    "name_cn": "与你相恋到生命尽头",
+    "relation": "书籍",
+    "type": 1,
+    "id": 254437
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/d9/38/633260_p4g4p.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/d9/38/633260_p4g4p.jpg"
+    },
+    "name": "「きみが死ぬまで恋をしたい」パイロットフィルム",
+    "name_cn": "「与你相恋到生命尽头」样片",
+    "relation": "其他",
+    "type": 2,
+    "id": 633260
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/c9/f2/660542_flz1f.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/c9/f2/660542_flz1f.jpg"
+    },
+    "name": "Amore",
+    "name_cn": "",
+    "relation": "片头曲",
+    "type": 3,
+    "id": 660542
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/ff/c0/668601_2O1d2.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/ff/c0/668601_2O1d2.jpg"
+    },
+    "name": "「きみが死ぬまで恋をしたい」ラジオの時間",
+    "name_cn": "",
+    "relation": "衍生",
+    "type": 6,
+    "id": 668601
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/d0/28/700481_aB0XX.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/d0/28/700481_aB0XX.jpg"
+    },
+    "name": "TVアニメ『きみが死ぬまで恋をしたい』 オリジナルサウンドトラック",
+    "name_cn": "",
+    "relation": "原声集",
+    "type": 3,
+    "id": 700481
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/e5/48/706528_Zp637.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/e5/48/706528_Zp637.jpg"
+    },
+    "name": "Cookie&Cream",
+    "name_cn": "",
+    "relation": "插入歌",
+    "type": 3,
+    "id": 706528
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/4a/c3/665725_26hu5.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/4a/c3/665725_26hu5.jpg"
+    },
+    "name": "エテルネル",
+    "name_cn": "",
+    "relation": "片尾曲",
+    "type": 3,
+    "id": 665725
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/1f/1f/697616_WfnBE.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/1f/1f/697616_WfnBE.jpg"
+    },
+    "name": "スターチス",
+    "name_cn": "",
+    "relation": "片尾曲",
+    "type": 3,
+    "id": 697616
+  }
+]

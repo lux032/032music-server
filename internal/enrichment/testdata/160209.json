@@ -1,0 +1,252 @@
+{
+  "id": 160209,
+  "type": 2,
+  "name": "君の名は。",
+  "name_cn": "你的名字。",
+  "date": "2016-08-26",
+  "platform": "剧场版",
+  "infobox": [
+    {
+      "key": "中文名",
+      "value": "你的名字。"
+    },
+    {
+      "key": "别名",
+      "value": [
+        {
+          "v": "Kimi no Na wa."
+        },
+        {
+          "v": "Your Name."
+        }
+      ]
+    },
+    {
+      "key": "上映年度",
+      "value": "2016年8月26日"
+    },
+    {
+      "key": "片长",
+      "value": "106分钟"
+    },
+    {
+      "key": "官方网站",
+      "value": "http://kiminona.com"
+    },
+    {
+      "key": "Copyright",
+      "value": "©2016「君の名は。」製作委員会"
+    },
+    {
+      "key": "原作",
+      "value": "新海誠"
+    },
+    {
+      "key": "导演",
+      "value": "新海誠"
+    },
+    {
+      "key": "人物设定",
+      "value": "田中将賀、安藤雅司"
+    },
+    {
+      "key": "作画监督",
+      "value": "安藤雅司"
+    },
+    {
+      "key": "演出",
+      "value": "居村健治;回忆场景演出:四宮義俊"
+    },
+    {
+      "key": "配给",
+      "value": "東宝"
+    },
+    {
+      "key": "音乐",
+      "value": "RADWIMPS"
+    },
+    {
+      "key": "话数",
+      "value": "1"
+    },
+    {
+      "key": "製作",
+      "value": "「君の名は。」製作委員会（市川南、川口典孝、大田圭二）共同製作：井上伸一郎、弓矢政法、畠中達郎、善木準二、坂本健；東宝：山内章弘、上田太地、小野田光、鎌田周平、大島孝幸、藤田雅規、大浦俊将、高橋敦司；CoMix Wave Films：角南一城、小川智弘、武田真理子；KADOKAWA：堀内大示、菊池剛、工藤大丈、菊島憲文；ジェイアール東日本企画：相原勉、土生宏匡、飯岡浩司；アミューズ：千葉伸大、遠藤日登思、久保美夏；塚原聡（voque ting）；ローソンHMVエンタテイメント：盛谷尚也、長田史郎、春田英彦、広瀬春奈、湯田健太郎"
+    },
+    {
+      "key": "企画",
+      "value": "川村元気"
+    },
+    {
+      "key": "执行制片人",
+      "value": "古澤佳寛"
+    },
+    {
+      "key": "制片人",
+      "value": "川村元気、武井克弘、伊藤耕一郎"
+    }
+  ],
+  "tags": [
+    {
+      "name": "新海誠",
+      "count": 8308,
+      "total_count": 10687
+    },
+    {
+      "name": "剧场版",
+      "count": 7898,
+      "total_count": 731416
+    },
+    {
+      "name": "恋爱",
+      "count": 6872,
+      "total_count": 572678
+    },
+    {
+      "name": "原创",
+      "count": 3711,
+      "total_count": 628490
+    },
+    {
+      "name": "2016",
+      "count": 3624,
+      "total_count": 71828
+    },
+    {
+      "name": "新海诚",
+      "count": 3164,
+      "total_count": 35656
+    },
+    {
+      "name": "奇幻",
+      "count": 2822,
+      "total_count": 480183
+    },
+    {
+      "name": "动画电影",
+      "count": 2441,
+      "total_count": 44225
+    },
+    {
+      "name": "君の名は。",
+      "count": 1945,
+      "total_count": 1955
+    },
+    {
+      "name": "CoMixWave",
+      "count": 1486,
+      "total_count": 5060
+    },
+    {
+      "name": "君の名は",
+      "count": 781,
+      "total_count": 784
+    },
+    {
+      "name": "2016年8月",
+      "count": 770,
+      "total_count": 1121
+    },
+    {
+      "name": "你的名字。",
+      "count": 688,
+      "total_count": 689
+    },
+    {
+      "name": "日本",
+      "count": 515,
+      "total_count": 304890
+    },
+    {
+      "name": "田中将贺",
+      "count": 419,
+      "total_count": 1916
+    },
+    {
+      "name": "治愈",
+      "count": 317,
+      "total_count": 305006
+    },
+    {
+      "name": "你的名字",
+      "count": 301,
+      "total_count": 313
+    },
+    {
+      "name": "青春",
+      "count": 244,
+      "total_count": 108572
+    },
+    {
+      "name": "2016年",
+      "count": 163,
+      "total_count": 4627
+    },
+    {
+      "name": "穿越",
+      "count": 144,
+      "total_count": 64150
+    },
+    {
+      "name": "CoMixWaveFilms",
+      "count": 121,
+      "total_count": 2143
+    },
+    {
+      "name": "校园",
+      "count": 110,
+      "total_count": 460640
+    },
+    {
+      "name": "催泪",
+      "count": 103,
+      "total_count": 60894
+    },
+    {
+      "name": "电影",
+      "count": 89,
+      "total_count": 13668
+    },
+    {
+      "name": "爱情",
+      "count": 84,
+      "total_count": 13645
+    },
+    {
+      "name": "神作",
+      "count": 71,
+      "total_count": 48113
+    },
+    {
+      "name": "radwimps",
+      "count": 54,
+      "total_count": 119
+    },
+    {
+      "name": "纯爱",
+      "count": 54,
+      "total_count": 39625
+    },
+    {
+      "name": "安藤雅司",
+      "count": 49,
+      "total_count": 312
+    },
+    {
+      "name": "映画",
+      "count": 31,
+      "total_count": 6313
+    }
+  ],
+  "meta_tags": [
+    "剧场版",
+    "恋爱",
+    "日本",
+    "奇幻",
+    "原创"
+  ],
+  "images": {
+    "large": "https://lain.bgm.tv/pic/cover/l/20/15/160209_2UzU8.jpg",
+    "common": "https://lain.bgm.tv/r/400/pic/cover/l/20/15/160209_2UzU8.jpg"
+  }
+}

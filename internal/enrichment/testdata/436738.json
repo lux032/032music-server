@@ -1,0 +1,356 @@
+{
+  "id": 436738,
+  "type": 2,
+  "name": "劇場総集編ぼっち・ざ・ろっく！ Re:",
+  "name_cn": "剧场总集篇孤独摇滚！ Re:",
+  "date": "2024-06-07",
+  "platform": "剧场版",
+  "infobox": [
+    {
+      "key": "中文名",
+      "value": "剧场总集篇孤独摇滚！ Re:"
+    },
+    {
+      "key": "别名",
+      "value": [
+        {
+          "v": "劇場総集編「ぼっち・ざ・ろっく！」 前編"
+        },
+        {
+          "v": "BOCCHI THE ROCK! Recap Part 1"
+        }
+      ]
+    },
+    {
+      "key": "上映年度",
+      "value": "2024年6月7日"
+    },
+    {
+      "key": "片长",
+      "value": "92分钟"
+    },
+    {
+      "key": "官方网站",
+      "value": "https://bocchi.rocks/"
+    },
+    {
+      "key": "Copyright",
+      "value": "©はまじあき／芳文社・アニプレックス"
+    },
+    {
+      "key": "话数",
+      "value": "1"
+    },
+    {
+      "key": "原作",
+      "value": "はまじあき（芳文社「まんがタイムきららMAX」連載中）"
+    },
+    {
+      "key": "导演",
+      "value": "斎藤圭一郎"
+    },
+    {
+      "key": "副导演",
+      "value": "山本ゆうすけ"
+    },
+    {
+      "key": "系列构成",
+      "value": "吉田恵里香"
+    },
+    {
+      "key": "人物设定",
+      "value": "けろりら"
+    },
+    {
+      "key": "原画",
+      "value": "伊藤優希（Live动画师）"
+    },
+    {
+      "key": "道具设计",
+      "value": "永木歩美(永木歩実)"
+    },
+    {
+      "key": "数码绘图",
+      "value": "梅木葵（2D WORK）"
+    },
+    {
+      "key": "美术监督",
+      "value": "守安靖尚"
+    },
+    {
+      "key": "美术设计",
+      "value": "taracod"
+    },
+    {
+      "key": "色彩设计",
+      "value": "横田明日香"
+    },
+    {
+      "key": "摄影监督",
+      "value": "金森つばさ"
+    },
+    {
+      "key": "CG 导演",
+      "value": "宮地克明；Live CG导演：内田博明"
+    },
+    {
+      "key": "剪辑",
+      "value": "平木大輔"
+    },
+    {
+      "key": "音响监督",
+      "value": "藤田亜紀子"
+    },
+    {
+      "key": "音效",
+      "value": "八十正太"
+    },
+    {
+      "key": "音乐",
+      "value": "菊谷知樹"
+    },
+    {
+      "key": "音乐制作",
+      "value": "Aniplex"
+    },
+    {
+      "key": "制片人",
+      "value": "石川達也、小林宏之"
+    },
+    {
+      "key": "制作统括",
+      "value": "清水暁"
+    },
+    {
+      "key": "动画制片人",
+      "value": "梅原翔太"
+    },
+    {
+      "key": "制作管理",
+      "value": "木村美月"
+    },
+    {
+      "key": "动画制作",
+      "value": "CloverWorks"
+    },
+    {
+      "key": "企画",
+      "value": "岩上敦宏、孝壽尚志"
+    },
+    {
+      "key": "製作",
+      "value": "Aniplex、芳文社"
+    },
+    {
+      "key": "脚本",
+      "value": "吉田恵里香"
+    },
+    {
+      "key": "分镜",
+      "value": "斎藤圭一郎、山本ゆうすけ、刈谷暢秀、川上雄介"
+    },
+    {
+      "key": "演出",
+      "value": "斎藤圭一郎、藤原佳幸、山本ゆうすけ、刈谷暢秀、川上雄介"
+    },
+    {
+      "key": "作画监督",
+      "value": "けろりら、助川裕彦、中村颯、Maring Song、高橋沙妃"
+    },
+    {
+      "key": "总作画监督",
+      "value": "けろりら"
+    },
+    {
+      "key": "OP・ED 分镜",
+      "value": "山本ゆうすけ（OP）"
+    },
+    {
+      "key": "主题歌作词",
+      "value": "樋口愛(ヒグチアイ) / 北澤ゆうほ"
+    },
+    {
+      "key": "主题歌作曲",
+      "value": "音羽-otoha- / 北澤ゆうほ"
+    },
+    {
+      "key": "主题歌编曲",
+      "value": "三井律郎"
+    },
+    {
+      "key": "主题歌演出",
+      "value": "喜多郁代（CV：長谷川育美）"
+    },
+    {
+      "key": "插入歌演出",
+      "value": "喜多郁代（CV：長谷川育美）"
+    },
+    {
+      "key": "其他上映日期",
+      "value": "2025年4月25日(中国大陆)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "剧场版",
+      "count": 995,
+      "total_count": 731364
+    },
+    {
+      "name": "总集篇",
+      "count": 669,
+      "total_count": 18730
+    },
+    {
+      "name": "CloverWorks",
+      "count": 608,
+      "total_count": 56848
+    },
+    {
+      "name": "2024",
+      "count": 548,
+      "total_count": 72368
+    },
+    {
+      "name": "芳文社",
+      "count": 505,
+      "total_count": 77924
+    },
+    {
+      "name": "漫画改",
+      "count": 486,
+      "total_count": 875113
+    },
+    {
+      "name": "音乐",
+      "count": 458,
+      "total_count": 104492
+    },
+    {
+      "name": "日常",
+      "count": 367,
+      "total_count": 406703
+    },
+    {
+      "name": "斋藤圭一郎",
+      "count": 280,
+      "total_count": 3864
+    },
+    {
+      "name": "百合",
+      "count": 243,
+      "total_count": 408337
+    },
+    {
+      "name": "乐队",
+      "count": 203,
+      "total_count": 23582
+    },
+    {
+      "name": "搞笑",
+      "count": 183,
+      "total_count": 647148
+    },
+    {
+      "name": "孤独摇滚",
+      "count": 129,
+      "total_count": 365
+    },
+    {
+      "name": "漫改",
+      "count": 106,
+      "total_count": 364822
+    },
+    {
+      "name": "治愈",
+      "count": 72,
+      "total_count": 304967
+    },
+    {
+      "name": "轻百合",
+      "count": 34,
+      "total_count": 38782
+    },
+    {
+      "name": "日本",
+      "count": 19,
+      "total_count": 304686
+    },
+    {
+      "name": "校园",
+      "count": 18,
+      "total_count": 460551
+    },
+    {
+      "name": "梅原翔太",
+      "count": 17,
+      "total_count": 1715
+    },
+    {
+      "name": "2024年",
+      "count": 16,
+      "total_count": 2731
+    },
+    {
+      "name": "青春",
+      "count": 13,
+      "total_count": 108548
+    },
+    {
+      "name": "斎藤圭一郎",
+      "count": 8,
+      "total_count": 1910
+    },
+    {
+      "name": "轻百",
+      "count": 7,
+      "total_count": 4153
+    },
+    {
+      "name": "2024年6月",
+      "count": 7,
+      "total_count": 283
+    },
+    {
+      "name": "2025",
+      "count": 5,
+      "total_count": 73791
+    },
+    {
+      "name": "少女乐队",
+      "count": 5,
+      "total_count": 491
+    },
+    {
+      "name": "吉田惠里香",
+      "count": 4,
+      "total_count": 51
+    },
+    {
+      "name": "续作",
+      "count": 4,
+      "total_count": 47421
+    },
+    {
+      "name": "TV",
+      "count": 4,
+      "total_count": 1422595
+    },
+    {
+      "name": "电影",
+      "count": 4,
+      "total_count": 13668
+    }
+  ],
+  "meta_tags": [
+    "剧场版",
+    "漫画改"
+  ],
+  "images": {
+    "small": "https://lain.bgm.tv/r/200/pic/cover/l/4d/fe/436738_Z960u.jpg",
+    "grid": "https://lain.bgm.tv/r/100/pic/cover/l/4d/fe/436738_Z960u.jpg",
+    "large": "https://lain.bgm.tv/pic/cover/l/4d/fe/436738_Z960u.jpg",
+    "medium": "https://lain.bgm.tv/r/800/pic/cover/l/4d/fe/436738_Z960u.jpg",
+    "common": "https://lain.bgm.tv/r/400/pic/cover/l/4d/fe/436738_Z960u.jpg"
+  }
+}

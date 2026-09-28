@@ -21,6 +21,9 @@ func workRoleLabel(role string) string {
 	}
 }
 func workSourceLabel(source string) string {
+	if source == "bangumi" {
+		return "Bangumi"
+	}
 	if source == "manual" {
 		return "手动"
 	}

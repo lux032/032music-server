@@ -43,7 +43,7 @@
     </section>
 
     <section class="feature-card"><h2>关联作品</h2>
-      {{range .AlbumWorks}}<p><a href="/admin/works/{{.ID}}">{{.Title}}</a> · {{workTypeLabel .Type}} · {{workRoleLabel .Role}} · {{workSourceLabel .Source}}{{if .TrackTitle}} · 曲目：{{.TrackTitle}}{{end}}</p>{{else}}<p>暂无关联作品</p>{{end}}
+      {{range .AlbumWorks}}<p><a href="/admin/works/{{.ID}}">{{.Title}}</a> · {{workTypeLabel .Type}} · {{workRoleLabel .Role}} · {{workSourceLabel .Source}}{{if .TrackTitle}} · 曲目：{{.TrackTitle}}{{end}}</p>{{else}}<p>暂无关联作品</p>{{end}}{{if .CanSearchBangumi}}<form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button class="secondary-button">从 Bangumi 查找</button></form>{{end}}
     </section>
     <div class="album-columns">
       <section class="album-content">

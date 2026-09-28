@@ -1,0 +1,70 @@
+{
+  "id": 507031,
+  "type": 3,
+  "name": "amore",
+  "name_cn": "",
+  "date": "2024-08-12",
+  "platform": "",
+  "infobox": [
+    {
+      "key": "版本特性",
+      "value": "CD"
+    },
+    {
+      "key": "发售日期",
+      "value": "2024-08-12 (C104)"
+    },
+    {
+      "key": "价格",
+      "value": "￥1000"
+    },
+    {
+      "key": "艺术家",
+      "value": "IZNA"
+    },
+    {
+      "key": "作词",
+      "value": "IZNA"
+    },
+    {
+      "key": "编曲",
+      "value": "NSY"
+    },
+    {
+      "key": "厂牌",
+      "value": "東方事変"
+    },
+    {
+      "key": "设计",
+      "value": "IZNA"
+    },
+    {
+      "key": "插图",
+      "value": "IZNA"
+    },
+    {
+      "key": "碟片数量",
+      "value": "1"
+    },
+    {
+      "key": "品番",
+      "value": "THJH-104"
+    },
+    {
+      "key": "特设",
+      "value": "https://thjh104.tumblr.com/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "doujin",
+      "count": 1,
+      "total_count": 583
+    }
+  ],
+  "meta_tags": [],
+  "images": {
+    "large": "https://lain.bgm.tv/pic/cover/l/fc/63/507031_kCkuk.jpg",
+    "common": "https://lain.bgm.tv/r/400/pic/cover/l/fc/63/507031_kCkuk.jpg"
+  }
+}

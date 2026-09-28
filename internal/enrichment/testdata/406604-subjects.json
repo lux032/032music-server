@@ -1,0 +1,68 @@
+[
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/e2/e7/328609_2EHLJ.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/e2/e7/328609_2EHLJ.jpg"
+    },
+    "name": "ぼっち・ざ・ろっく！",
+    "name_cn": "孤独摇滚！",
+    "relation": "动画",
+    "type": 2,
+    "id": 328609
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/d4/42/404443_9we2Q.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/d4/42/404443_9we2Q.jpg"
+    },
+    "name": "Distortion!!",
+    "name_cn": "",
+    "relation": "其他",
+    "type": 3,
+    "id": 404443
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/73/f8/406492_kRu88.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/73/f8/406492_kRu88.jpg"
+    },
+    "name": "カラカラ",
+    "name_cn": "",
+    "relation": "其他",
+    "type": 3,
+    "id": 406492
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/d5/cc/409027_mmP4T.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/d5/cc/409027_mmP4T.jpg"
+    },
+    "name": "なにが悪い",
+    "name_cn": "",
+    "relation": "其他",
+    "type": 3,
+    "id": 409027
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/4d/fe/436738_Z960u.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/4d/fe/436738_Z960u.jpg"
+    },
+    "name": "劇場総集編ぼっち・ざ・ろっく！ Re:",
+    "name_cn": "剧场总集篇孤独摇滚！ Re:",
+    "relation": "动画",
+    "type": 2,
+    "id": 436738
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/8e/16/459642_83jcG.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/8e/16/459642_83jcG.jpg"
+    },
+    "name": "劇場総集編ぼっち・ざ・ろっく！ Re:Re:",
+    "name_cn": "剧场总集篇孤独摇滚！ Re:Re:",
+    "relation": "动画",
+    "type": 2,
+    "id": 459642
+  }
+]

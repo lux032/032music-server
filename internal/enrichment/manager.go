@@ -22,29 +22,30 @@ import (
 )
 
 type Manager struct {
-	baseCtx           context.Context
-	store             *storage.Store
-	logger            *slog.Logger
-	client            *http.Client
-	mu                sync.Mutex
-	running           bool
-	artistRunID       int64
-	artistCancel      context.CancelFunc
-	mbMu              sync.Mutex
-	mbLast            time.Time
-	phaseMu           sync.Mutex
-	phaseRunning      bool
-	phaseRunID        int64
-	phaseCancel       context.CancelFunc
-	phaseEndpoints    phase4Endpoints
-	posterMu          sync.Mutex
-	posterBackfilling bool
-	musicBrainzBase   string
-	bangumiMu         sync.Mutex
-	bangumiLast       time.Time
-	bangumiInterval   time.Duration
-	imageDirectory    string
-	wg                sync.WaitGroup
+	baseCtx             context.Context
+	store               *storage.Store
+	logger              *slog.Logger
+	client              *http.Client
+	mu                  sync.Mutex
+	running             bool
+	artistRunID         int64
+	artistCancel        context.CancelFunc
+	mbMu                sync.Mutex
+	mbLast              time.Time
+	phaseMu             sync.Mutex
+	phaseRunning        bool
+	phaseRunID          int64
+	phaseCancel         context.CancelFunc
+	phaseEndpoints      phase4Endpoints
+	confirmAlbumSubject func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error)
+	posterMu            sync.Mutex
+	posterBackfilling   bool
+	musicBrainzBase     string
+	bangumiMu           sync.Mutex
+	bangumiLast         time.Time
+	bangumiInterval     time.Duration
+	imageDirectory      string
+	wg                  sync.WaitGroup
 }
 type MatchResult struct {
 	AutoMatched    bool

@@ -1,0 +1,24 @@
+[
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/20/15/160209_2UzU8.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/20/15/160209_2UzU8.jpg"
+    },
+    "name": "君の名は。",
+    "name_cn": "你的名字。",
+    "relation": "动画",
+    "type": 2,
+    "id": 160209
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/8e/98/187695_jp.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/8e/98/187695_jp.jpg"
+    },
+    "name": "君の名は。",
+    "name_cn": "你的名字。",
+    "relation": "原声集",
+    "type": 3,
+    "id": 187695
+  }
+]

@@ -21,10 +21,10 @@ type RunRequest struct {
 	Force    bool   `json:"force"`
 }
 
-type phase4Endpoints struct{ Bangumi string }
+type phase4Endpoints struct{ Bangumi, BangumiAPI string }
 
 func defaultPhase4Endpoints() phase4Endpoints {
-	return phase4Endpoints{Bangumi: "https://api.bgm.tv/v0/search/subjects"}
+	return phase4Endpoints{Bangumi: "https://api.bgm.tv/v0/search/subjects", BangumiAPI: "https://api.bgm.tv"}
 }
 
 // maxConsecutiveFailures aborts a run once a remote source is clearly down,
@@ -37,9 +37,9 @@ func normalizeRunRequest(value RunRequest) (RunRequest, error) {
 		value.Scope = "all"
 	}
 	switch value.Scope {
-	case "all":
+	case "all", "albums":
 		value.TargetID = 0
-	case "work":
+	case "work", "album":
 		if value.TargetID <= 0 {
 			return value, fmt.Errorf("target id is required for %s scope", value.Scope)
 		}
@@ -87,7 +87,8 @@ func (m *Manager) CancelRun(runID int64) error {
 }
 
 type phase4Item struct {
-	work storage.WorkEnrichmentTarget
+	work  storage.WorkEnrichmentTarget
+	album storage.AlbumBangumiTarget
 }
 
 func (m *Manager) phase4Items(ctx context.Context, request RunRequest) ([]phase4Item, error) {
@@ -100,7 +101,21 @@ func (m *Manager) phase4Items(ctx context.Context, request RunRequest) ([]phase4
 		enabled[setting.Source] = setting.Enabled
 	}
 	var result []phase4Item
-	if request.Scope == "all" || request.Scope == "work" {
+	if enabled["bangumi"] && (request.Scope == "all" || request.Scope == "albums" || request.Scope == "album") {
+		albums, e := m.store.AlbumsForBangumiTieup(ctx, request.Force, func() int64 {
+			if request.Scope == "album" {
+				return request.TargetID
+			}
+			return 0
+		}())
+		if e != nil {
+			return nil, e
+		}
+		for _, album := range albums {
+			result = append(result, phase4Item{album: album})
+		}
+	}
+	if request.Scope == "work" {
 		if enabled["bangumi"] {
 			works, e := m.store.WorksForEnrichment(ctx, "bangumi", request.Force, 0, request.TargetID)
 			if e != nil {
@@ -121,7 +136,9 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 			m.logger.Error("metadata enrichment panic", "panic", value)
 		}
 		m.phaseMu.Lock()
-		m.phaseCancel()
+		if m.phaseCancel != nil {
+			m.phaseCancel()
+		}
 		m.phaseRunning = false
 		m.phaseRunID = 0
 		m.phaseCancel = nil
@@ -146,13 +163,45 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	counts := storage.EnrichmentRunUpdate{Total: len(items)}
 	_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 	consecutiveFailures := 0
-	for _, item := range items {
+	worksCollected := request.Scope != "all"
+	bangumiEnabled := false
+	if setting, e := m.store.MetadataSourceSetting(ctx, "bangumi"); e == nil {
+		bangumiEnabled = setting.Enabled
+	}
+	if request.Scope == "all" && len(items) == 0 {
+		worksCollected = true
+		var works []storage.WorkEnrichmentTarget
+		var e error
+		if bangumiEnabled {
+			works, e = m.store.WorksForEnrichment(ctx, "bangumi", request.Force, 0)
+		}
+		if e != nil {
+			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", e.Error())
+			return
+		}
+		for _, work := range works {
+			items = append(items, phase4Item{work: work})
+		}
+		counts.Total = len(items)
+		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+	}
+	for index := 0; index < len(items); index++ {
+		item := items[index]
+		if request.Scope == "all" && !worksCollected && item.album.ID == 0 {
+			worksCollected = true
+		}
 		if ctx.Err() != nil {
 			finishCancelled()
 			return
 		}
-		counts.Current = item.work.Title
-		outcome, err := m.enrichBangumiWork(ctx, runID, item.work, request.Force)
+		var outcome string
+		if item.album.ID != 0 {
+			counts.Current = item.album.Title
+			outcome, err = m.enrichBangumiAlbum(ctx, runID, item.album, request.Force)
+		} else {
+			counts.Current = item.work.Title
+			outcome, err = m.enrichBangumiWork(ctx, runID, item.work, request.Force)
+		}
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			finishCancelled()
 			return
@@ -182,6 +231,23 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 			}
 		}
 		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+		if request.Scope == "all" && !worksCollected && index == len(items)-1 {
+			worksCollected = true
+			var works []storage.WorkEnrichmentTarget
+			var e error
+			if bangumiEnabled {
+				works, e = m.store.WorksForEnrichment(ctx, "bangumi", request.Force, 0)
+			}
+			if e != nil {
+				_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", e.Error())
+				return
+			}
+			for _, work := range works {
+				items = append(items, phase4Item{work: work})
+			}
+			counts.Total = len(items)
+			_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+		}
 	}
 	if ctx.Err() != nil {
 		finishCancelled()

@@ -3,8 +3,10 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,12 +31,15 @@ type enrichmentArtistReview struct {
 	Candidates []storage.ArtistRelationCandidate
 }
 
+var errAlbumCandidateConflict = errors.New("album subject candidate conflict")
+
 type enrichmentPageData struct {
 	Chrome
 	Notice             string
 	Runs               []storage.EnrichmentRun
 	Works              []enrichmentWorkReview
 	Artists            []enrichmentArtistReview
+	AlbumSubjects      []storage.AlbumSubjectCandidate
 	PendingWorkCount   int
 	PendingArtistCount int
 }
@@ -45,9 +50,9 @@ func normalizeEnrichmentRequest(value enrichmentRunRequest) (enrichmentRunReques
 		value.Scope = "all"
 	}
 	switch value.Scope {
-	case "all":
+	case "all", "albums":
 		value.TargetID = 0
-	case "work":
+	case "work", "album":
 		if value.TargetID <= 0 {
 			return value, fmt.Errorf("targetId is required for %s scope", value.Scope)
 		}
@@ -206,6 +211,7 @@ func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	data := enrichmentPageData{Chrome: chromeFor(session, "enrichment"), Notice: r.URL.Query().Get("notice")}
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
 	data.Works, data.Artists, data.PendingWorkCount, data.PendingArtistCount = a.enrichmentReviews(r.Context())
+	data.AlbumSubjects, _ = a.store.PendingAlbumSubjectCandidates(r.Context(), 200)
 	a.render(w, http.StatusOK, "enrichment-jobs.html", data)
 }
 
@@ -293,4 +299,103 @@ func enrichmentTargetLabel(run storage.EnrichmentRun) string {
 		return run.Scope
 	}
 	return run.Scope + " #" + strconv.FormatInt(run.TargetID, 10)
+}
+
+func positivePathID(value string) (int64, error) {
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("path id must be a positive integer")
+	}
+	return id, nil
+}
+
+func (a *App) handleAPIAlbumSubjectCandidates(w http.ResponseWriter, r *http.Request) {
+	albumID, err := positivePathID(r.PathValue("albumId"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	values, err := a.store.AlbumSubjectCandidates(r.Context(), albumID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeAPIError(w, http.StatusNotFound, "not_found", "Album not found.")
+		return
+	}
+	apiResult(w, values, err)
+}
+func (a *App) decideAlbumSubject(ctx context.Context, albumID, candidateID int64, accept bool, selected []int64) error {
+	if !accept {
+		return a.store.RejectAlbumSubjectCandidate(ctx, albumID, candidateID)
+	}
+	outcome, ids, err := a.store.ConfirmAlbumSubjectCandidate(ctx, albumID, candidateID, 0, "", false, selected)
+	if err == nil && outcome != "succeeded" {
+		return errAlbumCandidateConflict
+	}
+	if err == nil {
+		for _, id := range ids {
+			a.queueWorkPoster(id)
+		}
+	}
+	return err
+}
+func (a *App) handleAPIAlbumSubjectDecision(w http.ResponseWriter, r *http.Request, accept bool) {
+	var selected []int64
+	if accept && r.Body != nil {
+		var body struct {
+			WorkSubjectIDs []int64 `json:"workSubjectIds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			selected = body.WorkSubjectIDs
+		} else if !errors.Is(err, io.EOF) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	albumID, err := positivePathID(r.PathValue("albumId"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	candidateID, err := positivePathID(r.PathValue("candidateId"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	err = a.decideAlbumSubject(r.Context(), albumID, candidateID, accept, selected)
+	if errors.Is(err, errAlbumCandidateConflict) || errors.Is(err, storage.ErrCandidateNotPending) {
+		writeAPIError(w, http.StatusConflict, "candidate_conflict", err.Error())
+		return
+	}
+	if errors.Is(err, storage.ErrInvalidWork) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_work", err.Error())
+		return
+	}
+	writeDecisionResult(w, err)
+}
+func (a *App) handleAdminAlbumSubjectDecision(w http.ResponseWriter, r *http.Request, accept bool) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	err := a.decideAlbumSubject(r.Context(), parseInt64(r.PathValue("albumId")), parseInt64(r.PathValue("candidateId")), accept, nil)
+	message := "专辑候选已拒绝"
+	if accept {
+		message = "专辑候选已确认"
+	}
+	if err != nil {
+		message = err.Error()
+	}
+	redirectWithNotice(w, r, "/admin/enrichment", message)
+}
+func (a *App) handleAdminAlbumSubjectSearch(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	albumID := parseInt64(r.PathValue("albumId"))
+	_, err := a.startEnrichmentRunRequest(r.Context(), enrichmentRunRequest{Scope: "album", TargetID: albumID})
+	message := "Bangumi 专辑查询任务已启动"
+	if err != nil {
+		message = "任务正在运行或无法启动：" + err.Error()
+	}
+	redirectWithNotice(w, r, "/admin/albums/"+strconv.FormatInt(albumID, 10), message)
 }

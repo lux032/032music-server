@@ -1,0 +1,24 @@
+[
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/e2/e7/328609_2EHLJ.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/e2/e7/328609_2EHLJ.jpg"
+    },
+    "name": "ぼっち・ざ・ろっく！",
+    "name_cn": "孤独摇滚！",
+    "relation": "动画",
+    "type": 2,
+    "id": 328609
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/81/ae/466281_11QiV.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/81/ae/466281_11QiV.jpg"
+    },
+    "name": "結束バンドLIVE-恒星-",
+    "name_cn": "",
+    "relation": "三次元",
+    "type": 6,
+    "id": 466281
+  }
+]

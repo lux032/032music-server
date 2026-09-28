@@ -1,0 +1,145 @@
+[
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/bc/43/58949_rCnOB.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/bc/43/58949_rCnOB.jpg"
+    },
+    "name": "言の葉の庭",
+    "name_cn": "言叶之庭",
+    "relation": "角色出演",
+    "type": 2,
+    "id": 58949
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/8e/98/187695_jp.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/8e/98/187695_jp.jpg"
+    },
+    "name": "君の名は。",
+    "name_cn": "你的名字。",
+    "relation": "原声集",
+    "type": 3,
+    "id": 187695
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/ac/af/189834_jp.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/ac/af/189834_jp.jpg"
+    },
+    "name": "君の名は。 Another Side:Earthbound",
+    "name_cn": "",
+    "relation": "番外篇",
+    "type": 1,
+    "id": 189834
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/ee/52/189858_Z67V3.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/ee/52/189858_Z67V3.jpg"
+    },
+    "name": "新海誠監督作品 君の名は。 公式ビジュアルガイド",
+    "name_cn": "《你的名字。》官方视觉指南",
+    "relation": "画集",
+    "type": 1,
+    "id": 189858
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/f8/99/189859_rcI9u.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/f8/99/189859_rcI9u.jpg"
+    },
+    "name": "新海 誠Walker ウォーカームック",
+    "name_cn": "新海诚Walker",
+    "relation": "画集",
+    "type": 1,
+    "id": 189859
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/41/46/198229_PPsjs.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/41/46/198229_PPsjs.jpg"
+    },
+    "name": "人間開花",
+    "name_cn": "",
+    "relation": "其他",
+    "type": 3,
+    "id": 198229
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/d5/38/207556_jp.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/d5/38/207556_jp.jpg"
+    },
+    "name": "君の名は。 English edition",
+    "name_cn": "",
+    "relation": "原声集",
+    "type": 3,
+    "id": 207556
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/28/a7/215943_s6kz9.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/28/a7/215943_s6kz9.jpg"
+    },
+    "name": "君の名は。美術画集",
+    "name_cn": "《你的名字。》美术画集",
+    "relation": "画集",
+    "type": 1,
+    "id": 215943
+  },
+  {
+    "images": {
+      "large": "",
+      "common": ""
+    },
+    "name": "Your Name.",
+    "name_cn": "你的名字。",
+    "relation": "三次元",
+    "type": 6,
+    "id": 226616
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/00/e8/269235_Dg6gZ.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/00/e8/269235_Dg6gZ.jpg"
+    },
+    "name": "天気の子",
+    "name_cn": "天气之子",
+    "relation": "角色出演",
+    "type": 2,
+    "id": 269235
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/84/9d/303966_5u33A.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/84/9d/303966_5u33A.jpg"
+    },
+    "name": "君の名は。 新海誠絵コンテ集 2",
+    "name_cn": "你的名字 分镜集",
+    "relation": "画集",
+    "type": 1,
+    "id": 303966
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/4b/7b/183875_k3b6p.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/4b/7b/183875_k3b6p.jpg"
+    },
+    "name": "君の名は。",
+    "name_cn": "你的名字。",
+    "relation": "书籍",
+    "type": 1,
+    "id": 183875
+  },
+  {
+    "images": {
+      "large": "https://lain.bgm.tv/pic/cover/l/7a/69/182345_h46hD.jpg",
+      "common": "https://lain.bgm.tv/r/400/pic/cover/l/7a/69/182345_h46hD.jpg"
+    },
+    "name": "小説 君の名は。",
+    "name_cn": "你的名字。",
+    "relation": "书籍",
+    "type": 1,
+    "id": 182345
+  }
+]

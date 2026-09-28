@@ -105,10 +105,12 @@ func TestBangumiScoreRequiresStrongEvidence(t *testing.T) {
 	}
 }
 
-func TestStartRunRejectsRetiredAlbumScope(t *testing.T) {
-	manager, _, albumID, _ := phase4TestManager(t, http.NotFoundHandler())
-	if _, err := manager.StartRun(context.Background(), RunRequest{Scope: "album", TargetID: albumID}); err == nil {
-		t.Fatal("album scope (VGMdb) should be rejected")
+func TestStartRunAlbumScopeRequiresTarget(t *testing.T) {
+	if _, err := normalizeRunRequest(RunRequest{Scope: "album"}); err == nil {
+		t.Fatal("album scope must specify a target")
+	}
+	if _, err := normalizeRunRequest(RunRequest{Scope: "album", TargetID: 1}); err != nil {
+		t.Fatal(err)
 	}
 }
 
