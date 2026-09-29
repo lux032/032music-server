@@ -220,6 +220,10 @@ func (s *Store) RejectAlbumSubjectCandidate(ctx context.Context, albumID, candid
 		return err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE album_subject_candidates SET id=id WHERE 0`); err != nil {
+		return err
+	}
 	var external, status string
 	if err = tx.QueryRowContext(ctx, `SELECT external_id,status FROM album_subject_candidates WHERE album_id=? AND id=?`, albumID, candidateID).Scan(&external, &status); err != nil {
 		return err

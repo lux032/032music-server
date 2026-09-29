@@ -54,6 +54,11 @@ type Manager struct {
 	// runMemo remembers request keys already fetched during the current run so a
 	// forced refresh still hits the network only once per key (M4).
 	runMemo map[string]bool
+	// testWorkWriteHook is a test-only injection point (nil in production): it
+	// runs inside enrichBangumiWork right before the miss-row writes and before
+	// the review-return existence recheck, so tests can delete the work in that
+	// exact window (D-4 window 2).
+	testWorkWriteHook func()
 }
 type MatchResult struct {
 	AutoMatched    bool

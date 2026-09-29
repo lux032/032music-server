@@ -26,12 +26,19 @@ func TestAddWorkAlbumInvalidatesTrackBangumiMisses(t *testing.T) {
 		t.Fatal(e)
 	}
 	// The next tieup scan finds every matching entry suppressed and records a
-	// miss; the fresh miss hides the track from non-force runs.
+	// miss; the fresh miss hides the track from non-force runs. L4: the
+	// caller passes the evaluated (music, tieup) links so the storage layer
+	// can re-verify the suppression inside its transaction.
 	targets, e := s.TracksForBangumiTieup(ctx, false, album)
 	if e != nil || len(targets) != 1 {
 		t.Fatalf("targets=%+v %v", targets, e)
 	}
-	if e = s.SetSuppressedTrackBangumiMiss(ctx, targets[0]); e != nil {
+	var workTitle, workType string
+	if e = s.db.QueryRowContext(ctx, `SELECT title,type FROM works WHERE id=?`, workID).Scan(&workTitle, &workType); e != nil {
+		t.Fatal(e)
+	}
+	links := []BangumiSuppressedLink{{Music: "music-1", Tie: BangumiTieup{SubjectID: 42, Title: workTitle, Type: workType}}}
+	if e = s.SetSuppressedTrackBangumiMiss(ctx, targets[0], links); e != nil {
 		t.Fatal(e)
 	}
 	if targets, e = s.TracksForBangumiTieup(ctx, false, album); e != nil || len(targets) != 0 {

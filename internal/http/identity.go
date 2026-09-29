@@ -194,7 +194,7 @@ func (a *App) handleMatchArtist(w http.ResponseWriter, r *http.Request) {
 				// The match was confirmed before the rate limit hit; do not let
 				// the notice read like the match failed.
 				source, minutes, _ := enrichment.RateLimitNoticeParts(err)
-				notice = fmt.Sprintf("已自动确认匹配，但图片/简介因%s 限流暂未获取，约 %d 分钟后可重试", source, minutes)
+				notice = fmt.Sprintf("已自动确认匹配，但图片/简介因 %s 限流暂未获取，约 %d 分钟后可重试", source, minutes)
 			}
 			redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), notice)
 			return

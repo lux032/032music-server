@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -26,13 +25,19 @@ func TestAdminReturnPathAcceptsOnlyLocalAdminPaths(t *testing.T) {
 		{name: "non admin path", value: "/api/v1/albums", expected: "/admin/favorites"},
 		{name: "admin prefix confusion", value: "/administrator", expected: "/admin/favorites"},
 		{name: "empty", value: "", expected: "/admin/favorites"},
+		// M1：百分编码不是走私通道。
+		{name: "encoded backslash after dotdot", value: "/admin/../%5Cevil.com", expected: "/admin/favorites"},
+		{name: "encoded traversal and backslash", value: "/admin/..%2F..%2F%5Cx", expected: "/admin/favorites"},
+		{name: "encoded crlf", value: "/admin/%0d%0a", expected: "/admin/favorites"},
+		{name: "encoded question mark stays encoded", value: "/admin/x%3Fy", expected: "/admin/x%3Fy"},
+		{name: "encoded traversal out of admin", value: "/admin/..%2Fapi", expected: "/admin/favorites"},
+		{name: "raw backslash", value: "/\\evil.com", expected: "/admin/favorites"},
+		{name: "fragment preserved", value: "/admin/works/9#edit", expected: "/admin/works/9#edit"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest("POST", "/admin/favorites/albums/1", nil)
-			request.Form = url.Values{"returnTo": {test.value}}
-			if actual := adminReturnPath(request, "/admin/favorites"); actual != test.expected {
-				t.Fatalf("adminReturnPath() = %q, want %q", actual, test.expected)
+			if actual := safeAdminReturnTo(test.value, "/admin/favorites"); actual != test.expected {
+				t.Fatalf("safeAdminReturnTo() = %q, want %q", actual, test.expected)
 			}
 		})
 	}

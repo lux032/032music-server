@@ -120,7 +120,7 @@ func (a *App) readCustomImageUpload(w http.ResponseWriter, r *http.Request, fall
 		redirectWithNotice(w, r, fallback, "无法解析上传内容，请重试")
 		return nil, "", false
 	}
-	back := adminReturnPath(r, fallback)
+	back := safeAdminReturnTo(r.FormValue("returnTo"), fallback)
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return nil, "", false
@@ -316,12 +316,12 @@ func (a *App) handleResetAlbumArtwork(w http.ResponseWriter, r *http.Request) {
 	oldNames, err := a.store.ResetCustomAlbumArtwork(r.Context(), id)
 	if err != nil {
 		a.logger.Error("reset custom album artwork failed", "albumId", id, "error", err)
-		redirectWithNotice(w, r, adminReturnPath(r, "/admin/albums/"+strconv.FormatInt(id, 10)), "恢复默认封面失败，请重试")
+		redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums/"+strconv.FormatInt(id, 10)), "恢复默认封面失败，请重试")
 		return
 	}
 	a.removeUnreferenced(r.Context(), oldNames)
 	a.gcCustomImages(r.Context())
-	redirectWithNotice(w, r, adminReturnPath(r, "/admin/albums/"+strconv.FormatInt(id, 10)), "已恢复默认封面")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums/"+strconv.FormatInt(id, 10)), "已恢复默认封面")
 }
 
 func (a *App) handleUploadArtistImage(w http.ResponseWriter, r *http.Request) {
@@ -379,10 +379,10 @@ func (a *App) handleResetArtistImage(w http.ResponseWriter, r *http.Request) {
 	oldNames, err := a.store.ResetCustomArtistImage(r.Context(), id)
 	if err != nil {
 		a.logger.Error("reset custom artist image failed", "artistId", id, "error", err)
-		redirectWithNotice(w, r, adminReturnPath(r, "/admin/artists/"+strconv.FormatInt(id, 10)), "恢复默认歌手图片失败，请重试")
+		redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/artists/"+strconv.FormatInt(id, 10)), "恢复默认歌手图片失败，请重试")
 		return
 	}
 	a.removeUnreferenced(r.Context(), oldNames)
 	a.gcCustomImages(r.Context())
-	redirectWithNotice(w, r, adminReturnPath(r, "/admin/artists/"+strconv.FormatInt(id, 10)), "已恢复默认歌手图片")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/artists/"+strconv.FormatInt(id, 10)), "已恢复默认歌手图片")
 }

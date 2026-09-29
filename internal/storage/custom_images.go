@@ -52,6 +52,10 @@ func (s *Store) SaveCustomAlbumArtwork(ctx context.Context, albumID int64, img C
 		return 0, nil, err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE artworks SET id=id WHERE 0`); err != nil {
+		return 0, nil, err
+	}
 	var exists bool
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM albums WHERE id=?)`, albumID).Scan(&exists); err != nil {
 		return 0, nil, err
@@ -92,6 +96,10 @@ func (s *Store) ResetCustomAlbumArtwork(ctx context.Context, albumID int64) ([]s
 		return nil, err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE artworks SET id=id WHERE 0`); err != nil {
+		return nil, err
+	}
 	oldPaths, err := customArtworkPaths(ctx, tx, albumID)
 	if err != nil {
 		return nil, err
@@ -139,6 +147,10 @@ func (s *Store) SaveCustomArtistImage(ctx context.Context, artistID int64, img C
 		return "", err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_custom_images SET artist_id=artist_id WHERE 0`); err != nil {
+		return "", err
+	}
 	var exists bool
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artists WHERE id=?)`, artistID).Scan(&exists); err != nil {
 		return "", err
@@ -174,6 +186,10 @@ func (s *Store) ResetCustomArtistImage(ctx context.Context, artistID int64) ([]s
 		return nil, err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_custom_images SET artist_id=artist_id WHERE 0`); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT file_path FROM artist_custom_images WHERE artist_id=? OR artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=?)`, artistID, artistID)
 	if err != nil {
 		return nil, err

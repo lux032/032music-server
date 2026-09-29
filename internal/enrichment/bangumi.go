@@ -118,6 +118,15 @@ func bangumiTypes(workType string) []int {
 	}
 }
 
+// workGone reports whether the work was deleted while the enrichment request
+// was in flight (D-4). A removed work must read as "skipped": it must not be
+// counted as a failure (which would also feed the consecutive-failure
+// breaker) and must not surface as a pending review.
+func (m *Manager) workGone(ctx context.Context, workID int64) bool {
+	_, err := m.store.WorkByID(ctx, workID)
+	return errors.Is(err, sql.ErrNoRows)
+}
+
 func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work storage.WorkEnrichmentTarget, force bool) (string, error) {
 	if _, err := m.store.WorkByID(ctx, work.ID); errors.Is(err, sql.ErrNoRows) {
 		return "skipped", nil
@@ -209,6 +218,12 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 	_, err = m.cachedJSON(ctx, "bangumi", "search:v2:"+strings.Join(typeKeys, ",")+":"+work.Title, endpoint.String(), setting, force, body, &response)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = m.store.SetWorkEnrichmentMiss(ctx, work.ID, "bangumi"); err != nil {
+			// D-4 window 1: the work was deleted while the search request was
+			// in flight, so the miss row fails its foreign key. That is a
+			// skip, not a provider failure.
+			if m.workGone(ctx, work.ID) {
+				return "skipped", nil
+			}
 			return "", err
 		}
 		return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
@@ -241,7 +256,15 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		return "", err
 	}
 	if len(candidates) == 0 {
+		if m.testWorkWriteHook != nil {
+			m.testWorkWriteHook()
+		}
 		if err = m.store.SetWorkEnrichmentMiss(ctx, work.ID, "bangumi"); err != nil {
+			// D-4 window 2: the work was deleted between the existence
+			// recheck above and this write.
+			if m.workGone(ctx, work.ID) {
+				return "skipped", nil
+			}
 			return "", err
 		}
 		return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
@@ -284,6 +307,10 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 	}
 	if matches == 1 && matchID != 0 {
 		if err = m.store.AutoConfirmWorkMatchCandidate(ctx, work.ID, matchID, runID); errors.Is(err, storage.ErrAutoConfirmConflict) {
+			// D-4: a conflict read as review only while the work still exists.
+			if m.workGone(ctx, work.ID) {
+				return "skipped", nil
+			}
 			return "review", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 		} else if err != nil {
 			if _, lookupErr := m.store.WorkByID(ctx, work.ID); errors.Is(lookupErr, sql.ErrNoRows) {
@@ -303,6 +330,15 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 	}
 	if pending > 0 {
+		// D-4 window 2 (review half): the work may have been cleaned after the
+		// candidates were written; their cascade delete leaves nothing to
+		// review, so the outcome is a skip.
+		if m.testWorkWriteHook != nil {
+			m.testWorkWriteHook()
+		}
+		if m.workGone(ctx, work.ID) {
+			return "skipped", nil
+		}
 		return "review", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 	}
 	return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")

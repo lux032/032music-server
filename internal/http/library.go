@@ -710,7 +710,7 @@ func (a *App) handleUpdateArtist(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	redirectWithNotice(w, r, adminReturnPath(r, "/admin/artists/album"), "已保存")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/artists/album"), "已保存")
 }
 func (a *App) handleUpdateAlbum(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
@@ -736,7 +736,7 @@ func (a *App) handleUpdateTrack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	redirectWithNotice(w, r, adminReturnPath(r, "/admin/tracks"), "已保存")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/tracks"), "已保存")
 }
 func (a *App) validCSRF(r *http.Request) bool {
 	_ = r.ParseForm()

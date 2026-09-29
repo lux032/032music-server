@@ -268,3 +268,30 @@ func TestSeriesLegacyHandlersFriendlyErrorsWithReturnTo(t *testing.T) {
 		t.Fatalf("dissolve missing without returnTo: code=%d, want 404", rec.Code)
 	}
 }
+
+// L1：作品页拆出失败返回友好提示而非 500。非 500 路径（作品不在任何系列）
+// 与存储故障路径（关闭数据库模拟）都必须是 303 + 中文提示。
+func TestDetachWorkSeriesFriendlyErrors(t *testing.T) {
+	app, store, handler := credentialTestApp(t)
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+	work := batch6Work(t, store, "Detach Friendly", "anime", 2020)
+	detail := "/admin/works/" + strconv.FormatInt(work.ID, 10)
+
+	// 作品不在任何系列：303 + 提示。
+	rec := postSecurity(t, app, handler, cookie, detail+"/series/detach", url.Values{"returnTo": {detail}})
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || !strings.Contains(loc.Query().Get("notice"), "作品不在任何系列中") {
+		t.Fatalf("detach without series: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// 存储故障（关闭数据库模拟）：303 + “拆出失败，请重试”，不得是 500。
+	store.Close()
+	rec = postSecurity(t, app, handler, cookie, detail+"/series/detach", url.Values{"returnTo": {detail}})
+	if rec.Code == http.StatusInternalServerError {
+		t.Fatalf("detach storage failure must not be a 500")
+	}
+	loc, _ = url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || !strings.Contains(loc.Query().Get("notice"), "拆出失败") {
+		t.Fatalf("detach storage failure: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}

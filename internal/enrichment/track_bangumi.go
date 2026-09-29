@@ -223,6 +223,7 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 		return "skipped", m.store.SetTrackBangumiMiss(ctx, track, "no matching music entry")
 	}
 	unsuppressed := hits[:0]
+	var suppressedLinks []storage.BangumiSuppressedLink
 	for _, hit := range hits {
 		keep := false
 		for _, tie := range hit.tieups {
@@ -234,6 +235,7 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 				keep = true
 				break
 			}
+			suppressedLinks = append(suppressedLinks, storage.BangumiSuppressedLink{Music: strconv.FormatInt(hit.subject.ID, 10), Tie: tie})
 		}
 		if keep {
 			unsuppressed = append(unsuppressed, hit)
@@ -241,7 +243,9 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 	}
 	hits = unsuppressed
 	if len(hits) == 0 {
-		return "skipped", m.store.SetSuppressedTrackBangumiMiss(ctx, track)
+		// L4: the storage layer re-verifies the suppression state inside its
+		// transaction before writing the miss.
+		return "skipped", m.store.SetSuppressedTrackBangumiMiss(ctx, track, suppressedLinks)
 	}
 	// Generic-only is evaluated after suppression filtering: a suppressed
 	// generic hit must not force surviving specific hits into review.

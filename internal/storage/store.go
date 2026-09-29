@@ -152,6 +152,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.cleanAlbumTagControlChars(ctx); err != nil {
 		return fmt.Errorf("clean album tag control characters: %w", err)
 	}
+	// D-19: same repair for the track-level fields derived from the
+	// reader-side rawFirst closure (lyricist/arranger/reading_title) and the
+	// tag-derived artist reading name.
+	if err := s.cleanTrackTagControlChars(ctx); err != nil {
+		return fmt.Errorf("clean track tag control characters: %w", err)
+	}
 
 	return nil
 }

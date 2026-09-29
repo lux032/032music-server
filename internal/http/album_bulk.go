@@ -27,7 +27,7 @@ func (a *App) handleMergeAlbums(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	back := adminReturnPath(r, "/admin/albums")
+	back := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums")
 	ids := selectedAlbumIDs(r)
 	if len(ids) < 2 {
 		redirectWithNotice(w, r, back, "合并至少需要选择两张专辑")
@@ -54,7 +54,7 @@ func (a *App) handleDeleteAlbums(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	back := adminReturnPath(r, "/admin/albums")
+	back := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums")
 	ids := selectedAlbumIDs(r)
 	if len(ids) == 0 {
 		redirectWithNotice(w, r, back, "请先选择要删除的专辑")

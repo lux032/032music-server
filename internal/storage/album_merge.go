@@ -80,6 +80,10 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 		return 0, err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET id=id WHERE 0`); err != nil {
+		return 0, err
+	}
 	target, err := loadAlbumRuleSource(ctx, tx, targetID)
 	if err != nil {
 		return 0, err
@@ -103,7 +107,12 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 			return 0, err
 		}
 		// B3: preserve reviewed status on collisions; pending candidates may move.
-		if _, err = tx.ExecContext(ctx, `INSERT INTO album_subject_candidates(album_id,source,external_id,title,release_date,artist,score,evidence_json,tieups_json,payload_json,status,created_at,updated_at) SELECT ?,source,external_id,title,release_date,artist,score,evidence_json,tieups_json,payload_json,status,created_at,updated_at FROM album_subject_candidates WHERE album_id=? ON CONFLICT(album_id,source,external_id) DO UPDATE SET status=excluded.status WHERE album_subject_candidates.status='candidate' AND excluded.status IN ('confirmed','rejected')`, targetID, id); err != nil {
+		// L3: a pending candidate is dropped (not moved) when the target already
+		// has a confirmed Bangumi candidate or a manual/bangumi album-work
+		// association — the association decision is already made for the merged
+		// album, and moving the pending row could yield two confirmed
+		// candidates. Reviewed rows always move so their status is preserved.
+		if _, err = tx.ExecContext(ctx, `INSERT INTO album_subject_candidates(album_id,source,external_id,title,release_date,artist,score,evidence_json,tieups_json,payload_json,status,created_at,updated_at) SELECT ?,source,external_id,title,release_date,artist,score,evidence_json,tieups_json,payload_json,status,created_at,updated_at FROM album_subject_candidates WHERE album_id=? AND (status<>'candidate' OR (NOT EXISTS(SELECT 1 FROM album_subject_candidates done WHERE done.album_id=? AND done.status='confirmed') AND NOT EXISTS(SELECT 1 FROM album_works linked WHERE linked.album_id=? AND linked.source IN ('manual','bangumi')))) ON CONFLICT(album_id,source,external_id) DO UPDATE SET status=excluded.status WHERE album_subject_candidates.status='candidate' AND excluded.status IN ('confirmed','rejected')`, targetID, id, targetID, targetID); err != nil {
 			return 0, err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE album_id=?`, targetID, id); err != nil {
@@ -154,6 +163,12 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 	if _, err = tx.ExecContext(ctx, `UPDATE albums SET work_fingerprint=NULL,disc_count=MAX(disc_count,COALESCE((SELECT MAX(disc_number) FROM tracks WHERE album_id=?),1)),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, targetID, targetID); err != nil {
 		return 0, err
 	}
+	// L3/Low-1：收尾统一清理——只要合并后的目标已有 confirmed Bangumi 候选
+	// 或 manual/bangumi 专辑关联，就删掉目标上所有待审候选，让最终结果不
+	// 依赖源专辑的合并顺序（待审先于 confirmed 搬入的情况也被收回）。
+	if _, err = tx.ExecContext(ctx, `DELETE FROM album_subject_candidates WHERE album_id=? AND status='candidate' AND (EXISTS(SELECT 1 FROM album_subject_candidates done WHERE done.album_id=? AND done.status='confirmed') OR EXISTS(SELECT 1 FROM album_works linked WHERE linked.album_id=? AND linked.source IN ('manual','bangumi')))`, targetID, targetID, targetID); err != nil {
+		return 0, err
+	}
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
@@ -176,6 +191,10 @@ func (s *Store) DeleteAlbums(ctx context.Context, ids []int64) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET id=id WHERE 0`); err != nil {
+		return 0, err
+	}
 	for _, id := range albums {
 		album, loadErr := loadAlbumRuleSource(ctx, tx, id)
 		if loadErr != nil {

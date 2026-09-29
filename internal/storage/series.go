@@ -342,9 +342,26 @@ func (s *Store) ApplyAutoSeries(ctx context.Context, runID int64, components [][
 			}
 		}
 		if claimedBy >= 0 {
-			if candidates := candidatesOf(comps[claimedBy]); len(candidates) >= 2 {
+			candidates := candidatesOf(comps[claimedBy])
+			if len(candidates) >= 2 {
 				for _, id := range candidates {
 					target[id] = true
+				}
+			} else if manualTitle[row.id] {
+				// H1 (D69 方案 A)：改名的系列候选不足 2 个时（例如拆出/删除后
+				// 只剩一个未锁定的 auto 成员），保留“候选 ∩ 现有 auto 成员”，
+				// 不让第 1 阶段把它删成 0 成员。auto 名字的系列维持原逻辑，
+				// 新建系列仍然要求 ≥2 个候选（见下方 newSeries）。
+				autoMembers := map[int64]bool{}
+				for _, member := range members[row.id] {
+					if member.source == "auto" {
+						autoMembers[member.workID] = true
+					}
+				}
+				for _, id := range candidates {
+					if autoMembers[id] {
+						target[id] = true
+					}
 				}
 			}
 		}
@@ -401,8 +418,15 @@ func (s *Store) ApplyAutoSeries(ctx context.Context, runID int64, components [][
 			if current[workID] {
 				continue
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO work_series_members(work_id,series_id,source) VALUES(?,?,'auto')`, workID, row.id); err != nil {
-				return stats, err
+			// L2: the component was computed before this transaction; a work
+			// deleted in the meantime must be skipped instead of failing the
+			// whole stage on its foreign key.
+			res, insertErr := tx.ExecContext(ctx, `INSERT INTO work_series_members(work_id,series_id,source) SELECT ?,?,'auto' WHERE EXISTS(SELECT 1 FROM works WHERE id=?)`, workID, row.id, workID)
+			if insertErr != nil {
+				return stats, insertErr
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				continue
 			}
 			stats.MembersAdded++
 			if err = recordProvenance(workID, row.id); err != nil {
@@ -420,8 +444,14 @@ func (s *Store) ApplyAutoSeries(ctx context.Context, runID int64, components [][
 		seriesID, _ := result.LastInsertId()
 		stats.SeriesCreated++
 		for _, id := range candidates {
-			if _, err = tx.ExecContext(ctx, `INSERT INTO work_series_members(work_id,series_id,source) VALUES(?,?,'auto')`, id, seriesID); err != nil {
-				return stats, err
+			// L2: skip works deleted after the component was computed (same
+			// foreign-key race as phase 2).
+			res, insertErr := tx.ExecContext(ctx, `INSERT INTO work_series_members(work_id,series_id,source) SELECT ?,?,'auto' WHERE EXISTS(SELECT 1 FROM works WHERE id=?)`, id, seriesID, id)
+			if insertErr != nil {
+				return stats, insertErr
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				continue
 			}
 			stats.MembersAdded++
 			if err = recordProvenance(id, seriesID); err != nil {
@@ -429,10 +459,9 @@ func (s *Store) ApplyAutoSeries(ctx context.Context, runID int64, components [][
 			}
 		}
 	}
-	// Delete degenerate series: no manual members and at most one automatic
-	// member left (a single work needs no series). Frozen series are exempt
-	// (D41-A1).
-	degenerateRows, err := tx.QueryContext(ctx, `SELECT s.id FROM work_series s WHERE NOT EXISTS(SELECT 1 FROM work_series_members m WHERE m.series_id=s.id AND m.source='manual') AND (SELECT COUNT(*) FROM work_series_members m2 WHERE m2.series_id=s.id)<=1`)
+	// Delete degenerate series (D69 predicate: empty always goes; a renamed
+	// single-member series stays). Frozen series are exempt (D41-A1).
+	degenerateRows, err := tx.QueryContext(ctx, `SELECT s.id FROM work_series s WHERE `+degenerateSeriesSQL)
 	if err != nil {
 		return stats, err
 	}
@@ -548,12 +577,19 @@ func refreshSeriesRow(ctx context.Context, tx *sql.Tx, seriesID int64) error {
 	return err
 }
 
-// deleteDegenerateSeries removes a series that no longer needs to exist: no
-// manual members and at most one remaining member. It reports whether the
-// series was deleted.
+// degenerateSeriesSQL matches a series that no longer needs to exist. An
+// empty series never survives. A single-member series survives when the
+// user renamed it (D69, consistent with D61 allowing one-work series) or
+// when the remaining member is manual; only automatic-titled series with no
+// manual members degenerate at one member. D41-frozen series are exempted
+// by the caller (ApplyAutoSeries), not by this predicate.
+const degenerateSeriesSQL = `(SELECT COUNT(*) FROM work_series_members m2 WHERE m2.series_id=s.id)=0 OR ((SELECT COUNT(*) FROM work_series_members m2 WHERE m2.series_id=s.id)=1 AND s.title_source='auto' AND NOT EXISTS(SELECT 1 FROM work_series_members m WHERE m.series_id=s.id AND m.source='manual'))`
+
+// deleteDegenerateSeries removes a series matching degenerateSeriesSQL. It
+// reports whether the series was deleted.
 func deleteDegenerateSeries(ctx context.Context, tx *sql.Tx, seriesID int64) (bool, error) {
 	var degenerate bool
-	if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM work_series_members m WHERE m.series_id=? AND m.source='manual') AND (SELECT COUNT(*) FROM work_series_members m2 WHERE m2.series_id=?)<=1`, seriesID, seriesID).Scan(&degenerate); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT `+degenerateSeriesSQL+` FROM work_series s WHERE s.id=?`, seriesID).Scan(&degenerate); err != nil {
 		return false, err
 	}
 	if !degenerate {
@@ -567,7 +603,7 @@ func deleteDegenerateSeries(ctx context.Context, tx *sql.Tx, seriesID int64) (bo
 // representative references already cascaded): degenerate series go away and
 // series that lost their representative get a fresh one.
 func cleanupSeriesAfterWorkRemoval(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, `SELECT s.id FROM work_series s WHERE NOT EXISTS(SELECT 1 FROM work_series_members m WHERE m.series_id=s.id AND m.source='manual') AND (SELECT COUNT(*) FROM work_series_members m2 WHERE m2.series_id=s.id)<=1`)
+	rows, err := tx.QueryContext(ctx, `SELECT s.id FROM work_series s WHERE `+degenerateSeriesSQL)
 	if err != nil {
 		return err
 	}
@@ -624,6 +660,11 @@ func (s *Store) DetachWorkFromSeries(ctx context.Context, workID int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	// L1: the first statement is a write so the transaction takes the SQLite
+	// writer lock immediately instead of upgrading from a stale read snapshot.
+	if _, err = tx.ExecContext(ctx, `UPDATE work_series SET id=id WHERE 0`); err != nil {
+		return err
+	}
 	var seriesID int64
 	if err = tx.QueryRowContext(ctx, `SELECT series_id FROM work_series_members WHERE work_id=?`, workID).Scan(&seriesID); errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows

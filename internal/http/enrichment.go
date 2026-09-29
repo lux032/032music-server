@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,18 +102,6 @@ type workReviewPageData struct {
 	SeriesGroups    []seriesSuggestionGroup
 	SeriesCards     []seriesSuggestionCard
 	SeriesTruncated bool // 建议超过 200 条：仅显示前 200 条
-}
-
-func safeAdminReturnTo(raw, fallback string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, "/\\") || strings.ContainsAny(raw, "\r\n\\") {
-		return fallback
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "" || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/admin") {
-		return fallback
-	}
-	return raw
 }
 
 func (data *workReviewPageData) buildGroups() {
@@ -453,6 +440,12 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "work review unavailable", http.StatusInternalServerError)
 		return
 	}
+	data.SeriesSuggestionCount = seriesCount
+	// L5：TotalPendingCount 与导航角标同口径，始终是全局总数；带 albumId
+	// 过滤时只把专辑/曲目两个 Tab 的计数覆盖为过滤后的数量（M3），总数
+	// 不随之缩小（该字段当前不渲染在页面上，导航角标由 chromeFor 单独按
+	// 全局口径计算）。
+	data.TotalPendingCount = data.AlbumSubjectCount + data.TrackSubjectCount + data.WorkCandidateCount + data.SeriesSuggestionCount
 	if albumID > 0 {
 		// M3：过滤状态下 Tab 计数显示过滤后的数量（专辑/曲目两个 Tab）。
 		data.AlbumSubjectCount, data.TrackSubjectCount, err = a.store.PendingAlbumReviewCounts(r.Context(), albumID)
@@ -462,8 +455,6 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data.SeriesSuggestionCount = seriesCount
-	data.TotalPendingCount = data.AlbumSubjectCount + data.TrackSubjectCount + data.WorkCandidateCount + data.SeriesSuggestionCount
 
 	switch tab {
 	case "albums":

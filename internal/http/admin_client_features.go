@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -72,10 +73,10 @@ func (a *App) handleAdminAlbumFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 	favorite := r.FormValue("favorite") == "1"
 	if err := a.store.SetAlbumFavorite(r.Context(), parseInt64(r.PathValue("id")), favorite); err != nil {
-		a.redirectFeatureError(w, r, adminReturnPath(r, "/admin/favorites"), err)
+		a.redirectFeatureError(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites"), err)
 		return
 	}
-	redirectWithNotice(w, r, adminReturnPath(r, "/admin/favorites"), favoriteNotice(favorite, "专辑"))
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites"), favoriteNotice(favorite, "专辑"))
 }
 
 func (a *App) handleAdminTrackFavorite(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +86,10 @@ func (a *App) handleAdminTrackFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 	favorite := r.FormValue("favorite") == "1"
 	if err := a.store.SetTrackFavorite(r.Context(), parseInt64(r.PathValue("id")), favorite); err != nil {
-		a.redirectFeatureError(w, r, adminReturnPath(r, "/admin/favorites"), err)
+		a.redirectFeatureError(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites"), err)
 		return
 	}
-	redirectWithNotice(w, r, adminReturnPath(r, "/admin/favorites"), favoriteNotice(favorite, "歌曲"))
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites"), favoriteNotice(favorite, "歌曲"))
 }
 
 func (a *App) handleAdminPlaylists(w http.ResponseWriter, r *http.Request) {
@@ -314,22 +315,54 @@ func favoriteNotice(favorite bool, mediaType string) string {
 	return mediaType + "已取消收藏"
 }
 
-func adminReturnPath(r *http.Request, fallback string) string {
-	value := strings.TrimSpace(r.FormValue("returnTo"))
-	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Path != "/admin" && !strings.HasPrefix(parsed.Path, "/admin/")) || parsed.IsAbs() || parsed.Host != "" {
+// safeAdminReturnTo validates a returnTo form value: same-origin /admin
+// paths only, with any stale notice parameter stripped — redirectWithNotice
+// appends a fresh one. Fragments are preserved. This is the single
+// implementation for every admin handler (L6; it merges the old
+// adminReturnPath).
+//
+// M1: percent-encoding is not a smuggling channel. The decoded, cleaned
+// path is re-validated (encoded backslashes like %5C, control characters
+// like %0d, and ".." traversal that would escape /admin are all rejected),
+// and the output is built from EscapedPath so legal encoded characters
+// (e.g. %3F in a path segment) survive byte-for-byte instead of turning
+// into real delimiters.
+func safeAdminReturnTo(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, "/\\") || strings.ContainsAny(raw, "\r\n\\") {
 		return fallback
 	}
-	query := parsed.Query()
-	query.Del("notice")
-	if parsed.RawQuery == "" {
-		return parsed.Path
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
+		return fallback
 	}
-	encoded := query.Encode()
-	if encoded == "" {
-		return parsed.Path
+	decoded := parsed.Path
+	if decoded == "" {
+		decoded = "/"
 	}
-	return parsed.Path + "?" + encoded
+	if strings.ContainsRune(decoded, '\\') || strings.ContainsFunc(decoded, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return fallback
+	}
+	if cleaned := path.Clean(decoded); cleaned != "/admin" && !strings.HasPrefix(cleaned, "/admin/") {
+		return fallback
+	}
+	out := parsed.EscapedPath()
+	if out == "" {
+		out = "/"
+	}
+	if strings.Contains(parsed.RawQuery, "notice=") {
+		query := parsed.Query()
+		query.Del("notice")
+		if encoded := query.Encode(); encoded != "" {
+			out += "?" + encoded
+		}
+	} else if parsed.RawQuery != "" {
+		out += "?" + parsed.RawQuery
+	}
+	if parsed.Fragment != "" {
+		out += "#" + parsed.Fragment
+	}
+	return out
 }
 
 func playlistAdminPath(id int64) string { return "/admin/playlists/" + strconv.FormatInt(id, 10) }

@@ -143,12 +143,39 @@ func (s *Store) SetTrackBangumiMiss(ctx context.Context, t TrackBangumiTarget, r
 	return err
 }
 
-func (s *Store) SetSuppressedTrackBangumiMiss(ctx context.Context, t TrackBangumiTarget) error {
+// BangumiSuppressedLink identifies one music-entry/tieup pair the caller
+// evaluated as suppressed, for the transactional re-check in
+// SetSuppressedTrackBangumiMiss (L4).
+type BangumiSuppressedLink struct {
+	Music string
+	Tie   BangumiTieup
+}
+
+// SetSuppressedTrackBangumiMiss records the "all matching entries
+// suppressed" miss. L4: the transaction re-verifies every evaluated link
+// before writing, so a suppression lifted between the evaluation and this
+// write leaves no miss behind (the next run re-enriches the track). When
+// the re-check fails the function writes nothing at all.
+func (s *Store) SetSuppressedTrackBangumiMiss(ctx context.Context, t TrackBangumiTarget, links []BangumiSuppressedLink) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	// L1/Low-2: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE track_enrichment_misses SET source=source WHERE 0`); err != nil {
+		return err
+	}
+	for _, link := range links {
+		suppressed, e := bangumiTrackLinkSuppressed(ctx, tx, t.ID, t.AlbumID, link.Music, link.Tie, 0)
+		if e != nil {
+			return e
+		}
+		if !suppressed {
+			// A suppression was lifted after the evaluation: write nothing.
+			return nil
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM track_subject_candidates WHERE track_id=? AND status='candidate'`, t.ID); err != nil {
 		return err
 	}
@@ -245,6 +272,10 @@ func (s *Store) RejectTrackSubjectCandidate(ctx context.Context, trackID, candid
 		return err
 	}
 	defer tx.Rollback()
+	// L1: take the writer lock before any read in this transaction.
+	if _, err = tx.ExecContext(ctx, `UPDATE track_subject_candidates SET id=id WHERE 0`); err != nil {
+		return err
+	}
 	var external, status string
 	if err = tx.QueryRowContext(ctx, `SELECT external_id,status FROM track_subject_candidates WHERE track_id=? AND id=?`, trackID, candidateID).Scan(&external, &status); err != nil {
 		return err

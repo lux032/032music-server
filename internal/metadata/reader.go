@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dhowden/tag"
+	"github.com/lux032/032music-server/internal/tagclean"
 )
 
 type InvolvedPerson struct {
@@ -101,14 +102,15 @@ func Read(path string) (AudioMetadata, error) {
 	result.TrackNumber, result.TrackTotal = parsed.Track()
 	result.DiscNumber, result.DiscTotal = parsed.Disc()
 
-	// Extract credits and sort keys from raw tags (ID3v2 / MP4)
+	// Extract credits and sort keys from raw tags (ID3v2 / MP4). Values may
+	// carry NUL separators and C0 control characters, so the same cleaning
+	// rule as the storage layer (D62) applies via internal/tagclean (D-19).
+	// 回退语义（与 D62 一致）：键存在即不再回退到下一个键（例如 LYRICIST
+	// 存在但清理后为空时不会再看 TEXT）；同一个键的后续值会回退。跨格式
+	// 键（LYRICIST/TEXT、ARTISTSORT/SOAR/TSOP 等）在同一文件里极少共存，
+	// 保持与 storage 同一口径比兼容这种角落更重要。
 	rawFirst := func(keys ...string) string {
-		for _, key := range keys {
-			if vals := result.Raw[key]; len(vals) > 0 && strings.TrimSpace(vals[0]) != "" {
-				return strings.TrimSpace(vals[0])
-			}
-		}
-		return ""
+		return tagclean.FirstKey(result.Raw, keys...)
 	}
 	result.Lyricist = rawFirst("LYRICIST", "TEXT")
 	result.Arranger = rawFirst("ARRANGER")
@@ -212,14 +214,22 @@ func readFLAC(file *os.File) (AudioMetadata, error) {
 		}
 		return ""
 	}
+	// Credits and sort/reading keys go through the shared tag cleaning rule
+	// (D-19): NUL-separated segments, C0 control characters and tabs are
+	// normalized the same way the storage layer cleans album tag fields. 回退
+	// 语义与非 FLAC 路径一致（见 Read 里 rawFirst 的注释）：键存在即不再
+	// 回退到下一个键，同一个键的后续值会回退。
+	cleaned := func(keys ...string) string {
+		return tagclean.FirstKey(result.Raw, keys...)
+	}
 	result.Title = values("TITLE")
 	result.Album = values("ALBUM")
 	result.Artists = splitPeople(values("ARTIST"))
 	result.AlbumArtists = splitPeople(values("ALBUMARTIST", "ALBUM ARTIST"))
 	result.Composer = values("COMPOSER")
-	result.Lyricist = values("LYRICIST")
-	result.Arranger = values("ARRANGER")
-	result.Producer = values("PRODUCER")
+	result.Lyricist = cleaned("LYRICIST")
+	result.Arranger = cleaned("ARRANGER")
+	result.Producer = cleaned("PRODUCER")
 	result.Genres = splitValues(values("GENRE"))
 	result.Lyrics = values("LYRICS", "UNSYNCEDLYRICS")
 	date := values("DATE", "YEAR")
@@ -230,10 +240,10 @@ func readFLAC(file *os.File) (AudioMetadata, error) {
 	result.DiscNumber, result.DiscTotal = parseNumberPair(values("DISCNUMBER"), values("DISCTOTAL", "TOTALDISCS"))
 
 	// Sort/reading keys for Japanese ordering
-	result.ArtistSort = values("ARTISTSORT")
-	result.AlbumArtistSort = values("ALBUMARTISTSORT")
-	result.TitleSort = values("TITLESORT")
-	result.AlbumSort = values("ALBUMSORT")
+	result.ArtistSort = cleaned("ARTISTSORT")
+	result.AlbumArtistSort = cleaned("ALBUMARTISTSORT")
+	result.TitleSort = cleaned("TITLESORT")
+	result.AlbumSort = cleaned("ALBUMSORT")
 
 	return result, nil
 }

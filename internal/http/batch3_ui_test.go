@@ -284,6 +284,11 @@ func TestWorkReviewTabsAuthCountsAndGrouping(t *testing.T) {
 	if got := strings.Join(tabBadgeCounts(t, body), ","); got != "1,2,1,0" {
 		t.Fatalf("filtered tab badges = %s, want 1,2,1", got)
 	}
+	// L5：带 albumId 过滤时导航角标仍是全局总数（2 专辑 + 2 曲目 + 1 作品 = 5），
+	// 只有 Tab 计数缩小。
+	if !strings.Contains(body, `nav-badge">5<`) {
+		t.Fatalf("nav badge must stay the global total under albumId filter")
+	}
 }
 
 func TestWorkReviewReturnToRejectsExternalRedirect(t *testing.T) {

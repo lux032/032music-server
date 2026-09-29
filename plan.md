@@ -202,7 +202,7 @@
 | D-1 | 曲目级 alias 沿用：动画 X 被用户改名为 Y 后、库中尚无游戏 X 时，精选集曲目标签 `ゲーム『X』…` 可能误挂到 Y | 游戏 X 入库后下次重算自愈；可手动解除 | `work_aliases` 增加 `alias_type`，放行条件改为类型一致 |
 | D-2 | `TestSeasonSpellingAliasKeepsTypeFilter` 未单独证明曲目级 `origin='manual'` 条件 | 已解决（批次 1） | 新增曲目级 manual/auto 对照用例 |
 | D-3 | 季数前缀候选查询无法走索引 | 仅精确匹配失败时执行，命中后写别名；当前规模可忽略 | 改为范围条件 |
-| D-4 | Bangumi 增强在作品恰被清理时两处极窄窗口会记为失败/审核而非跳过 | 不影响数据正确性 | 写入失败后复查作品存在 |
+| D-4 | Bangumi 增强在作品恰被清理时两处极窄窗口会记为失败/审核而非跳过 | 已解决（批次 7） | 写入失败后复查作品存在（workGone），两处 miss 写入与两处 review 返回均已覆盖 |
 | D-5 | `RefreshAlbumWorks` 专辑级写入失败会回滚整批（≤100 张）并中止 | 已解决（批次 1） | 按专辑 savepoint 回滚并继续其余专辑 |
 | D-6 | 相似度中“同作品”信号与“同专辑”信号叠加 | 推荐权重可能偏移 | 上线后观察 |
 | D-7 | 规则 v4→v5 旧格式推断键 | 仅影响未发布的开发数据库，生产库不受影响 | 无需处理 |
@@ -217,7 +217,8 @@
 | D-16 | 本地推导遇到曲目上任何 manual 或 bangumi 行就整首跳过，纯手动行也会挡住本地推导去关联其他作品 | 符合 R1 和 D9，是有意为之，只作记录 | 无需处理 |
 | D-17 | `/admin/enrichment` 待审曲目每条都单独调一次 `TrackByID`（最多 200 次查询） | 已解决（批次 3） | 在 `trackCandidateSelect` 里直接带出歌手，省掉逐条查询 |
 | D-18 | 曲目 Bangumi 未命中指纹不包含抑制状态；解除抑制后仍可能命中旧 miss | 已解决（批次 5，D63） | 抑制删除时同事务清掉受影响曲目的 bangumi miss |
-| D-19 | metadata/reader.go 里独立的 rawFirst 闭包（LYRICIST/ARRANGER/排序名等曲目级字段）不清理控制字符 | 展示问题，专辑字段已由 D62 覆盖 | 下次动 reader.go 时复用 storage 的清理口径 |
+| D-19 | metadata/reader.go 里独立的 rawFirst 闭包（LYRICIST/ARRANGER/排序名等曲目级字段）不清理控制字符 | 已解决（批次 7） | 清理口径下沉到 internal/tagclean，reader（含 FLAC 路径）与 storage 共用；推断输入同步清理；Migrate 幂等修复 tracks/artists 派生列 |
+| D-20 | 系列锁按 work_id 记录；被拆出或解散的作品删除后，同一 Bangumi 条目经由其他专辑重新生成的作品会被自动归组重新拉回系列（R3 在作品重建后的延续） | 频率低，待用户反馈 | 视反馈决定是否改为按 subject 记录（重大决策） |
 
 ---
 
@@ -428,6 +429,27 @@
 | 第十二轮 reviewer 第三轮修订（Low-1～Low-3） | Low-1：提示文案统一——来源名与“限流”之间一律空格、结尾不加句号；图片下载类来源在提示里统称“图片源”（noticeSourceName），运行记录仍保留“作品海报 限流（429）”；手动匹配确认后限流的提示补“约 N 分钟后可重试”（RateLimitNoticeParts）；Low-2：StartAll 限流分支在 result.AutoMatched 时先 matched++ 并按 index+1 更新进度再结束本轮；Low-3：SetMusicBrainzBaseURL 注释标明只供测试、只能在管理器空闲时调用 | 第三轮 reviewer APPROVE 后的 Low 收尾 |
 
 **验证**：新增 TestArtistMatchConfirmedThenRateLimitCountsMatch（确认后限流仍计 Matched=1/Processed=1）；`go test ./...` 与 Playwright 全量通过。
+
+**第十三轮（批次 7 收敛）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 提示文案空格 | “已自动确认匹配，但图片/简介因 <来源> 限流暂未获取…”与“已确认匹配； <来源> 限流中…”统一为“中文 + 空格 + 来源名 + 空格 + 中文”，测试断言同步 | 中文与拉丁来源名直接拼接难读 |
+| 创建作品按钮竖排 | .create-work form 改 `minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto`，label/输入框可收缩（min-width:0、width:100%），按钮 `white-space:nowrap; justify-self:end` | 原 `fr` 轨道的 min-content 下限被长 option（“未指定（由 Bangumi 纠正）”）撑满，auto 列被压成单字宽并溢出卡片；E2E_SCREENSHOTS=1 重截 1440 并补 1280/1920 验证 |
+| D-19 清理口径 | 新建无依赖小包 internal/tagclean（Value/First/FirstKey），storage 的 rawFirst/cleanTagValue 与 metadata reader 两侧的曲目级字段闭包（非 FLAC 的 rawFirst、FLAC 的 credits/排序名）全部共用同一实现，不复制两份；storage 依赖 metadata，故下沉到独立小包而非互相引用 | 同一规则只维护一份 |
+| 推断输入清理 | InferTrackWorkFromTags 对每个原始值先 tagclean.Value 再推断（ImportTrack 与 RefreshAlbumWorks 两处调用同源受益）；audio_file_tags 保留原始存档不动，页面无直接展示原始标签的路径（audio_file_tags 仅用于 COMPILATION 判定、TaggedMBID 与推断输入） | 存档保真、显示与推断必净 |
+| D-19 存量修复 | cleanTrackTagControlChars 幂等修复 tracks.lyricist/arranger/reading_title 与 artists.reading_name（均为标签派生列；tracks 列虽重扫覆盖但仅在文件变更时，reading_name 只在 NULL 时写入，重扫均不自愈）；不碰 user_* 与 artists.display_name（身份匹配输入）；由脏标签派生的游离艺术家显示名（如“詞\x00作者”）不自动清理，列为已知限制 | 与 D62 同一思路，Go 端幂等修复 |
+| D-4 两处窗口 | 位置：enrichBangumiWork 中（1）搜索返回 404 分支的 SetWorkEnrichmentMiss——作品在请求期间被删时外键失败→记为失败并进熔断计数；（2）零候选分支的 SetWorkEnrichmentMiss（复查与写入之间）与 pending>0 / ErrAutoConfirmConflict 两处 review 返回——记为失败或待审。修复：新增 workGone 复查，两处 miss 写入失败与两处 review 返回前复查，作品已删即返回 "skipped"（不计失败、不进熔断、不留待审）；类型纠正分支经核查无外键（enrichment_provenance 无作品 FK、UPDATE 零行不报错），天然安全 | 与 2fd99e6 已有的四处复查同一思路 |
+| 演练脚本 | scripts/rehearsal/（rehearsal.sh + migrate.go/dbquery.go/dbexec.go + screenshots.mjs + README）：必须显式传副本路径并拒绝 .local/data；副本内置数据源 enabled/auto_match=0、存在带 poster_url 的作品即中止；媒体库指向空目录（S1 守卫 + MarkMissing 按 library 限定 + CleanupOrphans 不删曲目，依据见 internal/scanner/scanner.go 与 internal/storage/library.go）；临时凭据走环境变量 + RESET_CREDENTIALS=all 只作用副本 | 可重复、默认安全 |
+
+**验证**：新增 internal/tagclean 包测试（\\0 开头/末尾 NUL/只有 NUL/中间夹 NUL 的日文/制表符/同键回退/键序语义）、TestReadFLACCleansCreditAndSortTags、TestReadFLACCreditFallsBackToNextValue、TestReadMP3CleansCreditAndSortTags、TestInferTrackWorkFromTagsCleansValues、TestMigrateCleansTrackTagControlCharsIdempotent、TestBangumiSearchMissAfterWorkDeletedIsSkipped、TestBangumiEmptyResultAfterWorkDeletedIsSkipped；TestConfirmArtistMatchRateLimitNotice 与 TestMatchArtistConfirmedThenRateLimitNotice 断言同步空格；变异验证：tagclean.Value 退化为 TrimSpace → tagclean/metadata/storage 清理测试全部失败；去掉 D-4 窗口 1 复查 → TestBangumiSearchMissAfterWorkDeletedIsSkipped 失败（外键错误）；`go test ./...` 与 Playwright 全量通过；真实库副本演练：迁移 14→31、integrity/foreign_key 检查通过、27 个页面全 200、角标=Tab 之和=3、日志 0 ERROR/panic、真实库 mtime/sha256 前后一致、进程已结束。
+
+| 第十三轮 跨批审查修订（M1/D68、D69、L1～L7） | M1/D68：protectedWorkSQL 增加 manual 系列成员与系列锁两个保护条件，手动入系列/留锁的 auto 作品失去引用后不再被 CleanupAutoWorks 删除（列入无引用管理列表）；D69：退化谓词统一为 degenerateSeriesSQL（0 成员必删；改名系列 1 成员保留；auto 名字系列照旧），deleteDegenerateSeries/cleanupSeriesAfterWorkRemoval/ApplyAutoSeries 三处共用，D41 冻结豁免不变，改名单成员（未锁定 auto）系列仍可被 D59 口径认领补员；L1：DetachWorkFromSeries、custom_images 四段、两个 Reject、MergeAlbums/DeleteAlbums 事务首句改 UPDATE…WHERE 0 写锁，works.go 拆出失败改友好提示不再 500；L2：ApplyAutoSeries 第 2/3 阶段与 ReplaceSeriesSuggestions 的 INSERT 在事务内过滤已删除作品（EXISTS works），避免外键冲突整批回滚；L3：MergeAlbums 目标已有 confirmed 候选或 manual/bangumi 关联时丢弃源专辑搬来的待审候选；L4：SetSuppressedTrackBangumiMiss 事务内复核全部抑制链接，解除即不写；L5：/admin/work-review 带 albumId 过滤时 TotalPendingCount 固定为全局总数（与导航角标同口径，页面只显示过滤后 Tab 计数）；L6：adminReturnPath 与 safeAdminReturnTo 合并为 safeAdminReturnTo 单一实现（/admin 前缀严格校验、剥离旧 notice、保留 fragment，当时全部既有合法跳转的目标页面不变）；L7：设计文档 D60 标注“已被 D67 收窄”，第 9 节新增 D68/D69，待办新增 D-20 | 跨批次整体审查（331c129..82b4a37）1 Medium + 7 Low |
+
+**验证**：新增 TestCleanupAutoWorksProtectsManualSeriesMember、TestCleanupAutoWorksProtectsSeriesLocked、TestRenamedSeriesSurvivesOneMemberButNotZero、TestAutoNamedSeriesStillDeletedAtOneMember、TestRenamedSeriesSurvivesWorkDeletion、TestRenamedSingleMemberSeriesClaimedAndRefilled、TestApplyAutoSeriesSkipsDeletedComponentWorks、TestReplaceSeriesSuggestionsSkipsDeletedWorks、TestMergeAlbumsDropsPendingCandidatesWhenTargetDecided、TestMergeAlbumsPendingCandidatesMoveRules、TestSetSuppressedTrackBangumiMissRechecksSuppression、TestDetachWorkSeriesFriendlyErrors；TestWorkReviewTabsAuthCountsAndGrouping 增加过滤状态导航角标仍为全局总数的断言；TestAdminReturnPathAcceptsOnlyLocalAdminPaths 改走统一实现；变异验证：去掉 D68 两个保护条件 → M1 两测试失败（作品被删）；退化谓词回退 → D69 三测试失败；`go test ./...` 与 Playwright 全量通过；真实库副本演练复跑通过（sha256 不变、27 页全 200、ERROR=0、进程已结束）。
+
+| 第十三轮 门禁审查修订（H1/H2/M1/Low-1～7） | H1（D69 方案 A）：ApplyAutoSeries 认领后候选 <2 且系列为 manual 名字时保留“候选 ∩ 现有 auto 成员”，改名系列不再被删成 0 成员；auto 名字系列与新建 ≥2 候选规则不变；H2：rehearsal.sh 加 set -euo pipefail（逐步审计非零出口）、trap 恒删 cookies、副本目录与 source 目录相互包含一律拒绝、数据源开关回读确认、海报按本地缓存文件判定、taskkill 走 /proc/<pid>/winpid；migrate/dbexec/dbquery 共用新的可测试小包 scripts/rehearsal/guard（Abs+EvalSymlinks、大小写不敏感，拒绝 .local/data 与 REHEARSAL_SOURCE）；M1：safeAdminReturnTo 输出改 EscapedPath，解码后的 path.Clean 重新做 /admin 前缀校验，解码含反斜杠/控制字符即拒绝（%5C/%0d 不再可绕过，%3F 等合法编码保持原样）；Low-1：MergeAlbums 收尾统一删除目标上已定论后的待审候选（顺序无关）；Low-2：SetSuppressedTrackBangumiMiss 事务首句写锁；Low-3：reader.go 两处闭包注释写明回退语义（键存在即不回退到下一个键，同键后续值回退，与 D62 一致；LYRICIST/TEXT 跨格式键同文件极少共存，保持统一口径）；Low-4：D68 副作用写入设计文档（typeOrder 优先受保护作品、无引用受保护作品需手动删除）；Low-5：Manager.testWorkWriteHook 注入点确定性覆盖 D-4 窗口 2（零候选 miss 写入前与 review 返回前各一条测试 + 正常 review 对照）；Low-6：“已确认匹配；%s 限流中”全角分号后不加空格；Low-7：手测清单第 14 节改为通用说法、第 9 节命名选项按模板文案（“保留被并入系列的名字”“自动（按规则）”）并同步 H1 说法 | 批次 7 门禁审查 BLOCK 修复（2 High + 1 Medium + 7 Low） |
+
+**验证**：新增 TestRenamedSeriesKeepsAutoMemberWhenCandidatesRunThin、TestAutoNamedSeriesDropsMemberWhenCandidatesRunThin、TestMergeAlbumsFinalCleanupOrderIndependent、TestBangumiZeroCandidateMissWriteAfterWorkDeletedIsSkipped、TestBangumiReviewReturnAfterWorkDeletedIsSkipped、TestBangumiReviewReturnNormallyReview、scripts/rehearsal/guard 的 TestCheckCopyDBPath/TestIsUnderDataDirPrefixBoundaries；TestAdminReturnPathAcceptsOnlyLocalAdminPaths 增加 8 个编码绕过/合法编码用例；变异验证：H1 放宽条件置否 → TestRenamedSeriesKeepsAutoMemberWhenCandidatesRunThin 失败（成员被删系列消失）；M1 去掉解码复核 → 4 个编码绕过用例失败；`go test ./...` 与 Playwright 全量通过；演练复跑（sha256 不变、27 页全 200、ERROR=0、回读确认、进程结束）+ 6 种误用拒绝实测（同目录/子目录/包含/大小写/相对路径，假库 sha256 不变）。
 
 **第九轮（批次 4 自定义图片，migration 030）**：
 | 决策 | 选择 | 理由 |

@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/lux032/032music-server/internal/tagclean"
 )
 
 var (
@@ -180,6 +182,12 @@ func InferTrackWorkFromTags(raw map[string][]string, trackTitle string) []WorkAs
 				continue
 			}
 			for _, value := range values {
+				// D-19: raw tag values may carry NUL separators and C0 control
+				// characters; the inference input must be cleaned first.
+				value = tagclean.Value(value)
+				if value == "" {
+					continue
+				}
 				if key == "WORK" && Normalize(value) == Normalize(trackTitle) {
 					continue
 				}

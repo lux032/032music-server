@@ -356,7 +356,9 @@ func (a *App) handleDetachWorkSeries(w http.ResponseWriter, r *http.Request) {
 			redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), fallback), "作品不在任何系列中")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// 存储层故障不应抛出 500：回到来路并给出可重试的提示。
+		a.logger.Error("detach work from series", "workId", id, "error", err)
+		redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), fallback), "拆出失败，请重试")
 		return
 	}
 	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), fallback), "已从系列中拆出，自动归组不会再把它加回来")

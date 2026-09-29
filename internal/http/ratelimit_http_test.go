@@ -212,7 +212,7 @@ func TestMatchArtistConfirmedThenRateLimitNotice(t *testing.T) {
 	}
 	rec := postAdminForm(t, handler, cookie, csrf, "/admin/artists/"+strconv.FormatInt(artists[0].ID, 10)+"/match", nil)
 	notice := notice303Of(t, rec)
-	if !strings.Contains(notice, "已自动确认匹配，但图片/简介因MusicBrainz 限流暂未获取，约 1 分钟后可重试") {
+	if !strings.Contains(notice, "已自动确认匹配，但图片/简介因 MusicBrainz 限流暂未获取，约 1 分钟后可重试") {
 		t.Fatalf("notice=%q", notice)
 	}
 }

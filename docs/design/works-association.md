@@ -259,7 +259,7 @@ S1 存储层（migration 027、屏蔽和去重、共用落地函数）→ S2 匹
 | D57 | 合并时成员处理 | A：被吸收系列的成员一律改为 manual 并清除锁；保留方的 auto 成员不动 |
 | D58 | 人工合并的名字 | A：可以选任一方的名字或新填；只有一方是 manual 名字时默认用该方；两方都是 manual 且未指定时返回冲突错误（ErrSeriesTitleConflict）；两方都是 auto 时保留成员多的一方（数量相同时保留 id 小的），名字保持 auto |
 | D59 | B1 重合度口径 | A：ApplyAutoSeries 的系列认领重合度只计算未锁定的 auto 成员；D41 冲突检测使用同一口径 |
-| D60 | sequel 建议 | A：作品与某系列内的 manual 成员之间存在双向续集/前传关系时也生成建议（kind='sequel'），补足“合并后被吸收那条链的新季不会自动加入”的局限 |
+| D60 | sequel 建议 | A：作品与某系列内的 manual 成员之间存在双向续集/前传关系时也生成建议（kind='sequel'），补足“合并后被吸收那条链的新季不会自动加入”的局限（**已被 D67 收窄**：只有 (a) 至少一端是系列 manual 成员或 (b) 两端都是 type 4 时才生成 sequel 建议，普通 type 2 续集对交给自动归组） |
 | D61 | 手动新建系列 | A：至少包含 1 部作品；名字可以不填（title_source='auto'，跟随代表作） |
 | D62 | D-9 控制字符清理 | A：library.go 的 rawFirst（专辑相关原始标签字段的公共入口：label/catalog_number/version/country/日期）统一清理：按 `\x00` 切分取第一个非空段、去掉 C0 控制字符（\t 改为空格）、TrimSpace；存量数据由 Migrate 末尾的 Go 端幂等修复处理（实测 SQL replace 清不掉 NUL，不能用 SQL 迁移）；清理后为空的字段写 NULL，ImportTrack 重扫时只允许覆盖仍含控制字符的旧脏值。metadata/reader.go 里另有独立的 rawFirst 闭包（作词、编曲、排序名等曲目级字段），不在本批范围（见 plan.md 待办 D-19） |
 | D63 | D-18 解除抑制后的 miss | A：AddWorkAlbum 与 clearManualSuppressions 在删除抑制记录时，同一事务里删掉受影响曲目（专辑级=全专曲目，曲目级=该曲目）的 bangumi miss；不把抑制状态并进 miss 指纹（会让 ConfirmTrackSubjectCandidate 的指纹比较失效） |
@@ -267,6 +267,8 @@ S1 存储层（migration 027、屏蔽和去重、共用落地函数）→ S2 匹
 | D65 | 4.6 交付节奏 | A：分两批：批次 5 数据与逻辑（migration 031、建议生成与接受/拒绝、合并/新建/分页存储接口、B1/D-9/D-18 修复）、批次 6 管理页 UI |
 | D66 | B1 口径的已知副作用 | A：保持修复后口径。系列只剩 manual 成员时 auto 分量不能认领它；同一轮进来 ≥2 部新季会另建 auto 系列，链暂时分成两个系列，靠 sequel 建议（D67a）加人工合并修复；只凭 manual 成员与改名系列重合不再触发 D41 冻结 |
 | D67 | sequel 建议收窄 | A：双向互为续集/前传的作品对只在以下情况生成 kind='sequel' 建议：(a) 至少一端是某系列的 manual 成员（原 D60 场景）；(b) 两端都是 type 4（游戏续作，BFS 不处理）。普通 type 2 续集对由自动归组负责（本轮因 tainted/节点上限未归组的，下一轮自愈） |
+| D68 | 手动系列成员的 auto 作品保护 | A：protectedWorkSQL 增加“存在 manual 系列成员行”与“存在系列锁”两个条件：用户手动放进系列（或拆出/解散留锁）的本地 auto 作品失去引用后不再被 CleanupAutoWorks 删除，改列进无引用作品管理列表（批次 7 跨批审查 M1）。**已知副作用**：resolveAutoWork 的 typeOrder 以 protectedWorkSQL 排序，保护面扩大后，类型冲突时受保护作品（含被拆出后无引用的作品）会优先被选中；被拆出且失去引用的作品会一直留在“受保护但无引用”列表中，需要用户在作品页手动删除 |
+| D69 | 改名系列的退化保留 | A：title_source='manual' 的系列只剩 1 个成员时保留（与 D61 允许 1 部作品一致），0 个成员仍删除；auto 名字的系列维持原行为（少于 2 个成员即删）；deleteDegenerateSeries、cleanupSeriesAfterWorkRemoval 与 ApplyAutoSeries 共用同一退化谓词；D41 冻结豁免不变；只剩 1 个未锁定 auto 成员的改名系列仍可被组件按 D59 口径认领并补回成员（批次 7 跨批审查）。**H1（方案 A）**：认领后候选不足 2 个时，改名系列保留“候选 ∩ 现有 auto 成员”作为目标成员，不再被删成 0 成员；auto 名字的系列维持原逻辑，新建系列仍要求 ≥2 个候选 |
 
 ### 9.1 补充风险说明
 

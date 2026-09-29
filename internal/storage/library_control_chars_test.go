@@ -134,3 +134,62 @@ func TestMigrateCleansAlbumTagControlCharsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate rewrote the row: %s", updated)
 	}
 }
+
+// D-19: the reader-side rawFirst closure (lyricist/arranger/producer/sort
+// names) cleaned nothing before this batch, so track-level tag-derived
+// columns and the tag-derived artist reading name may hold NUL/C0 bytes.
+// Migrate repairs them idempotently; user_* columns stay untouched.
+func TestMigrateCleansTrackTagControlCharsIdempotent(t *testing.T) {
+	f := newAlbumMergeFixture(t)
+	ctx := context.Background()
+	f.importFile(t, "A/01.flac", "Album", "Song", 1, 1)
+	var trackID, artistID int64
+	if err := f.store.db.QueryRowContext(ctx, `SELECT id FROM tracks WHERE title='Song'`).Scan(&trackID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.db.QueryRowContext(ctx, `SELECT id FROM artists WHERE display_name='Singer'`).Scan(&artistID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE tracks SET lyricist=CAST(x'0000E4BD9CE8AF8D' AS TEXT),arranger='arr'||char(9)||'x',reading_title=CAST(x'00' AS TEXT),user_title='用户'||CAST(x'00' AS TEXT)||'曲',updated_at='2001-01-01T00:00:00.000Z' WHERE id=?`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE artists SET reading_name=CAST(x'000073696E676572' AS TEXT),updated_at='2001-01-01T00:00:00.000Z' WHERE id=?`, artistID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var lyricist, arranger, userTitle string
+	var readingTitle *string
+	if err := f.store.db.QueryRowContext(ctx, `SELECT lyricist,arranger,reading_title,user_title FROM tracks WHERE id=?`, trackID).Scan(&lyricist, &arranger, &readingTitle, &userTitle); err != nil {
+		t.Fatal(err)
+	}
+	if lyricist != "作词" || arranger != "arr x" || readingTitle != nil {
+		t.Fatalf("lyricist=%q arranger=%q reading_title=%v", lyricist, arranger, readingTitle)
+	}
+	if userTitle != "用户\x00曲" {
+		t.Fatalf("user_title must stay untouched, got %q", userTitle)
+	}
+	var readingName *string
+	if err := f.store.db.QueryRowContext(ctx, `SELECT reading_name FROM artists WHERE id=?`, artistID).Scan(&readingName); err != nil {
+		t.Fatal(err)
+	}
+	if readingName == nil || *readingName != "singer" {
+		t.Fatalf("reading_name=%v", readingName)
+	}
+	// Second run is a no-op: nothing matches the dirty predicate, so even
+	// updated_at stays put.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE tracks SET updated_at='2002-02-02T00:00:00.000Z' WHERE id=?`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var updated string
+	if err := f.store.db.QueryRowContext(ctx, `SELECT updated_at FROM tracks WHERE id=?`, trackID).Scan(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated != "2002-02-02T00:00:00.000Z" {
+		t.Fatalf("second migrate rewrote the row: %s", updated)
+	}
+}

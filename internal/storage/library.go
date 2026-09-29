@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/metadata"
+	"github.com/lux032/032music-server/internal/tagclean"
 )
 
 type Library struct {
@@ -988,49 +989,17 @@ func yearDate(year int) string {
 	return fmt.Sprintf("%04d-01-01", year)
 }
 func rawFirst(raw map[string][]string, keys ...string) string {
-	for _, key := range keys {
-		values := raw[key]
-		if len(values) == 0 {
-			continue
-		}
-		// D-9/D62: tag values may contain NUL separators and other C0
-		// control characters (e.g. a catalog number stored as
-		// "\x00\x00\x00\x00ARCD0012"). Split on NUL, take the first
-		// segment that survives cleaning, strip the remaining control
-		// characters (tab becomes a space) and trim.
-		for _, value := range values {
-			if cleaned := cleanTagValue(value); cleaned != "" {
-				return cleaned
-			}
-		}
-		return ""
-	}
-	return ""
+	// D-9/D62/D-19: tag values may contain NUL separators and other C0
+	// control characters (e.g. a catalog number stored as
+	// "\x00\x00\x00\x00ARCD0012"). Split on NUL, take the first segment that
+	// survives cleaning, strip the remaining control characters (tab becomes
+	// a space) and trim; the shared implementation lives in internal/tagclean.
+	return tagclean.FirstKey(raw, keys...)
 }
 
-// cleanTagValue normalizes one raw tag value: split on NUL bytes and take
-// the first non-empty segment, remove C0 control characters (tab folds to a
-// space), then trim surrounding whitespace.
+// cleanTagValue normalizes one raw tag value (see tagclean.Value).
 func cleanTagValue(value string) string {
-	for _, segment := range strings.Split(value, "\x00") {
-		cleaned := strings.TrimSpace(stripC0Controls(segment))
-		if cleaned != "" {
-			return cleaned
-		}
-	}
-	return ""
-}
-
-func stripC0Controls(value string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\t' {
-			return ' '
-		}
-		if r < 0x20 {
-			return -1
-		}
-		return r
-	}, value)
+	return tagclean.Value(value)
 }
 
 // tagValueDirtySQL is a SQLite predicate matching values that still carry
@@ -1047,11 +1016,33 @@ func tagValueDirtySQL(column string) string {
 // cannot remove NUL bytes. Cleaned-empty values become NULL. user_* columns
 // are user intent and are never touched.
 func (s *Store) cleanAlbumTagControlChars(ctx context.Context) error {
-	columns := []string{"label", "catalog_number", "version", "country", "release_date", "original_release_date"}
+	return s.cleanTagControlCharColumns(ctx, "albums", []string{"label", "catalog_number", "version", "country", "release_date", "original_release_date"})
+}
+
+// cleanTrackTagControlChars is the D-19 counterpart of the album repair:
+// track-level fields derived from the reader-side rawFirst closure (lyricist,
+// arranger, TITLESORT reading) and the artist reading name (from
+// ARTISTSORT/ALBUMARTISTSORT tags) may hold NUL/C0 bytes from imports before
+// the reader cleaned them. Rescans overwrite the tracks columns, but only
+// when a file actually changes, and artists.reading_name is only ever set
+// while NULL — neither fixes existing dirty rows, so they are repaired here
+// idempotently. Only tag-derived columns are touched (never user_* columns);
+// artists.display_name is deliberately excluded because it feeds identity
+// matching.
+func (s *Store) cleanTrackTagControlChars(ctx context.Context) error {
+	if err := s.cleanTagControlCharColumns(ctx, "tracks", []string{"lyricist", "arranger", "reading_title"}); err != nil {
+		return err
+	}
+	return s.cleanTagControlCharColumns(ctx, "artists", []string{"reading_name"})
+}
+
+// cleanTagControlCharColumns cleans NUL/C0 bytes from the given tag-derived
+// columns of one table (idempotent; cleaned-empty values become NULL).
+func (s *Store) cleanTagControlCharColumns(ctx context.Context, table string, columns []string) error {
 	for _, column := range columns {
-		rows, err := s.db.QueryContext(ctx, `SELECT id,`+column+` FROM albums WHERE `+tagValueDirtySQL(column))
+		rows, err := s.db.QueryContext(ctx, `SELECT id,`+column+` FROM `+table+` WHERE `+tagValueDirtySQL(column))
 		if err != nil {
-			return fmt.Errorf("scan albums.%s: %w", column, err)
+			return fmt.Errorf("scan %s.%s: %w", table, column, err)
 		}
 		type fix struct {
 			id    int64
@@ -1073,8 +1064,8 @@ func (s *Store) cleanAlbumTagControlChars(ctx context.Context) error {
 		rows.Close()
 		for _, f := range fixes {
 			cleaned := cleanTagValue(f.value)
-			if _, err = s.db.ExecContext(ctx, `UPDATE albums SET `+column+`=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, cleaned, f.id); err != nil {
-				return fmt.Errorf("clean albums.%s row %d: %w", column, f.id, err)
+			if _, err = s.db.ExecContext(ctx, `UPDATE `+table+` SET `+column+`=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, cleaned, f.id); err != nil {
+				return fmt.Errorf("clean %s.%s row %d: %w", table, column, f.id, err)
 			}
 		}
 	}

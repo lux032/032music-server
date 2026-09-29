@@ -86,6 +86,23 @@ test('captures batch 6 screenshots to .local/mockups/impl46/', async ({ page }, 
   await page.screenshot({ path: path.join(IMPL46_DIR, '15-works-type-filter.png'), fullPage: false });
 });
 
+// ---- 批次 7：.create-work「创建作品」按钮布局修复后的宽度验证（1280 / 1920）----
+test('captures batch 7 works create-card screenshots to .local/mockups/impl47/', async ({ page }, testInfo) => {
+  test.skip(!SCREENSHOTS, '只在 E2E_SCREENSHOTS=1 时生成截图');
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  const IMPL47_DIR = path.resolve(ROOT, '.local', 'mockups', 'impl47');
+  fs.mkdirSync(IMPL47_DIR, { recursive: true });
+  for (const width of [1280, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/admin/works?type=movie');
+    const card = page.locator('.create-work');
+    await expect(card).toBeVisible();
+    await card.scrollIntoViewIfNeeded();
+    await settleMain(page);
+    await page.screenshot({ path: path.join(IMPL47_DIR, `works-create-${width}.png`), fullPage: false });
+  }
+});
+
 // ---- D51：/works 按类型筛选时的系列行（声明在接受建议的用例之前）----
 test('works list type filter narrows series row count and members', async ({ page }) => {
   await page.goto('/admin/works?type=movie');
