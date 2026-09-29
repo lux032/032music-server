@@ -17,7 +17,12 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const albumWorkRuleVersion = "album-work-v5"
+// albumWorkRuleVersion is part of every album's work fingerprint; bumping it
+// reprocesses every album on the next refresh. v6 (D70/D71): OST bracket
+// groups removed whole, paired brackets and " -X-" dashes survive edge
+// trimming, word-based generic-title rejection, case-sensitive standalone
+// OP/ED; carryOverAlbumWorkRuleUpgrade migrates v5 identities.
+const albumWorkRuleVersion = "album-work-v6"
 
 const albumWorkInputSQL = `SELECT COALESCE(a.user_title,a.title),COALESCE((SELECT af.relative_path FROM tracks t JOIN audio_files af ON af.track_id=t.id WHERE t.album_id=a.id ORDER BY af.id LIMIT 1),''),(COALESCE(a.user_is_compilation,a.is_compilation,0)=1 OR EXISTS(SELECT 1 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id AND LOWER(COALESCE(ar.user_display_name,ar.display_name))='various artists')),EXISTS(SELECT 1 FROM tracks t JOIN audio_files af ON af.track_id=t.id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE t.album_id=a.id AND UPPER(tag.field_name) IN ('COMPILATION','TCMP') AND tag.value='1') FROM albums a WHERE a.id=?`
 
@@ -256,34 +261,19 @@ func resolveAutoWork(ctx context.Context, tx *sql.Tx, a metadata.WorkAssociation
 	inferred := inferredWorkKey(a)
 	// B2: resolve the bound identity first, including legacy aliases and
 	// distinct season spellings; never let an unrelated season absorb it.
-	var boundID int64
-	boundRows, e := tx.QueryContext(ctx, `SELECT DISTINCT w.id,w.title,w.type,COALESCE(x.normalized_key,'') FROM works w JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' LEFT JOIN work_aliases x ON x.work_id=w.id ORDER BY w.id`)
+	boundID, e := findBangumiBoundWork(ctx, tx, a)
 	if e != nil {
 		return 0, false, e
 	}
-	for boundRows.Next() {
-		var candidateTitle, candidateType, alias string
-		if e = boundRows.Scan(&boundID, &candidateTitle, &candidateType, &alias); e != nil {
-			break
-		}
-		if !bangumiTypeCompatible(candidateType, a.Type) || metadata.WorkSeasonNumber(candidateTitle) != a.Season {
-			continue
-		}
-		if norm.NFKC.String(key) == norm.NFKC.String(metadata.Normalize(candidateTitle)) || norm.NFKC.String(key) == norm.NFKC.String(alias) || bangumiStrictKey(a.Title) == bangumiStrictKey(candidateTitle) || alias != "" && bangumiStrictKey(a.Title) == bangumiStrictKey(alias) || a.Season > 0 && (norm.NFKC.String(normalizedWorkIdentity(a.Title)) == norm.NFKC.String(normalizedWorkIdentity(candidateTitle)) || alias != "" && norm.NFKC.String(normalizedWorkIdentity(a.Title)) == norm.NFKC.String(normalizedWorkIdentity(alias)) && metadata.WorkSeasonNumber(alias) == a.Season) {
-			boundRows.Close()
-			return boundID, false, nil
-		}
-	}
-	if e == nil {
-		e = boundRows.Err()
-	}
-	boundRows.Close()
-	if e != nil {
-		return 0, false, e
+	if boundID != 0 {
+		return boundID, false, nil
 	}
 	var id int64
 	if albumID > 0 {
-		err := tx.QueryRowContext(ctx, `SELECT work_id FROM album_works WHERE album_id=? AND source='auto' AND inferred_key=?`, albumID, inferred).Scan(&id)
+		// L4: a manual row with the same inferred_key is the user's confirmation
+		// of this identity — resolving to it avoids a duplicate auto row next to
+		// the manual one (e.g. after a D71 carryover that could not rename).
+		err := tx.QueryRowContext(ctx, `SELECT work_id FROM album_works WHERE album_id=? AND source IN ('auto','manual') AND inferred_key=? ORDER BY CASE source WHEN 'auto' THEN 0 ELSE 1 END LIMIT 1`, albumID, inferred).Scan(&id)
 		if err == nil {
 			return id, false, nil
 		}
@@ -605,6 +595,23 @@ albumLoop:
 		compilation = input.compilation
 		fingerprint = fmt.Sprintf("%x", sha1.Sum([]byte(fmt.Sprintf("%s|%s|%s|%t", albumWorkRuleVersion, a.title, folder, compilation))))
 		assoc, ok := metadata.InferAlbumWork(a.title, folder, compilation)
+		// D71: v5→v6 rule-upgrade carryover. Suppressions written under the old
+		// identity also cover the new one (R3), and protected works keep their
+		// id via an alias/rename instead of being replaced. Runs before the
+		// suppression load so the carried key is seen by this very refresh.
+		if e = carryOverAlbumWorkRuleUpgrade(ctx, tx, a.id, input); e != nil {
+			if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO album_refresh`); rollbackErr != nil {
+				tx.Rollback()
+				return stats, rollbackErr
+			}
+			if _, releaseErr := tx.ExecContext(ctx, `RELEASE album_refresh`); releaseErr != nil {
+				tx.Rollback()
+				return stats, releaseErr
+			}
+			stats.AlbumsFailed++
+			slog.Error("carry over album work rule upgrade", "albumId", a.id, "error", e)
+			continue albumLoop
+		}
 		createdInAlbum := 0
 		var hasBangumiAlbum bool
 		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM album_works WHERE album_id=? AND source='bangumi')`, a.id).Scan(&hasBangumiAlbum); e != nil {
@@ -619,6 +626,7 @@ albumLoop:
 		}
 		// Keep an unchanged auto link until resolution has chosen its work ID.
 		suppressed := false
+		resolvedID := int64(0)
 		if ok && !hasBangumiAlbum {
 			key := inferredWorkKey(assoc)
 			var supKeys []string
@@ -659,6 +667,7 @@ albumLoop:
 						suppressed = true
 					}
 					if !suppressed {
+						resolvedID = id
 						if created {
 							createdInAlbum++
 						}
@@ -686,7 +695,10 @@ albumLoop:
 				return stats, e
 			}
 		}
-		if _, e = tx.ExecContext(ctx, `DELETE FROM album_works WHERE album_id=? AND source='auto' AND (inferred_key IS NULL OR inferred_key<>? OR ?=0 OR EXISTS(SELECT 1 FROM album_work_suppressions sup WHERE sup.album_id=album_works.album_id AND sup.inferred_key=album_works.inferred_key))`, a.id, func() string {
+		// D72/F5: keep only the row resolution chose this run; a stale auto row
+		// with the same inferred_key but a different work (created before the
+		// bound identity existed) is deleted too.
+		if _, e = tx.ExecContext(ctx, `DELETE FROM album_works WHERE album_id=? AND source='auto' AND (work_id<>? OR inferred_key IS NULL OR inferred_key<>? OR ?=0 OR EXISTS(SELECT 1 FROM album_work_suppressions sup WHERE sup.album_id=album_works.album_id AND sup.inferred_key=album_works.inferred_key))`, a.id, resolvedID, func() string {
 			if ok && !hasBangumiAlbum {
 				return inferredWorkKey(assoc)
 			}
@@ -694,6 +706,21 @@ albumLoop:
 		}(), boolInt(ok && !hasBangumiAlbum)); e != nil {
 			tx.Rollback()
 			return stats, e
+		}
+		// D71: track-level v5→v6 carryover (suppressions + protected works)
+		// before the auto rows are dropped and rebuilt below.
+		if e = carryOverTrackWorkRuleUpgrade(ctx, tx, a.id); e != nil {
+			if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO album_refresh`); rollbackErr != nil {
+				tx.Rollback()
+				return stats, rollbackErr
+			}
+			if _, releaseErr := tx.ExecContext(ctx, `RELEASE album_refresh`); releaseErr != nil {
+				tx.Rollback()
+				return stats, releaseErr
+			}
+			stats.AlbumsFailed++
+			slog.Error("carry over track work rule upgrade", "albumId", a.id, "error", e)
+			continue albumLoop
 		}
 		if _, e = tx.ExecContext(ctx, `DELETE FROM work_tracks WHERE source='auto' AND track_id IN (SELECT id FROM tracks WHERE album_id=?)`, a.id); e != nil {
 			tx.Rollback()
@@ -785,6 +812,248 @@ albumLoop:
 	e := s.CleanupAutoWorks(ctx, &stats)
 	return stats, e
 }
+
+// findBangumiBoundWork resolves the identity against Bangumi-bound works
+// first (R2), including legacy aliases and distinct season spellings; it
+// returns 0 when no bound work matches. Shared by resolveAutoWork and the
+// D71 carryover, which must not rename a protected work when the new identity
+// already belongs to another bound work (R5 merge instead).
+func findBangumiBoundWork(ctx context.Context, tx *sql.Tx, a metadata.WorkAssociation) (int64, error) {
+	key := metadata.Normalize(a.Title)
+	var boundID int64
+	boundRows, e := tx.QueryContext(ctx, `SELECT DISTINCT w.id,w.title,w.type,COALESCE(x.normalized_key,'') FROM works w JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' LEFT JOIN work_aliases x ON x.work_id=w.id ORDER BY w.id`)
+	if e != nil {
+		return 0, e
+	}
+	for boundRows.Next() {
+		var candidateTitle, candidateType, alias string
+		if e = boundRows.Scan(&boundID, &candidateTitle, &candidateType, &alias); e != nil {
+			break
+		}
+		if !bangumiTypeCompatible(candidateType, a.Type) || metadata.WorkSeasonNumber(candidateTitle) != a.Season {
+			continue
+		}
+		if norm.NFKC.String(key) == norm.NFKC.String(metadata.Normalize(candidateTitle)) || norm.NFKC.String(key) == norm.NFKC.String(alias) || bangumiStrictKey(a.Title) == bangumiStrictKey(candidateTitle) || alias != "" && bangumiStrictKey(a.Title) == bangumiStrictKey(alias) || a.Season > 0 && (norm.NFKC.String(normalizedWorkIdentity(a.Title)) == norm.NFKC.String(normalizedWorkIdentity(candidateTitle)) || alias != "" && norm.NFKC.String(normalizedWorkIdentity(a.Title)) == norm.NFKC.String(normalizedWorkIdentity(alias)) && metadata.WorkSeasonNumber(alias) == a.Season) {
+			boundRows.Close()
+			return boundID, nil
+		}
+	}
+	if e == nil {
+		e = boundRows.Err()
+	}
+	boundRows.Close()
+	if e != nil {
+		return 0, e
+	}
+	return 0, nil
+}
+
+// carryOverAlbumWorkRuleUpgrade migrates identities stored under the v5
+// inference rules to v6 (D71). When both rule versions infer an identity for
+// the album's current input and the keys differ:
+//
+// (a) a suppression matching the v5 key is REWRITTEN to the v6 key (the old
+// row is deleted), so the user's "never link this" decision survives the rule
+// change exactly once (R3) and lifting it later cannot resurrect it;
+// (b) an auto/manual link whose stored inferred_key is the v5 key and whose
+// work is protected (protectedWorkSQL) carries over: the work gains the new
+// name as an alias, the row's inferred_key becomes the v6 key, and an
+// untouched auto-named work is also renamed (a unique-identity collision
+// keeps the old display name and only adds the alias). Exception (R5): when
+// the new identity already belongs to another Bangumi-bound work, the
+// protected work is NOT carried — the album links to the bound work and the
+// old work becomes protected-but-unreferenced, listed in the unreferenced
+// works management list for the user to handle.
+//
+// Unprotected works are deliberately not carried: they are replaced by the
+// newly inferred identity below and cleaned up if left unreferenced.
+func carryOverAlbumWorkRuleUpgrade(ctx context.Context, tx *sql.Tx, albumID int64, input albumWorkInput) error {
+	oldAssoc, okOld := metadata.InferAlbumWorkV5(input.title, input.folder, input.compilation)
+	newAssoc, okNew := metadata.InferAlbumWork(input.title, input.folder, input.compilation)
+	if !okOld || !okNew {
+		return nil
+	}
+	oldKey, newKey := inferredWorkKey(oldAssoc), inferredWorkKey(newAssoc)
+	if oldKey == newKey {
+		return nil
+	}
+	return carryOverInferredKey(ctx, tx, oldAssoc, newAssoc, oldKey, newKey,
+		`SELECT inferred_key FROM album_work_suppressions WHERE album_id=?`,
+		`INSERT OR IGNORE INTO album_work_suppressions(album_id,inferred_key) VALUES(?,?)`,
+		`DELETE FROM album_work_suppressions WHERE album_id=? AND inferred_key=?`,
+		`SELECT aw.work_id FROM album_works aw WHERE aw.album_id=? AND aw.inferred_key=?`,
+		`UPDATE album_works SET inferred_key=? WHERE album_id=? AND inferred_key=? AND work_id=?`,
+		albumID)
+}
+
+// carryOverTrackWorkRuleUpgrade is the track-level half of D71: explicit-tag
+// identities change between v5 and v6 for a few tracks, and their
+// suppressions / protected works must follow the new key before the auto
+// track rows are deleted and rebuilt.
+func carryOverTrackWorkRuleUpgrade(ctx context.Context, tx *sql.Tx, albumID int64) error {
+	trackRows, err := tx.QueryContext(ctx, `SELECT t.id,COALESCE(t.user_title,t.title) FROM tracks t WHERE t.album_id=?`, albumID)
+	if err != nil {
+		return err
+	}
+	type track struct {
+		id    int64
+		title string
+	}
+	tracks := []track{}
+	for trackRows.Next() {
+		var t track
+		if err = trackRows.Scan(&t.id, &t.title); err != nil {
+			break
+		}
+		tracks = append(tracks, t)
+	}
+	trackRows.Close()
+	if err != nil {
+		return err
+	}
+	for _, t := range tracks {
+		raw := map[string][]string{}
+		tagRows, e := tx.QueryContext(ctx, `SELECT tag.field_name,tag.value FROM audio_file_tags tag JOIN audio_files af ON af.id=tag.audio_file_id WHERE af.track_id=? ORDER BY tag.position`, t.id)
+		if e == nil {
+			for tagRows.Next() {
+				var field, value string
+				if e = tagRows.Scan(&field, &value); e != nil {
+					break
+				}
+				raw[field] = append(raw[field], value)
+			}
+			tagRows.Close()
+		}
+		if e != nil {
+			return e
+		}
+		oldList := metadata.InferTrackWorkFromTagsV5(raw, t.title)
+		newList := metadata.InferTrackWorkFromTags(raw, t.title)
+		if len(oldList) == 0 || len(newList) == 0 {
+			continue
+		}
+		oldKey, newKey := inferredWorkKey(oldList[0]), inferredWorkKey(newList[0])
+		if oldKey == newKey {
+			continue
+		}
+		if e = carryOverInferredKey(ctx, tx, oldList[0], newList[0], oldKey, newKey,
+			`SELECT inferred_key FROM track_work_suppressions WHERE track_id=?`,
+			`INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) VALUES(?,?)`,
+			`DELETE FROM track_work_suppressions WHERE track_id=? AND inferred_key=?`,
+			`SELECT wt.work_id FROM work_tracks wt WHERE wt.track_id=? AND wt.inferred_key=?`,
+			`UPDATE work_tracks SET inferred_key=? WHERE track_id=? AND inferred_key=? AND work_id=?`,
+			t.id); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// carryOverInferredKey implements the shared D71 carryover for one entity
+// (album or track): rewrite matching suppressions to the new key (the old
+// rows are deleted so the carryover cannot resurrect a lifted suppression),
+// then carry protected works — except when the new identity already belongs
+// to a different Bangumi-bound work, which takes over by R5 merge instead.
+func carryOverInferredKey(ctx context.Context, tx *sql.Tx, oldAssoc, newAssoc metadata.WorkAssociation, oldKey, newKey, suppressionSelect, suppressionInsert, suppressionDelete, linkSelect, linkUpdate string, entityID int64) error {
+	supKeys, err := suppressionKeys(ctx, tx, suppressionSelect, entityID)
+	if err != nil {
+		return err
+	}
+	rewritten := false
+	for _, stored := range supKeys {
+		// workTitleKeysMatch compares title+season only: when the rule change
+		// alters just the type segment, a stored row can already BE the new key.
+		// Never delete the row we just (or already) wrote.
+		if stored == newKey || !workTitleKeysMatch(stored, oldKey) {
+			continue
+		}
+		if !rewritten {
+			if _, err = tx.ExecContext(ctx, suppressionInsert, entityID, newKey); err != nil {
+				return err
+			}
+			rewritten = true
+		}
+		if _, err = tx.ExecContext(ctx, suppressionDelete, entityID, stored); err != nil {
+			return err
+		}
+	}
+	boundID, err := findBangumiBoundWork(ctx, tx, newAssoc)
+	if err != nil {
+		return err
+	}
+	workRows, err := tx.QueryContext(ctx, `SELECT DISTINCT w.id,`+protectedWorkSQL+` FROM works w WHERE w.id IN (`+linkSelect+`)`, entityID, oldKey)
+	if err != nil {
+		return err
+	}
+	type carriedWork struct {
+		id        int64
+		protected bool
+	}
+	works := []carriedWork{}
+	for workRows.Next() {
+		var w carriedWork
+		if err = workRows.Scan(&w.id, &w.protected); err != nil {
+			break
+		}
+		works = append(works, w)
+	}
+	workRows.Close()
+	if err != nil {
+		return err
+	}
+	for _, w := range works {
+		if !w.protected {
+			// Unprotected works are replaced (F2): their rows keep the old key
+			// so the stale-row cleanup removes them after resolution.
+			continue
+		}
+		if boundID != 0 && boundID != w.id {
+			// R5: the new identity belongs to another bound work; the album
+			// links to it and this work becomes protected-but-unreferenced.
+			continue
+		}
+		if err = carryOverWorkIdentity(ctx, tx, w.id, oldAssoc.Title, newAssoc.Title); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, linkUpdate, newKey, entityID, oldKey, w.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// carryOverWorkIdentity gives a protected work the new rule's name as an
+// alias so resolution keeps landing on it, and renames the work when its
+// display name is still the untouched v5 inference. A unique-identity
+// collision (another work already owns the new name for the same type/year)
+// leaves the display name alone; the alias is enough to keep the link.
+func carryOverWorkIdentity(ctx context.Context, tx *sql.Tx, workID int64, oldTitle, newTitle string) error {
+	newNormalized := metadata.Normalize(newTitle)
+	if newNormalized == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_aliases(normalized_key,work_id) VALUES(?,?)`, newNormalized, workID); err != nil {
+		return err
+	}
+	var origin, normalizedTitle, typ string
+	var year sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT origin,normalized_title,type,year FROM works WHERE id=?`, workID).Scan(&origin, &normalizedTitle, &typ, &year); err != nil {
+		return err
+	}
+	if origin != "auto" || normalizedTitle != metadata.Normalize(oldTitle) {
+		return nil
+	}
+	var collision bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM works o WHERE o.id<>? AND o.normalized_title=? AND o.type=? AND IFNULL(o.year,0)=IFNULL(?,0))`, workID, newNormalized, typ, year).Scan(&collision); err != nil {
+		return err
+	}
+	if collision {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE works SET title=?,normalized_title=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, newTitle, newNormalized, workID)
+	return err
+}
+
 func (s *Store) CleanupAutoWorks(ctx context.Context, stats *RefreshStats) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

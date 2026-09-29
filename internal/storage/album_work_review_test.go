@@ -51,7 +51,7 @@ func TestCompilationSoundtrackRefreshAndRuleVersion(t *testing.T) {
 	if e != nil || stats.AlbumsRefreshed != 3 {
 		t.Fatalf("rule bump %+v %v", stats, e)
 	}
-	if !strings.Contains(albumWorkRuleVersion, "v5") {
+	if !strings.Contains(albumWorkRuleVersion, "v6") {
 		t.Fatal("rule version was not bumped")
 	}
 }

@@ -484,6 +484,21 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		return err
 	}
 	// Rebuild only scanner-created associations. Manual links are preserved.
+	// D71: the same v5→v6 carryover RefreshAlbumWorks performs, for this one
+	// track, before its auto rows are dropped and rebuilt.
+	if oldList, newList := metadata.InferTrackWorkFromTagsV5(m.Raw, m.Title), metadata.InferTrackWorkFromTags(m.Raw, m.Title); len(oldList) > 0 && len(newList) > 0 {
+		if oldKey, newKey := inferredWorkKey(oldList[0]), inferredWorkKey(newList[0]); oldKey != newKey {
+			if err = carryOverInferredKey(ctx, tx, oldList[0], newList[0], oldKey, newKey,
+				`SELECT inferred_key FROM track_work_suppressions WHERE track_id=?`,
+				`INSERT OR IGNORE INTO track_work_suppressions(track_id,inferred_key) VALUES(?,?)`,
+				`DELETE FROM track_work_suppressions WHERE track_id=? AND inferred_key=?`,
+				`SELECT wt.work_id FROM work_tracks wt WHERE wt.track_id=? AND wt.inferred_key=?`,
+				`UPDATE work_tracks SET inferred_key=? WHERE track_id=? AND inferred_key=? AND work_id=?`,
+				trackID); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM work_tracks WHERE track_id=? AND source='auto'`, trackID); err != nil {
 		return err
 	}
