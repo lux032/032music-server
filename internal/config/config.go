@@ -43,6 +43,11 @@ type Config struct {
 	// or CIDRs of reverse proxies whose X-Forwarded-For is believed when
 	// rate limiting logins. Empty keeps RemoteAddr as the client address.
 	TrustedProxies string
+	// WorkPosterBackfill is MUSIC_SERVER_WORK_POSTER_BACKFILL (default on):
+	// automatically cache missing work posters ~30s after startup, after scans
+	// and after each enrichment run. Tests/e2e disable it so nothing reaches
+	// the network.
+	WorkPosterBackfill bool
 }
 
 // ParseTrustedProxies parses MUSIC_SERVER_TRUSTED_PROXIES. A bare IP is
@@ -118,8 +123,10 @@ func Load() (Config, error) {
 		LogLevel:            strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
 		DevMode:             devMode,
 		MediaTokenGenerated: mediaTokenGenerated,
-		ResetCredentials:    strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
-		TrustedProxies:      strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
+		// 默认开启；显式设为 0/false/off 才关闭。
+		WorkPosterBackfill: os.Getenv("MUSIC_SERVER_WORK_POSTER_BACKFILL") == "" || parseBool(os.Getenv("MUSIC_SERVER_WORK_POSTER_BACKFILL")),
+		ResetCredentials:   strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
+		TrustedProxies:     strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
 	}
 
 	if err := cfg.Validate(); err != nil {

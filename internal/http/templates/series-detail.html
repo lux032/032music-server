@@ -47,7 +47,7 @@
         {{range .Members}}
         <div class="series-member-row">
           <a href="/admin/works/{{.Work.ID}}" class="series-member-item">
-            {{with workPoster .Work}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+            {{with workPoster .Work 360}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
             <div class="series-member-meta">
               <strong>{{.Work.Title}}</strong>
               <small>{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}} · {{if eq .Source "manual"}}手动加入{{else}}自动归组{{end}}</small>

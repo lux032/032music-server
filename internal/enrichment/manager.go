@@ -41,13 +41,17 @@ type Manager struct {
 	confirmAlbumSubject func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error)
 	posterMu            sync.Mutex
 	posterBackfilling   bool
-	musicBrainzBase     string
-	bangumiMu           sync.Mutex
-	bangumiLast         time.Time
-	bangumiBlockedUntil time.Time
-	bangumiInterval     time.Duration
-	imageDirectory      string
-	wg                  sync.WaitGroup
+	posterLastResult    *PosterBackfillResult
+	// posterBackfillEnabled 控制自动触发（启动延迟、扫描后、每轮增强结束）；
+	// 默认关闭，由 main 根据配置开启，测试与 e2e 保持关闭以不访问外网。
+	posterBackfillEnabled bool
+	musicBrainzBase       string
+	bangumiMu             sync.Mutex
+	bangumiLast           time.Time
+	bangumiBlockedUntil   time.Time
+	bangumiInterval       time.Duration
+	imageDirectory        string
+	wg                    sync.WaitGroup
 	// sleep backs waitBangumiRateLimit/waitMBRateLimit; tests replace it to
 	// observe backoff waits without really sleeping.
 	sleep func(ctx context.Context, d time.Duration) error
@@ -59,6 +63,10 @@ type Manager struct {
 	// the review-return existence recheck, so tests can delete the work in that
 	// exact window (D-4 window 2).
 	testWorkWriteHook func()
+	// testStageCollectHook 是测试专用注入点（生产为 nil）：在每个阶段开始统计
+	// 目标列表之前（“正在统计 X 阶段…”已持久化之后）调用，让测试能确定性地
+	// 观察到统计中的任务状态。
+	testStageCollectHook func(stage string)
 }
 type MatchResult struct {
 	AutoMatched    bool
@@ -129,7 +137,9 @@ func (m *Manager) StartAuto(ctx context.Context) {
 			m.logger.Warn("automatic artist matching was not started", "error", err)
 		}
 	}
-	m.StartWorkPosterBackfill()
+	if m.posterBackfillAutoEnabled() {
+		m.StartWorkPosterBackfill()
+	}
 }
 
 func (m *Manager) StartAll(ctx context.Context) (int64, error) {

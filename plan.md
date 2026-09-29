@@ -451,6 +451,20 @@
 
 **验证**：新增 TestRenamedSeriesKeepsAutoMemberWhenCandidatesRunThin、TestAutoNamedSeriesDropsMemberWhenCandidatesRunThin、TestMergeAlbumsFinalCleanupOrderIndependent、TestBangumiZeroCandidateMissWriteAfterWorkDeletedIsSkipped、TestBangumiReviewReturnAfterWorkDeletedIsSkipped、TestBangumiReviewReturnNormallyReview、scripts/rehearsal/guard 的 TestCheckCopyDBPath/TestIsUnderDataDirPrefixBoundaries；TestAdminReturnPathAcceptsOnlyLocalAdminPaths 增加 8 个编码绕过/合法编码用例；变异验证：H1 放宽条件置否 → TestRenamedSeriesKeepsAutoMemberWhenCandidatesRunThin 失败（成员被删系列消失）；M1 去掉解码复核 → 4 个编码绕过用例失败；`go test ./...` 与 Playwright 全量通过；演练复跑（sha256 不变、27 页全 200、ERROR=0、回读确认、进程结束）+ 6 种误用拒绝实测（同目录/子目录/包含/大小写/相对路径，假库 sha256 不变）。
 
+**第十四轮（批次 8 · 用户手测反馈，migration 032）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 任务进度口径 | 任务卡新增分阶段行“阶段：曲目（2/4）· 专辑 145 · 曲目 3,210 · 作品 待统计 · 系列 待统计”；阶段集合由 scope 推导，计数持久化到 enrichment_runs 新列（migration 032：stage/stage_albums/stage_tracks/stage_works，-1=未统计）；不预先统计全部阶段（曲目阶段统计本身约 2 分钟），未统计阶段显示“待统计” | 用户实测“处理 145/145”只是专辑阶段，误以为总数；预先统计会让任务开始就多卡两分钟 |
+| 统计中的可见性 | 每个阶段开始统计目标列表前，先把 current 持久化为“正在统计 X 阶段…”并更新 stage 字段；统计查询本身的性能优化留给下一批 | 用户库实测曲目阶段统计 15303 首要 1m50s，期间任务卡停在上一阶段的末值，看起来像卡死 |
+| 瞬时错误重试 | cachedJSON 对传输层瞬时错误（io.ErrUnexpectedEOF/io.EOF/ECONNRESET/ECONNABORTED/超时）自动重试 1 次，间隔一个 Bangumi 请求间隔；429 限流与 HTTP 错误状态不重试；调用方 ctx 取消/到期不重试（ctx.Err() 守卫，context.DeadlineExceeded 实现 net.Error 但只有 http.Client 自身 20s 超时会走到重试） | 用户实测 unexpected EOF 让专辑记为失败；瞬时错误重试一次成本极低 |
+| 审核页图片 | 候选作品的 Bangumi 外链海报（CSP img-src 'self' 拦截后裂图）全部移除：专辑/曲目候选的关联行去掉缩略图列（类型本就有 format-pill），作品对齐候选与系列建议的分组头/作品改为本地类型胶囊（新 .work-type-chip）；本地专辑封面（本站缩略图）保留 | 用户要求审核页不显示外链图片，减轻压力；专辑封面是本站 128px 缓存，负担极小且有助于辨认 |
+| 海报补全（C1/C2） | 增强页显示“作品海报：已缓存 X / 应有 Y · 缺失 Z”（Y=有海报地址的作品数，只读本地文件）与“补全缺失海报”按钮（POST + CSRF，进行中提示“正在补全”），上次补全结果存内存（重启清空）；自动触发时机：启动约 30 秒后、扫描后、每轮增强结束后（任何状态）；新配置 MUSIC_SERVER_WORK_POSTER_BACKFILL（默认开启，e2e/测试关闭以防访问外网），手动按钮不受开关影响 | 脏数据海报一直没缓存就没有任何补下载入口，只能等下一次扫描 |
+| 海报缩略图（C3） | /admin/works/{id}/poster 支持 size 参数，复用 thumbnailManager（source="work-poster"）；列表/系列成员卡片用 360（512 桶），作品详情主图用 768，详情编辑仍可取原图（不带 size）；缩略图 key 含缓存文件路径（海报 URL 的哈希），海报变更不串图 | 之前直接用 Bangumi 大图，每页 120 个卡片时流量不可接受 |
+| 作品页每页数量 | 24/36/60/120 四档，URL 参数 size 控制，非法值回落 36；cookie（032_pagesize_works）记忆上次选择，与 rememberSort 同机制（rememberPageSize 把 cookie 值改写进请求 URL，分页/筛选/字母索引链接自动带上 size）；筛选栏新增“每页 N 个”下拉 | 固定 36 在大库下翻页太多 |
+
+**验证**：新增 TestEnrichmentRunStageColumns（storage，迁移 032 默认值/回写/哨兵校验/列表读路径）、TestCachedJSONRetriesTransientTransportError（httptest 截断响应→第二次成功，断言 2 次请求 + 1 次等待）、TestCachedJSONDoesNotRetryRateLimit（429 只请求 1 次）、TestCachedJSONDoesNotRetryCancelledContext、TestIsTransientTransportError、TestPhase4RunPersistsStageProgressAndCollectingNotice（testStageCollectHook 确定性观察“正在统计 X 阶段…”+ 阶段计数持久化）、TestWorkPosterBackfillStatsAndResult、TestPhase4RunEndTriggersPosterBackfillWhenEnabled/Disabled、TestScheduleStartupPosterBackfill（开关/延迟/ctx 关闭三分支）、TestWorkReviewTabsHaveNoExternalImages（四 Tab 无 http 外链 img + 类型胶囊存在 + 本地封面保留）、TestEnrichmentPagePosterStatsAndBackfill（统计行/按钮/CSRF 403/重复触发提示/上次结果）、TestWorkPosterServesThumbnail（size=360→512 桶、无 size→原图、非法 size→400）、TestWorksPageSizeOptions（默认 36/60 一页/cookie 记忆/999 回落/24 与分页链接带 size）、TestEnrichmentStageLine（旧行空/进行中序号/完成态/单阶段范围）；TestSeriesSuggestionGroupHeaderPosterURL 改写为类型胶囊断言（原海报行为已被批次 8 移除）；e2e fixture 增加 MUSIC_SERVER_WORK_POSTER_BACKFILL=false。变异验证：去掉 cachedJSON 的瞬时错误重试 → TestCachedJSONRetriesTransientTransportError 失败（unexpected EOF 直接返回）；去掉“正在统计 X 阶段…”持久化 → TestPhase4RunPersistsStageProgressAndCollectingNotice 失败（钩子观察到 current/stage 不对）；rememberPageSize 非法值不回落 → TestWorksPageSizeOptions 失败。截图：.local/mockups/impl48/（审核页专辑/系列 Tab、增强页、作品页每页控件）。
+
+
 **第九轮（批次 4 自定义图片，migration 030）**：
 | 决策 | 选择 | 理由 |
 |------|------|------|

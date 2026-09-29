@@ -28,7 +28,7 @@
         <div class="album-work-capsules">
           {{range $index, $cap := .AlbumCapsules}}
           <a href="/admin/works/{{$cap.Work.ID}}" class="work-capsule {{if ge $index 2}}is-extra{{end}}" {{if ge $index 2}}hidden{{end}} title="查看作品：{{$cap.Work.Title}}">
-            {{with workPoster $cap.Work}}<img class="work-capsule-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<span class="work-capsule-poster cover-placeholder">作</span>{{end}}
+            {{with workPoster $cap.Work 128}}<img class="work-capsule-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<span class="work-capsule-poster cover-placeholder">作</span>{{end}}
             <span class="work-capsule-title">{{$cap.Work.Title}}</span>
             {{if $cap.RoleLabel}}<span class="work-capsule-role {{if $cap.IsOST}}ost{{end}}">{{$cap.RoleLabel}}</span>{{end}}
           </a>
@@ -86,7 +86,7 @@
               <div class="work-hover-popover" role="dialog" aria-label="作品详情" hidden>
                 {{range $tieups}}
                 <a href="/admin/works/{{.Work.ID}}" class="popover-work-item">
-                  {{with workPoster .Work}}<img class="popover-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="popover-poster cover-placeholder">作</div>{{end}}
+                  {{with workPoster .Work 360}}<img class="popover-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="popover-poster cover-placeholder">作</div>{{end}}
                   <div class="popover-work-meta">
                     <strong class="jp-title">{{.Work.Title}}</strong>
                     {{if .Work.TranslatedTitle}}<span class="cn-title">{{.Work.TranslatedTitle}}</span>{{end}}
@@ -125,7 +125,7 @@
           <div class="inspector-works-list">
             {{range .InspectorWorks}}
             <a href="/admin/works/{{.Work.ID}}" class="inspector-work-card">
-              {{with workPoster .Work}}<img class="inspector-work-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="inspector-work-poster cover-placeholder">作</div>{{end}}
+              {{with workPoster .Work 360}}<img class="inspector-work-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="inspector-work-poster cover-placeholder">作</div>{{end}}
               <div class="inspector-work-info">
                 <strong>{{.Work.Title}}</strong>
                 <span>{{.TypeAndYear}}</span>

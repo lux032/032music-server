@@ -18,7 +18,7 @@
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="work-hero">
-      <div class="hero-cover work-cover">{{with workPoster .Work}}<img class="fade-img" src="{{.}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}</div>
+      <div class="hero-cover work-cover">{{with workPoster .Work 768}}<img class="fade-img" src="{{.}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}</div>
       <div class="album-heading">
         <h1>{{.Work.Title}}</h1>
         {{if .Work.TranslatedTitle}}<h2>{{.Work.TranslatedTitle}}</h2>{{end}}
@@ -58,7 +58,7 @@
           {{range .Members}}
           {{if eq .Work.ID $.Work.ID}}
           <div class="series-member-item current">
-            {{with workPoster .Work}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+            {{with workPoster .Work 360}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
             <div class="series-member-meta">
               <strong>{{.Work.Title}}</strong>
               <small>{{if .Work.Year}}{{.Work.Year}} · {{end}}{{workTypeLabel .Work.Type}} · 当前作品</small>
@@ -66,7 +66,7 @@
           </div>
           {{else}}
           <a href="/admin/works/{{.Work.ID}}" class="series-member-item">
-            {{with workPoster .Work}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+            {{with workPoster .Work 360}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
             <div class="series-member-meta">
               <strong>{{.Work.Title}}</strong>
               <small>{{if .Work.Year}}{{.Work.Year}} · {{end}}{{workTypeLabel .Work.Type}} · {{.Work.TrackCount}} 首曲目</small>

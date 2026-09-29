@@ -31,6 +31,26 @@
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="feature-section">
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">首轮曲目阶段会逐首查询 Bangumi，曲目多时需要数小时；之后有缓存会快很多。</p>
+    </section>
+
+    {{if ge .PosterTotal 0}}
+    <section class="feature-section">
+      <div class="pending-review-banner enrichment-review-entry">
+        <span>作品海报：已缓存 {{.PosterCached}} / 应有 {{.PosterTotal}} · 缺失 {{subtract .PosterTotal .PosterCached}}{{if .PosterLast}} · 上次补全：{{if .PosterLast.RateLimited}}因限流停止（{{end}}成功 {{.PosterLast.Cached}} · 失败 {{.PosterLast.Failed}}{{if .PosterLast.RateLimited}}）{{end}}{{end}}</span>
+        {{if .PosterBackfillRunning}}
+        <span class="muted">正在补全…</span>
+        {{else}}
+        <form method="post" action="/admin/enrichment/posters/backfill" style="margin:0;">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">补全缺失海报</button>
+        </form>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    <section class="feature-section">
       <div class="pending-review-banner enrichment-review-entry">
         <span>作品关联待审 {{.TotalPendingCount}} 条（专辑 {{.AlbumCount}} · 曲目 {{.TrackCount}} · 作品 {{.WorkCount}}）</span>
         <a href="/admin/work-review">去审核 →</a>
@@ -48,6 +68,7 @@
           </header>
           <div class="progress"><span style="width:{{enrichmentRunProgress .}}%"></span></div>
           <p>{{if and (eq .Status "running") (eq .Total 0) (eq .Processed 0)}}收集中 · {{end}}处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
+          {{with enrichmentStageLine .}}<p class="muted" style="margin:0;font-size:var(--fs-xs);">{{.}}</p>{{end}}
           {{if eq .Status "running"}}<form method="post" action="/admin/enrichment/runs/{{.ID}}/cancel"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">停止</button></form>{{end}}
           {{if .Current}}<small>当前：{{.Current}}</small>{{end}}
           {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}

@@ -49,8 +49,6 @@ type seriesSuggestionCard struct {
 	ID            int64
 	CSRFToken     string
 	WorkA, WorkB  storage.Work
-	PosterA       string
-	PosterB       string
 	RelationLabel string // 短标签胶囊，如 “动画 ↔ 游戏”（顺序见下）
 	// RelationSentence 是自然语言关系描述，如 “《B》是《A》的续集”。
 	RelationSentence string
@@ -69,8 +67,7 @@ type seriesSuggestionCard struct {
 // seriesSuggestionGroup 把“同一部作品出现在多条建议中”的建议收拢到一个
 // 分组头下，避免个别作品（如 FGO）刷屏。
 type seriesSuggestionGroup struct {
-	Work   storage.Work
-	Poster string
+	Work storage.Work
 	// Total 是该作品涉及的建议总数（L1：建议可能被归到另一端的分组，
 	// 所以不用 len(Cards)）。
 	Total int
@@ -101,8 +98,6 @@ func (a *App) seriesSuggestionCards(csrfToken string, suggestions []storage.Seri
 			CSRFToken:     csrfToken,
 			WorkA:         suggestion.WorkA,
 			WorkB:         suggestion.WorkB,
-			PosterA:       workPosterURL(a.enrichment, suggestion.WorkA),
-			PosterB:       workPosterURL(a.enrichment, suggestion.WorkB),
 			RelationLabel: suggestion.RelationBA + " ↔ " + suggestion.RelationAB,
 			// 胶囊按 RelationBA ↔ RelationAB 排列：每个词紧挨着它所描述的那部
 			// 作品（relationBA 描述 A、靠左；relationAB 描述 B、靠右）。
@@ -165,7 +160,7 @@ func (a *App) seriesSuggestionCards(csrfToken string, suggestions []storage.Seri
 			if work.ID != key {
 				work = suggestion.WorkB
 			}
-			groups = append(groups, seriesSuggestionGroup{Work: work, Poster: workPosterURL(a.enrichment, work), Total: counts[key]})
+			groups = append(groups, seriesSuggestionGroup{Work: work, Total: counts[key]})
 		}
 		groups[idx].Cards = append(groups[idx].Cards, cards[i])
 	}
@@ -320,7 +315,7 @@ func (a *App) handleAdminSeriesList(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		view := seriesListRow{Series: row.Series, TypeSpread: seriesTypeSpread(row.TypeCounts)}
 		if work, ok := repWorks[row.Series.RepresentativeWorkID]; ok {
-			view.PosterURL = workPosterURL(a.enrichment, work)
+			view.PosterURL = workPosterURL(a.enrichment, work, 360)
 		}
 		data.Rows = append(data.Rows, view)
 	}

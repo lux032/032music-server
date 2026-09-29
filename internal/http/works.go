@@ -168,13 +168,14 @@ func writeWorkResult(w http.ResponseWriter, status int, value storage.Work, err 
 
 func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 	rememberSort(w, r, "works")
+	size := rememberPageSize(w, r, "works")
 	session, _ := a.sessions.get(r)
 	filter := workFilters(r)
 	page := int(parseInt64(r.URL.Query().Get("page")))
 	if page < 1 {
 		page = 1
 	}
-	filter.Limit, filter.Offset = 36, (page-1)*36
+	filter.Limit, filter.Offset = size, (page-1)*size
 	rows, err := a.store.ListWorksFolded(r.Context(), filter)
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
@@ -185,7 +186,7 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := worksPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data := worksPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Total: total, Page: page, PageSize: size, Notice: r.URL.Query().Get("notice")}
 	data.Rows = make([]worksListRow, 0, len(rows))
 	for _, row := range rows {
 		view := worksListRow{WorkListRow: row}
@@ -199,7 +200,7 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data.PageCount = int((total + 35) / 36)
+	data.PageCount = int((total + int64(size) - 1) / int64(size))
 	if data.PageCount < 1 {
 		data.PageCount = 1
 	}
@@ -484,8 +485,15 @@ func setWorksPagination(r *http.Request, data *worksPageData) {
 }
 
 // handleWorkPoster serves the locally cached copy of the work's poster so it
-// renders under the img-src 'self' CSP.
+// renders under the img-src 'self' CSP. & size=...（批次 8 C3）走缩略图缓存，
+// 与专辑封面共用 thumbnailManager；缩略图 key 含缓存文件路径（海报 URL 的
+// 哈希），海报变更后不会串图。
 func (a *App) handleWorkPoster(w http.ResponseWriter, r *http.Request) {
+	size, sizeErr := thumbnailSize(r)
+	if sizeErr != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Invalid size.")
+		return
+	}
 	value, err := a.store.WorkByID(r.Context(), parseInt64(r.PathValue("id")))
 	if err != nil || value.PosterURL == "" || a.enrichment == nil {
 		http.NotFound(w, r)
@@ -510,6 +518,11 @@ func (a *App) handleWorkPoster(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if size != 0 {
+		if a.serveThumbnail(w, r, file, info, "work-poster", value.ID, size, "private, max-age=86400") {
+			return
+		}
+	}
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
@@ -523,12 +536,17 @@ func (a *App) queueWorkPoster(workID int64) {
 
 // workPosterURL returns the same-origin poster URL for a work, or "" when the
 // poster has not been cached locally yet (the placeholder icon is shown).
-func workPosterURL(manager *enrichment.Manager, work storage.Work) string {
+// size > 0 时附带缩略图尺寸参数。
+func workPosterURL(manager *enrichment.Manager, work storage.Work, size int) string {
 	if work.PosterURL == "" || manager == nil {
 		return ""
 	}
 	if _, _, err := manager.CachedWorkPoster(work.PosterURL); err != nil {
 		return ""
 	}
-	return "/admin/works/" + strconv.FormatInt(work.ID, 10) + "/poster?v=" + url.QueryEscape(work.UpdatedAt)
+	u := "/admin/works/" + strconv.FormatInt(work.ID, 10) + "/poster?v=" + url.QueryEscape(work.UpdatedAt)
+	if size > 0 {
+		u += "&size=" + strconv.Itoa(size)
+	}
+	return u
 }

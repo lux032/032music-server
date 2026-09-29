@@ -148,6 +148,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"playbackStateLabel":     playbackStateLabel,
 		"enrichmentRunProgress":  enrichmentRunProgress,
 		"enrichmentTargetLabel":  enrichmentTargetLabel,
+		"enrichmentStageLine":    enrichmentStageLine,
+		"subtract":               func(a, b int) int { return a - b },
 		"scanStatusLabel":        scanStatusLabel,
 		// indexValues and kanaIndexValues split indexLetters the same way the
 		// library index bar does: "#" stays with the always-visible Latin
@@ -177,7 +179,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
 		"thumb": thumbURL,
 		// workPoster returns the local poster URL, or "" until it is cached.
-		"workPoster": func(work storage.Work) string { return workPosterURL(enrichmentManager, work) },
+		// size > 0 时附带缩略图尺寸参数（批次 8 C3），0 表示原图。
+		"workPoster": func(work storage.Work, size int) string { return workPosterURL(enrichmentManager, work, size) },
 	}).ParseFS(webFiles, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse admin templates: %w", err)
@@ -339,6 +342,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/enrichment", a.requireAdmin(http.HandlerFunc(a.handleAdminEnrichment)))
 	mux.Handle("POST /admin/enrichment/run", a.requireAdmin(http.HandlerFunc(a.handleAdminStartEnrichment)))
 	mux.Handle("POST /admin/enrichment/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleAdminCancelEnrichment)))
+	mux.Handle("POST /admin/enrichment/posters/backfill", a.requireAdmin(http.HandlerFunc(a.handleWorkPosterBackfill)))
 	mux.Handle("POST /admin/enrichment/albums/{albumId}/subjects/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminAlbumSubjectDecision(w, r, true) })))
 	mux.Handle("POST /admin/enrichment/albums/{albumId}/subjects/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminAlbumSubjectDecision(w, r, false) })))
 	mux.Handle("POST /admin/enrichment/albums/{albumId}/subjects/search", a.requireAdmin(http.HandlerFunc(a.handleAdminAlbumSubjectSearch)))

@@ -26,15 +26,24 @@ type EnrichmentRun struct {
 	Skipped      int    `json:"skipped"`
 	Review       int    `json:"review"`
 	Failed       int    `json:"failed"`
-	CreatedAt    string `json:"createdAt"`
-	StartedAt    string `json:"startedAt"`
-	UpdatedAt    string `json:"updatedAt"`
-	FinishedAt   string `json:"finishedAt"`
+	// 批次 8：分阶段进度。Stage 是正在处理的阶段（albums/tracks/works/series），
+	// StageAlbums/StageTracks/StageWorks 是各阶段收集到的条目数，-1 表示尚未
+	// 统计或不属于本轮范围。
+	Stage       string `json:"stage"`
+	StageAlbums int    `json:"stageAlbums"`
+	StageTracks int    `json:"stageTracks"`
+	StageWorks  int    `json:"stageWorks"`
+	CreatedAt   string `json:"createdAt"`
+	StartedAt   string `json:"startedAt"`
+	UpdatedAt   string `json:"updatedAt"`
+	FinishedAt  string `json:"finishedAt"`
 }
 
 type EnrichmentRunUpdate struct {
 	Total, Processed, Succeeded, Skipped, Review, Failed int
 	Current, ErrorMessage                                string
+	Stage                                                string
+	StageAlbums, StageTracks, StageWorks                 int
 }
 
 type HTTPResponseCacheEntry struct {
@@ -123,7 +132,10 @@ func (s *Store) UpdateEnrichmentRun(ctx context.Context, id int64, value Enrichm
 	if value.Total < 0 || value.Processed < 0 || value.Succeeded < 0 || value.Skipped < 0 || value.Review < 0 || value.Failed < 0 {
 		return fmt.Errorf("invalid enrichment run counters")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET total=?,processed=?,succeeded=?,skipped=?,review=?,failed=?,current=NULLIF(?,''),error_message=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, value.Total, value.Processed, value.Succeeded, value.Skipped, value.Review, value.Failed, value.Current, value.ErrorMessage, id)
+	if value.StageAlbums < -1 || value.StageTracks < -1 || value.StageWorks < -1 {
+		return fmt.Errorf("invalid enrichment run stage counters")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET total=?,processed=?,succeeded=?,skipped=?,review=?,failed=?,current=NULLIF(?,''),error_message=NULLIF(?,''),stage=?,stage_albums=?,stage_tracks=?,stage_works=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, value.Total, value.Processed, value.Succeeded, value.Skipped, value.Review, value.Failed, value.Current, value.ErrorMessage, value.Stage, value.StageAlbums, value.StageTracks, value.StageWorks, id)
 	if err != nil {
 		return err
 	}
@@ -165,12 +177,12 @@ func scanEnrichmentRun(scanner interface{ Scan(...any) error }) (EnrichmentRun, 
 	var v EnrichmentRun
 	var target sql.NullInt64
 	var force int
-	err := scanner.Scan(&v.ID, &v.Status, &v.Scope, &target, &force, &v.Total, &v.Processed, &v.Succeeded, &v.Skipped, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage, &v.CreatedAt, &v.StartedAt, &v.UpdatedAt, &v.FinishedAt)
+	err := scanner.Scan(&v.ID, &v.Status, &v.Scope, &target, &force, &v.Total, &v.Processed, &v.Succeeded, &v.Skipped, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage, &v.Stage, &v.StageAlbums, &v.StageTracks, &v.StageWorks, &v.CreatedAt, &v.StartedAt, &v.UpdatedAt, &v.FinishedAt)
 	v.TargetID, v.Force = target.Int64, force != 0
 	return v, err
 }
 
-const enrichmentRunColumns = `id,status,scope,target_id,force,total,processed,succeeded,skipped,review,failed,COALESCE(current,''),COALESCE(error_message,''),created_at,COALESCE(started_at,''),updated_at,COALESCE(finished_at,'')`
+const enrichmentRunColumns = `id,status,scope,target_id,force,total,processed,succeeded,skipped,review,failed,COALESCE(current,''),COALESCE(error_message,''),stage,stage_albums,stage_tracks,stage_works,created_at,COALESCE(started_at,''),updated_at,COALESCE(finished_at,'')`
 
 func (s *Store) EnrichmentRun(ctx context.Context, id int64) (EnrichmentRun, error) {
 	return scanEnrichmentRun(s.db.QueryRowContext(ctx, `SELECT `+enrichmentRunColumns+` FROM enrichment_runs WHERE id=?`, id))

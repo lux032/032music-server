@@ -145,20 +145,99 @@ func (m *Manager) QueueWorkPoster(workID int64) {
 	})
 }
 
+// PosterBackfillResult 记录上一轮海报补全的结果（内存态，重启后清空）。
+type PosterBackfillResult struct {
+	Cached      int
+	Failed      int
+	RateLimited bool
+	FinishedAt  time.Time
+}
+
+// WorkPosterCacheStats 统计作品海报的本地缓存情况：total 是有海报地址的作品
+// 数，cached 是本地已缓存数。只读本地文件，不访问网络。
+func (m *Manager) WorkPosterCacheStats(ctx context.Context) (cached, total int, err error) {
+	posters, err := m.store.WorkPosterURLs(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	total = len(posters)
+	for _, item := range posters {
+		if _, _, statErr := m.CachedWorkPoster(item.URL); statErr == nil {
+			cached++
+		}
+	}
+	return cached, total, nil
+}
+
+// PosterBackfillRunning 报告是否正在补全海报。
+func (m *Manager) PosterBackfillRunning() bool {
+	m.posterMu.Lock()
+	defer m.posterMu.Unlock()
+	return m.posterBackfilling
+}
+
+// LastPosterBackfill 返回上一轮补全的结果；从未补全过时返回 nil。
+func (m *Manager) LastPosterBackfill() *PosterBackfillResult {
+	m.posterMu.Lock()
+	defer m.posterMu.Unlock()
+	if m.posterLastResult == nil {
+		return nil
+	}
+	result := *m.posterLastResult
+	return &result
+}
+
+// SetPosterBackfillEnabled 开关海报自动补全（启动延迟一次、扫描后、每轮增强
+// 结束后）。手动点“补全缺失海报”按钮不受此开关影响。测试与 e2e 关闭它以
+// 保证不访问外网。
+func (m *Manager) SetPosterBackfillEnabled(enabled bool) {
+	m.posterMu.Lock()
+	m.posterBackfillEnabled = enabled
+	m.posterMu.Unlock()
+}
+
+func (m *Manager) posterBackfillAutoEnabled() bool {
+	m.posterMu.Lock()
+	defer m.posterMu.Unlock()
+	return m.posterBackfillEnabled
+}
+
+// ScheduleStartupPosterBackfill 在服务启动约 delay 后自动补全一次缺失海报；
+// ctx 关闭则不再启动。开关关闭时不排期。
+func (m *Manager) ScheduleStartupPosterBackfill(delay time.Duration) {
+	if !m.posterBackfillAutoEnabled() {
+		return
+	}
+	m.goBackground("work-poster-backfill-startup", func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-m.baseCtx.Done():
+			return
+		case <-timer.C:
+		}
+		m.StartWorkPosterBackfill()
+	})
+}
+
 // StartWorkPosterBackfill caches posters of already-matched works that are
-// missing from the local cache. Only one backfill runs at a time.
-func (m *Manager) StartWorkPosterBackfill() {
+// missing from the local cache. Only one backfill runs at a time; started is
+// false when one is already running.
+func (m *Manager) StartWorkPosterBackfill() (started bool) {
 	m.posterMu.Lock()
 	if m.posterBackfilling {
 		m.posterMu.Unlock()
-		return
+		return false
 	}
 	m.posterBackfilling = true
 	m.posterMu.Unlock()
 	m.goBackground("work-poster-backfill", func() {
+		result := &PosterBackfillResult{}
 		defer func() {
+			result.FinishedAt = time.Now()
 			m.posterMu.Lock()
 			m.posterBackfilling = false
+			m.posterLastResult = result
 			m.posterMu.Unlock()
 		}()
 		posters, err := m.store.WorkPosterURLs(m.baseCtx)
@@ -166,7 +245,6 @@ func (m *Manager) StartWorkPosterBackfill() {
 			m.logger.Warn("list work posters", "error", err)
 			return
 		}
-		cached, failed := 0, 0
 		for _, item := range posters {
 			if m.baseCtx.Err() != nil {
 				return
@@ -180,13 +258,14 @@ func (m *Manager) StartWorkPosterBackfill() {
 			if err != nil {
 				if rateLimited := asRateLimited(err); rateLimited != nil {
 					// A 429 stops this backfill pass; the next pass retries.
+					result.RateLimited = true
 					m.logger.Warn("work poster backfill stopped by rate limiting", "workId", item.WorkID, "retryAfter", rateLimited.RetryAfter.String())
 					return
 				}
-				failed++
+				result.Failed++
 				m.logger.Warn("backfill work poster", "workId", item.WorkID, "error", err)
 			} else {
-				cached++
+				result.Cached++
 			}
 			select {
 			case <-m.baseCtx.Done():
@@ -194,8 +273,9 @@ func (m *Manager) StartWorkPosterBackfill() {
 			case <-time.After(m.bangumiInterval):
 			}
 		}
-		if cached > 0 || failed > 0 {
-			m.logger.Info("work poster backfill finished", "cached", cached, "failed", failed)
+		if result.Cached > 0 || result.Failed > 0 {
+			m.logger.Info("work poster backfill finished", "cached", result.Cached, "failed", result.Failed)
 		}
 	})
+	return true
 }

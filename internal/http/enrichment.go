@@ -45,6 +45,11 @@ type enrichmentPageData struct {
 	AlbumCount         int
 	TrackCount         int
 	WorkCount          int
+	// 批次 8 C1：作品海报缓存状态；PosterTotal<0 表示统计不可用（无管理器）。
+	PosterCached          int
+	PosterTotal           int
+	PosterBackfillRunning bool
+	PosterLast            *enrichment.PosterBackfillResult
 }
 
 // workReviewCtx 是候选卡片子模板需要的页面级上下文（CSRF、当前分组与过滤）。
@@ -395,13 +400,21 @@ func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []
 
 func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
-	data := enrichmentPageData{Chrome: a.chromeFor(r.Context(), session, "enrichment"), Notice: r.URL.Query().Get("notice")}
+	data := enrichmentPageData{Chrome: a.chromeFor(r.Context(), session, "enrichment"), Notice: r.URL.Query().Get("notice"), PosterTotal: -1}
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
 	albumCount, trackCount, workCount, seriesCount, _ := a.store.PendingWorkReviewCounts(r.Context())
 	data.AlbumCount = albumCount
 	data.TrackCount = trackCount
 	data.WorkCount = workCount
 	data.TotalPendingCount = albumCount + trackCount + workCount + seriesCount
+	// 批次 8 C1：海报缓存状态只读本地文件，不访问网络。
+	if a.enrichment != nil {
+		if cached, total, err := a.enrichment.WorkPosterCacheStats(r.Context()); err == nil {
+			data.PosterCached, data.PosterTotal = cached, total
+		}
+		data.PosterBackfillRunning = a.enrichment.PosterBackfillRunning()
+		data.PosterLast = a.enrichment.LastPosterBackfill()
+	}
 	// D44：艺术家关系候选的审核保留在 /admin/enrichment，不迁到作品关联审核页。
 	var reviewErr error
 	_, data.Artists, _, data.PendingArtistCount, reviewErr = a.enrichmentReviews(r.Context())
@@ -410,6 +423,23 @@ func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 		a.logger.Error("enrichment artist reviews", "error", reviewErr)
 	}
 	a.render(w, http.StatusOK, "enrichment-jobs.html", data)
+}
+
+// handleWorkPosterBackfill 手动触发一次缺失海报补全（批次 8 C1）。
+func (a *App) handleWorkPosterBackfill(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.enrichment == nil {
+		redirectWithNotice(w, r, "/admin/enrichment", "增强管理器不可用")
+		return
+	}
+	if a.enrichment.StartWorkPosterBackfill() {
+		redirectWithNotice(w, r, "/admin/enrichment", "已开始补全缺失的作品海报")
+	} else {
+		redirectWithNotice(w, r, "/admin/enrichment", "正在补全作品海报，无需重复启动")
+	}
 }
 
 func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
@@ -585,6 +615,122 @@ func enrichmentTargetLabel(run storage.EnrichmentRun) string {
 		return run.Scope
 	}
 	return run.Scope + " #" + strconv.FormatInt(run.TargetID, 10)
+}
+
+// 批次 8：增强任务的分阶段进度展示。阶段集合由范围推导；计数为 -1 的阶段
+// 显示“待统计”（曲目阶段可能有上万首，任务开始时预算太贵，见 phase4.go）。
+var enrichmentStageOrder = []struct {
+	key, label string
+}{
+	{"albums", "专辑"},
+	{"tracks", "曲目"},
+	{"works", "作品"},
+	{"series", "系列"},
+}
+
+func enrichmentRunStages(run storage.EnrichmentRun) []string {
+	switch run.Scope {
+	case "all":
+		return []string{"albums", "tracks", "works", "series"}
+	case "albums":
+		return []string{"albums"}
+	case "tracks":
+		return []string{"tracks"}
+	case "album":
+		return []string{"albums", "tracks", "works"}
+	case "works":
+		return []string{"works", "series"}
+	case "work":
+		return []string{"works"}
+	default:
+		return nil
+	}
+}
+
+func enrichmentStageCount(run storage.EnrichmentRun, stage string) int {
+	switch stage {
+	case "albums":
+		return run.StageAlbums
+	case "tracks":
+		return run.StageTracks
+	case "works":
+		return run.StageWorks
+	case "series":
+		// 系列阶段没有单独计数列：进入过该阶段即为 1 个处理单元。
+		if run.Stage == "series" {
+			return 1
+		}
+		return -1
+	default:
+		return -1
+	}
+}
+
+// enrichmentStageLine 返回类似“阶段：曲目（2/4）· 专辑 145 · 曲目 3,210 ·
+// 作品 待统计 · 系列 待统计”的一行说明；旧行（迁移前无阶段数据）返回空串。
+func enrichmentStageLine(run storage.EnrichmentRun) string {
+	stages := enrichmentRunStages(run)
+	if len(stages) == 0 {
+		return ""
+	}
+	hasData := false
+	for _, stage := range stages {
+		if enrichmentStageCount(run, stage) >= 0 {
+			hasData = true
+			break
+		}
+	}
+	if !hasData {
+		return ""
+	}
+	labels := map[string]string{}
+	for _, item := range enrichmentStageOrder {
+		labels[item.key] = item.label
+	}
+	var b strings.Builder
+	if run.Status == "running" && run.Stage != "" {
+		position := 0
+		for i, stage := range stages {
+			if stage == run.Stage {
+				position = i + 1
+				break
+			}
+		}
+		if position > 0 {
+			fmt.Fprintf(&b, "阶段：%s（%d/%d）· ", labels[run.Stage], position, len(stages))
+		}
+	} else {
+		b.WriteString("分阶段：")
+	}
+	for i, stage := range stages {
+		if i > 0 {
+			b.WriteString(" · ")
+		}
+		b.WriteString(labels[stage])
+		b.WriteString(" ")
+		if count := enrichmentStageCount(run, stage); count >= 0 {
+			b.WriteString(formatIntGroup(count))
+		} else {
+			b.WriteString("待统计")
+		}
+	}
+	return b.String()
+}
+
+// formatIntGroup 以千分位渲染计数（曲目阶段可能上万）。
+func formatIntGroup(n int) string {
+	digits := strconv.Itoa(n)
+	if len(digits) <= 3 {
+		return digits
+	}
+	var b strings.Builder
+	for i, c := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
 }
 
 func positivePathID(value string) (int64, error) {

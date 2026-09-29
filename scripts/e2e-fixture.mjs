@@ -100,7 +100,9 @@ export async function setup(options = {}) {
       MUSIC_SERVER_MEDIA_TOKEN: 'e2e-media-token-000000000000000000',
       MUSIC_SERVER_COOKIE_SECURE: 'false',
       MUSIC_SERVER_LOG_LEVEL: 'error',
-      MUSIC_SERVER_DEV_MODE: 'false'
+      MUSIC_SERVER_DEV_MODE: 'false',
+      // 批次 8：e2e 实例关闭海报自动补全，保证任何测试都不会访问外网。
+      MUSIC_SERVER_WORK_POSTER_BACKFILL: 'false'
     }
   });
   fs.closeSync(logFd);

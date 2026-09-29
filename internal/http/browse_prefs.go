@@ -24,6 +24,43 @@ var librarySortOptions = map[string][]string{
 
 func sortCookieName(page string) string { return "032_sort_" + page }
 
+// libraryPageSizes 是各列表页可选的每页数量；批次 8 只有作品页开放。
+var libraryPageSizes = map[string][]int{
+	"works": {24, 36, 60, 120},
+}
+
+const defaultPageSize = 36
+
+func pageSizeCookieName(page string) string { return "032_pagesize_" + page }
+
+// rememberPageSize 与 rememberSort 同机制：URL 带合法的 size 时记入 cookie；
+// URL 没有 size 时从 cookie 恢复并改写进请求 URL，分页/筛选链接由此自动
+// 带上 size；非法值回落默认值且不覆盖已记住的选择。
+func rememberPageSize(w http.ResponseWriter, r *http.Request, page string) int {
+	allowed := libraryPageSizes[page]
+	name := pageSizeCookieName(page)
+	q := r.URL.Query()
+	if q.Has("size") {
+		if value, err := strconv.Atoi(q.Get("size")); err == nil && slices.Contains(allowed, value) {
+			http.SetCookie(w, &http.Cookie{Name: name, Value: strconv.Itoa(value), Path: "/admin", MaxAge: browsePrefMaxAge, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+			return value
+		}
+		// 非法 size：回落默认并从 URL 移除，避免分页链接继续携带坏值。
+		q.Del("size")
+		r.URL.RawQuery = q.Encode()
+		return defaultPageSize
+	}
+	cookie, err := r.Cookie(name)
+	if err == nil {
+		if value, convErr := strconv.Atoi(cookie.Value); convErr == nil && slices.Contains(allowed, value) {
+			q.Set("size", strconv.Itoa(value))
+			r.URL.RawQuery = q.Encode()
+			return value
+		}
+	}
+	return defaultPageSize
+}
+
 // rememberSort persists an explicitly chosen sort order and restores the
 // remembered one when the request carries no sort parameter. An explicit empty
 // "sort=" resets to the default order and forgets the preference. The request

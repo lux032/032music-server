@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
@@ -25,6 +27,37 @@ type phase4Endpoints struct{ Bangumi, BangumiAPI string }
 
 func defaultPhase4Endpoints() phase4Endpoints {
 	return phase4Endpoints{Bangumi: "https://api.bgm.tv/v0/search/subjects", BangumiAPI: "https://api.bgm.tv"}
+}
+
+// 批次 8：分阶段进度。stage 名字与 enrichment_runs.stage / 页面展示一致。
+const (
+	phase4StageAlbums = "albums"
+	phase4StageTracks = "tracks"
+	phase4StageWorks  = "works"
+	phase4StageSeries = "series"
+)
+
+// phase4Stage 是一轮增强中的一个阶段：名字用于持久化进度，collect 在进入该
+// 阶段时才拉取条目（曲目阶段可能有上万首，不能在任务开始时全部预算）。
+type phase4Stage struct {
+	name    string
+	collect func() ([]phase4Item, error)
+}
+
+// phase4StageLabel 是阶段的中文名，用于“正在统计 X 阶段…”提示。
+func phase4StageLabel(stage string) string {
+	switch stage {
+	case phase4StageAlbums:
+		return "专辑"
+	case phase4StageTracks:
+		return "曲目"
+	case phase4StageWorks:
+		return "作品"
+	case phase4StageSeries:
+		return "系列"
+	default:
+		return stage
+	}
 }
 
 // maxConsecutiveFailures aborts a run once a remote source is clearly down,
@@ -167,6 +200,11 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 		m.phaseRunID = 0
 		m.phaseCancel = nil
 		m.phaseMu.Unlock()
+		// 批次 8：每轮增强结束后（无论完成/失败/停止）补一次缺失海报；开关
+		// 关闭（测试/e2e）时不触发。
+		if m.posterBackfillAutoEnabled() {
+			m.StartWorkPosterBackfill()
+		}
 	}()
 	finishCancelled := func() {
 		if m.baseCtx.Err() != nil {
@@ -175,6 +213,14 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "cancelled", "已手动停止")
 		}
 	}
+	// 批次 8 追加：第一阶段的统计（phase4Items 里的专辑/作品查询）也可能
+	// 耗时，先把“当前”置为统计提示，避免任务卡停在 0/0 看起来像卡住。
+	firstStageName := phase4StageAlbums
+	if request.Scope == "work" {
+		firstStageName = phase4StageWorks
+	}
+	counts := storage.EnrichmentRunUpdate{Stage: firstStageName, Current: "正在统计" + phase4StageLabel(firstStageName) + "阶段…", StageAlbums: -1, StageTracks: -1, StageWorks: -1}
+	_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 	items, err := m.phase4Items(ctx, request)
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		finishCancelled()
@@ -184,7 +230,7 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 		_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", err.Error())
 		return
 	}
-	counts := storage.EnrichmentRunUpdate{Total: len(items)}
+	counts.Total = len(items)
 	_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 	consecutiveFailures := 0
 	bangumiEnabled := false
@@ -227,12 +273,14 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	// Stages are appended only after the previous stage is fully processed, so
 	// a growing slice is safe. Collecting inside the same loop used to skip the
 	// items just appended (the index had already moved past them).
-	stages := []func() ([]phase4Item, error){func() ([]phase4Item, error) { return items, nil }}
+	// 批次 8：第一阶段按范围命名（scope=work 时 items 是作品，其余是专辑；
+	// tracks/works 范围 items 恒为空）。
+	stages := []phase4Stage{{name: firstStageName, collect: func() ([]phase4Item, error) { return items, nil }}}
 	if wantTracks {
-		stages = append(stages, next)
+		stages = append(stages, phase4Stage{name: phase4StageTracks, collect: next})
 	}
 	if wantWorks {
-		stages = append(stages, func() ([]phase4Item, error) {
+		stages = append(stages, phase4Stage{name: phase4StageWorks, collect: func() ([]phase4Item, error) {
 			if !bangumiEnabled {
 				return nil, nil
 			}
@@ -248,7 +296,7 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 				out = append(out, phase4Item{work: work})
 			}
 			return out, nil
-		})
+		}})
 	}
 	var queue []phase4Item
 	for _, stage := range stages {
@@ -256,13 +304,30 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 			finishCancelled()
 			return
 		}
-		batch, e := stage()
+		// 批次 8 追加：统计目标列表可能耗时（用户实测曲目阶段 15303 首将近
+		// 2 分钟），先持久化“正在统计 X 阶段…”，让任务卡看得出没有卡住。
+		counts.Stage = stage.name
+		counts.Current = "正在统计" + phase4StageLabel(stage.name) + "阶段…"
+		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+		if m.testStageCollectHook != nil {
+			m.testStageCollectHook(stage.name)
+		}
+		batch, e := stage.collect()
 		if e != nil {
 			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", e.Error())
 			return
 		}
+		counts.Current = ""
 		queue = append(queue, batch...)
 		counts.Total = len(queue)
+		switch stage.name {
+		case phase4StageAlbums:
+			counts.StageAlbums = len(batch)
+		case phase4StageTracks:
+			counts.StageTracks = len(batch)
+		case phase4StageWorks:
+			counts.StageWorks = len(batch)
+		}
 		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 		for _, item := range queue[len(queue)-len(batch):] {
 			var outcome string
@@ -329,6 +394,7 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	}
 	if wantSeries && bangumiEnabled {
 		counts.Current = "作品系列归组"
+		counts.Stage = phase4StageSeries
 		_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 		_, seriesErr := m.enrichBangumiSeries(ctx, runID, request.Force)
 		if ctx.Err() != nil {
@@ -397,12 +463,38 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 		reader = strings.NewReader(string(raw))
 		method = http.MethodPost
 	}
+	// 批次 8：瞬时传输错误（EOF/连接重置/超时）自动重试一次。限流错误不走
+	// 这里——429 仍然立即停止本轮。重试间隔用 Bangumi 请求间隔，并通过
+	// m.sleep 让测试可以观察到等待而不真的睡眠。
+	attempt := func() (int, error) {
+		return m.cachedJSONAttempt(ctx, source, key, endpoint, setting, method, reader, target)
+	}
+	status, err := attempt()
+	if err != nil && isTransientTransportError(err) && ctx.Err() == nil {
+		m.logger.Info("retrying request after transient transport error", "source", source, "endpoint", endpoint, "error", err)
+		if sleepErr := m.sleep(ctx, m.bangumiInterval); sleepErr != nil {
+			return status, err
+		}
+		status, err = attempt()
+	}
+	return status, err
+}
+
+func (m *Manager) cachedJSONAttempt(ctx context.Context, source, key, endpoint string, setting storage.MetadataSourceSetting, method string, bodyReader io.Reader, target any) (int, error) {
+	var reader = bodyReader
+	if bodyReader != nil {
+		if seeker, ok := bodyReader.(io.Seeker); ok {
+			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+				return 0, err
+			}
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("Accept", "application/json")
-	if body != nil {
+	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("User-Agent", userAgent(setting))
@@ -461,4 +553,17 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 		return resp.StatusCode, fmt.Errorf("%s returned HTTP %d", source, resp.StatusCode)
 	}
 	return resp.StatusCode, nil
+}
+
+// isTransientTransportError reports whether err is a transport-level flap that
+// is worth one immediate retry: truncated response bodies (unexpected EOF),
+// connections reset/aborted by the peer, and timeouts. Context cancellation is
+// never transient. Rate limiting and HTTP error statuses never reach this
+// classifier, so they are never retried.
+func isTransientTransportError(err error) bool {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

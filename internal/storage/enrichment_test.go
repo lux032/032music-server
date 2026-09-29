@@ -140,7 +140,7 @@ func TestPhase4MigrationSourcesAndStrictTables(t *testing.T) {
 }
 
 func TestEnrichmentRunJSONTagsAreDistinct(t *testing.T) {
-	value := EnrichmentRun{ID: 1, Status: "running", Scope: "album", Current: "current", ErrorMessage: "error", TargetID: 2, Force: true, Total: 10, Processed: 9, Succeeded: 8, Skipped: 7, Review: 6, Failed: 5, CreatedAt: "created", StartedAt: "started", UpdatedAt: "updated", FinishedAt: "finished"}
+	value := EnrichmentRun{ID: 1, Status: "running", Scope: "album", Current: "current", ErrorMessage: "error", TargetID: 2, Force: true, Total: 10, Processed: 9, Succeeded: 8, Skipped: 7, Review: 6, Failed: 5, Stage: "tracks", StageAlbums: 11, StageTracks: 12, StageWorks: 13, CreatedAt: "created", StartedAt: "started", UpdatedAt: "updated", FinishedAt: "finished"}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestEnrichmentRunJSONTagsAreDistinct(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"id": float64(1), "status": "running", "scope": "album", "current": "current", "errorMessage": "error", "targetId": float64(2), "force": true, "total": float64(10), "processed": float64(9), "succeeded": float64(8), "skipped": float64(7), "review": float64(6), "failed": float64(5), "createdAt": "created", "startedAt": "started", "updatedAt": "updated", "finishedAt": "finished"}
+	want := map[string]any{"id": float64(1), "status": "running", "scope": "album", "current": "current", "errorMessage": "error", "targetId": float64(2), "force": true, "total": float64(10), "processed": float64(9), "succeeded": float64(8), "skipped": float64(7), "review": float64(6), "failed": float64(5), "stage": "tracks", "stageAlbums": float64(11), "stageTracks": float64(12), "stageWorks": float64(13), "createdAt": "created", "startedAt": "started", "updatedAt": "updated", "finishedAt": "finished"}
 	if len(got) != len(want) {
 		t.Fatalf("JSON keys=%v raw=%s", got, raw)
 	}

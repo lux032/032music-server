@@ -12,35 +12,28 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
-// M-new-1：分组头海报必须用 {{with .Poster}} 渲染——{{if .Poster}} 不会
-// 重绑定 dot，src 会拿到整个 group 结构体（被 URL 转义后输出）。
+// 批次 8 B：系列建议分组头不再渲染海报（Bangumi 外链被 CSP 拦截），改为
+// 本地类型胶囊。取代原 M-new-1 的海报断言。
 func TestSeriesSuggestionGroupHeaderPosterURL(t *testing.T) {
 	app, _, _ := credentialTestApp(t)
 	data := workReviewPageData{ActiveTab: "series"}
 	data.SeriesGroups = []seriesSuggestionGroup{{
-		Work:   storage.Work{ID: 7, Title: "海报作品", Type: "anime"},
-		Poster: "/admin/works/7/poster?v=abc",
-		Total:  2,
+		Work:  storage.Work{ID: 7, Title: "海报作品", Type: "anime"},
+		Total: 2,
 	}}
 	var buf bytes.Buffer
 	if err := app.templates.ExecuteTemplate(&buf, "work-review.html", data); err != nil {
 		t.Fatal(err)
 	}
 	body := buf.String()
-	if !strings.Contains(body, `src="/admin/works/7/poster?v=abc"`) {
-		t.Fatalf("group header poster src missing or wrong")
+	if !strings.Contains(body, `work-type-chip`) || !strings.Contains(body, "动画") {
+		t.Fatalf("group header type chip missing")
+	}
+	if strings.Contains(body, "review-poster-thumb") || strings.Contains(body, `<img class="series-member-poster`) {
+		t.Fatalf("series tab must not render poster images anymore")
 	}
 	if strings.Contains(body, "ZgotmplZ") {
 		t.Fatal("template rendered ZgotmplZ")
-	}
-	// 无海报时回退占位块。
-	data.SeriesGroups[0].Poster = ""
-	buf.Reset()
-	if err := app.templates.ExecuteTemplate(&buf, "work-review.html", data); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(buf.String(), `review-poster-thumb cover-placeholder`) {
-		t.Fatal("placeholder missing when poster is empty")
 	}
 }
 

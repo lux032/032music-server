@@ -63,7 +63,10 @@ func run() error {
 
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
-	enrichmentManager.StartWorkPosterBackfill()
+	enrichmentManager.SetPosterBackfillEnabled(cfg.WorkPosterBackfill)
+	// 批次 8：启动约 30 秒后自动补一次缺失的作品海报（替代原来的立即补全，
+	// 避免与启动扫描争抢）；开关关闭时不排期。
+	enrichmentManager.ScheduleStartupPosterBackfill(30 * time.Second)
 
 	// NewApp applies MUSIC_SERVER_RESET_CREDENTIALS and loads admin-page
 	// credential overrides, so the per-boot media token warning is only

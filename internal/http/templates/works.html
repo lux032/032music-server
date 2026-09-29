@@ -17,6 +17,7 @@
         <form class="instant-search" method="get">
           <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
           <input name="q" value="{{.Query}}" placeholder="原文、译名、假名或罗马音…">
+          {{if ne .PageSize 36}}<input type="hidden" name="size" value="{{.PageSize}}">{{end}}
         </form>
         <form method="post" action="/admin/works/refresh" style="margin:0;">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
@@ -44,15 +45,21 @@
         <option value="year" {{if eq .Sort "year"}}selected{{end}}>年份</option>
         <option value="updated" {{if eq .Sort "updated"}}selected{{end}}>最近更新</option>
       </select></label>
+      <label><span>每页</span><select name="size">
+        <option value="24" {{if eq .PageSize 24}}selected{{end}}>24 个</option>
+        <option value="36" {{if eq .PageSize 36}}selected{{end}}>36 个</option>
+        <option value="60" {{if eq .PageSize 60}}selected{{end}}>60 个</option>
+        <option value="120" {{if eq .PageSize 120}}selected{{end}}>120 个</option>
+      </select></label>
       <button class="apply-focus">应用</button>
       <a class="clear-focus" href="/admin/works">清除</a>
     </form>
 
     <nav class="index-bar works-index-bar" aria-label="首字母索引">
       {{$current := .Index}}
-      <a class="{{if eq $current ""}}active{{end}}" href="/admin/works">全部</a>
-      {{range $v := (indexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}">{{$v}}</a>{{end}}
-      <button type="button" class="kana-toggle" aria-expanded="{{.KanaIndex}}">かな</button><span class="kana-links" {{if not .KanaIndex}}hidden{{end}}>{{range $v := (kanaIndexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}">{{$v}}</a>{{end}}</span>
+      <a class="{{if eq $current ""}}active{{end}}" href="/admin/works{{if ne .PageSize 36}}?size={{.PageSize}}{{end}}">全部</a>
+      {{range $v := (indexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}{{if ne $.PageSize 36}}&size={{$.PageSize}}{{end}}">{{$v}}</a>{{end}}
+      <button type="button" class="kana-toggle" aria-expanded="{{.KanaIndex}}">かな</button><span class="kana-links" {{if not .KanaIndex}}hidden{{end}}>{{range $v := (kanaIndexValues)}}<a class="{{if eq $current $v}}active{{end}}" href="/admin/works?index={{$v}}{{if ne $.PageSize 36}}&size={{$.PageSize}}{{end}}">{{$v}}</a>{{end}}</span>
     </nav>
 
     <section class="works-grid">
@@ -61,7 +68,7 @@
       <details class="works-series-row">
         <summary class="works-series-bar">
           <div class="works-series-stack">
-            {{with workPoster .Representative}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg></div>{{end}}
+            {{with workPoster .Representative 360}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg></div>{{end}}
           </div>
           <div class="works-series-info">
             <div class="title-line">
@@ -92,7 +99,7 @@
           <div class="works-series-members-grid">
             {{range .Members}}
             <a href="/admin/works/{{.Work.ID}}" class="works-member-card">
-              {{with workPoster .Work}}<img class="works-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="works-member-poster cover-placeholder">作</div>{{end}}
+              {{with workPoster .Work 360}}<img class="works-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="works-member-poster cover-placeholder">作</div>{{end}}
               <div>
                 <strong>{{.Work.Title}}</strong>
                 {{if .Work.TranslatedTitle}}<span>{{.Work.TranslatedTitle}}</span>{{end}}
@@ -107,7 +114,7 @@
       {{else}}
       <a class="work-card" href="/admin/works/{{.Work.ID}}">
         <div class="work-poster">
-          {{with workPoster .Work}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
+          {{with workPoster .Work 360}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
           <b>{{workTypeLabel .Work.Type}}</b>
         </div>
         <h2>{{.Work.Title}}</h2>

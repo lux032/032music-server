@@ -60,7 +60,8 @@
       <article class="review-group-card">
         <header class="review-group-head">
           <div class="review-subject-summary">
-            {{with .Poster}}<img class="review-poster-thumb fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="review-poster-thumb cover-placeholder">作</div>{{end}}
+            {{/* 批次 8：审核页不再加载 Bangumi 外链海报（CSP img-src 'self' 拦截后显示裂图），改为本地类型胶囊。 */}}
+            <span class="work-type-chip">{{workTypeLabel .Work.Type}}</span>
             <div class="review-subject-meta">
               <h2><a href="/admin/works/{{.Work.ID}}">{{.Work.Title}}</a></h2>
               <p>{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}} · {{.Total}} 条建议涉及本作品</p>
@@ -163,7 +164,7 @@
       <article class="review-group-card">
         <header class="review-group-head">
           <div class="review-subject-summary">
-            {{with workPoster $item.Work}}<img class="review-poster-thumb fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="review-poster-thumb cover-placeholder">作</div>{{end}}
+            <span class="work-type-chip">{{workTypeLabel $item.Work.Type}}</span>
             <div class="review-subject-meta">
               <h2><a href="/admin/works/{{$item.Work.ID}}">{{$item.Work.Title}}</a></h2>
               <p>本地作品 #{{$item.Work.ID}} · 当前类型：{{workTypeLabel $item.Work.Type}} · 关联 {{$item.Work.TrackCount}} 首曲目 · 来源：{{workSourceLabel $item.Work.Origin}}</p>
@@ -176,7 +177,7 @@
           <div class="work-align-candidates">
             {{range $item.Candidates}}
             <div class="work-align-option">
-              {{if .PosterURL}}<img class="work-align-poster fade-img" src="{{thumb .PosterURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="work-align-poster cover-placeholder">作</div>{{end}}
+              <span class="work-type-chip">{{workTypeLabel .Type}}</span>
               <div class="work-align-info">
                 <strong>{{.Title}}</strong>
                 {{if .TranslatedTitle}}<span class="cn-title">{{.TranslatedTitle}}</span>{{end}}
@@ -235,7 +236,6 @@
       {{range .Cand.Tieups}}
       <div class="candidate-tieup-row">
         <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked title="勾选以接受">
-        {{if .PosterURL}}<img class="tieup-mini-poster fade-img" src="{{thumb .PosterURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="tieup-mini-poster cover-placeholder">作</div>{{end}}
         <div class="tieup-work-info">
           <strong>{{.Title}}</strong>
           <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
@@ -290,7 +290,6 @@
       {{range .Cand.Tieups}}
       <div class="candidate-tieup-row">
         <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked title="选择关联此作品">
-        {{if .PosterURL}}<img class="tieup-mini-poster fade-img" src="{{thumb .PosterURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="tieup-mini-poster cover-placeholder">作</div>{{end}}
         <div class="tieup-work-info">
           <strong>{{.Title}}</strong>
           <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
@@ -333,7 +332,7 @@
 <div class="review-candidate-body series-suggestion-card">
   <div class="series-suggestion-pair">
     <a href="/admin/works/{{.WorkA.ID}}" class="series-suggestion-work">
-      {{with .PosterA}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+      <span class="work-type-chip">{{workTypeLabel .WorkA.Type}}</span>
       <div class="series-member-meta">
         <strong title="{{.WorkA.Title}}">{{.WorkA.Title}}</strong>
         <small>{{workTypeLabel .WorkA.Type}}{{if .WorkA.Year}} · {{.WorkA.Year}}{{end}}{{if .WorkA.TranslatedTitle}} · {{.WorkA.TranslatedTitle}}{{end}}</small>
@@ -341,7 +340,7 @@
     </a>
     <span class="series-relation-pill" title="{{.RelationSentence}}">{{.RelationLabel}}</span>
     <a href="/admin/works/{{.WorkB.ID}}" class="series-suggestion-work">
-      {{with .PosterB}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+      <span class="work-type-chip">{{workTypeLabel .WorkB.Type}}</span>
       <div class="series-member-meta">
         <strong title="{{.WorkB.Title}}">{{.WorkB.Title}}</strong>
         <small>{{workTypeLabel .WorkB.Type}}{{if .WorkB.Year}} · {{.WorkB.Year}}{{end}}{{if .WorkB.TranslatedTitle}} · {{.WorkB.TranslatedTitle}}{{end}}</small>

@@ -1607,13 +1607,22 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
   object-fit: cover;
   font-size: 0.72rem;
 }
-.review-poster-thumb {
-  width: 44px;
-  height: 62px;
+/* 批次 8：审核页候选作品不再加载 Bangumi 外链海报（CSP img-src 'self' 会
+   拦截），用本地类型胶囊代替，保持原有视觉锚点。 */
+.work-type-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
+  min-width: 40px;
+  min-height: 56px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
-  object-fit: cover;
-  font-size: 0.66rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  white-space: nowrap;
 }
 .review-subject-meta {
   min-width: 0;
@@ -1728,20 +1737,13 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 }
 .candidate-tieup-row {
   display: grid;
-  grid-template-columns: 22px 36px minmax(0, 1fr) auto auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 9px 12px;
   background: var(--bg-soft);
-}
-.tieup-mini-poster {
-  width: 36px;
-  height: 50px;
-  border-radius: 5px;
-  object-fit: cover;
-  font-size: 0.55rem;
 }
 .tieup-work-info {
   min-width: 0;
@@ -1812,7 +1814,7 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 }
 .work-align-option {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -1822,13 +1824,6 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 .work-align-option.recommended {
   border-color: var(--accent-line);
   background: rgba(47, 107, 255, 0.04);
-}
-.work-align-poster {
-  width: 58px;
-  height: 84px;
-  border-radius: var(--radius-sm);
-  object-fit: cover;
-  font-size: 0.65rem;
 }
 .work-align-info {
   display: flex;
@@ -2693,7 +2688,7 @@ details.works-series-row[open] .series-toggle-btn .icon { transform: rotate(180d
 }
 .series-suggestion-work {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
