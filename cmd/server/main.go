@@ -35,6 +35,9 @@ func run() error {
 
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
+	for _, warning := range cfg.Warnings {
+		logger.Warn("config", "warning", warning)
+	}
 
 	if cfg.DevMode {
 		logger.Warn("MUSIC_SERVER_DEV_MODE is enabled: weak admin passwords are allowed and the media token may fall back to the API token; do not use in production")

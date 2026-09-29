@@ -123,24 +123,38 @@ func TestCachedJSONDoesNotRetryRateLimit(t *testing.T) {
 	}
 }
 
+// eofBody 在 Read 时立即返回 io.ErrUnexpectedEOF，模拟被截断的响应体。
+type eofBody struct{}
+
+func (eofBody) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (eofBody) Close() error             { return nil }
+
+// L4：ctx 在传输途中被取消且错误属于瞬时类型（响应体读到 EOF）时也不重试。
+// cachedJSONAttempt 的 body 读取分支不做 ctx 转换，EOF 会原样传到重试判定，
+// 全靠 cachedJSON 的 ctx.Err()==nil 守卫拦截（变异验证：删掉守卫本测试失败）。
 func TestCachedJSONDoesNotRetryCancelledContext(t *testing.T) {
 	store := batch8Store(t)
 	manager := batch8Manager(t, store)
-	var calls atomic.Int32
-	server := truncatedJSONServer(t, &calls)
-
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	var calls atomic.Int32
+	manager.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		cancel() // 模拟 ctx 在响应体读取前被取消
+		return &http.Response{Status: "200 OK", StatusCode: http.StatusOK, Header: make(http.Header), Body: eofBody{}, Request: r}, nil
+	})}
+
 	var target struct {
 		OK bool `json:"ok"`
 	}
-	setting := storage.MetadataSourceSetting{Source: "bangumi", Enabled: true, CacheDays: 30}
-	_, err := manager.cachedJSON(ctx, "bangumi", "cancel-key", server.URL+"/subjects", setting, false, nil, &target)
+	// 用没有限流等待的来源（lastfm）：bangumi/musicbrainz 的 waitXRateLimit
+	// 会先拦下重试，那样 ctx 守卫就起不到判定作用，变异验证会漏报。
+	setting := storage.MetadataSourceSetting{Source: "lastfm", Enabled: true, CacheDays: 30}
+	_, err := manager.cachedJSON(ctx, "lastfm", "cancel-key", "http://lastfm.local/subjects", setting, false, nil, &target)
 	if err == nil {
 		t.Fatal("cancelled context must fail")
 	}
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("requests=%d, want 0 (cancelled before sending)", got)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("requests=%d, want 1 (cancelled context never retries)", got)
 	}
 }
 
@@ -256,20 +270,24 @@ func TestWorkPosterBackfillStatsAndResult(t *testing.T) {
 		t.Fatalf("stats cached=%d total=%d err=%v, want 1/2", cached, total, err)
 	}
 
+	// L4：用 hook 把补全 goroutine 阻塞住，消除“第二次启动”的竞态。
+	blocked := make(chan struct{})
+	entered := make(chan struct{})
+	manager.testPosterBackfillHook = func() { close(entered); <-blocked }
 	if !manager.StartWorkPosterBackfill() {
 		t.Fatal("first backfill must start")
 	}
+	<-entered
 	if manager.StartWorkPosterBackfill() {
 		t.Fatal("second backfill must report already running")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for manager.LastPosterBackfill() == nil && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	if !manager.PosterBackfillRunning() {
+		t.Fatal("backfill must be running while the hook blocks")
 	}
+	close(blocked)
+	manager.testPosterBackfillHook = nil
+	waitBackfillResult(t, manager, nil)
 	result := manager.LastPosterBackfill()
-	if result == nil {
-		t.Fatal("backfill result never recorded")
-	}
 	// 已缓存的不重复下载（不计入成功）；失败的计入失败。
 	if result.Cached != 0 || result.Failed != 1 || result.RateLimited {
 		t.Fatalf("result=%+v, want cached=0 failed=1 rateLimited=false", result)
@@ -278,6 +296,128 @@ func TestWorkPosterBackfillStatsAndResult(t *testing.T) {
 		t.Fatal("backfill must be finished")
 	}
 	_ = cachedWork
+}
+
+// waitBackfillResult 等待一轮补全结束（FinishedAt 晚于 prev；注意
+// LastPosterBackfill 返回的是副本指针，不能用指针比较）。
+func waitBackfillResult(t *testing.T, manager *Manager, prev *PosterBackfillResult) *PosterBackfillResult {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if result := manager.LastPosterBackfill(); result != nil && (prev == nil || result.FinishedAt.After(prev.FinishedAt)) {
+			return result
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("backfill result never recorded")
+	return nil
+}
+
+// 批次 8.5 L3：自动补全跳过 6 小时内失败的 URL；手动按钮强制重试。
+func TestWorkPosterBackfillSkipsRecentlyFailed(t *testing.T) {
+	store := batch8Store(t)
+	ctx := context.Background()
+	if _, err := store.CreateWork(ctx, storage.WorkInput{Title: "Failing", Type: "anime", PosterURL: "http://127.0.0.1/poster.jpg"}); err != nil {
+		t.Fatal(err)
+	}
+	manager := batch8Manager(t, store)
+
+	// 第一轮：失败并记录。
+	manager.StartWorkPosterBackfill()
+	first := waitBackfillResult(t, manager, nil)
+	if first.Failed != 1 {
+		t.Fatalf("first=%+v, want failed=1", first)
+	}
+	// 第二轮（自动）：TTL 内跳过，不再失败。
+	manager.StartWorkPosterBackfill()
+	second := waitBackfillResult(t, manager, first)
+	if second.Failed != 0 || second.Cached != 0 {
+		t.Fatalf("second=%+v, want failed=0 (skipped by failure memory)", second)
+	}
+	// 手动按钮：忽略失败记录，强制重试。
+	manager.RetryWorkPosterBackfill()
+	third := waitBackfillResult(t, manager, second)
+	if third.Failed != 1 {
+		t.Fatalf("third=%+v, want failed=1 (manual retry)", third)
+	}
+	// TTL 过期后自动补全重新尝试。
+	manager.posterMu.Lock()
+	manager.posterFailed["http://127.0.0.1/poster.jpg"] = time.Now().Add(-7 * time.Hour)
+	manager.posterMu.Unlock()
+	manager.StartWorkPosterBackfill()
+	fourth := waitBackfillResult(t, manager, third)
+	if fourth.Failed != 1 {
+		t.Fatalf("fourth=%+v, want failed=1 (TTL expired)", fourth)
+	}
+}
+
+// 批次 8.5 L1：scope=tracks 时没有空的专辑阶段，也不会显示“正在统计专辑
+// 阶段…”。
+func TestPhase4TracksScopeSkipsEmptyAlbumStage(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	})
+	manager, store, _, _ := phase4TestManager(t, handler)
+	ctx := context.Background()
+
+	run, err := store.CreateEnrichmentRun(ctx, "tracks", 0, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []string
+	manager.testStageCollectHook = func(stage string) {
+		current, readErr := store.EnrichmentRun(ctx, run.ID)
+		if readErr != nil {
+			t.Errorf("read run in hook: %v", readErr)
+			return
+		}
+		if strings.Contains(current.Current, "专辑") {
+			t.Errorf("tracks scope must never mention the album stage: %q", current.Current)
+		}
+		observed = append(observed, stage)
+	}
+	manager.executePhase4Run(ctx, run.ID, RunRequest{Scope: "tracks"})
+
+	finished, err := store.EnrichmentRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != "completed" {
+		t.Fatalf("run=%+v", finished)
+	}
+	if len(observed) != 1 || observed[0] != phase4StageTracks {
+		t.Fatalf("stages=%v, want [tracks] only", observed)
+	}
+	if finished.StageAlbums != -1 {
+		t.Fatalf("StageAlbums=%d, want -1 (album stage not part of this run)", finished.StageAlbums)
+	}
+	if finished.StageTracks != 1 {
+		t.Fatalf("StageTracks=%d, want 1 (fixture track)", finished.StageTracks)
+	}
+}
+
+// 批次 8.5 L2：服务关闭（baseCtx 取消）后，增强轮结束不再触发海报补全。
+func TestPhase4RunEndBackfillSkippedWhenShuttingDown(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	})
+	manager, store, _, _ := phase4TestManager(t, handler)
+	manager.SetPosterBackfillEnabled(true)
+	run, err := store.CreateEnrichmentRun(context.Background(), "albums", 0, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 取消 baseCtx，再跑（会立刻走 cancelled 分支结束）。
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	manager.baseCtx = cancelled
+	manager.executePhase4Run(cancelled, run.ID, RunRequest{Scope: "albums"})
+	time.Sleep(200 * time.Millisecond)
+	if manager.LastPosterBackfill() != nil {
+		t.Fatal("poster backfill must not run after shutdown")
+	}
 }
 
 // 批次 8 C2：增强轮结束后按开关触发海报补全。
@@ -294,13 +434,7 @@ func TestPhase4RunEndTriggersPosterBackfillWhenEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.executePhase4Run(ctx, run.ID, RunRequest{Scope: "all"})
-	deadline := time.Now().Add(5 * time.Second)
-	for manager.LastPosterBackfill() == nil && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if manager.LastPosterBackfill() == nil {
-		t.Fatal("poster backfill was not triggered after the run")
-	}
+	waitBackfillResult(t, manager, nil)
 }
 
 func TestPhase4RunEndDoesNotTriggerPosterBackfillWhenDisabled(t *testing.T) {

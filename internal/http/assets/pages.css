@@ -862,6 +862,10 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .operation-status.rolled_back { border-color: var(--line-strong); color: var(--muted); background: var(--bg-soft); }
 
 .enrichment-launch { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
+/* 批次 8.5：标题“元数据自动增强”在 1440 宽下被右侧表单挤成两行——允许
+   表单换到下一行，并禁止标题折行。 */
+.enrichment-main .browser-header { flex-wrap: wrap; row-gap: 14px; }
+.enrichment-main .browser-header h1 { white-space: nowrap; }
 .enrichment-launch label { align-self: center; }
 .enrichment-runs { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
 .enrichment-runs > article { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 18px; background: var(--surface); }

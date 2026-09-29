@@ -48,6 +48,8 @@ type Config struct {
 	// and after each enrichment run. Tests/e2e disable it so nothing reaches
 	// the network.
 	WorkPosterBackfill bool
+	// Warnings 是启动时应告警但不致命的配置问题（如无法识别的开关取值）。
+	Warnings []string
 }
 
 // ParseTrustedProxies parses MUSIC_SERVER_TRUSTED_PROXIES. A bare IP is
@@ -104,6 +106,9 @@ func Load() (Config, error) {
 		}
 	}
 
+	// L5：只有明确的关闭值才关闭；无法识别的值按开启处理并告警。
+	posterBackfill, posterBackfillWarning := posterBackfillFromEnv(os.Getenv("MUSIC_SERVER_WORK_POSTER_BACKFILL"))
+
 	cfg := Config{
 		ListenAddress:       envOrDefault("MUSIC_SERVER_ADDRESS", ":4533"),
 		DataDirectory:       dataDirectory,
@@ -123,10 +128,13 @@ func Load() (Config, error) {
 		LogLevel:            strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
 		DevMode:             devMode,
 		MediaTokenGenerated: mediaTokenGenerated,
-		// 默认开启；显式设为 0/false/off 才关闭。
-		WorkPosterBackfill: os.Getenv("MUSIC_SERVER_WORK_POSTER_BACKFILL") == "" || parseBool(os.Getenv("MUSIC_SERVER_WORK_POSTER_BACKFILL")),
-		ResetCredentials:   strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
-		TrustedProxies:     strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
+		ResetCredentials:    strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
+		TrustedProxies:      strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
+	}
+
+	cfg.WorkPosterBackfill = posterBackfill
+	if posterBackfillWarning != "" {
+		cfg.Warnings = append(cfg.Warnings, posterBackfillWarning)
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -214,6 +222,20 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// posterBackfillFromEnv 解析 MUSIC_SERVER_WORK_POSTER_BACKFILL（L5）：空值与
+// 明确的开启值开启；只有明确的关闭值（false/0/off/no，不区分大小写）才关闭；
+// 其他无法识别的值按开启处理并返回一条 warning。
+func posterBackfillFromEnv(value string) (enabled bool, warning string) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "1", "true", "yes", "on":
+		return true, ""
+	case "0", "false", "no", "off":
+		return false, ""
+	default:
+		return true, fmt.Sprintf("unrecognized MUSIC_SERVER_WORK_POSTER_BACKFILL value %q; work poster backfill stays enabled", value)
+	}
 }
 
 func parseBool(value string) bool {

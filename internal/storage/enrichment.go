@@ -43,7 +43,15 @@ type EnrichmentRunUpdate struct {
 	Total, Processed, Succeeded, Skipped, Review, Failed int
 	Current, ErrorMessage                                string
 	Stage                                                string
-	StageAlbums, StageTracks, StageWorks                 int
+	// StageAlbums/StageTracks/StageWorks：-1 表示该阶段尚未统计（页面显示
+	// “待统计”），0 表示统计过但为 0。零值结构体会把“未统计”误写成 0，
+	// 新建载荷请用 NewEnrichmentRunUpdate。
+	StageAlbums, StageTracks, StageWorks int
+}
+
+// NewEnrichmentRunUpdate 返回阶段计数均为“未统计”（-1）的更新载荷。
+func NewEnrichmentRunUpdate() EnrichmentRunUpdate {
+	return EnrichmentRunUpdate{StageAlbums: -1, StageTracks: -1, StageWorks: -1}
 }
 
 type HTTPResponseCacheEntry struct {

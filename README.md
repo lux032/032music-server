@@ -142,7 +142,7 @@ Invoke-RestMethod `
 | `MUSIC_SERVER_RESET_CREDENTIALS` | 无 | 恢复用：`password`（用户名与密码）、`tokens`（API 与媒体 Token）或 `all`。启动时删除对应的管理页覆盖值及全部登录会话；变量保留期间每次启动都会重复并告警，恢复后请移除 |
 | `MUSIC_SERVER_TRUSTED_PROXIES` | 无 | 可选，逗号分隔的反向代理 IP 或 CIDR（如 `172.16.0.0/12,127.0.0.1`）。见下文“反向代理与登录限流” |
 | `MUSIC_SERVER_BANGUMI_INTERVAL_MS` | `500` | Bangumi API 两次请求的最小间隔（毫秒），允许 200～10000；非法或越界值回退默认值并在启动日志告警 |
-| `MUSIC_SERVER_WORK_POSTER_BACKFILL` | 开启 | 作品海报自动补全：启动约 30 秒后、每次扫描与每轮增强结束后各补一次本地缺失的海报。设为 `0`/`false`/`off` 关闭（测试环境用）；增强页的“补全缺失海报”按钮不受此开关影响 |
+| `MUSIC_SERVER_WORK_POSTER_BACKFILL` | 开启 | 作品海报自动补全：启动约 30 秒后、每次扫描与每轮增强结束后各补一次本地缺失的海报；6 小时内失败过的地址自动跳过。只有明确的关闭值（`0`/`false`/`off`/`no`，不区分大小写）才关闭，无法识别的值按开启处理并在启动日志告警；增强页的“补全缺失海报”按钮不受此开关影响，且会强制重试失败过的地址 |
 
 ### 管理页修改凭据
 

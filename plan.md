@@ -451,6 +451,20 @@
 
 **验证**：新增 TestRenamedSeriesKeepsAutoMemberWhenCandidatesRunThin、TestAutoNamedSeriesDropsMemberWhenCandidatesRunThin、TestMergeAlbumsFinalCleanupOrderIndependent、TestBangumiZeroCandidateMissWriteAfterWorkDeletedIsSkipped、TestBangumiReviewReturnAfterWorkDeletedIsSkipped、TestBangumiReviewReturnNormallyReview、scripts/rehearsal/guard 的 TestCheckCopyDBPath/TestIsUnderDataDirPrefixBoundaries；TestAdminReturnPathAcceptsOnlyLocalAdminPaths 增加 8 个编码绕过/合法编码用例；变异验证：H1 放宽条件置否 → TestRenamedSeriesKeepsAutoMemberWhenCandidatesRunThin 失败（成员被删系列消失）；M1 去掉解码复核 → 4 个编码绕过用例失败；`go test ./...` 与 Playwright 全量通过；演练复跑（sha256 不变、27 页全 200、ERROR=0、回读确认、进程结束）+ 6 种误用拒绝实测（同目录/子目录/包含/大小写/相对路径，假库 sha256 不变）。
 
+**第十五轮（批次 8.5 · TracksForBangumiTieup 性能与批次 8 Low 项，migration 033）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 曲目阶段性能 | 只加索引不改查询（migration 033：idx_track_artists_track_role(track_id,role,artist_id)、idx_track_subject_candidates_track_status(track_id,status)）：三个别名 GROUP_CONCAT 相关子查询原来按 role 全扫（≈全库每个 primary 行 × 每首目标曲目），候选 NOT EXISTS 按 status 全扫；用户库副本实测 1m43.9s → 276ms，优化前后结果集排序 JSON 的 sha256 完全一致；AlbumsForBangumiTieup 1.64s、WorksForEnrichment 2.6ms，均在阈值内不动 | EXPLAIN QUERY PLAN 定位到子查询 5/6/7 走 idx_track_artists_role(role=?)；写入路径代价是扫描时每曲目多一次 B-tree 插入，可接受 |
+| L1 空阶段提示 | scope=tracks/works 时跳过恒为空的第一阶段（phase4Items 本就不收集），首个真实阶段作为“正在统计…”的对象 | 空阶段提示“正在统计专辑阶段…”是误导 |
+| L2 关机不补海报 | phase4 defer 里触发海报补全加 && m.baseCtx.Err()==nil | 服务关闭时不再启动新后台任务 |
+| L3 失败记忆 | 内存记录补全失败 URL（6 小时 TTL 或到重启），自动补全跳过；手动“补全缺失海报”走 RetryWorkPosterBackfill 清空记录强制重试 | 脏 URL 每轮都失败一次浪费请求 |
+| L5 开关解析 | MUSIC_SERVER_WORK_POSTER_BACKFILL 只有明确的关闭值（false/0/off/no 不区分大小写）才关闭；无法识别的值按开启处理并经 Config.Warnings 在启动日志告警 | 笔误不应静默关闭功能 |
+| L5 零值语义 | storage.NewEnrichmentRunUpdate() 构造函数，阶段计数默认 -1（未统计）；结构体注释说明零值会误写成 0 | 零值与“统计过但为 0”语义不同 |
+| L5 空类型胶囊 | work-review.html 类型胶囊在 Type 为空时回落显示“作品”（模板 with/else） | 空胶囊没有信息量 |
+| 增强页标题 | .enrichment-main .browser-header 允许换行 + h1 禁止折行，表单空间不足时落到下一行 | 1440 宽下“元数据自动增强”被挤成两行 |
+
+**验证**：新增 TestMigration033CreatesTrackTieupPerfIndexes、TestTracksForBangumiTieupEquivalenceBatch85（confirmed/rejected/candidate/新鲜 miss 排除 + force 语义 + 别名与合并艺术家字段组装）、TestPhase4TracksScopeSkipsEmptyAlbumStage（L1）、TestPhase4RunEndBackfillSkippedWhenShuttingDown（L2）、TestWorkPosterBackfillSkipsRecentlyFailed（L3：跳过/手动重试/TTL 过期）、TestPosterBackfillFromEnv 与 TestLoadPosterBackfillWarning（L5）；TestCachedJSONDoesNotRetryCancelledContext 改为 transport 内取消 + EOF 体（无限流等待来源，否则 waitBangumiRateLimit 会先于守卫拦下重试）；TestWorkPosterBackfillStatsAndResult 与 TestEnrichmentPagePosterStatsAndBackfill 改用 hook 阻塞消除竞态；TestWorksPageSizeOptions 增加 page=2&size=60 链接与 999 不下发 Set-Cookie 断言；TestSeriesSuggestionGroupHeaderPosterURL 增加空类型回落断言；waitBackfillResult 改按 FinishedAt 比较（LastPosterBackfill 返回副本指针）。变异验证：删 cachedJSON 的 ctx.Err()==nil 守卫 → TestCachedJSONDoesNotRetryCancelledContext 失败；tracks 范围仍走空专辑阶段 → TestPhase4TracksScopeSkipsEmptyAlbumStage 失败；去掉失败记忆跳过 → TestWorkPosterBackfillSkipsRecentlyFailed 失败。截图 .local/mockups/impl48/05-enrichment-header-{1280,1440}.png。
+
 **第十四轮（批次 8 · 用户手测反馈，migration 032）**：
 | 决策 | 选择 | 理由 |
 |------|------|------|

@@ -201,8 +201,8 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 		m.phaseCancel = nil
 		m.phaseMu.Unlock()
 		// 批次 8：每轮增强结束后（无论完成/失败/停止）补一次缺失海报；开关
-		// 关闭（测试/e2e）时不触发。
-		if m.posterBackfillAutoEnabled() {
+		// 关闭（测试/e2e）或服务正在关闭时不触发（L2）。
+		if m.posterBackfillAutoEnabled() && m.baseCtx.Err() == nil {
 			m.StartWorkPosterBackfill()
 		}
 	}()
@@ -215,11 +215,18 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	}
 	// 批次 8 追加：第一阶段的统计（phase4Items 里的专辑/作品查询）也可能
 	// 耗时，先把“当前”置为统计提示，避免任务卡停在 0/0 看起来像卡住。
+	// L1：scope 为 tracks/works 时第一阶段恒为空（phase4Items 不收集专辑），
+	// 直接把首个真实阶段作为提示对象，不显示“正在统计专辑阶段…”。
 	firstStageName := phase4StageAlbums
-	if request.Scope == "work" {
+	switch request.Scope {
+	case "work", "works":
 		firstStageName = phase4StageWorks
+	case "tracks":
+		firstStageName = phase4StageTracks
 	}
-	counts := storage.EnrichmentRunUpdate{Stage: firstStageName, Current: "正在统计" + phase4StageLabel(firstStageName) + "阶段…", StageAlbums: -1, StageTracks: -1, StageWorks: -1}
+	counts := storage.NewEnrichmentRunUpdate()
+	counts.Stage = firstStageName
+	counts.Current = "正在统计" + phase4StageLabel(firstStageName) + "阶段…"
 	_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
 	items, err := m.phase4Items(ctx, request)
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -273,9 +280,13 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 	// Stages are appended only after the previous stage is fully processed, so
 	// a growing slice is safe. Collecting inside the same loop used to skip the
 	// items just appended (the index had already moved past them).
-	// 批次 8：第一阶段按范围命名（scope=work 时 items 是作品，其余是专辑；
-	// tracks/works 范围 items 恒为空）。
-	stages := []phase4Stage{{name: firstStageName, collect: func() ([]phase4Item, error) { return items, nil }}}
+	// 批次 8：第一阶段按范围命名（scope=work 时 items 是作品，其余是专辑）。
+	// L1：tracks/works 范围的 items 恒为空，直接跳过这个空阶段，任务卡不会
+	// 出现“正在统计专辑阶段…”的假提示，分阶段行也不显示专辑阶段。
+	var stages []phase4Stage
+	if request.Scope != "tracks" && request.Scope != "works" {
+		stages = append(stages, phase4Stage{name: firstStageName, collect: func() ([]phase4Item, error) { return items, nil }})
+	}
 	if wantTracks {
 		stages = append(stages, phase4Stage{name: phase4StageTracks, collect: next})
 	}

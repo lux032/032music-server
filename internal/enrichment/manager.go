@@ -42,6 +42,9 @@ type Manager struct {
 	posterMu            sync.Mutex
 	posterBackfilling   bool
 	posterLastResult    *PosterBackfillResult
+	// posterFailed 记录最近补全失败的海报 URL 及失败时间（L3）：自动补全在
+	// posterFailureTTL 内跳过它们；手动“补全缺失海报”强制重试（清空本表）。
+	posterFailed map[string]time.Time
 	// posterBackfillEnabled 控制自动触发（启动延迟、扫描后、每轮增强结束）；
 	// 默认关闭，由 main 根据配置开启，测试与 e2e 保持关闭以不访问外网。
 	posterBackfillEnabled bool
@@ -67,6 +70,9 @@ type Manager struct {
 	// 目标列表之前（“正在统计 X 阶段…”已持久化之后）调用，让测试能确定性地
 	// 观察到统计中的任务状态。
 	testStageCollectHook func(stage string)
+	// testPosterBackfillHook 是测试专用注入点（生产为 nil）：在海报补全
+	// goroutine 开始处理列表前调用，让测试确定性地观察“正在补全”状态。
+	testPosterBackfillHook func()
 }
 type MatchResult struct {
 	AutoMatched    bool
@@ -74,7 +80,7 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext}
+	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
 	if recovered, err := store.FailRunningEnrichmentRuns(context.Background(), "server restarted before the enrichment run completed"); err != nil {
 		logger.Warn("recover interrupted enrichment runs", "error", err)
 	} else if recovered > 0 {

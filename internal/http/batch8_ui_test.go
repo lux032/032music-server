@@ -133,7 +133,11 @@ func TestEnrichmentPagePosterStatsAndBackfill(t *testing.T) {
 		t.Fatalf("POST without CSRF: %d", rec.Code)
 	}
 
-	// 触发补全：303 + 提示。
+	// 触发补全：303 + 提示。L4：用 hook 阻塞补全 goroutine，确定性地观察
+	// “正在补全”。
+	blocked := make(chan struct{})
+	entered := make(chan struct{})
+	manager.SetPosterBackfillTestHook(func() { close(entered); <-blocked })
 	rec = postForm(handler, cookie, "/admin/enrichment/posters/backfill", url.Values{"csrfToken": {csrf}})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST backfill: %d", rec.Code)
@@ -142,12 +146,15 @@ func TestEnrichmentPagePosterStatsAndBackfill(t *testing.T) {
 	if notice := location.Query().Get("notice"); !strings.Contains(notice, "已开始补全") {
 		t.Fatalf("notice=%q", notice)
 	}
-	// 补全还在进行（失败的 127.0.0.1 下载之后有一次间隔等待）：重复触发提示“正在补全”。
+	<-entered
+	// 补全被 hook 阻塞中：重复触发提示“正在补全”。
 	rec = postForm(handler, cookie, "/admin/enrichment/posters/backfill", url.Values{"csrfToken": {csrf}})
 	location, _ = url.Parse(rec.Header().Get("Location"))
 	if notice := location.Query().Get("notice"); !strings.Contains(notice, "正在补全") {
 		t.Fatalf("second POST notice=%q, want 正在补全", notice)
 	}
+	close(blocked)
+	manager.SetPosterBackfillTestHook(nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for manager.LastPosterBackfill() == nil && time.Now().Before(deadline) {
@@ -287,8 +294,9 @@ func TestWorksPageSizeOptions(t *testing.T) {
 	if n := countCards(rec.Body.String()); n != 60 {
 		t.Fatalf("size=60 cards=%d, want 60", n)
 	}
-	if next := rec.Body.String(); !strings.Contains(next, "size=60") {
-		t.Fatal("pagination links must carry size=60")
+	// L4：分页链接必须同时带 page 与 size（href 中 & 被转义为 &amp;）。
+	if next := rec.Body.String(); !strings.Contains(next, "page=2&amp;size=60") {
+		t.Fatal("pagination links must carry page=2&size=60")
 	}
 	var sizeCookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
@@ -310,7 +318,7 @@ func TestWorksPageSizeOptions(t *testing.T) {
 		t.Fatalf("remembered cards=%d, want 60", n)
 	}
 
-	// 非法值回落 36，且不覆盖已记住的 cookie。
+	// 非法值回落 36，且不覆盖已记住的 cookie（L4：不下发 Set-Cookie）。
 	req = httptest.NewRequest(http.MethodGet, "/admin/works?size=999", nil)
 	req.AddCookie(cookie)
 	req.AddCookie(sizeCookie)
@@ -318,6 +326,11 @@ func TestWorksPageSizeOptions(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if n := countCards(rec.Body.String()); n != 36 {
 		t.Fatalf("invalid size cards=%d, want 36 fallback", n)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "032_pagesize_works" {
+			t.Fatalf("invalid size must not set the cookie, got %q", c.Value)
+		}
 	}
 
 	// size=24：24 个，分页链接带 size=24。

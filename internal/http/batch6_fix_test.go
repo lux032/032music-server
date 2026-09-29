@@ -35,6 +35,15 @@ func TestSeriesSuggestionGroupHeaderPosterURL(t *testing.T) {
 	if strings.Contains(body, "ZgotmplZ") {
 		t.Fatal("template rendered ZgotmplZ")
 	}
+	// L5：Type 为空时类型胶囊回落显示“作品”。
+	data.SeriesGroups[0].Work.Type = ""
+	buf.Reset()
+	if err := app.templates.ExecuteTemplate(&buf, "work-review.html", data); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `work-type-chip">作品</span>`) {
+		t.Fatal("empty type must fall back to 作品 chip")
+	}
 }
 
 // H1（D58）：管理页合并选“自动（按规则）”时，名字交给存储层按 D58 处理；

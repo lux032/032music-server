@@ -435,7 +435,8 @@ func (a *App) handleWorkPosterBackfill(w http.ResponseWriter, r *http.Request) {
 		redirectWithNotice(w, r, "/admin/enrichment", "增强管理器不可用")
 		return
 	}
-	if a.enrichment.StartWorkPosterBackfill() {
+	// L3：手动按钮忽略失败记录，强制重试全部缺失海报。
+	if a.enrichment.RetryWorkPosterBackfill() {
 		redirectWithNotice(w, r, "/admin/enrichment", "已开始补全缺失的作品海报")
 	} else {
 		redirectWithNotice(w, r, "/admin/enrichment", "正在补全作品海报，无需重复启动")

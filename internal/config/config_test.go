@@ -36,3 +36,40 @@ func TestConfigValidateTrustedProxies(t *testing.T) {
 		t.Fatalf("invalid trusted proxies error = %v", err)
 	}
 }
+
+// 批次 8.5 L5：MUSIC_SERVER_WORK_POSTER_BACKFILL 只有明确的关闭值才关闭；
+// 无法识别的值按开启处理并带 warning。
+func TestPosterBackfillFromEnv(t *testing.T) {
+	for _, value := range []string{"", "true", "1", "ON", "yes"} {
+		enabled, warning := posterBackfillFromEnv(value)
+		if !enabled || warning != "" {
+			t.Fatalf("%q: enabled=%v warning=%q, want on without warning", value, enabled, warning)
+		}
+	}
+	for _, value := range []string{"false", "0", "off", "No", "OFF"} {
+		enabled, warning := posterBackfillFromEnv(value)
+		if enabled || warning != "" {
+			t.Fatalf("%q: enabled=%v warning=%q, want off without warning", value, enabled, warning)
+		}
+	}
+	enabled, warning := posterBackfillFromEnv("maybe")
+	if !enabled || warning == "" {
+		t.Fatalf("unrecognized: enabled=%v warning=%q, want on with warning", enabled, warning)
+	}
+}
+
+func TestLoadPosterBackfillWarning(t *testing.T) {
+	t.Setenv("MUSIC_SERVER_DATA_DIR", t.TempDir())
+	t.Setenv("MUSIC_SERVER_MUSIC_DIR", t.TempDir())
+	t.Setenv("MUSIC_SERVER_ADMIN_PASSWORD", "test-password-123")
+	t.Setenv("MUSIC_SERVER_API_TOKEN", "test-api-token-00000000000000")
+	t.Setenv("MUSIC_SERVER_MEDIA_TOKEN", "test-media-token-000000000000")
+	t.Setenv("MUSIC_SERVER_WORK_POSTER_BACKFILL", "maybe")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WorkPosterBackfill || len(cfg.Warnings) != 1 {
+		t.Fatalf("backfill=%v warnings=%v", cfg.WorkPosterBackfill, cfg.Warnings)
+	}
+}

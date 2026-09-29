@@ -220,9 +220,42 @@ func (m *Manager) ScheduleStartupPosterBackfill(delay time.Duration) {
 	})
 }
 
+// posterFailureTTL 是失败海报 URL 的自动跳过窗口（L3）。
+const posterFailureTTL = 6 * time.Hour
+
+// posterRecentlyFailed 报告 URL 是否在 TTL 内失败过（自动补全跳过）。
+func (m *Manager) posterRecentlyFailed(remoteURL string) bool {
+	m.posterMu.Lock()
+	defer m.posterMu.Unlock()
+	failedAt, ok := m.posterFailed[remoteURL]
+	return ok && time.Since(failedAt) < posterFailureTTL
+}
+
+func (m *Manager) notePosterFailure(remoteURL string) {
+	m.posterMu.Lock()
+	m.posterFailed[remoteURL] = time.Now()
+	m.posterMu.Unlock()
+}
+
+func (m *Manager) clearPosterFailure(remoteURL string) {
+	m.posterMu.Lock()
+	delete(m.posterFailed, remoteURL)
+	m.posterMu.Unlock()
+}
+
+// RetryWorkPosterBackfill 是手动“补全缺失海报”按钮的入口：忽略失败记录，
+// 强制重试全部缺失海报。返回值与 StartWorkPosterBackfill 相同。
+func (m *Manager) RetryWorkPosterBackfill() bool {
+	m.posterMu.Lock()
+	m.posterFailed = map[string]time.Time{}
+	m.posterMu.Unlock()
+	return m.StartWorkPosterBackfill()
+}
+
 // StartWorkPosterBackfill caches posters of already-matched works that are
 // missing from the local cache. Only one backfill runs at a time; started is
-// false when one is already running.
+// false when one is already running. URLs that failed within posterFailureTTL
+// are skipped (L3); use RetryWorkPosterBackfill to force a retry.
 func (m *Manager) StartWorkPosterBackfill() (started bool) {
 	m.posterMu.Lock()
 	if m.posterBackfilling {
@@ -245,11 +278,17 @@ func (m *Manager) StartWorkPosterBackfill() (started bool) {
 			m.logger.Warn("list work posters", "error", err)
 			return
 		}
+		if m.testPosterBackfillHook != nil {
+			m.testPosterBackfillHook()
+		}
 		for _, item := range posters {
 			if m.baseCtx.Err() != nil {
 				return
 			}
 			if _, _, err = m.CachedWorkPoster(item.URL); err == nil {
+				continue
+			}
+			if m.posterRecentlyFailed(item.URL) {
 				continue
 			}
 			ctx, cancel := context.WithTimeout(m.baseCtx, time.Minute)
@@ -263,9 +302,11 @@ func (m *Manager) StartWorkPosterBackfill() (started bool) {
 					return
 				}
 				result.Failed++
+				m.notePosterFailure(item.URL)
 				m.logger.Warn("backfill work poster", "workId", item.WorkID, "error", err)
 			} else {
 				result.Cached++
+				m.clearPosterFailure(item.URL)
 			}
 			select {
 			case <-m.baseCtx.Done():
