@@ -741,6 +741,56 @@ func (s *Store) ListSeries(ctx context.Context) ([]WorkSeries, error) {
 	return values, rows.Err()
 }
 
+// ListSeriesOptions searches series by title for the management page's
+// series picker (parameterized LIKE, ordered by title).
+func (s *Store) ListSeriesOptions(ctx context.Context, query string, limit int) ([]WorkSeries, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title,title_source,COALESCE(representative_work_id,0),(SELECT COUNT(*) FROM work_series_members m WHERE m.series_id=work_series.id),created_at,updated_at FROM work_series WHERE (?='' OR title LIKE '%'||?||'%') ORDER BY title COLLATE NOCASE,id LIMIT ?`, strings.TrimSpace(query), strings.TrimSpace(query), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var values []WorkSeries
+	for rows.Next() {
+		value, scanErr := scanWorkSeries(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		values = append(values, value)
+	}
+	return values, rows.Err()
+}
+
+// SeriesByWork returns the series each given work belongs to (works without
+// a series are absent from the map). Used by the options endpoint to render
+// “将从《Z》移入” hints.
+func (s *Store) SeriesByWork(ctx context.Context, workIDs []int64) (map[int64]WorkSeries, error) {
+	out := map[int64]WorkSeries{}
+	if len(workIDs) == 0 {
+		return out, nil
+	}
+	placeholders, args := int64Placeholders(workIDs)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.work_id,s.id,s.title,s.title_source,COALESCE(s.representative_work_id,0),(SELECT COUNT(*) FROM work_series_members m2 WHERE m2.series_id=s.id),s.created_at,s.updated_at FROM work_series_members m JOIN work_series s ON s.id=m.series_id WHERE m.work_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var workID int64
+		var series WorkSeries
+		if err = rows.Scan(&workID, &series.ID, &series.Title, &series.TitleSource, &series.RepresentativeWorkID, &series.MemberCount, &series.CreatedAt, &series.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out[workID] = series
+	}
+	return out, rows.Err()
+}
+
 // SeriesMembers lists a series' members ordered like the representative rule:
 // earliest first (year, then Bangumi date, then id).
 func (s *Store) SeriesMembers(ctx context.Context, seriesID int64) ([]WorkSeriesMember, error) {
@@ -827,6 +877,9 @@ type WorkListRow struct {
 	Series         *WorkSeries
 	Representative Work
 	Members        []WorkSeriesMember
+	// MatchedCount 是 D51 类型筛选下符合类型的成员数（此时 Members 只含符合
+	// 类型的成员、Representative 为第一部符合类型的成员）；未按类型筛选时为 0。
+	MatchedCount int
 }
 
 const workFoldGroupSQL = ` FROM works w LEFT JOIN work_series_members m ON m.work_id=w.id LEFT JOIN work_series s ON s.id=m.series_id WHERE `
@@ -919,6 +972,22 @@ func (s *Store) ListWorksFolded(ctx context.Context, filter WorkFilters) ([]Work
 		row := WorkListRow{Series: &series, Members: memberMap[ref.seriesID]}
 		if series.RepresentativeWorkID != 0 {
 			row.Representative = workMap[series.RepresentativeWorkID]
+		}
+		if filter.Type != "" {
+			// D51：类型是筛选而不是层级。系列行只展开符合类型的成员，海报取
+			// 第一部符合类型的成员，并记录“其中 K 部”的计数（行本身能出现，
+			// 说明 WHERE 已保证至少一名成员符合，计数与分页口径一致）。
+			matched := make([]WorkSeriesMember, 0, len(row.Members))
+			for _, member := range row.Members {
+				if member.Work.Type == filter.Type {
+					matched = append(matched, member)
+				}
+			}
+			if len(matched) > 0 {
+				row.Members = matched
+				row.MatchedCount = len(matched)
+				row.Representative = matched[0].Work
+			}
 		}
 		values = append(values, row)
 	}

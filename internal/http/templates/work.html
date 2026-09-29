@@ -52,8 +52,10 @@
         </span>
       </summary>
       <div class="series-fold-body">
+        {{range .SeriesGroups}}
+        {{if .ShowHeader}}<h3 class="series-type-group-head">{{.TypeLabel}}</h3>{{end}}
         <div class="series-member-grid">
-          {{range .SeriesMembers}}
+          {{range .Members}}
           {{if eq .Work.ID $.Work.ID}}
           <div class="series-member-item current">
             {{with workPoster .Work}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
@@ -73,6 +75,7 @@
           {{end}}
           {{end}}
         </div>
+        {{end}}
 
         <div class="series-admin-bar">
           <form class="inline-rename" method="post" action="/admin/series/{{.Series.ID}}/rename">
@@ -82,6 +85,7 @@
             <button type="submit" class="secondary-button">重命名</button>
           </form>
           <div class="series-admin-actions">
+            <a href="/admin/series/{{.Series.ID}}" class="secondary-button">在系列管理页打开</a>
             <form method="post" action="/admin/works/{{.Work.ID}}/series/detach">
               <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
               <button type="submit" class="secondary-button">从系列中拆出本作品</button>

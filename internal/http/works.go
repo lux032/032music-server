@@ -13,13 +13,19 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
+type worksListRow struct {
+	storage.WorkListRow
+	// MemberGroups 是 D51 的类型分组展开区（只有一种类型时不显示分组头）。
+	MemberGroups []seriesMemberGroup
+}
+
 type worksPageData struct {
 	Chrome
 	Query, Type, Index, Sort, Notice string
 	KanaIndex                        bool
 	Year, Page, PageCount, PageSize  int
 	Total                            int64
-	Rows                             []storage.WorkListRow
+	Rows                             []worksListRow
 	Unreferenced                     []storage.Work
 	UnreferencedTotal                int64
 	Years                            []int
@@ -38,6 +44,7 @@ type workPageData struct {
 	Query               string
 	Series              *storage.WorkSeries
 	SeriesMembers       []storage.WorkSeriesMember
+	SeriesGroups        []seriesMemberGroup
 	CurrentMemberIndex  int
 	CurrentMemberSource string
 	SeriesLocked        bool
@@ -178,7 +185,15 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := worksPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Rows: rows, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data := worksPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Total: total, Page: page, PageSize: 36, Notice: r.URL.Query().Get("notice")}
+	data.Rows = make([]worksListRow, 0, len(rows))
+	for _, row := range rows {
+		view := worksListRow{WorkListRow: row}
+		if row.Series != nil {
+			view.MemberGroups = groupSeriesMembersByType(row.Members)
+		}
+		data.Rows = append(data.Rows, view)
+	}
 	data.Unreferenced, data.UnreferencedTotal, err = a.store.UnreferencedProtectedWorks(r.Context())
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
@@ -251,6 +266,7 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 		seriesCopy := series
 		data.Series = &seriesCopy
 		data.SeriesMembers = members
+		data.SeriesGroups = groupSeriesMembersByType(members)
 		for idx, m := range members {
 			if m.Work.ID == id {
 				data.CurrentMemberIndex = idx + 1
@@ -376,6 +392,21 @@ func (a *App) handleRenameWorkSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	seriesID := parseInt64(r.PathValue("id"))
 	if err := a.store.RenameWorkSeries(r.Context(), seriesID, r.FormValue("title")); err != nil {
+		// L4：带 returnTo 时（系列管理页）用友好提示回到原页面；不带时保持
+		// 原来的错误响应（作品页内联表单的既有行为）。
+		if returnTo := r.FormValue("returnTo"); returnTo != "" {
+			message := "重命名失败，请重试"
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				message = "系列不存在"
+			case errors.Is(err, storage.ErrInvalidWork):
+				message = "系列名不能为空"
+			default:
+				a.logger.Error("rename series", "error", err)
+			}
+			redirectWithNotice(w, r, safeAdminReturnTo(returnTo, "/admin/series"), message)
+			return
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
@@ -399,6 +430,17 @@ func (a *App) handleDissolveWorkSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	seriesID := parseInt64(r.PathValue("id"))
 	if err := a.store.DissolveWorkSeries(r.Context(), seriesID); err != nil {
+		// L4：带 returnTo 时用友好提示；不带时保持原来的 404/500 行为。
+		if returnTo := r.FormValue("returnTo"); returnTo != "" {
+			message := "解散系列失败，请重试"
+			if errors.Is(err, sql.ErrNoRows) {
+				message = "系列不存在"
+			} else {
+				a.logger.Error("dissolve series", "error", err)
+			}
+			redirectWithNotice(w, r, safeAdminReturnTo(returnTo, "/admin/series"), message)
+			return
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return

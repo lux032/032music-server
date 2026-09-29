@@ -67,18 +67,28 @@
             <div class="title-line">
               <span class="series-badge">系列</span>
               <h2>{{.Series.Title}}</h2>
+              {{if $.Type}}
+              <span class="works-series-count">共 {{.Series.MemberCount}} 部，其中 {{.MatchedCount}} 部为{{workTypeLabel $.Type}}</span>
+              {{else}}
               <span class="works-series-count">共 {{.Series.MemberCount}} 部作品</span>
+              {{end}}
             </div>
-            <p>代表作：{{.Representative.Title}}{{if .Representative.Year}} ({{.Representative.Year}}){{end}}{{if .Representative.TranslatedTitle}} · {{.Representative.TranslatedTitle}}{{end}} · {{workTypeLabel .Representative.Type}}</p>
+            <p>{{if $.Type}}第一部符合类型：{{else}}代表作：{{end}}{{.Representative.Title}}{{if .Representative.Year}} ({{.Representative.Year}}){{end}}{{if .Representative.TranslatedTitle}} · {{.Representative.TranslatedTitle}}{{end}} · {{workTypeLabel .Representative.Type}}</p>
           </div>
           <div></div>
           <span class="series-toggle-btn">
+            {{if $.Type}}
+            <span class="toggle-text-collapsed">展开符合类型的成员 ({{.MatchedCount}})</span>
+            {{else}}
             <span class="toggle-text-collapsed">展开系列成员 ({{.Series.MemberCount}})</span>
+            {{end}}
             <span class="toggle-text-expanded">收起系列成员</span>
             <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg>
           </span>
         </summary>
         <div class="works-series-expanded-drawer">
+          {{range .MemberGroups}}
+          {{if .ShowHeader}}<h3 class="series-type-group-head">{{.TypeLabel}}</h3>{{end}}
           <div class="works-series-members-grid">
             {{range .Members}}
             <a href="/admin/works/{{.Work.ID}}" class="works-member-card">
@@ -91,6 +101,7 @@
             </a>
             {{end}}
           </div>
+          {{end}}
         </div>
       </details>
       {{else}}

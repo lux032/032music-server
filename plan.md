@@ -190,11 +190,11 @@
   * 不做裁剪（居中铺满显示）；专辑合并保留目标专辑的自定义封面，目标没有时沿用源专辑的。
   * **实现**：migration 030 重建 `artworks` 为 AUTOINCREMENT（每次上传必得新 artwork id，URL 即缓存键）并新建 `artist_custom_images`；`albumArtworkURLSQL` 统一为 custom 优先并替换全部 9 处分散取封面 SQL（含 playlist、Sync 两处 `is_primary=1` JOIN），新增 `artistImageURLSQL(alias)` 统一 4 处歌手图片地址（自定义带 `?v=<哈希前12位>`）；文件存 `<数据目录>/custom-images/<sha256("custom:"+内容)>.<ext>`，临时文件 + rename 原子写入、哈希去重、引用检查 + 1 小时孤儿 GC；上传按魔数 + DecodeConfig 判格式（JPEG/PNG/WebP，x/image 解码），先查像素上限（D29：边 ≤8192、总像素 ≤4000 万）再完整解码一次；`POST /admin/albums/{id}/artwork[/reset]` 与 `/admin/artists/{id}/image[/reset]` 管理员 + CSRF + MaxBytesReader 11MB；专辑合并保留目标自定义封面、否则沿用第一张源专辑的（custom 行单独转移，非 custom 封面合并行为不变）；歌手合并按 merged-from 继承自定义图片（回滚安全）；专辑清理级联删除 custom 行（D31），重扫写入默认主图不再置 primary 于 custom 之上。Reviewer 修订：数据库只存文件名（M3）、上传全程串行 + 去重刷新 mtime（M4）、主表单文件判定改按 `form.elements`（M1）、WebP 缩略图加入允许列表（M2）、歌手合并继承规则 D50（恢复默认连同删除 merged-from 行，撤销合并不恢复源行——已知行为）、启动与扫描完成后各跑一次孤儿 GC（L2）、上传完整解码复用缩略图并发槽（L7）。
 
-### Phase 4.6: 系列层（Phase 4.5 之后单独立项）
+### Phase 4.6: 系列层（Phase 4.5 之后单独立项）（已全部完成：批次 5 数据层 + 批次 6 UI）
 * [x] 系列只做一层、一个作品只属于一个系列。
-* [ ] 类型作为筛选而非固定层级，单一类型的系列省略类型层（本批未实现）。
+* [x] 类型作为筛选而非固定层级，单一类型的系列省略类型层（批次 6：/works 按类型筛选时系列行显示“共 N 部，其中 K 部为<类型>”、海报取第一部符合类型成员、展开区只列符合类型成员；系列展开区、作品详情页系列条、系列管理详情按类型分组显示，单一类型省略分组头）。
 * [x] 季数/剧场版沿续集、前传关系自动归入（4.5.3 已上线：自动归组、拆出、重命名、手动加入、解散，用户意图永久有效）。
-* [ ] 跨媒体关系只生成建议（数据层已完成：migration 031 建议表、白名单配对、接受/拒绝与计数；UI 待批次 6）；完整的管理页可手动创建系列、调整归属（部分已由作品详情页的系列操作覆盖；存储层 CreateWorkSeries/MergeWorkSeries/ListSeriesPage 已就绪）。
+* [x] 跨媒体关系只生成建议（批次 5 数据层 + 批次 6 审核 UI：/admin/work-review 第 4 个 Tab“系列建议”，接受按当前归属新建/加入/合并，命名冲突与失效友好提示）；完整的管理页可手动创建系列、调整归属（批次 6：/admin/series 列表 + 详情，新建、改名、加入/移入、移出写锁、合并（D58 命名）、解散）。
 
 ### 待办与已知风险（作品关联“专辑为主”交付时暂缓）
 | # | 项目 | 影响 | 建议 |
@@ -383,6 +383,23 @@
 | 建议生成时机 | enrichBangumiSeries 的 BFS 与 ApplyAutoSeries 完成且未中止时执行；type 2 关系复用 BFS 的 runMemo/缓存，type 4 按需拉取（同样节流/熔断）；建议库另建 suggestLibrary，不动 BFS 的 type-2 library | 游戏不能被续集链拉进自动归组 |
 | 建议落库 | 单事务 upsert；删除“两端本轮都拉取成功但不再产生”的旧建议；拉取失败的作品旧建议保持不动；未变化的行不刷新 updated_at | 幂等 + 部分失败不丢数据 |
 | 第十轮 reviewer 修订（M1～M3/L4/L6/L7） | ReplaceSeriesSuggestions 事务首句即为写操作（顺手删除任一端被锁定的建议，M1）；INSERT 改 INSERT…SELECT…WHERE NOT EXISTS 在事务里复核决定/锁/同系列（M2）；processed 集合改走 json_each(JSON) 避免变量上限（L4）；AcceptSeriesSuggestion/mergeWorkSeriesTx/createWorkSeriesTx/addWorkToSeriesTx 首条语句均为写操作（L6）；合并/新建/加入后同事务删除同系列待审建议（L7）；Accept 重读发现锁定返回 ErrSeriesSuggestionStale 且不清锁；sequel 建议按 D67 收窄 | 批次 5 reviewer APPROVE 条件 |
+| D64 效果图的地位 | A：效果图只作参考，不作为逐像素验收标准；实现后截图存档（.local/mockups/impl46/） | 不停下来等确认 |
+| D65 4.6 交付节奏 | A：分两批：批次 5 数据与逻辑、批次 6 管理页 UI | 数据层与 UI 解耦 |
+| D66 B1 口径的已知副作用 | A：保持修复后口径。manual-only 系列不被 auto 分量认领：同轮进来 ≥2 部新季会另建 auto 系列，链暂时分成两个系列，靠 sequel 建议（D67a）+ 人工合并修复；只凭 manual 成员与改名系列重合不再触发 D41 冻结 | 手动成员是用户意图 |
+| D67 sequel 建议收窄 | A：双向互为续集/前传只在 (a) 至少一端是某系列 manual 成员，或 (b) 两端都是 type 4 时生成 kind='sequel' 建议；普通 type 2 续集对由自动归组负责（本轮未归组的下一轮自愈）。**D60 已被 D67 取代**（D60 的“manual 成员”场景即 D67a） | 普通续集建议会刷屏且与自动归组重复 |
+
+**第十一轮（批次 6 UI：系列建议 Tab + 系列管理页 + D51 类型筛选 + 批次 5 遗留 L-A～L-E）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 系列建议 Tab（D54） | /admin/work-review 第 4 个 Tab“系列建议”（?tab=series）：每条建议显示两部作品（海报/标题/类型/年份/链接）、双向关系中文标签与接受后效果预览（新建系列/把 B 加入《X》/合并《X》与《Y》）；不支持分组切换与 albumId 过滤（与作品对齐 Tab 相同）；同一作品出现在多条建议时按作品分组收拢 | R6 集中审核；避免 FGO 类作品刷屏 |
+| 合并命名 UI（D58） | 双方都改过名：单选“保留《X》/保留《Y》/新名字（文本框）”；只有一方改过名：默认保留该方（隐藏域提交，显示提示）；双方都是自动名：不显示命名选项，按 D58 自动处理；ErrSeriesTitleConflict 回到 Tab 提示“两个系列都改过名，请选择合并后的名字”；ErrSeriesSuggestionStale 提示“建议已失效，已移除”；不存在 404；均不返回 500 | 冲突必须让人选择 |
+| 系列管理页 | GET /admin/series（搜索系列名或成员名、分页、每行：系列名+“已改名”标注、成员数、类型分布“动画 3 · 游戏 1”、代表作海报、新建入口）；GET /admin/series/{id}（改名表单、成员按类型分组（D51）、来源（自动归组/手动加入）、年份、移出按钮（旁注“移出后该作品不再自动归组”）、加入作品（作品搜索自动补全 + “将从《Z》移入”提示）、合并系列（系列搜索自动补全 + D58 命名单选）、解散（D39 提示））；POST /admin/series、/{id}/members、/{id}/members/{workId}/remove、/{id}/merge；改名/解散复用既有 handler + returnTo；全部管理员 + CSRF + safeAdminReturnTo，错误友好提示不返回 500 | 完整管理入口 |
+| 系列搜索接口 | GET /admin/options/series?q=（管理员 JSON，最多 10 条），做法与 /admin/options/works 相同（参数化、防抖、textContent 渲染）；/admin/options/works 增加可选 withSeries=1 在标签里标出“将从《Z》移入” | 合并目标与加入作品的选择器 |
+| D51 类型筛选显示 | /works 按类型筛选：系列行“共 N 部，其中 K 部为<类型>”、海报取第一部符合类型成员、展开区只列符合类型成员（ListWorksFolded 批量查询后在 Go 端收窄，无 N+1，计数/分页/筛选同口径）；系列展开区、作品详情页系列条、系列管理详情按类型分组显示，单一类型省略分组头 | 类型是筛选不是层级 |
+| 批次 5 遗留修复 | L-A：PendingWorkReviewCounts 系列建议计数加锁定过滤（与列表同口径）；L-B：ReplaceSeriesSuggestions 对被复核条件拦下的已有行当场 DELETE（不留到下一轮）；L-C：条目详情 404 也计入 seedResolved（确定性解析）；L-D：RejectSeriesSuggestion 首条语句为写操作；L-E：TestSeriesSuggestionTaintedRunProducesNothing 改为第一轮即失败真正验证 D67（含变异验证） | reviewer 遗留 Low |
+| 导航与入口 | “管理”组加入“系列管理”（作品关联审核旁）；作品详情页系列条加“在系列管理页打开”链接；Tab 角标与导航角标都含系列建议数 | 可发现性 |
+| e2e | 批次 6 种子扩展进 45441 独立实例（不污染 45439）：加入/新建/合并需选名/拒绝四条建议 + 两个改名系列；用例覆盖接受新建/加入、拒绝、选名合并、管理页全生命周期、/works 类型筛选；截图用 E2E_SCREENSHOTS=1 输出 .local/mockups/impl46/（声明在最前，与批次 3 同一处理；依赖声明顺序，不可开启 retries） | 双实例隔离机制不变 |
+| 第十一轮 reviewer 修订（H1/M1～M3/L1～L8） | H1：合并命名单选增加“自动（按规则）”（空串交存储层按 D58 处理），MergeWorkSeries 返回保留方 id，合并后跳到 /admin/series/{keptID}（returnTo 指向被删方时同样纠正）；M1：admin.js/router.js 的 ADMIN_NAV_KEYS 加入 series（管理组自动展开）；M2：base.css 的 checkbox 规则同时覆盖 input[type=radio]；M3：建议卡关系标签改自然语言（relationAB 描述 B：“《B》是《A》的<关系>”，相同则“互为”；胶囊按 RelationBA ↔ RelationAB），种子方向修正；L1 分组计数用 counts[key]；L2 超 200 条提示；L3 withSeries 排除本系列；L4 改名/解散带 returnTo 时友好提示；L5 内联样式入 CSS；L6 .dissolve-hint 间距；L7/L8 e2e 注释 | 批次 6 reviewer BLOCK 修复 |
 
 **第九轮（批次 4 自定义图片，migration 030）**：
 | 决策 | 选择 | 理由 |

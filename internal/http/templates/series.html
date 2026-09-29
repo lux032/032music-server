@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>系列管理 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main identity-main series-admin-main">
+    <header class="browser-header">
+      <div>
+        <h1>系列管理</h1>
+        <p class="result-count">共 {{.Total}} 个系列 · 新建、改名、调整成员、合并与解散都在此进行。</p>
+      </div>
+      <form class="instant-search" method="get">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+        <input name="q" value="{{.Query}}" placeholder="系列名或成员名…">
+      </form>
+    </header>
+    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card series-create-card">
+      <div>
+        <h2>新建系列</h2>
+        <p class="result-count">至少选择一部作品；名字可以留空（跟随代表作）。创建后可继续加入成员。</p>
+      </div>
+      <form method="post" action="/admin/series" class="series-create-form">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>系列名（可选）<input name="title" placeholder="留空则跟随代表作"></label>
+        <div class="work-picker" data-work-picker="/admin/options/works">
+          <label>选择作品<input data-work-search placeholder="搜索作品标题…" autocomplete="off"></label>
+          <input type="hidden" name="workId" data-work-id-input>
+          <div class="work-picker-results" data-work-results hidden></div>
+        </div>
+        <div class="work-picker" data-work-picker="/admin/options/works">
+          <label>第二部作品（可选）<input data-work-search placeholder="搜索作品标题…" autocomplete="off"></label>
+          <input type="hidden" name="workId" data-work-id-input>
+          <div class="work-picker-results" data-work-results hidden></div>
+        </div>
+        <button type="submit" class="primary-button">创建系列</button>
+      </form>
+    </section>
+
+    <section class="series-list">
+      {{range .Rows}}
+      <article class="series-list-row">
+        <a href="/admin/series/{{.Series.ID}}" class="series-list-poster">
+          {{with .PosterURL}}<img class="fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg></div>{{end}}
+        </a>
+        <div class="series-list-info">
+          <div class="title-line">
+            <h2><a href="/admin/series/{{.Series.ID}}">{{.Series.Title}}</a></h2>
+            {{if eq .Series.TitleSource "manual"}}<span class="series-renamed-badge" title="系列名由用户修改过，自动流程不会覆盖">已改名</span>{{end}}
+          </div>
+          <p>共 {{.Series.MemberCount}} 部作品{{if .TypeSpread}} · {{.TypeSpread}}{{end}}</p>
+        </div>
+        <a href="/admin/series/{{.Series.ID}}" class="secondary-button">管理</a>
+      </article>
+      {{else}}
+      <div class="zero-state"><strong>没有找到系列</strong><span>自动归组或手动新建后，系列会出现在这里。</span></div>
+      {{end}}
+    </section>
+
+    {{if gt .PageCount 1}}
+    <nav class="pagination" aria-label="分页">
+      {{if .PrevURL}}<a href="{{.PrevURL}}">上一页</a>{{else}}<span>上一页</span>{{end}}
+      <div>{{range .Pages}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}">{{.Number}}</a>{{end}}</div>
+      {{if .NextURL}}<a href="{{.NextURL}}">下一页</a>{{else}}<span>下一页</span>{{end}}
+    </nav>
+    {{end}}
+  </main>
+</body>
+</html>

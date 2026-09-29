@@ -55,7 +55,9 @@ func (s *Store) PendingWorkReviewCounts(ctx context.Context) (albumCount, trackC
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT work_id) FROM work_match_candidates WHERE status='candidate'`).Scan(&workCount); err != nil {
 		return 0, 0, 0, 0, err
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_series_suggestions`).Scan(&seriesCount); err != nil {
+	// 系列建议的角标与 PendingSeriesSuggestions 保持同一口径：任一端被
+	// 锁定（拆出/解散）的建议在列表里也是隐藏的，计数不能把它算进去。
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_series_suggestions sg WHERE NOT EXISTS(SELECT 1 FROM work_series_locks l WHERE l.work_id=sg.work_a OR l.work_id=sg.work_b)`).Scan(&seriesCount); err != nil {
 		return 0, 0, 0, 0, err
 	}
 	return albumCount, trackCount, workCount, seriesCount, nil

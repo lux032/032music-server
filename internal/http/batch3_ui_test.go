@@ -206,7 +206,7 @@ func TestWorkReviewTabsAuthCountsAndGrouping(t *testing.T) {
 	if !strings.Contains(body, "作品关联审核") || !strings.Contains(body, "专辑候选") {
 		t.Fatalf("missing page header: %s", body)
 	}
-	if got := strings.Join(tabBadgeCounts(t, body), ","); got != "2,2,1" {
+	if got := strings.Join(tabBadgeCounts(t, body), ","); got != "2,2,1,0" {
 		t.Fatalf("tab badges = %s, want 2,2,1", got)
 	}
 	if !strings.Contains(body, "Amore") || !strings.Contains(body, "412958") || !strings.Contains(body, "Work Anime A") {
@@ -281,7 +281,7 @@ func TestWorkReviewTabsAuthCountsAndGrouping(t *testing.T) {
 	if !strings.Contains(body, "Amore") || strings.Contains(body, "Beta Hits") {
 		t.Fatalf("albumId filter not applied: %s", body)
 	}
-	if got := strings.Join(tabBadgeCounts(t, body), ","); got != "1,2,1" {
+	if got := strings.Join(tabBadgeCounts(t, body), ","); got != "1,2,1,0" {
 		t.Fatalf("filtered tab badges = %s, want 1,2,1", got)
 	}
 }

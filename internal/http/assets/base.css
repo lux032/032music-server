@@ -85,7 +85,7 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-input[type="checkbox"] { min-width: 16px; width: 16px; accent-color: var(--accent); }
+input[type="checkbox"], input[type="radio"] { min-width: 16px; width: 16px; accent-color: var(--accent); }
 input[type="range"] { accent-color: var(--accent); padding: 0; border: 0; }
 
 details { min-width: 260px; }

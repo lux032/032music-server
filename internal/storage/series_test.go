@@ -862,3 +862,120 @@ func TestApplyAutoSeriesManualAdditionsDoNotStealSeries(t *testing.T) {
 		}
 	}
 }
+
+// D51：类型是筛选而不是层级。按类型筛选时，系列行只展开符合类型的成员、
+// 计数为“其中 K 部”、代表作（海报）取第一部符合类型的成员；未筛选时不变。
+func TestListWorksFoldedTypeFilterNarrowsSeriesRows(t *testing.T) {
+	store, ctx := newSeriesStore(t)
+	mk := func(title, typ string, year int) Work {
+		work, err := store.CreateWork(ctx, WorkInput{Title: title, Type: typ, Year: year})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return work
+	}
+	anime1 := mk("Fold Anime One", "anime", 2019)
+	movie := mk("Fold Movie", "movie", 2021)
+	anime2 := mk("Fold Anime Two", "anime", 2023)
+	if _, err := store.ApplyAutoSeries(ctx, 0, [][]int64{{anime1.ID, movie.ID, anime2.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	// 无筛选：全部成员、原代表作、无匹配计数。
+	rows, err := store.ListWorksFolded(ctx, WorkFilters{})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	if got := len(rows[0].Members); got != 3 || rows[0].MatchedCount != 0 || rows[0].Representative.ID != anime1.ID {
+		t.Fatalf("unfiltered row members=%d matched=%d rep=%d", got, rows[0].MatchedCount, rows[0].Representative.ID)
+	}
+	// 按 movie 筛选：折叠行仍是一个；成员只剩 movie；计数与分页口径一致。
+	rows, err = store.ListWorksFolded(ctx, WorkFilters{Type: "movie"})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("filtered rows=%d err=%v", len(rows), err)
+	}
+	row := rows[0]
+	if row.Series == nil || row.Series.MemberCount != 3 {
+		t.Fatalf("filtered series=%+v", row.Series)
+	}
+	if row.MatchedCount != 1 || len(row.Members) != 1 || row.Members[0].Work.ID != movie.ID {
+		t.Fatalf("matched=%d members=%+v", row.MatchedCount, row.Members)
+	}
+	if row.Representative.ID != movie.ID {
+		t.Fatalf("representative=%d, want first matching member %d", row.Representative.ID, movie.ID)
+	}
+	total, err := store.CountWorksFolded(ctx, WorkFilters{Type: "movie"})
+	if err != nil || total != 1 {
+		t.Fatalf("folded filtered total=%d err=%v", total, err)
+	}
+	// 按 anime 筛选：两名成员符合，代表作仍是按规则排最前的动画成员。
+	rows, err = store.ListWorksFolded(ctx, WorkFilters{Type: "anime"})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("anime rows=%d err=%v", len(rows), err)
+	}
+	if rows[0].MatchedCount != 2 || len(rows[0].Members) != 2 || rows[0].Representative.ID != anime1.ID {
+		t.Fatalf("anime matched=%d members=%d rep=%d", rows[0].MatchedCount, len(rows[0].Members), rows[0].Representative.ID)
+	}
+	// 系列没有任何 drama 成员：整行消失（WHERE 已下推，不留空系列行）。
+	rows, err = store.ListWorksFolded(ctx, WorkFilters{Type: "drama"})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("drama rows=%d err=%v", len(rows), err)
+	}
+}
+
+// 系列搜索选项：按标题过滤、按标题排序、尊重上限（系列管理页的合并目标选择器）。
+func TestListSeriesOptions(t *testing.T) {
+	store, ctx := newSeriesStore(t)
+	a := mustWork(t, store, ctx, "Opt Alpha", 2019)
+	b := mustWork(t, store, ctx, "Opt Beta", 2020)
+	c := mustWork(t, store, ctx, "Opt Gamma", 2021)
+	if _, err := store.CreateWorkSeries(ctx, "命运之夜", []int64{a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWorkSeries(ctx, "鬼灭之刃", []int64{b.ID, c.ID}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.ListSeriesOptions(ctx, "", 10)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all=%d err=%v", len(all), err)
+	}
+	// 中文按标题 COLLATE NOCASE 排序：命运(U+547D) < 鬼(U+9B3C)。
+	if all[0].Title != "命运之夜" || all[1].Title != "鬼灭之刃" || all[1].MemberCount != 2 {
+		t.Fatalf("all=%+v", all)
+	}
+	filtered, err := store.ListSeriesOptions(ctx, "鬼灭", 10)
+	if err != nil || len(filtered) != 1 || filtered[0].Title != "鬼灭之刃" {
+		t.Fatalf("filtered=%+v err=%v", filtered, err)
+	}
+	// 参数化：引号注入不会命中任何行（与 ListWorkOptions 同一口径，
+	// LIKE 通配符仍按 LIKE 语义工作）。
+	none, err := store.ListSeriesOptions(ctx, "' OR 1=1--", 10)
+	if err != nil || len(none) != 0 {
+		t.Fatalf("injection filtered=%+v err=%v", none, err)
+	}
+	limited, err := store.ListSeriesOptions(ctx, "", 1)
+	if err != nil || len(limited) != 1 {
+		t.Fatalf("limited=%+v err=%v", limited, err)
+	}
+}
+
+// SeriesByWork：只返回属于系列的作品的系列（“加入作品”移入提示）。
+func TestSeriesByWork(t *testing.T) {
+	store, ctx := newSeriesStore(t)
+	a := mustWork(t, store, ctx, "Titled A", 2019)
+	b := mustWork(t, store, ctx, "Titled B", 2020)
+	seriesID, err := store.CreateWorkSeries(ctx, "命运系列", []int64{a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byWork, err := store.SeriesByWork(ctx, []int64{a.ID, b.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byWork) != 1 || byWork[a.ID].Title != "命运系列" || byWork[a.ID].ID != seriesID {
+		t.Fatalf("byWork=%v", byWork)
+	}
+	empty, err := store.SeriesByWork(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty=%v err=%v", empty, err)
+	}
+}

@@ -91,7 +91,7 @@ func TestMergeWorkSeriesMovesMembersAsManualAndClearsLocks(t *testing.T) {
 	if _, err = store.db.ExecContext(ctx, `INSERT INTO work_series_locks(work_id) VALUES(?)`, b2.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.MergeWorkSeries(ctx, keep.ID, drop.ID, "合并后的系列"); err != nil {
+	if _, err = store.MergeWorkSeries(ctx, keep.ID, drop.ID, "合并后的系列"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = store.WorkSeriesByID(ctx, drop.ID); !errors.Is(err, sql.ErrNoRows) {
@@ -144,7 +144,7 @@ func TestMergeWorkSeriesTitleRules(t *testing.T) {
 	}
 	t.Run("single manual title wins", func(t *testing.T) {
 		store, ctx, keepID, dropID := setup(t, "", "Drop 的名字")
-		if err := store.MergeWorkSeries(ctx, keepID, dropID, ""); err != nil {
+		if _, err := store.MergeWorkSeries(ctx, keepID, dropID, ""); err != nil {
 			t.Fatal(err)
 		}
 		merged, _ := store.WorkSeriesByID(ctx, keepID)
@@ -154,7 +154,7 @@ func TestMergeWorkSeriesTitleRules(t *testing.T) {
 	})
 	t.Run("two manual titles conflict", func(t *testing.T) {
 		store, ctx, keepID, dropID := setup(t, "Keep 的名字", "Drop 的名字")
-		err := store.MergeWorkSeries(ctx, keepID, dropID, "")
+		_, err := store.MergeWorkSeries(ctx, keepID, dropID, "")
 		if !errors.Is(err, ErrSeriesTitleConflict) {
 			t.Fatalf("err=%v, want ErrSeriesTitleConflict", err)
 		}
@@ -166,7 +166,7 @@ func TestMergeWorkSeriesTitleRules(t *testing.T) {
 			t.Fatalf("drop series gone after conflict: %v", err)
 		}
 		// An explicit title resolves the conflict.
-		if err = store.MergeWorkSeries(ctx, keepID, dropID, "用户定的名字"); err != nil {
+		if _, err = store.MergeWorkSeries(ctx, keepID, dropID, "用户定的名字"); err != nil {
 			t.Fatal(err)
 		}
 		merged, _ := store.WorkSeriesByID(ctx, keepID)
@@ -187,7 +187,7 @@ func TestMergeWorkSeriesTitleRules(t *testing.T) {
 		big, _, _ := store.SeriesForWork(ctx, big1.ID)
 		small, _, _ := store.SeriesForWork(ctx, small1.ID)
 		// Merging the larger into the smaller swaps the survivor.
-		if err := store.MergeWorkSeries(ctx, small.ID, big.ID, ""); err != nil {
+		if _, err := store.MergeWorkSeries(ctx, small.ID, big.ID, ""); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.WorkSeriesByID(ctx, small.ID); !errors.Is(err, sql.ErrNoRows) {
@@ -204,7 +204,7 @@ func TestMergeWorkSeriesTitleRules(t *testing.T) {
 	t.Run("equal size keeps the smaller id", func(t *testing.T) {
 		store, ctx, keepID, dropID := setup(t, "", "")
 		// keepID < dropID and both have 2 members: keep survives.
-		if err := store.MergeWorkSeries(ctx, dropID, keepID, ""); err != nil {
+		if _, err := store.MergeWorkSeries(ctx, dropID, keepID, ""); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.WorkSeriesByID(ctx, keepID); err != nil {
@@ -213,10 +213,10 @@ func TestMergeWorkSeriesTitleRules(t *testing.T) {
 	})
 	t.Run("self merge and missing series are errors", func(t *testing.T) {
 		store, ctx, keepID, _ := setup(t, "", "")
-		if err := store.MergeWorkSeries(ctx, keepID, keepID, ""); !errors.Is(err, ErrInvalidWork) {
+		if _, err := store.MergeWorkSeries(ctx, keepID, keepID, ""); !errors.Is(err, ErrInvalidWork) {
 			t.Fatalf("self merge err=%v", err)
 		}
-		if err := store.MergeWorkSeries(ctx, keepID, 9999, ""); !errors.Is(err, sql.ErrNoRows) {
+		if _, err := store.MergeWorkSeries(ctx, keepID, 9999, ""); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("missing drop err=%v", err)
 		}
 	})
@@ -628,10 +628,91 @@ func TestMergeWorkSeriesDropsSameSeriesSuggestions(t *testing.T) {
 	if got := pendingCount(t, store, ctx); got != 1 {
 		t.Fatalf("pending after add=%d, want 1", got)
 	}
-	if err := store.MergeWorkSeries(ctx, seriesA, seriesB, "合并"); err != nil {
+	if _, err := store.MergeWorkSeries(ctx, seriesA, seriesB, "合并"); err != nil {
 		t.Fatal(err)
 	}
 	if got := pendingCount(t, store, ctx); got != 0 {
 		t.Fatalf("pending after merge=%d", got)
+	}
+}
+
+// L-A：PendingWorkReviewCounts 的系列建议计数与 PendingSeriesSuggestions 同
+// 口径——任一端被锁定的建议不计入角标（列表里也看不到它）。
+func TestPendingWorkReviewCountsFiltersLockedSuggestions(t *testing.T) {
+	store, ctx := newSeriesStore(t)
+	a := mustWork(t, store, ctx, "Count A", 2019)
+	b := mustWork(t, store, ctx, "Count B", 2021)
+	mustSeriesSuggestion(t, store, ctx, a.ID, b.ID, 11, 22, "cross")
+	_, _, _, seriesCount, err := store.PendingWorkReviewCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seriesCount != 1 {
+		t.Fatalf("seriesCount=%d, want 1", seriesCount)
+	}
+	// 用户拆出 b：锁定写入后角标立即归零（不能等到下一轮生成）。
+	seriesID, err := store.CreateWorkSeries(ctx, "临时", []int64{b.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.DissolveWorkSeries(ctx, seriesID); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, seriesCount, err = store.PendingWorkReviewCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seriesCount != 0 {
+		t.Fatalf("seriesCount after lock=%d, want 0", seriesCount)
+	}
+	// 原始行还在（等下一轮生成删除），证明计数靠的是过滤而不是行已消失。
+	var raw int
+	if err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_series_suggestions`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != 1 {
+		t.Fatalf("raw suggestion rows=%d, want 1", raw)
+	}
+}
+
+// L-B：一轮生成重复给出了已在库里的建议，但这对作品在生成后、事务前被决定
+// 或并入同一系列时，INSERT…SELECT 的复核条件会拦下写入；已存在的旧行也必须
+// 当场删除，不能留到下一轮。
+func TestReplaceSeriesSuggestionsDeletesBlockedExistingRows(t *testing.T) {
+	store, ctx := newSeriesStore(t)
+	a := mustWork(t, store, ctx, "Blocked A", 2019)
+	b := mustWork(t, store, ctx, "Blocked B", 2021)
+	c := mustWork(t, store, ctx, "Blocked C", 2020)
+	d := mustWork(t, store, ctx, "Blocked D", 2022)
+	// 两条建议都已在库中。
+	mustSeriesSuggestion(t, store, ctx, a.ID, b.ID, 11, 22, "cross")
+	mustSeriesSuggestion(t, store, ctx, c.ID, d.ID, 33, 44, "cross")
+	// 竞态一：(a,b) 的 subject 对刚被拒绝。
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO work_series_suggestion_decisions(subject_a,subject_b,decision) VALUES(11,22,'rejected')`); err != nil {
+		t.Fatal(err)
+	}
+	// 竞态二：(c,d) 刚并入同一系列（直接写成员，模拟与本事务并发的合并）。
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO work_series(title,title_source) VALUES('抢占','auto')`); err != nil {
+		t.Fatal(err)
+	}
+	var grabbed int64
+	if err := store.db.QueryRowContext(ctx, `SELECT id FROM work_series WHERE title='抢占'`).Scan(&grabbed); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{c.ID, d.ID} {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO work_series_members(work_id,series_id,source) VALUES(?,?,'auto')`, id, grabbed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 本轮生成“再次”给出这两对（生成期读到的还是旧状态），两端都已处理。
+	inputs := []SeriesSuggestionInput{
+		{WorkA: a.ID, WorkB: b.ID, SubjectA: 11, SubjectB: 22, RelationAB: "游戏", RelationBA: "动画", Kind: "cross"},
+		{WorkA: c.ID, WorkB: d.ID, SubjectA: 33, SubjectB: 44, RelationAB: "衍生", RelationBA: "主线故事", Kind: "cross"},
+	}
+	if err := store.ReplaceSeriesSuggestions(ctx, 2, inputs, []int64{a.ID, b.ID, c.ID, d.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := pendingCount(t, store, ctx); got != 0 {
+		t.Fatalf("blocked suggestions survived, pending=%d", got)
 	}
 }

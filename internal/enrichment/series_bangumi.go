@@ -214,6 +214,10 @@ func (m *Manager) enrichBangumiSeries(ctx context.Context, runID int64, force bo
 			key := strconv.FormatInt(seed.SubjectID, 10)
 			_, fetchErr := m.cachedJSON(ctx, "bangumi", "subject:"+key, base+"/v0/subjects/"+key, setting, force, nil, &subject)
 			if errors.Is(fetchErr, sql.ErrNoRows) {
+				// 条目详情 404：Bangumi 上已不存在该条目，这是一次确定性的
+				// 解析结果（404 会被缓存），不是暂时失败——与成功解析一样计入
+				// seedResolved，其残留旧建议按 M1 口径清理。
+				seedResolved[seed.WorkID] = true
 				continue
 			}
 			if fetchErr != nil {

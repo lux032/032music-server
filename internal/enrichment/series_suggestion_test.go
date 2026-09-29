@@ -368,25 +368,68 @@ func TestSeriesSuggestionReboundSubjectCleaned(t *testing.T) {
 	}
 }
 
-// D67(a): a plain type-2 sequel pair whose run is tainted gets no
-// suggestion — automatic grouping owns it and the next healthy run heals.
-func TestSeriesSuggestionTaintedRunProducesNothing(t *testing.T) {
-	fail := map[int64]bool{}
-	server := syntheticSeriesGraphServer(t, chainEdges([][]int64{{1, 2, 3}}), fail)
+// M1（L-C）：缓存资料没有记录条目类型的作品，本轮解析条目详情时遇到 404
+// （条目在 Bangumi 上已不存在）也算“解析成功”——这是确定性结果而不是暂时
+// 失败，其残留旧建议必须被清理，不能永远挂着。
+func TestSeriesSuggestionSeedSubject404CleansOldSuggestions(t *testing.T) {
+	server := seriesFixtureServer(t, nil)
 	defer server.Close()
 	manager, store := newSeriesManager(t, server)
-	bindSeriesWork(t, store, "Taint A", "anime", 2019, 1, "2019-01-01")
-	bindSeriesWork(t, store, "Taint B", "anime", 2021, 2, "2021-01-01")
-	bindSeriesWork(t, store, "Taint C", "anime", 2023, 3, "2023-01-01")
+	x := bindSeriesWorkRaw(t, store, "Lost Entry", 99, `{"id":99}`)
+	y := bindSubjectWork(t, store, "Healthy Neighbor", "anime", 2020, 98, 2, "2020-01-01")
+	// 上一轮留下的旧建议。
+	input := storage.SeriesSuggestionInput{WorkA: x, WorkB: y, SubjectA: 99, SubjectB: 98, RelationAB: "衍生", RelationBA: "主线故事", Kind: "cross"}
+	if err := store.ReplaceSeriesSuggestions(context.Background(), 1, []storage.SeriesSuggestionInput{input}, []int64{x, y}); err != nil {
+		t.Fatal(err)
+	}
+	if n := countSuggestions(t, store); n != 1 {
+		t.Fatalf("seed suggestions=%d, want 1", n)
+	}
+	// 本轮：X 的条目详情 404（已解析但不可建议），Y 的关系 404（空关系）。
+	// 两端都算已处理，旧建议被删除；若 404 分支不计入 seedResolved，X 不算
+	// 已处理，旧行会残留（变异验证点）。
 	if _, err := manager.enrichBangumiSeries(context.Background(), 0, false); err != nil {
 		t.Fatal(err)
 	}
-	fail[2] = true
-	if _, err := manager.enrichBangumiSeries(context.Background(), 0, true); err != nil {
+	if n := countSuggestions(t, store); n != 0 {
+		t.Fatalf("404-resolved work's suggestion survived: %d", n)
+	}
+}
+
+// D67(a): a plain type-2 sequel pair whose grouping run is tainted gets no
+// suggestion — automatic grouping owns it and the next healthy run heals.
+// 第一轮就让节点 3 的拉取失败：(1,2) 两端都成功拉到了关系，但分量被污染而
+// 没有归组。此时若拿掉 D67 的收窄，(1,2) 这对普通 type-2 续集对就会产生
+// sequel 建议（变异验证点）；有 D67 时建议数为 0，且下一轮健康运行自愈归组。
+func TestSeriesSuggestionTaintedRunProducesNothing(t *testing.T) {
+	fail := map[int64]bool{3: true}
+	server := syntheticSeriesGraphServer(t, chainEdges([][]int64{{1, 2, 3}}), fail)
+	defer server.Close()
+	manager, store := newSeriesManager(t, server)
+	w1 := bindSeriesWork(t, store, "Taint A", "anime", 2019, 1, "2019-01-01")
+	w2 := bindSeriesWork(t, store, "Taint B", "anime", 2021, 2, "2021-01-01")
+	w3 := bindSeriesWork(t, store, "Taint C", "anime", 2023, 3, "2023-01-01")
+	if _, err := manager.enrichBangumiSeries(context.Background(), 0, false); err != nil {
 		t.Fatal(err)
+	}
+	// 分量被污染：没有任何归组；(1,2) 两端虽已拉取但不产生建议（D67）。
+	if n := seriesCount(t, store); n != 0 {
+		t.Fatalf("tainted run grouped %d series", n)
 	}
 	if n := countSuggestions(t, store); n != 0 {
 		t.Fatalf("tainted run produced %d suggestions", n)
+	}
+	// 下一轮健康运行自愈：三部作品归为一个系列，依然不产生建议。
+	delete(fail, 3)
+	if _, err := manager.enrichBangumiSeries(context.Background(), 0, true); err != nil {
+		t.Fatal(err)
+	}
+	members := seriesMembersOf(t, store, w1)
+	if len(members) != 3 || members[w2] != "auto" || members[w3] != "auto" {
+		t.Fatalf("healed members=%v", members)
+	}
+	if n := countSuggestions(t, store); n != 0 {
+		t.Fatalf("healthy run produced %d suggestions", n)
 	}
 }
 

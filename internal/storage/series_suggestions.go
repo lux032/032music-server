@@ -91,6 +91,13 @@ func (s *Store) ReplaceSeriesSuggestions(ctx context.Context, runID int64, sugge
 		if _, err = tx.ExecContext(ctx, `INSERT INTO work_series_suggestions(work_a,work_b,subject_a,subject_b,relation_ab,relation_ba,kind,run_id) SELECT ?,?,?,?,?,?,?,NULLIF(?,0) WHERE NOT EXISTS(SELECT 1 FROM work_series_suggestion_decisions d WHERE d.subject_a=MIN(?,?) AND d.subject_b=MAX(?,?)) AND NOT EXISTS(SELECT 1 FROM work_series_locks l WHERE l.work_id IN (?,?)) AND NOT EXISTS(SELECT 1 FROM work_series_members ma JOIN work_series_members mb ON mb.series_id=ma.series_id WHERE ma.work_id=? AND mb.work_id=?) ON CONFLICT(work_a,work_b) DO UPDATE SET subject_a=excluded.subject_a,subject_b=excluded.subject_b,relation_ab=excluded.relation_ab,relation_ba=excluded.relation_ba,kind=excluded.kind,run_id=excluded.run_id,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE work_series_suggestions.subject_a!=excluded.subject_a OR work_series_suggestions.subject_b!=excluded.subject_b OR work_series_suggestions.relation_ab!=excluded.relation_ab OR work_series_suggestions.relation_ba!=excluded.relation_ba OR work_series_suggestions.kind!=excluded.kind`, suggestion.WorkA, suggestion.WorkB, suggestion.SubjectA, suggestion.SubjectB, suggestion.RelationAB, suggestion.RelationBA, suggestion.Kind, runID, suggestion.SubjectA, suggestion.SubjectB, suggestion.SubjectA, suggestion.SubjectB, suggestion.WorkA, suggestion.WorkB, suggestion.WorkA, suggestion.WorkB); err != nil {
 			return err
 		}
+		// 生成期竞态的收尾：这对作品在生成后、本事务前被决定（接受/拒绝）
+		// 或并入了同一系列时，上面的 INSERT…SELECT 会被复核条件拦下，但已
+		// 存在的旧行不能因为“本轮又生成了它”而留下来——按相同条件当场删除，
+		// 不留到下一轮（锁定已由事务首句统一处理）。
+		if _, err = tx.ExecContext(ctx, `DELETE FROM work_series_suggestions WHERE work_a=? AND work_b=? AND (EXISTS(SELECT 1 FROM work_series_suggestion_decisions d WHERE d.subject_a=MIN(?,?) AND d.subject_b=MAX(?,?)) OR EXISTS(SELECT 1 FROM work_series_members ma JOIN work_series_members mb ON mb.series_id=ma.series_id WHERE ma.work_id=? AND mb.work_id=?))`, suggestion.WorkA, suggestion.WorkB, suggestion.SubjectA, suggestion.SubjectB, suggestion.SubjectA, suggestion.SubjectB, suggestion.WorkA, suggestion.WorkB); err != nil {
+			return err
+		}
 	}
 	if len(processedWorks) > 0 {
 		// L4: pass the processed set as a JSON array through json_each instead
@@ -290,7 +297,7 @@ func (s *Store) AcceptSeriesSuggestion(ctx context.Context, id int64, mergeTitle
 			return err
 		}
 	default:
-		if err = mergeWorkSeriesTx(ctx, tx, seriesA, seriesB, mergeTitle); err != nil {
+		if _, err = mergeWorkSeriesTx(ctx, tx, seriesA, seriesB, mergeTitle); err != nil {
 			return err
 		}
 	}
@@ -311,6 +318,11 @@ func (s *Store) RejectSeriesSuggestion(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	// L6：首条语句为写操作，立刻拿到 SQLite 写锁，避免从过期读快照升级
+	// （BUSY_SNAPSHOT）。
+	if _, err = tx.ExecContext(ctx, `UPDATE work_series_suggestions SET id=id WHERE id=?`, id); err != nil {
+		return err
+	}
 	var subjectA, subjectB int64
 	if err = tx.QueryRowContext(ctx, `SELECT subject_a,subject_b FROM work_series_suggestions WHERE id=?`, id).Scan(&subjectA, &subjectB); err != nil {
 		return err
@@ -561,26 +573,31 @@ func createWorkSeriesTx(ctx context.Context, tx *sql.Tx, title string, workIDs [
 // automatic. The title follows D58: an explicit title wins; a single manual
 // title is kept; two manual titles conflict (ErrSeriesTitleConflict); two
 // automatic titles keep the larger series (the smaller id on ties) and stay
-// automatic.
-func (s *Store) MergeWorkSeries(ctx context.Context, keepID, dropID int64, title string) error {
+// automatic. It returns the id of the series that survived (which may be
+// dropID after the automatic swap).
+func (s *Store) MergeWorkSeries(ctx context.Context, keepID, dropID int64, title string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
-	if err = mergeWorkSeriesTx(ctx, tx, keepID, dropID, title); err != nil {
-		return err
+	keptID, err := mergeWorkSeriesTx(ctx, tx, keepID, dropID, title)
+	if err != nil {
+		return 0, err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return keptID, nil
 }
 
-func mergeWorkSeriesTx(ctx context.Context, tx *sql.Tx, keepID, dropID int64, title string) error {
+func mergeWorkSeriesTx(ctx context.Context, tx *sql.Tx, keepID, dropID int64, title string) (int64, error) {
 	if keepID == dropID {
-		return fmt.Errorf("%w: cannot merge a series into itself", ErrInvalidWork)
+		return 0, fmt.Errorf("%w: cannot merge a series into itself", ErrInvalidWork)
 	}
 	// L6: take the writer lock before any read in this transaction.
 	if _, err := tx.ExecContext(ctx, `UPDATE work_series SET id=id WHERE id IN (?,?)`, keepID, dropID); err != nil {
-		return err
+		return 0, err
 	}
 	load := func(id int64) (seriesRow, int, error) {
 		var row seriesRow
@@ -590,15 +607,15 @@ func mergeWorkSeriesTx(ctx context.Context, tx *sql.Tx, keepID, dropID int64, ti
 	}
 	keep, keepCount, err := load(keepID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	drop, dropCount, err := load(dropID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	title = strings.TrimSpace(title)
 	if title == "" && keep.titleSource == "manual" && drop.titleSource == "manual" {
-		return ErrSeriesTitleConflict
+		return 0, ErrSeriesTitleConflict
 	}
 	if title == "" && keep.titleSource == "auto" && drop.titleSource == "auto" {
 		// Both automatic: the larger series survives (smaller id on a tie).
@@ -609,54 +626,54 @@ func mergeWorkSeriesTx(ctx context.Context, tx *sql.Tx, keepID, dropID int64, ti
 	var moved []int64
 	movedRows, err := tx.QueryContext(ctx, `SELECT work_id FROM work_series_members WHERE series_id=? ORDER BY work_id`, drop.id)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for movedRows.Next() {
 		var workID int64
 		if err = movedRows.Scan(&workID); err != nil {
 			movedRows.Close()
-			return err
+			return 0, err
 		}
 		moved = append(moved, workID)
 	}
 	if err = movedRows.Err(); err != nil {
 		movedRows.Close()
-		return err
+		return 0, err
 	}
 	movedRows.Close()
 	if _, err = tx.ExecContext(ctx, `DELETE FROM work_series_locks WHERE work_id IN (SELECT work_id FROM work_series_members WHERE series_id=?)`, drop.id); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE work_series_members SET series_id=?,source='manual' WHERE series_id=?`, keep.id, drop.id); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM work_series WHERE id=?`, drop.id); err != nil {
-		return err
+		return 0, err
 	}
 	// L7: pairs that ended up in the same series through the merge are no
 	// longer suggestions.
 	if err = deleteSameSeriesSuggestionsTx(ctx, tx); err != nil {
-		return err
+		return 0, err
 	}
 	switch {
 	case title != "":
 		if _, err = tx.ExecContext(ctx, `UPDATE work_series SET title=?,title_source='manual',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, title, keep.id); err != nil {
-			return err
+			return 0, err
 		}
 	case keep.titleSource == "auto" && drop.titleSource == "manual":
 		if _, err = tx.ExecContext(ctx, `UPDATE work_series SET title=?,title_source='manual',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, drop.title, keep.id); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if err = refreshSeriesRow(ctx, tx, keep.id); err != nil {
-		return err
+		return 0, err
 	}
 	for _, workID := range moved {
 		if err = putProvenance(ctx, tx, "work", workID, "series", "manual", "", 0, map[string]int64{"series": keep.id, "mergedFrom": drop.id}); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return keep.id, nil
 }
 
 // ListSeriesPage lists series for the management page with member counts per

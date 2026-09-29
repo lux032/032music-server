@@ -217,7 +217,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     } catch (_) { sessionStorage.removeItem(draftStorageKey); }
   }
 
-  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'enrichment', 'merges', 'settings', 'security'];
+  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'series', 'enrichment', 'merges', 'settings', 'security'];
 
   // syncChrome copies just the per-page bits of the persistent shell from
   // the freshly fetched document: the navigation highlight, the admin

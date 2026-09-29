@@ -85,7 +85,7 @@ type workReviewWorkGroup struct {
 
 type workReviewPageData struct {
 	Chrome
-	ActiveTab             string // "albums" | "tracks" | "works"
+	ActiveTab             string // "albums" | "tracks" | "works" | "series"
 	Group                 string // "album" | "work"
 	AlbumID               int64  // optional filter
 	Notice                string
@@ -99,6 +99,10 @@ type workReviewPageData struct {
 	WorkReviews           []enrichmentWorkReview
 	AlbumGroups           []workReviewAlbumGroup
 	WorkGroups            []workReviewWorkGroup
+	// 系列建议 Tab（D54）：与作品对齐 Tab 相同，不支持分组切换与 albumId 过滤。
+	SeriesGroups    []seriesSuggestionGroup
+	SeriesCards     []seriesSuggestionCard
+	SeriesTruncated bool // 建议超过 200 条：仅显示前 200 条
 }
 
 func safeAdminReturnTo(raw, fallback string) string {
@@ -424,7 +428,7 @@ func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	tab := r.URL.Query().Get("tab")
-	if tab != "tracks" && tab != "works" {
+	if tab != "tracks" && tab != "works" && tab != "series" {
 		tab = "albums"
 	}
 	group := r.URL.Query().Get("group")
@@ -489,6 +493,17 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "work review unavailable", http.StatusInternalServerError)
 			return
 		}
+	case "series":
+		// 系列建议（D54）：与作品对齐 Tab 相同，忽略 group 与 albumId。
+		suggestions, err := a.store.PendingSeriesSuggestions(r.Context(), 200, 0)
+		if err != nil {
+			a.logger.Error("work review series suggestions", "error", err)
+			http.Error(w, "work review unavailable", http.StatusInternalServerError)
+			return
+		}
+		// L2：超过 200 条时提示“仅显示前 200 条”（角标计数与列表同口径）。
+		data.SeriesTruncated = data.SeriesSuggestionCount > len(suggestions)
+		data.SeriesGroups, data.SeriesCards = a.seriesSuggestionCards(data.CSRFToken, suggestions)
 	}
 
 	a.render(w, http.StatusOK, "work-review.html", data)

@@ -1,7 +1,8 @@
 // Playwright globalSetup：启动两个隔离的 fixture 实例——
 //   · 共享实例 45439：保持 20 首曲目、1 张专辑的原始假设，供既有 spec 使用；
-//   · 批次 3 独立实例 45441：播种批次 3 示例数据，仅供 work-review-batch3.spec.js
-//     使用，避免污染共享 fixture（player-queue 等 spec 依赖全局曲目数）。
+//   · 独立实例 45441：播种批次 3 与批次 6 的示例数据（seed_e2e.go 一次写入，
+//     含系列建议与改名系列），供 work-review-batch3/batch6 两个 spec 使用，
+//     避免污染共享 fixture（player-queue 等 spec 依赖全局曲目数）。
 // 两个实例共用一个 findTool 解析结果，server 二进制只 build 一次。
 // 种子失败会直接抛错中止整个 e2e 运行，不吞错误；每个实例启动后立刻写各自的
 // state file，global teardown 按 state file 逐个关闭，中途失败也能清理。
@@ -43,7 +44,7 @@ async function seedBatch3(go) {
   for (;;) {
     const res = spawnSync(seedBin, [dbPath], { cwd: ROOT, encoding: 'utf8' });
     if (res.status === 0) {
-      console.log('[e2e-setup] batch3 seed data ready (isolated instance :45441)');
+      console.log('[e2e-setup] batch3+batch6 seed data ready (isolated instance :45441)');
       return;
     }
     if (res.error) throw new Error(`seed_e2e failed to launch: ${res.error}`);

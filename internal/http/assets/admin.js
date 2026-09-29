@@ -9,7 +9,7 @@
 
   // ------------------------------------------------- sidebar admin group
   const GROUP_KEY = '032_admin_group';
-  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'enrichment', 'merges', 'settings', 'security'];
+  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'series', 'enrichment', 'merges', 'settings', 'security'];
 
   function applyGroupState() {
     const group = document.getElementById('sidebar-admin-group');

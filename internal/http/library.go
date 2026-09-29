@@ -451,6 +451,22 @@ func (a *App) handleAdminWorkOptions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 500, "query_failed", err.Error())
 		return
 	}
+	// withSeries=1（系列管理页“加入作品”）：在标签里标出作品当前所在的
+	// 系列，提示“将从《Z》移入”。excludeSeries=<id> 时排除本系列（已在本
+	// 系列的作品不显示移入提示，L3）。
+	seriesOf := map[int64]storage.WorkSeries{}
+	if r.URL.Query().Get("withSeries") == "1" && len(works) > 0 {
+		ids := make([]int64, 0, len(works))
+		for _, work := range works {
+			ids = append(ids, work.ID)
+		}
+		if byWork, titleErr := a.store.SeriesByWork(r.Context(), ids); titleErr == nil {
+			seriesOf = byWork
+		} else {
+			a.logger.Error("work options series lookup", "error", titleErr)
+		}
+	}
+	excludeSeries := parseInt64(r.URL.Query().Get("excludeSeries"))
 	items := make([]optionItem, 0, len(works))
 	for _, work := range works {
 		label := work.Title
@@ -459,6 +475,9 @@ func (a *App) handleAdminWorkOptions(w http.ResponseWriter, r *http.Request) {
 		}
 		if work.Year > 0 {
 			label += fmt.Sprintf(" [%d]", work.Year)
+		}
+		if series, ok := seriesOf[work.ID]; ok && series.ID != excludeSeries {
+			label += " · 将从《" + series.Title + "》移入"
 		}
 		items = append(items, optionItem{ID: work.ID, Label: label})
 	}

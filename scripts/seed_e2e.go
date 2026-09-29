@@ -220,6 +220,55 @@ func main() {
 		}
 	}
 
+	// -------------------------------------------------------------
+	// 批次 6 种子（必须在 bocchi 播种标记写入之前完成）：系列建议与系列
+	// 管理的示例数据。所有系列/建议标题都排在 鬼滅（U+9B3C）之后或不影响
+	// 鬼滅 系列行，避免干扰批次 3 的“第一条系列行”断言。
+	// -------------------------------------------------------------
+	hinokami := mustWork(storage.WorkInput{Title: "鬼滅の刃 ヒノカミ血風譚", TranslatedTitle: "鬼灭之刃 火之神血风谭", Type: "game", Year: 2021, ExternalID: "302688"})
+	fateA := mustWork(storage.WorkInput{Title: "Fate/stay night", Type: "anime", Year: 2006, ExternalID: "290"})
+	fateB := mustWork(storage.WorkInput{Title: "Fate/stay night [Unlimited Blade Works]", Type: "anime", Year: 2014, ExternalID: "24255"})
+	index := mustWork(storage.WorkInput{Title: "とある魔術の禁書目録", TranslatedTitle: "魔法禁书目录", Type: "anime", Year: 2008, ExternalID: "1014"})
+	railgun := mustWork(storage.WorkInput{Title: "とある科学の超電磁砲", TranslatedTitle: "某科学的超电磁炮", Type: "anime", Year: 2009, ExternalID: "2585"})
+	ryuuA := mustWork(storage.WorkInput{Title: "龍の国 第一部", Type: "anime", Year: 2016})
+	ryuuB := mustWork(storage.WorkInput{Title: "龍の国 第二部", Type: "anime", Year: 2018})
+
+	// 避免新作品进入“受保护但无引用”区：给它们一张单独的专辑（不加进
+	// 精选集，否则会改变批次 3 胶囊 +N 断言的作品数）。
+	b6Tracks := importTracks("E2E Batch6 Album", "E2E Artist", 2024,
+		"B6 Song 1", "B6 Song 2", "B6 Song 3", "B6 Song 4", "B6 Song 5", "B6 Song 6", "B6 Song 7")
+	linkTrack(hinokami.ID, b6Tracks[0], "op")
+	linkTrack(fateA.ID, b6Tracks[1], "op")
+	linkTrack(fateB.ID, b6Tracks[2], "theme")
+	linkTrack(index.ID, b6Tracks[3], "op")
+	linkTrack(railgun.ID, b6Tracks[4], "op")
+	linkTrack(ryuuA.ID, b6Tracks[5], "op")
+	linkTrack(ryuuB.ID, b6Tracks[6], "op")
+
+	// 龍の国：两部作品各在一个改过名的系列里（合并建议需要选择名字）。
+	ryuuSeriesA, err := s.CreateWorkSeries(ctx, "龍の国シリーズ甲", []int64{ryuuA.ID})
+	if err != nil {
+		fail("create ryuu series A: %v", err)
+	}
+	ryuuSeriesB, err := s.CreateWorkSeries(ctx, "龍の国シリーズ乙", []int64{ryuuB.ID})
+	if err != nil {
+		fail("create ryuu series B: %v", err)
+	}
+	_ = ryuuSeriesA
+	_ = ryuuSeriesB
+
+	// 四条系列建议：加入已有系列（接受）、新建系列（接受）、合并需选名
+	// （选择名字后接受）、普通建议（拒绝）。RelationAB 是 A 的关系列表里
+	// 对 B 的标注（描述 B），方向与生产语义一致（见 series_bangumi.go）。
+	if err = s.ReplaceSeriesSuggestions(ctx, 1, []storage.SeriesSuggestionInput{
+		{WorkA: kimetsu1.ID, WorkB: hinokami.ID, SubjectA: 245665, SubjectB: 302688, RelationAB: "游戏", RelationBA: "动画", Kind: "cross"},
+		{WorkA: fateA.ID, WorkB: fateB.ID, SubjectA: 290, SubjectB: 24255, RelationAB: "不同演绎", RelationBA: "不同演绎", Kind: "cross"},
+		{WorkA: ryuuA.ID, WorkB: ryuuB.ID, SubjectA: 770001, SubjectB: 770002, RelationAB: "续集", RelationBA: "前传", Kind: "sequel"},
+		{WorkA: index.ID, WorkB: railgun.ID, SubjectA: 1014, SubjectB: 2585, RelationAB: "衍生", RelationBA: "主线故事", Kind: "cross"},
+	}, []int64{kimetsu1.ID, hinokami.ID, fateA.ID, fateB.ID, ryuuA.ID, ryuuB.ID, index.ID, railgun.ID}); err != nil {
+		fail("seed series suggestions: %v", err)
+	}
+
 	// 待审候选：专辑 / 曲目 / 作品对齐各一条
 	if err = s.SaveAlbumSubjectCandidates(ctx, gurengeAlbum[0].ID, []storage.AlbumSubjectCandidate{
 		{

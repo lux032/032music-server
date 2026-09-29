@@ -2179,6 +2179,9 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
   padding: 6px;
   background: var(--bg-soft);
 }
+.work-picker-results[hidden] {
+  display: none;
+}
 .work-picker-results button {
   width: 100%;
   min-height: 30px;
@@ -2376,7 +2379,7 @@ details.series-fold-card[open] .series-toggle-btn .icon { transform: rotate(180d
   font-size: var(--fs-xs);
 }
 .dissolve-hint {
-  margin: -8px 0 0;
+  margin: 10px 0 8px;
   color: var(--muted);
   font-size: var(--fs-xs);
 }
@@ -2669,4 +2672,217 @@ details.works-series-row[open] .series-toggle-btn .icon { transform: rotate(180d
 }
 .work-track-usage-row form {
   margin: 0;
+}
+
+/* ---------------------------------------------------------------
+   Phase 4.6 批次 6：系列建议 Tab 与系列管理页
+   --------------------------------------------------------------- */
+
+/* 系列建议卡片：两部作品 + 双向关系标签 */
+.series-suggestion-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+.series-suggestion-work {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  color: inherit;
+  background: var(--bg-soft);
+}
+.series-suggestion-work .series-member-meta strong,
+.series-suggestion-work .series-member-meta small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.series-suggestion-work:hover {
+  border-color: var(--accent);
+}
+.danger-text-button {
+  color: var(--danger) !important;
+}
+.series-relation-pill {
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 3px 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.series-effect-preview {
+  margin: 10px 0 0;
+  font-size: var(--fs-sm);
+}
+.series-naming-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+}
+.series-naming-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.series-naming-options input[type="text"] {
+  height: 30px;
+  min-width: 200px;
+}
+.series-naming-hint {
+  margin: 6px 0 0;
+  font-size: var(--fs-xs);
+}
+.series-relation-sentence {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.series-truncated-hint {
+  margin: 0 0 10px;
+  font-size: var(--fs-xs);
+}
+
+/* 系列管理列表页 */
+.series-create-card .series-create-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+.series-create-form label,
+.series-add-form label {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.series-create-form .work-picker,
+.series-add-form .work-picker,
+.series-merge-form .work-picker {
+  display: grid;
+  gap: 6px;
+  min-width: 260px;
+}
+.series-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.series-list-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  background: var(--bg-soft);
+}
+.series-list-poster,
+.series-list-poster img,
+.series-list-poster .cover-placeholder {
+  width: 52px;
+  height: 72px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.series-list-poster .cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: var(--surface);
+}
+.series-list-info {
+  min-width: 0;
+}
+.series-list-info .title-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.series-list-info h2 {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.series-list-info p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.series-renamed-badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* 系列管理详情页 */
+.series-detail-header {
+  align-items: flex-end;
+}
+.series-detail-header .inline-rename {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.series-detail-header .inline-rename input {
+  height: 34px;
+  min-width: 240px;
+}
+.series-detail-header .inline-rename button {
+  white-space: nowrap;
+}
+.series-detail-header .inline-rename label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.series-detail-header .inline-rename .rename-label {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.series-type-group-head {
+  margin: 14px 0 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.series-member-list {
+  display: grid;
+  gap: 8px;
+}
+.series-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.series-member-row form {
+  margin: 0;
+}
+.series-add-form,
+.series-merge-form {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
 }

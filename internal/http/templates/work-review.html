@@ -13,7 +13,7 @@
         <h1>作品关联审核</h1>
         <p class="result-count">集中审核来自 Bangumi 的专辑、曲目及作品对齐建议，永久保留人工决策意图。</p>
       </div>
-      {{if ne .ActiveTab "works"}}
+      {{if and (ne .ActiveTab "works") (ne .ActiveTab "series")}}
       <div class="review-controls">
         <div class="group-segmented">
           <a href="/admin/work-review?tab={{.ActiveTab}}&group=album{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}" class="{{if eq .Group "album"}}active{{end}}">按专辑分组</a>
@@ -37,6 +37,10 @@
           <span>作品对齐候选</span>
           <span class="review-tab-badge">{{.WorkCandidateCount}}</span>
         </a>
+        <a href="/admin/work-review?tab=series" class="review-tab {{if eq .ActiveTab "series"}}active{{end}}">
+          <span>系列建议</span>
+          <span class="review-tab-badge">{{.SeriesSuggestionCount}}</span>
+        </a>
       </div>
       {{if .AlbumID}}
       <div class="review-filter-indicator">
@@ -47,7 +51,36 @@
     </nav>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    {{if eq .ActiveTab "albums"}}
+    {{if eq .ActiveTab "series"}}
+    {{/* 系列建议（D54）：与作品对齐 Tab 相同，始终平铺（同作品多条建议按作
+         品分组收拢），不支持按专辑分组与 albumId 过滤。 */}}
+    {{if .SeriesTruncated}}<p class="series-truncated-hint muted">建议较多，仅显示前 200 条，处理后会继续出现。</p>{{end}}
+    <section class="review-group-list">
+      {{range .SeriesGroups}}
+      <article class="review-group-card">
+        <header class="review-group-head">
+          <div class="review-subject-summary">
+            {{with .Poster}}<img class="review-poster-thumb fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="review-poster-thumb cover-placeholder">作</div>{{end}}
+            <div class="review-subject-meta">
+              <h2><a href="/admin/works/{{.Work.ID}}">{{.Work.Title}}</a></h2>
+              <p>{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}} · {{.Total}} 条建议涉及本作品</p>
+            </div>
+          </div>
+          <span class="score-pill">{{.Total}} 条建议</span>
+        </header>
+        {{range .Cards}}{{template "wrSeriesSuggCard" .}}{{end}}
+      </article>
+      {{end}}
+      {{range .SeriesCards}}
+      <article class="review-group-card">
+        {{template "wrSeriesSuggCard" .}}
+      </article>
+      {{end}}
+      {{if and (not .SeriesGroups) (not .SeriesCards)}}
+      <div class="zero-state"><strong>暂无系列建议</strong><span>当 Bangumi 登记了跨媒体或续作关系、但自动归组不处理时，将在此等待人工确认。</span></div>
+      {{end}}
+    </section>
+    {{else if eq .ActiveTab "albums"}}
     <section class="review-group-list">
       {{if eq .Group "album"}}
       {{range .AlbumGroups}}
@@ -291,6 +324,64 @@
     <div class="candidate-btn-group">
       <button type="submit" form="track-accept-{{.Cand.ID}}" class="primary-button">接受候选</button>
       <button type="submit" form="track-reject-{{.Cand.ID}}" class="secondary-button" style="color:var(--danger);">拒绝</button>
+    </div>
+  </footer>
+</div>
+{{end}}
+
+{{define "wrSeriesSuggCard"}}
+<div class="review-candidate-body series-suggestion-card">
+  <div class="series-suggestion-pair">
+    <a href="/admin/works/{{.WorkA.ID}}" class="series-suggestion-work">
+      {{with .PosterA}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+      <div class="series-member-meta">
+        <strong title="{{.WorkA.Title}}">{{.WorkA.Title}}</strong>
+        <small>{{workTypeLabel .WorkA.Type}}{{if .WorkA.Year}} · {{.WorkA.Year}}{{end}}{{if .WorkA.TranslatedTitle}} · {{.WorkA.TranslatedTitle}}{{end}}</small>
+      </div>
+    </a>
+    <span class="series-relation-pill" title="{{.RelationSentence}}">{{.RelationLabel}}</span>
+    <a href="/admin/works/{{.WorkB.ID}}" class="series-suggestion-work">
+      {{with .PosterB}}<img class="series-member-poster fade-img" src="{{.}}" alt="" loading="lazy" decoding="async">{{else}}<div class="series-member-poster cover-placeholder">作</div>{{end}}
+      <div class="series-member-meta">
+        <strong title="{{.WorkB.Title}}">{{.WorkB.Title}}</strong>
+        <small>{{workTypeLabel .WorkB.Type}}{{if .WorkB.Year}} · {{.WorkB.Year}}{{end}}{{if .WorkB.TranslatedTitle}} · {{.WorkB.TranslatedTitle}}{{end}}</small>
+      </div>
+    </a>
+  </div>
+  <p class="series-relation-sentence" title="{{.RelationSentence}}">{{.RelationSentence}}</p>
+
+  <form id="series-accept-{{.ID}}" method="post" action="/admin/work-review/series-suggestions/{{.ID}}/accept">
+    <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+    <input type="hidden" name="returnTo" value="/admin/work-review?tab=series">
+    <p class="series-effect-preview">接受后：{{.EffectPreview}}</p>
+    {{if .Merge}}
+    <input type="hidden" name="seriesTitleA" value="{{.SeriesATitle}}">
+    <input type="hidden" name="seriesTitleB" value="{{.SeriesBTitle}}">
+    {{if eq .NamingMode "both"}}
+    <div class="series-naming-options" role="radiogroup" aria-label="合并后的名字">
+      <span class="muted">两个系列都改过名，请选择合并后的名字：</span>
+      <label><input type="radio" name="titleChoice" value="a" checked> 保留《{{.SeriesATitle}}》</label>
+      <label><input type="radio" name="titleChoice" value="b"> 保留《{{.SeriesBTitle}}》</label>
+      <label><input type="radio" name="titleChoice" value="new"> 新名字：<input type="text" name="title" placeholder="输入合并后的系列名" aria-label="新系列名"></label>
+    </div>
+    {{else if eq .NamingMode "one"}}
+    <input type="hidden" name="titleChoice" value="{{.DefaultTitleChoice}}">
+    <p class="series-naming-hint muted">合并后保留名字《{{.DefaultKeepTitle}}》。</p>
+    {{else}}
+    <p class="series-naming-hint muted">合并后名字按规则自动确定。</p>
+    {{end}}
+    {{end}}
+  </form>
+  <form id="series-reject-{{.ID}}" method="post" action="/admin/work-review/series-suggestions/{{.ID}}/reject">
+    <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+    <input type="hidden" name="returnTo" value="/admin/work-review?tab=series">
+  </form>
+
+  <footer class="candidate-footer-actions">
+    <span class="action-hint">接受与拒绝都会永久记住这对作品的决定。</span>
+    <div class="candidate-btn-group">
+      <button type="submit" form="series-accept-{{.ID}}" class="primary-button">接受建议</button>
+      <button type="submit" form="series-reject-{{.ID}}" class="secondary-button danger-text-button">拒绝</button>
     </div>
   </footer>
 </div>
