@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lux032/032music-server/internal/appmeta"
 )
 
 const (
@@ -82,7 +84,7 @@ type Client struct {
 }
 
 func NewClient(apiKey, apiSecret string) *Client {
-	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}, Endpoint: DefaultEndpoint, APIKey: apiKey, APISecret: apiSecret, UserAgent: "032-Music-Server/dev (self-hosted scrobbler)"}
+	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}, Endpoint: DefaultEndpoint, APIKey: apiKey, APISecret: apiSecret, UserAgent: "032-Music-Server/dev (" + appmeta.RepoURL + ")"}
 }
 
 // Sign computes api_sig: md5 over the alphabetically sorted name+value pairs

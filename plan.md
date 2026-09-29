@@ -401,6 +401,34 @@
 | e2e | 批次 6 种子扩展进 45441 独立实例（不污染 45439）：加入/新建/合并需选名/拒绝四条建议 + 两个改名系列；用例覆盖接受新建/加入、拒绝、选名合并、管理页全生命周期、/works 类型筛选；截图用 E2E_SCREENSHOTS=1 输出 .local/mockups/impl46/（声明在最前，与批次 3 同一处理；依赖声明顺序，不可开启 retries） | 双实例隔离机制不变 |
 | 第十一轮 reviewer 修订（H1/M1～M3/L1～L8） | H1：合并命名单选增加“自动（按规则）”（空串交存储层按 D58 处理），MergeWorkSeries 返回保留方 id，合并后跳到 /admin/series/{keptID}（returnTo 指向被删方时同样纠正）；M1：admin.js/router.js 的 ADMIN_NAV_KEYS 加入 series（管理组自动展开）；M2：base.css 的 checkbox 规则同时覆盖 input[type=radio]；M3：建议卡关系标签改自然语言（relationAB 描述 B：“《B》是《A》的<关系>”，相同则“互为”；胶囊按 RelationBA ↔ RelationAB），种子方向修正；L1 分组计数用 counts[key]；L2 超 200 条提示；L3 withSeries 排除本系列；L4 改名/解散带 returnTo 时友好提示；L5 内联样式入 CSS；L6 .dissolve-hint 间距；L7/L8 e2e 注释 | 批次 6 reviewer BLOCK 修复 |
 
+**第十二轮（外部 API 礼貌性加固）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 429/503 退避 | cachedJSON 与 doSourceJSON（原 doJSON）识别 429 与带 Retry-After 的 503：Retry-After 支持秒数与 HTTP 日期，缺失/非法默认 60 秒、上限 10 分钟；按来源（bangumi/musicbrainz）在 Manager 上记录 blocked-until（各自由 bangumiMu/mbMu 保护），waitBangumiRateLimit/waitMBRateLimit 等待到 max(间隔点, blocked-until)，等待可被取消；返回可识别的 *RateLimitError（包裹 ErrRateLimited，含来源/状态码/退避时长）；限流响应不写缓存（沿用非 2xx/404 不缓存） | 被限流后继续按原间隔打满来源只会延长封禁 |
+| 运行循环策略 | (a) 遇到 ErrRateLimited 立即结束本轮：phase4 条目循环与系列阶段、StartAll 艺术家匹配循环都 FinishRun(failed, 中文信息“Bangumi 限流（429），已停止本轮，约 X 分钟后可重试”)；限流不计入 Failed 与连续失败熔断计数 | 退避可达 10 分钟，占住唯一后台 worker 等待重试收益低；任务幂等可稍后重跑，缓存命中使重跑代价小 |
+| 系列阶段传播 | series_bangumi.go 三处拉取失败点（种子详情、BFS 关系、type-4 建议）遇 ErrRateLimited 直接返回，不累加 consecutiveFailures，由 executePhase4Run 统一收尾 | 熔断信息保持准确 |
+| 艺术家匹配传播 | matchArtist 内 MB 搜索/TaggedMBID 查询/详情补查与 Last.fm 查询遇 ErrRateLimited 直接返回；Last.fm JSON 错误码 29（rate limit）同样视为限流 | StartAll 循环只认返回值 |
+| 海报回填 | downloadPublicImage 遇 429 返回 RateLimitError；StartWorkPosterBackfill 遇到即停止本次回填并记日志，下一轮自愈 | 回填是可重试的幕后任务 |
+| 统一 User-Agent | 新增 userAgent(setting)：<App>/<Version> (<Contact>)，空 Contact 回退项目仓库地址 https://github.com/lux032/032music-server（替换 “self-hosted”/“local-self-hosted-instance” 等不可联系值），空名称/版本回退 032-Music-Server/dev；Bangumi(cachedJSON)、MusicBrainz(mbRequest)、Last.fm 歌手信息、Wikidata/Wikipedia/Spotify、海报与歌手图片下载全部改走该函数 | MusicBrainz/Wikimedia 要求 UA 可联系到使用者 |
+| Wikimedia UA 设置来源 | metadataUserAgent(ctx) 统一读 MusicBrainz 数据源设置：管理页唯一可编辑联系方式的表单就在 MB 卡片，且这些辅助请求都是为 MB 身份解析关系的 | 调用处拿不到各自的 setting，避免改一串函数签名 |
+| Last.fm scrobble UA | internal/lastfm 默认 UA 的 “self-hosted scrobbler” 同样是不可联系值，一并统一为仓库地址 | 任务允许同值统一 |
+| Bangumi 间隔配置 | 环境变量 MUSIC_SERVER_BANGUMI_INTERVAL_MS（默认 500ms，下限 200ms、上限 10000ms，非法/越界回退默认并告警），在 enrichment.New 读取；不放进数据源设置（需迁移且间隔是部署级调参而非数据源属性） | 沿用 MUSIC_SERVER_* 模式，改动小、无迁移 |
+| 等待可注入 | Manager.sleep 字段（默认 sleepContext）承接限流等待，测试注入后断言退避时长而无需真等 | 退避默认 60 秒起，真等不可行 |
+
+**验证**：新增 TestParseRetryAfter、TestCachedJSONRateLimited（含不写缓存/退避等待/取消）、TestCachedJSONServiceUnavailableRetryAfter、TestPhase4RunStopsOnRateLimit（断言 429 后请求数=1）、TestArtistMatchStopsOnRateLimit、TestSeriesGroupingStopsOnRateLimit、TestUserAgentFallback、TestCachedJSONUserAgent、TestMusicBrainzRequestUserAgent、TestWikidataUserAgentAndRateLimit、TestSpotifyImageRateLimit、TestLastFMError29RateLimited、TestDownloadPublicImageUserAgentAndRateLimit、TestParseBangumiIntervalMS、TestBangumiIntervalFromEnv、TestNewManagerBangumiIntervalFromEnv；变异验证：去掉 cachedJSON 退避分支→限流测试失败、UA 回退改 “self-hosted”→UA 测试失败；`go test ./...` 与 Playwright 全量通过。
+
+| 第十二轮 reviewer 修订（H1/H2/M1/M2/L1～L6） | H1：RefreshConfirmedArtistImage/RefreshArtistBiographies 各拉取点遇限流立即返回，matchArtist 三处调用点（图片回填、简介刷新、自动确认后缓存）透传；H2：wikipediaSummary REST 限流不再回退 action API；M1：waitBangumiRateLimit/waitMBRateLimit 退避期内立即返回 RateLimitError（不再持锁睡眠），交互式 handler（手动匹配/确认/刷新简介）显示中文提示“X 限流中，约 N 分钟后再试”；M2：parseRetryAfter 相乘前先判上限、Atoi ErrRange 取上限；L1：README 按实际行为改写（仅 Bangumi/MB 记录退避）；L2：UA 的 App/Version 空白转“-”；L3：Contact 控制字符转空格且管理页拒绝含控制字符的联系方式；L4：设置页提示与实际行为一致；L5：TestArtistMatchStopsOnRateLimit 增至 2 位艺术家；L6：仓库地址常量为 internal/appmeta.RepoURL，enrichment 与 lastfm 共用 | 批次 reviewer BLOCK 修复 |
+
+**验证**：新增 TestArtistMatchRefreshStopsOnRateLimit、TestArtistMatchBiographyRateLimitStopsRun、TestWikipediaSummaryRateLimitStopsFallback、TestWaitRateLimitReturnsImmediatelyDuringBackoff、TestMatchArtistRateLimitNotice、TestConfirmArtistMatchRateLimitNotice、TestRefreshArtistBiographiesRateLimitNotice、TestSaveMetadataSettingsRejectsControlCharContact；TestCachedJSONRateLimited 改为断言退避期立即返回且 sleep 不被调用；变异验证：去掉刷新路径限流返回→H1 两测试失败、恢复持锁睡眠→M1 两测试失败；`go test ./...` 与 Playwright 全量通过。
+
+| 第十二轮 reviewer 第二轮修订（H-1/M-1/L-1～L-3） | H-1：musicBrainzLookup 里 wikidataImage/spotifyImage 的限流错误不再吞掉（Spotify 循环遇限流立即停），调用点（matchArtist 两处、RefreshConfirmedArtistImage）均已透传；M-1：bangumi.go 自动确认后海报下载遇限流返回错误停本轮（确认已落库，海报由回填补）；L-1：确认匹配遇限流提示“已确认匹配；<来源>限流中，图片/简介可稍后手动刷新，或在下次自动匹配时补全”；L-2：sourceDisplayName 补“歌手图片/作品海报/外部来源”，手动匹配先确认后限流时提示“已自动确认匹配，但图片/简介因<来源>限流暂未获取”（matchArtist 确认后透传改返回 AutoMatched=true 的 MatchResult）；L-3：两个 run 级测试的注释改为说明区分点是 status+消息 | 第二轮 reviewer BLOCK 修复 |
+
+**验证**：新增 TestWikidataImageRateLimitStopsStartAll（Wikidata 429 停轮、第二位不再请求 Wikidata）、TestSpotifyImageRateLimitStopsLoop（Spotify 循环遇 429 停）、TestPhase4WorkPosterRateLimitStopsRun（海报 429 停轮且确认已落库）、TestMatchArtistConfirmedThenRateLimitNotice；变异验证：去掉 wikidata 限流返回→TestWikidataImageRateLimitStopsStartAll 失败；`go test ./...` 与 Playwright 全量通过。
+
+| 第十二轮 reviewer 第三轮修订（Low-1～Low-3） | Low-1：提示文案统一——来源名与“限流”之间一律空格、结尾不加句号；图片下载类来源在提示里统称“图片源”（noticeSourceName），运行记录仍保留“作品海报 限流（429）”；手动匹配确认后限流的提示补“约 N 分钟后可重试”（RateLimitNoticeParts）；Low-2：StartAll 限流分支在 result.AutoMatched 时先 matched++ 并按 index+1 更新进度再结束本轮；Low-3：SetMusicBrainzBaseURL 注释标明只供测试、只能在管理器空闲时调用 | 第三轮 reviewer APPROVE 后的 Low 收尾 |
+
+**验证**：新增 TestArtistMatchConfirmedThenRateLimitCountsMatch（确认后限流仍计 Matched=1/Processed=1）；`go test ./...` 与 Playwright 全量通过。
+
 **第九轮（批次 4 自定义图片，migration 030）**：
 | 决策 | 选择 | 理由 |
 |------|------|------|

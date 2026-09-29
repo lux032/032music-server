@@ -141,6 +141,7 @@ Invoke-RestMethod `
 | `MUSIC_SERVER_LOG_LEVEL` | `info` | `debug`、`info`、`warn` 或 `error` |
 | `MUSIC_SERVER_RESET_CREDENTIALS` | 无 | 恢复用：`password`（用户名与密码）、`tokens`（API 与媒体 Token）或 `all`。启动时删除对应的管理页覆盖值及全部登录会话；变量保留期间每次启动都会重复并告警，恢复后请移除 |
 | `MUSIC_SERVER_TRUSTED_PROXIES` | 无 | 可选，逗号分隔的反向代理 IP 或 CIDR（如 `172.16.0.0/12,127.0.0.1`）。见下文“反向代理与登录限流” |
+| `MUSIC_SERVER_BANGUMI_INTERVAL_MS` | `500` | Bangumi API 两次请求的最小间隔（毫秒），允许 200～10000；非法或越界值回退默认值并在启动日志告警 |
 
 ### 管理页修改凭据
 
@@ -359,6 +360,8 @@ MusicBrainz 公共 API 不需要 Key，但启用时必须配置有意义的应�
 可通过专辑名查找 Bangumi 音乐条目及关联动画/游戏作品；不确定的关系进入管理员审核。
 
 `/admin/enrichment` 的作品对齐以 [Bangumi](https://bgm.tv) 为唯一在线来源，面向日本动画、游戏等 ACG 作品，以日文原名为主要匹配依据；普通电影、电视剧不在考虑范围内，最多顺带匹配。VGMdb 专辑增强已下线：它唯一的机器可读接口（非官方镜像 vgmdb.info）不可用，vgmdb.net 又拦截自动化访问。之前已写入的 VGMdb 数据会保留。
+
+对外部 API 保持礼貌：所有请求的 User-Agent 都携带可联系的标识（管理页填写的联系方式，留空时为项目仓库地址）；Bangumi 请求默认间隔 500ms（可用 `MUSIC_SERVER_BANGUMI_INTERVAL_MS` 调整），MusicBrainz 保持每秒 1 次；任一来源返回 429（或带 Retry-After 的 503）时本轮任务立即停止并给出中文提示。Bangumi 与 MusicBrainz 还会按 Retry-After 记录退避时间，退避期间的后续请求会立即被拒绝而不再实际发出；其余来源（Last.fm、Wikidata、Wikipedia、Spotify、图片下载）只识别限流并停止本轮。稍后可手动重跑。
 
 作品与曲库的关联**以专辑为主**：
 

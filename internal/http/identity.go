@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/storage"
@@ -132,6 +133,10 @@ func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request)
 				redirectWithNotice(w, r, "/admin/settings/metadata", "启用 MusicBrainz 时必须填写联系邮箱或项目地址")
 				return
 			}
+			if strings.IndexFunc(setting.Contact, unicode.IsControl) >= 0 {
+				redirectWithNotice(w, r, "/admin/settings/metadata", "联系方式不能包含换行等控制字符")
+				return
+			}
 			if scope == "lastfm" && setting.Enabled && setting.APIKey == "" && !existingLastFM.HasAPIKey {
 				redirectWithNotice(w, r, "/admin/settings/metadata", "首次启用 Last.fm 时必须填写 API Key")
 				return
@@ -184,6 +189,16 @@ func (a *App) handleMatchArtist(w http.ResponseWriter, r *http.Request) {
 	id := parseInt64(r.PathValue("id"))
 	result, err := a.enrichment.MatchArtist(r.Context(), id)
 	if err != nil {
+		if notice, ok := enrichment.RateLimitNotice(err); ok {
+			if result.AutoMatched {
+				// The match was confirmed before the rate limit hit; do not let
+				// the notice read like the match failed.
+				source, minutes, _ := enrichment.RateLimitNoticeParts(err)
+				notice = fmt.Sprintf("已自动确认匹配，但图片/简介因%s 限流暂未获取，约 %d 分钟后可重试", source, minutes)
+			}
+			redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), notice)
+			return
+		}
 		redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), err.Error())
 		return
 	}
@@ -204,13 +219,24 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	rateLimitedSource := ""
 	if err := a.enrichment.RefreshConfirmedArtistImage(r.Context(), id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if source, ok := enrichment.RateLimitedSourceName(err); ok {
+			rateLimitedSource = source
+		}
 		a.logger.Warn("cache confirmed artist image", "artistId", id, "error", err)
 	}
 	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if source, ok := enrichment.RateLimitedSourceName(err); ok && rateLimitedSource == "" {
+			rateLimitedSource = source
+		}
 		a.logger.Warn("cache confirmed artist biographies", "artistId", id, "error", err)
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), "外部身份已经人工确认")
+	message := "外部身份已经人工确认"
+	if rateLimitedSource != "" {
+		message = fmt.Sprintf("已确认匹配；%s 限流中，图片/简介可稍后手动刷新，或在下次自动匹配时补全", rateLimitedSource)
+	}
+	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), message)
 }
 
 func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +246,10 @@ func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Requ
 	}
 	id := parseInt64(r.PathValue("id"))
 	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil {
+		if notice, ok := enrichment.RateLimitNotice(err); ok {
+			redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), notice)
+			return
+		}
 		redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), "简介刷新失败："+err.Error())
 		return
 	}

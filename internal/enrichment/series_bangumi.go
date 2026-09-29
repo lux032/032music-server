@@ -224,6 +224,11 @@ func (m *Manager) enrichBangumiSeries(ctx context.Context, runID int64, force bo
 				if ctx.Err() != nil {
 					return "", ctx.Err()
 				}
+				if asRateLimited(fetchErr) != nil {
+					// Rate limiting stops the stage immediately; it must not feed
+					// the consecutive-failure breaker.
+					return "", fetchErr
+				}
 				seedFailed[seed.WorkID] = true
 				consecutiveFailures++
 				if consecutiveFailures >= maxConsecutiveFailures {
@@ -312,6 +317,9 @@ func (m *Manager) enrichBangumiSeries(ctx context.Context, runID int64, force bo
 			if fetchErr != nil {
 				if ctx.Err() != nil {
 					return "", ctx.Err()
+				}
+				if asRateLimited(fetchErr) != nil {
+					return "", fetchErr
 				}
 				// A failed component keeps its current membership this run.
 				dirty = true
@@ -476,6 +484,9 @@ func (m *Manager) generateSeriesSuggestions(ctx context.Context, runID int64, se
 		if fetchErr != nil {
 			if ctx.Err() != nil {
 				return 0, ctx.Err()
+			}
+			if asRateLimited(fetchErr) != nil {
+				return 0, fetchErr
 			}
 			consecutiveFailures++
 			m.logger.Warn("bangumi series suggestion relation fetch failed", "subject", subjectID, "error", fetchErr)

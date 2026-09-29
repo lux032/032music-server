@@ -292,6 +292,12 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 			return "", err
 		}
 		if posterErr := m.CacheWorkPoster(ctx, work.ID); posterErr != nil && ctx.Err() == nil {
+			// 确认结果已经写入，这里返回错误让 phase4 循环停止本轮并不会造成
+			// 数据不一致：海报之后由海报回填任务补上（与回填遇 429 停止本轮的
+			// 处理方式一致）。
+			if asRateLimited(posterErr) != nil {
+				return "", posterErr
+			}
 			m.logger.Warn("cache work poster", "workId", work.ID, "error", posterErr)
 		}
 		return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")

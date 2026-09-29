@@ -26,7 +26,7 @@ func (m *Manager) downloadPublicImage(ctx context.Context, remoteURL, label stri
 	if err != nil {
 		return nil, "", "", err
 	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted image cache)")
+	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	client := *m.client
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
@@ -39,6 +39,10 @@ func (m *Manager) downloadPublicImage(ctx context.Context, remoteURL, label stri
 		return nil, "", "", err
 	}
 	defer response.Body.Close()
+	if isRateLimitResponse(response.StatusCode, response.Header) {
+		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+		return nil, "", "", m.rateLimitedError(label, response.StatusCode, retryAfter)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, "", "", fmt.Errorf("%s returned %s", label, response.Status)
 	}
@@ -174,6 +178,11 @@ func (m *Manager) StartWorkPosterBackfill() {
 			err = m.CacheWorkPoster(ctx, item.WorkID)
 			cancel()
 			if err != nil {
+				if rateLimited := asRateLimited(err); rateLimited != nil {
+					// A 429 stops this backfill pass; the next pass retries.
+					m.logger.Warn("work poster backfill stopped by rate limiting", "workId", item.WorkID, "retryAfter", rateLimited.RetryAfter.String())
+					return
+				}
 				failed++
 				m.logger.Warn("backfill work poster", "workId", item.WorkID, "error", err)
 			} else {

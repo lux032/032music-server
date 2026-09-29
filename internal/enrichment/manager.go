@@ -32,6 +32,7 @@ type Manager struct {
 	artistCancel        context.CancelFunc
 	mbMu                sync.Mutex
 	mbLast              time.Time
+	mbBlockedUntil      time.Time
 	phaseMu             sync.Mutex
 	phaseRunning        bool
 	phaseRunID          int64
@@ -43,9 +44,13 @@ type Manager struct {
 	musicBrainzBase     string
 	bangumiMu           sync.Mutex
 	bangumiLast         time.Time
+	bangumiBlockedUntil time.Time
 	bangumiInterval     time.Duration
 	imageDirectory      string
 	wg                  sync.WaitGroup
+	// sleep backs waitBangumiRateLimit/waitMBRateLimit; tests replace it to
+	// observe backoff waits without really sleeping.
+	sleep func(ctx context.Context, d time.Duration) error
 	// runMemo remembers request keys already fetched during the current run so a
 	// forced refresh still hits the network only once per key (M4).
 	runMemo map[string]bool
@@ -56,7 +61,7 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: 300 * time.Millisecond, imageDirectory: filepath.Join(dataDirectory, "artist-images")}
+	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext}
 	if recovered, err := store.FailRunningEnrichmentRuns(context.Background(), "server restarted before the enrichment run completed"); err != nil {
 		logger.Warn("recover interrupted enrichment runs", "error", err)
 	} else if recovered > 0 {
@@ -183,6 +188,19 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 				finishCancelled()
 				return
 			}
+			if rateLimited := asRateLimited(matchErr); rateLimited != nil {
+				if result.AutoMatched {
+					// The artist was confirmed before the rate limit hit (e.g. the
+					// biography refresh afterwards): count the match and the
+					// processed artist before stopping the run.
+					matched++
+					_ = m.store.UpdateArtistMatchRun(context.Background(), runID, index+1, matched, review, failed, artist.Name)
+				}
+				message := rateLimitRunMessage(rateLimited)
+				m.logger.Warn("artist matching stopped by rate limiting", "source", rateLimited.Source, "retryAfter", rateLimited.RetryAfter.String())
+				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", message)
+				return
+			}
 			if matchErr != nil {
 				failed++
 				m.logger.Warn("artist match failed", "artist", artist.Name, "error", matchErr)
@@ -226,6 +244,9 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	if automatic {
 		if needed, checkErr := m.store.ArtistImageCheckNeeded(ctx, artistID); checkErr == nil && needed {
 			if imageErr := m.RefreshConfirmedArtistImage(ctx, artistID); imageErr != nil && !errors.Is(imageErr, sql.ErrNoRows) {
+				if asRateLimited(imageErr) != nil {
+					return MatchResult{}, imageErr
+				}
 				m.logger.Warn("backfill confirmed artist image", "artistId", artistID, "error", imageErr)
 			}
 		}
@@ -235,6 +256,9 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 		return MatchResult{}, err
 	}
 	if biographyErr := m.RefreshArtistBiographies(ctx, artistID, !automatic); biographyErr != nil && !errors.Is(biographyErr, sql.ErrNoRows) {
+		if asRateLimited(biographyErr) != nil {
+			return MatchResult{}, biographyErr
+		}
 		m.logger.Warn("refresh confirmed artist biographies", "artistId", artistID, "error", biographyErr)
 	}
 	settings, err := m.store.MetadataSourceSettings(ctx)
@@ -271,10 +295,15 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 					candidate.Evidence = []string{"文件标签包含 MusicBrainz ID"}
 					found = append(found, candidate)
 					mbProfiles[candidate.MBID] = profile
+				} else if asRateLimited(e) != nil {
+					return MatchResult{}, e
 				}
 			} else {
 				found, mbProfiles, err = m.musicBrainzSearch(ctx, artist, setting)
 				if err != nil {
+					if asRateLimited(err) != nil {
+						return MatchResult{}, err
+					}
 					m.logger.Warn("musicbrainz search failed", "artist", artist.Name, "error", err)
 				} else {
 					successfulSources++
@@ -291,6 +320,9 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 			queriedSources++
 			candidate, profile, e := m.lastFMInfo(ctx, artist, setting)
 			if e != nil {
+				if asRateLimited(e) != nil {
+					return MatchResult{}, e
+				}
 				m.logger.Warn("lastfm lookup failed", "artist", artist.Name, "error", e)
 			} else {
 				successfulSources++
@@ -344,6 +376,8 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 				if setting, enabled := bySource["musicbrainz"]; enabled {
 					if _, detailed, lookupErr := m.musicBrainzLookup(ctx, best.MBID, setting); lookupErr == nil {
 						profile = detailed
+					} else if asRateLimited(lookupErr) != nil {
+						return MatchResult{}, lookupErr
 					}
 				}
 			}
@@ -360,9 +394,18 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 			return MatchResult{}, err
 		}
 		if err = m.CacheArtistImage(ctx, artistID); err != nil {
+			if asRateLimited(err) != nil {
+				// The confirmation is already persisted; report AutoMatched so
+				// interactive callers can say the match succeeded but the
+				// image/biography fetch was deferred by the rate limit.
+				return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
+			}
 			m.logger.Warn("cache artist image failed", "artistId", artistID, "error", err)
 		}
 		if err = m.RefreshArtistBiographies(ctx, artistID, false); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			if asRateLimited(err) != nil {
+				return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
+			}
 			m.logger.Warn("cache artist biographies failed", "artistId", artistID, "error", err)
 		}
 		auto = true
@@ -441,7 +484,15 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 	var spotifyURLs []string
 	for _, relation := range value.Relations {
 		if relation.Type == "wikidata" {
-			imageURL, _ = m.wikidataImage(ctx, relation.URL.Resource)
+			var imageErr error
+			imageURL, imageErr = m.wikidataImage(ctx, relation.URL.Resource)
+			if imageErr != nil {
+				// Rate limiting must abort the match; ordinary image lookup
+				// failures stay best-effort.
+				if asRateLimited(imageErr) != nil {
+					return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, imageErr
+				}
+			}
 			if imageURL != "" {
 				break
 			}
@@ -452,7 +503,15 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 	}
 	if imageURL == "" {
 		for _, spotifyURL := range spotifyURLs {
-			imageURL, _ = m.spotifyImage(ctx, spotifyURL)
+			var imageErr error
+			imageURL, imageErr = m.spotifyImage(ctx, spotifyURL)
+			if imageErr != nil {
+				// Stop the loop on rate limiting instead of hammering the next URL.
+				if asRateLimited(imageErr) != nil {
+					return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, imageErr
+				}
+				continue
+			}
 			if imageURL != "" {
 				break
 			}
@@ -466,13 +525,15 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 	m.bangumiMu.Lock()
 	defer m.bangumiMu.Unlock()
+	// Never sleep through a rate-limit backoff while holding the lock: report
+	// it immediately so callers (run loops and interactive handlers alike)
+	// can react instead of being blocked uncancellably.
+	if remaining := time.Until(m.bangumiBlockedUntil); remaining > 0 {
+		return &RateLimitError{Source: "bangumi", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
+	}
 	if wait := time.Until(m.bangumiLast.Add(m.bangumiInterval)); wait > 0 {
-		timer := time.NewTimer(wait)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
+		if err := m.sleep(ctx, wait); err != nil {
+			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -487,15 +548,16 @@ func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 func (m *Manager) waitMBRateLimit(ctx context.Context) error {
 	m.mbMu.Lock()
 	defer m.mbMu.Unlock()
-	wait := time.Until(m.mbLast.Add(time.Second))
-	if wait > 0 {
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+	if remaining := time.Until(m.mbBlockedUntil); remaining > 0 {
+		return &RateLimitError{Source: "musicbrainz", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
+	}
+	if wait := time.Until(m.mbLast.Add(time.Second)); wait > 0 {
+		if err := m.sleep(ctx, wait); err != nil {
+			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	m.mbLast = time.Now()
 	return nil
@@ -509,16 +571,14 @@ func (m *Manager) mbRequest(ctx context.Context, endpoint string, setting storag
 	if err != nil {
 		return err
 	}
-	contact := setting.Contact
-	if contact == "" {
-		contact = "local-self-hosted-instance"
-	}
-	req.Header.Set("User-Agent", fmt.Sprintf("%s/%s (%s)", setting.ApplicationName, setting.ApplicationVersion, contact))
-	return doJSON(m.client, req, target)
+	req.Header.Set("User-Agent", userAgent(setting))
+	return m.doSourceJSON(m.client, req, "musicbrainz", target)
 }
 
 type lastFMResponse struct {
-	Artist struct {
+	Error   int    `json:"error"`
+	Message string `json:"message"`
+	Artist  struct {
 		Name, MBID, URL string
 		Image           []struct {
 			URL  string `json:"#text"`
@@ -548,9 +608,15 @@ func (m *Manager) lastFMInfoLanguage(ctx context.Context, artist storage.ArtistM
 	if err != nil {
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, err
 	}
+	req.Header.Set("User-Agent", userAgent(setting))
 	var response lastFMResponse
-	if err = doJSON(m.client, req, &response); err != nil {
+	if err = m.doSourceJSON(m.client, req, "lastfm", &response); err != nil {
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, err
+	}
+	if response.Error == 29 {
+		// Last.fm error 29 is "rate limit exceeded"; the API reports it with a
+		// 200 (or 429) status and a JSON error payload.
+		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, m.rateLimitedError("lastfm", http.StatusTooManyRequests, defaultRateLimitBackoff)
 	}
 	if response.Artist.Name == "" {
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, errors.New("Last.fm returned no artist")
@@ -614,17 +680,6 @@ func rejectPrivateIP(ip net.IP) error {
 	return nil
 }
 
-func doJSON(client *http.Client, req *http.Request, target any) error {
-	response, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("remote service returned %s", response.Status)
-	}
-	return json.NewDecoder(response.Body).Decode(target)
-}
 func profilePayload(pageURL, imageURL, biography string, aliases, tags []string) json.RawMessage {
 	value := map[string]any{"pageUrl": pageURL, "imageUrl": imageURL, "biography": biography, "aliases": aliases, "tags": tags}
 	data, _ := json.Marshal(value)
@@ -663,6 +718,8 @@ func (m *Manager) RefreshConfirmedArtistImage(ctx context.Context, artistID int6
 					return upsertErr
 				}
 				refreshed = true
+			} else if asRateLimited(lookupErr) != nil {
+				return lookupErr
 			}
 		}
 	}
@@ -677,6 +734,8 @@ func (m *Manager) RefreshConfirmedArtistImage(ctx context.Context, artistID int6
 						return upsertErr
 					}
 					refreshed = true
+				} else if asRateLimited(lookupErr) != nil {
+					return lookupErr
 				}
 			}
 		}
@@ -729,6 +788,9 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 			var value mbArtistResponse
 			endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(mbid) + "?inc=url-rels&fmt=json"
 			if lookupErr := m.mbRequest(ctx, endpoint, mbSetting, &value); lookupErr != nil {
+				if asRateLimited(lookupErr) != nil {
+					return lookupErr
+				}
 				m.logger.Warn("load MusicBrainz relations for biography", "artistId", artistID, "error", lookupErr)
 			} else {
 				wikidataChecked = true
@@ -745,6 +807,9 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 	if wikipediaNeeded && wikidataResource != "" {
 		sitelinks, linkErr := m.wikidataSitelinks(ctx, wikidataResource)
 		if linkErr != nil {
+			if asRateLimited(linkErr) != nil {
+				return linkErr
+			}
 			m.logger.Warn("load Wikidata sitelinks", "artistId", artistID, "error", linkErr)
 		} else {
 			for _, language := range languages {
@@ -758,6 +823,9 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 				}
 				biography, pageURL, fetchErr := m.wikipediaSummary(ctx, language, title)
 				if fetchErr != nil {
+					if asRateLimited(fetchErr) != nil {
+						return fetchErr
+					}
 					m.logger.Warn("fetch Wikipedia biography", "artistId", artistID, "language", language, "error", fetchErr)
 					continue
 				}
@@ -780,6 +848,9 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 		for _, language := range languages {
 			_, profile, fetchErr := m.lastFMInfoLanguage(ctx, artist, lastFMSetting, language)
 			if fetchErr != nil {
+				if asRateLimited(fetchErr) != nil {
+					return fetchErr
+				}
 				m.logger.Warn("fetch Last.fm biography", "artistId", artistID, "language", language, "error", fetchErr)
 				continue
 			}
@@ -814,13 +885,13 @@ func (m *Manager) wikidataSitelinks(ctx context.Context, resource string) (map[s
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist metadata cache)")
+	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	var document struct {
 		Entities map[string]struct {
 			Sitelinks map[string]struct{ Title string } `json:"sitelinks"`
 		} `json:"entities"`
 	}
-	if err = doJSON(m.client, request, &document); err != nil {
+	if err = m.doSourceJSON(m.client, request, "wikidata", &document); err != nil {
 		return nil, err
 	}
 	entity, ok := document.Entities[entityID]
@@ -842,7 +913,7 @@ func (m *Manager) wikipediaSummary(ctx context.Context, language, title string) 
 	if err != nil {
 		return "", "", err
 	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist metadata cache)")
+	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	var summary struct {
 		Extract     string `json:"extract"`
 		ContentURLs struct {
@@ -851,11 +922,14 @@ func (m *Manager) wikipediaSummary(ctx context.Context, language, title string) 
 			} `json:"desktop"`
 		} `json:"content_urls"`
 	}
-	if restErr := doJSON(m.client, request, &summary); restErr == nil && strings.TrimSpace(summary.Extract) != "" {
+	if restErr := m.doSourceJSON(m.client, request, "wikipedia", &summary); restErr == nil && strings.TrimSpace(summary.Extract) != "" {
 		if summary.ContentURLs.Desktop.Page != "" {
 			pageURL = summary.ContentURLs.Desktop.Page
 		}
 		return strings.TrimSpace(summary.Extract), pageURL, nil
+	} else if restErr != nil && asRateLimited(restErr) != nil {
+		// Rate limited: back off instead of hammering the action API fallback.
+		return "", "", restErr
 	}
 
 	query := url.Values{"action": {"query"}, "prop": {"extracts"}, "exintro": {"1"}, "explaintext": {"1"}, "redirects": {"1"}, "format": {"json"}, "formatversion": {"2"}, "titles": {title}}
@@ -863,7 +937,7 @@ func (m *Manager) wikipediaSummary(ctx context.Context, language, title string) 
 	if err != nil {
 		return "", "", err
 	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist metadata cache)")
+	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	var action struct {
 		Query struct {
 			Pages []struct {
@@ -871,7 +945,7 @@ func (m *Manager) wikipediaSummary(ctx context.Context, language, title string) 
 			}
 		} `json:"query"`
 	}
-	if err = doJSON(m.client, request, &action); err != nil {
+	if err = m.doSourceJSON(m.client, request, "wikipedia", &action); err != nil {
 		return "", "", err
 	}
 	if len(action.Query.Pages) == 0 || strings.TrimSpace(action.Query.Pages[0].Extract) == "" {
@@ -889,7 +963,7 @@ func (m *Manager) wikidataImage(ctx context.Context, resource string) (string, e
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist metadata cache)")
+	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	var document struct {
 		Entities map[string]struct {
 			Claims map[string][]struct {
@@ -899,7 +973,7 @@ func (m *Manager) wikidataImage(ctx context.Context, resource string) (string, e
 			} `json:"claims"`
 		} `json:"entities"`
 	}
-	if err = doJSON(m.client, request, &document); err != nil {
+	if err = m.doSourceJSON(m.client, request, "wikidata", &document); err != nil {
 		return "", err
 	}
 	entity, ok := document.Entities[entityID]
@@ -923,11 +997,11 @@ func (m *Manager) spotifyImage(ctx context.Context, artistURL string) (string, e
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("User-Agent", "032-Music-Server/dev (self-hosted artist metadata cache)")
+	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	var response struct {
 		ThumbnailURL string `json:"thumbnail_url"`
 	}
-	if err = doJSON(m.client, request, &response); err != nil {
+	if err = m.doSourceJSON(m.client, request, "spotify", &response); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(response.ThumbnailURL) == "" {

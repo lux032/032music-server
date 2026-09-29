@@ -35,6 +35,7 @@
             <label>应用版本<input name="musicbrainz_application_version" value="{{.ApplicationVersion}}"></label>
             <label>联系邮箱或项目地址<input name="musicbrainz_contact" value="{{.Contact}}" placeholder="启用时必填"></label>
           </div>
+          <p class="field-hint">建议填写邮箱或主页地址，MusicBrainz/Wikimedia 要求 User-Agent 可联系到使用者；启用 MusicBrainz 时必须填写，其他来源留空时使用项目仓库地址。</p>
           <label class="switch"><input type="checkbox" name="musicbrainz_auto" {{if .AutoMatch}}checked{{end}}> 参与自动匹配</label>
           <div class="editor-actions"><button type="submit">保存 MusicBrainz 设置</button></div>
         </section>

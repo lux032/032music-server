@@ -286,6 +286,16 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 				finishCancelled()
 				return
 			}
+			// Rate limiting stops the whole run immediately: the remaining items
+			// would hit the same wall, and the error must not feed the
+			// consecutive-failure breaker.
+			if rateLimited := asRateLimited(err); rateLimited != nil {
+				message := rateLimitRunMessage(rateLimited)
+				m.logger.Warn("metadata enrichment stopped by rate limiting", "runId", runID, "source", rateLimited.Source, "retryAfter", rateLimited.RetryAfter.String())
+				_ = m.store.UpdateEnrichmentRun(context.Background(), runID, counts)
+				_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", message)
+				return
+			}
 			counts.Processed++
 			if err != nil {
 				counts.Failed++
@@ -323,6 +333,12 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 		_, seriesErr := m.enrichBangumiSeries(ctx, runID, request.Force)
 		if ctx.Err() != nil {
 			finishCancelled()
+			return
+		}
+		if rateLimited := asRateLimited(seriesErr); rateLimited != nil {
+			message := rateLimitRunMessage(rateLimited)
+			m.logger.Warn("bangumi series grouping stopped by rate limiting", "runId", runID, "retryAfter", rateLimited.RetryAfter.String())
+			_ = m.store.FinishEnrichmentRun(context.Background(), runID, "failed", message)
 			return
 		}
 		if seriesErr != nil {
@@ -389,11 +405,7 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	contact := strings.TrimSpace(setting.Contact)
-	if contact == "" {
-		contact = "self-hosted"
-	}
-	req.Header.Set("User-Agent", fmt.Sprintf("%s/%s (%s)", setting.ApplicationName, setting.ApplicationVersion, contact))
+	req.Header.Set("User-Agent", userAgent(setting))
 	// Cached responses do not consume the source's request interval.
 	if source == "bangumi" {
 		if err = m.waitBangumiRateLimit(ctx); err != nil {
@@ -412,6 +424,13 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 		return 0, err
 	}
 	defer resp.Body.Close()
+	// 429 (or 503 with Retry-After) pushes back the source's next allowed
+	// request time and is reported as a recognizable error; the response is
+	// never cached.
+	if isRateLimitResponse(resp.StatusCode, resp.Header) {
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		return resp.StatusCode, m.rateLimitedError(source, resp.StatusCode, retryAfter)
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return resp.StatusCode, err
