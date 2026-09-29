@@ -583,7 +583,7 @@ func TestWorkPageTrackUsagesAndRemove(t *testing.T) {
 
 	// 解除后作品页不再显示该曲目用途
 	body = getAdmin(t, handler, cookie, workPath)
-	if strings.Contains(body, "曲目用途") {
+	if strings.Contains(body, `class="work-track-usages"`) {
 		t.Fatalf("曲目用途 section should disappear after removing the only track usage")
 	}
 	// 专辑级关联仍在

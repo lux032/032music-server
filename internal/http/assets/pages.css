@@ -2207,13 +2207,14 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 /* 3. Work Detail Page (4.5.6) */
 .work-hero {
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
+  grid-template-columns: clamp(220px, 18vw, 270px) minmax(0, 1fr);
   align-items: center;
-  gap: 22px;
-  padding: 10px 0 16px;
+  gap: 32px;
+  padding: 14px 0 24px;
 }
 .work-hero .work-cover {
-  max-width: 120px;
+  width: 100%;
+  max-width: 270px;
   aspect-ratio: 2 / 3;
   border-radius: var(--radius-md);
 }
@@ -2229,12 +2230,25 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 .work-hero .album-actions {
   margin-top: 10px;
 }
+.work-hero .album-actions .danger-action { color: var(--danger); }
 .work-hero .primary-round,
 .work-hero .secondary-round {
   min-height: 36px;
   padding: 0 16px;
   font-size: var(--fs-xs);
 }
+.work-dialog { width: min(680px, calc(100vw - 48px)); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 0; color: var(--text); background: var(--surface); box-shadow: var(--shadow-card); }
+.work-dialog::backdrop { background: rgba(10, 12, 18, 0.72); backdrop-filter: blur(3px); }
+.work-dialog form { display: grid; gap: 18px; padding: 24px; }
+.work-dialog fieldset { display: grid; gap: 16px; margin: 0; padding: 0; border: 0; }
+.work-dialog details { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.work-dialog details label { margin-top: 12px; }
+.dialog-head, .dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dialog-head h2 { margin: 2px 0 0; }
+.dialog-actions { justify-content: flex-end; }
+.subject-id-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; margin-top: 14px; }
+.subject-id-form label { min-width: 0; }
+@media (max-width: 1100px) { .work-hero { grid-template-columns: 200px minmax(0, 1fr); gap: 24px; } }
 
 .series-fold-card {
   margin-bottom: 14px;

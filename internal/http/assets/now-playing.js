@@ -16,6 +16,34 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
   let restorePosition = null;
   const announce = (message) => { const live = document.getElementById('np-queue-live'); if (live) live.textContent = message; };
 
+  function renderArtistLinks(container, detail, fallback) {
+    if (!container) return;
+    container.replaceChildren();
+    if (detail?.artists?.length) {
+      detail.artists.forEach((artist, index) => {
+        if (index) container.append(document.createTextNode('、'));
+        const link = document.createElement('a');
+        link.href = `/admin/artists/${artist.id}`;
+        link.textContent = artist.name;
+        link.dataset.playerNav = '1';
+        container.append(link);
+      });
+    } else container.textContent = fallback || '—';
+  }
+
+  function renderAlbumLink(container, detail, name, suffix = '') {
+    if (!container) return;
+    container.replaceChildren();
+    if (detail?.albumId) {
+      const link = document.createElement('a');
+      link.href = `/admin/albums/${detail.albumId}`;
+      link.textContent = name || detail.album || '';
+      link.dataset.playerNav = '1';
+      container.append(link);
+      if (suffix) container.append(document.createTextNode(suffix));
+    } else container.textContent = (name || '') + suffix;
+  }
+
   function syncFavorite() {
     const track = s.queue[s.currentIndex];
     const detail = track && trackDetails.get(String(track.id));
@@ -69,6 +97,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       }
     }
     if (detailId === id) {
+      lastQueueSignature = null;
       const toast = document.querySelector('.client-toast');
       if (toast?.style.display !== 'none' && toast?.textContent.includes('无法获取歌曲信息，请重试')) toast.style.display = 'none';
       syncFavorite(); syncNowPlayingPanel();
@@ -365,7 +394,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         e.stopPropagation(); removeQueueTrack(Number(remove.closest('li').dataset.qindex));
       });
       list.addEventListener('click', (e) => {
-        if (e.target.closest('.q-remove, .q-drag')) return;
+        if (e.target.closest('[data-player-nav]')) return;
+        if (e.target.closest('.q-remove, .q-drag, .q-artist')) return;
         const item = e.target instanceof Element ? e.target.closest('li[data-qindex]') : null;
         if (!item) return;
         const index = parseInt(item.getAttribute('data-qindex'), 10);
@@ -426,9 +456,19 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     const countEl = document.getElementById('np-queue-count');
 
     if (titleEl) titleEl.textContent = track ? (track.title || '未知曲目') : '未在播放';
-    if (artistEl) artistEl.textContent = track ? (track.artist || '—') : '—';
     const detail = track && trackDetails.get(String(track.id));
-    if (albumEl) albumEl.textContent = track && track.album ? track.album + (detail?.year ? ` · ${detail.year}` : '') : '';
+    renderArtistLinks(artistEl, detail, track ? track.artist : '—');
+    renderAlbumLink(albumEl, detail, track?.album, detail?.year ? ` · ${detail.year}` : '');
+    const playerArtist = document.getElementById('player-artist');
+    if (playerArtist && track) {
+      renderArtistLinks(playerArtist, detail, track.artist);
+      if (track.album) {
+        playerArtist.append(document.createTextNode(' · '));
+        const albumPart = document.createElement('span');
+        renderAlbumLink(albumPart, detail, track.album);
+        playerArtist.append(albumPart);
+      }
+    }
     loadTrackDetail(track);
     syncFavorite();
     const clear = document.getElementById('np-queue-clear'); if (clear) clear.disabled = !s.queue.length;
@@ -531,6 +571,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       title.textContent = track.title || '未知曲目';
       const artist = document.createElement('span');
       artist.className = 'q-artist';
+      // Queue rows are buttons; keep their artist label plain text rather than
+      // nesting an interactive link inside the button.
       artist.textContent = track.artist || '';
       meta.appendChild(title);
       meta.appendChild(artist);

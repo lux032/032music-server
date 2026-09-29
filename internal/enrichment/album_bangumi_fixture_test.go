@@ -96,7 +96,7 @@ func TestF3BangumiFixtureEndToEndMatrix(t *testing.T) {
 	}{
 		{name: "Amore OP", title: "Amore", artist: "ReoNa", date: "2026-07-22", wantOutcome: "succeeded", role: "op", workType: "anime", tieups: 1},
 		{name: "Amore version 20 day delta", title: "Amore (初回限定盤)", artist: "ReoNa", date: "2026-07-02", wantOutcome: "review", workType: "anime", tieups: 1},
-		{name: "507031 same title different singer", title: "Amore", artist: "IZNA", date: "2024-08-12", wantOutcome: "review", tieups: 0},
+		{name: "507031 same title different singer", title: "Amore", artist: "IZNA", date: "2024-08-12", wantOutcome: "skipped", tieups: 0},
 		{name: "406604 TV and two movies", title: "結束バンド", artist: "長谷川育美", date: "2022-12-28", wantOutcome: "review", tieups: 3},
 		{name: "512098 type six ignored", title: "結束バンドLIVE-恒星", artist: "結束バンド", date: "2023-11-22", wantOutcome: "review", tieups: 1},
 		{name: "198229 movie generic", title: "人間開花", artist: "RADWIMPS", date: "2016-11-23", wantOutcome: "review", tieups: 1, workType: "movie"},
@@ -145,6 +145,12 @@ func TestF3BangumiFixtureEndToEndMatrix(t *testing.T) {
 				t.Fatalf("outcome=%q expected=%q err=%v", outcome, tc.wantOutcome, err)
 			}
 			candidates, err := store.AlbumSubjectCandidates(ctx, targets[0].ID)
+			if tc.tieups == 0 {
+				if err != nil || len(candidates) != 0 {
+					t.Fatalf("empty-tieup candidates=%+v err=%v", candidates, err)
+				}
+				return
+			}
 			if err != nil || len(candidates) == 0 {
 				t.Fatalf("candidates=%+v err=%v", candidates, err)
 			}

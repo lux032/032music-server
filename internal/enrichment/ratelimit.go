@@ -134,6 +134,10 @@ func (m *Manager) NoteRateLimited(source string, retryAfter time.Duration) {
 // 数据竞争）。
 func (m *Manager) SetMusicBrainzBaseURL(base string) { m.musicBrainzBase = base }
 
+// SetBangumiBaseURL overrides the Bangumi subject API base URL for integration
+// tests. Interactive tests use an httptest server and never access the network.
+func (m *Manager) SetBangumiBaseURL(base string) { m.phaseEndpoints.BangumiAPI = base }
+
 // SetPosterBackfillTestHook 安装海报补全的测试钩子（在 goroutine 开始处理
 // 列表前调用）。只供测试使用，让“正在补全”状态的观察成为确定性事件。
 func (m *Manager) SetPosterBackfillTestHook(hook func()) { m.testPosterBackfillHook = hook }

@@ -60,6 +60,12 @@ func (a *App) handleAddWorkAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(id, 10))
+	albumID := parseInt64(r.FormValue("albumId"))
+	if albumID <= 0 {
+		redirectWithNotice(w, r, target, "请从搜索结果中选择专辑")
+		return
+	}
 	role := r.FormValue("role")
 	if role == "" {
 		role = "other"
@@ -69,7 +75,7 @@ func (a *App) handleAddWorkAlbum(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "专辑级关系类型只支持 ost / other", http.StatusBadRequest)
 		return
 	}
-	err := a.store.AddWorkAlbum(r.Context(), id, parseInt64(r.FormValue("albumId")), role)
+	err := a.store.AddWorkAlbum(r.Context(), id, albumID, role)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "作品或专辑不存在", http.StatusNotFound)
@@ -78,7 +84,6 @@ func (a *App) handleAddWorkAlbum(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "无法添加专辑关联", http.StatusBadRequest)
 		return
 	}
-	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(id, 10))
 	redirectWithNotice(w, r, target, "专辑关联已添加")
 }
 func (a *App) handleRemoveWorkAlbum(w http.ResponseWriter, r *http.Request) {

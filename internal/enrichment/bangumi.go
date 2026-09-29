@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -103,6 +104,50 @@ func bangumiWorkType(subjectType int, platform string) string {
 	default:
 		return ""
 	}
+}
+
+// BangumiWorkCandidateByID loads one subject through the shared Bangumi
+// cache/throttle path and converts it to a user-selected work candidate.
+func (m *Manager) BangumiWorkCandidateByID(ctx context.Context, subjectID int64) (storage.WorkMatchCandidate, error) {
+	setting, err := m.store.MetadataSourceSetting(ctx, "bangumi")
+	if err != nil {
+		return storage.WorkMatchCandidate{}, err
+	}
+	base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
+	if base == "" {
+		base = "https://api.bgm.tv"
+	}
+	key := strconv.FormatInt(subjectID, 10)
+	var subject struct {
+		ID       int64  `json:"id"`
+		Type     int    `json:"type"`
+		Name     string `json:"name"`
+		NameCN   string `json:"name_cn"`
+		Date     string `json:"date"`
+		Platform string `json:"platform"`
+		Images   struct {
+			Large  string `json:"large"`
+			Common string `json:"common"`
+		} `json:"images"`
+	}
+	_, err = m.cachedJSON(ctx, "bangumi", "subject:"+key, base+"/v0/subjects/"+key, setting, false, nil, &subject)
+	if err != nil {
+		return storage.WorkMatchCandidate{}, err
+	}
+	typ := bangumiWorkType(subject.Type, subject.Platform)
+	if typ == "" {
+		return storage.WorkMatchCandidate{}, fmt.Errorf("只支持动画或游戏条目")
+	}
+	year := 0
+	if len(subject.Date) >= 4 {
+		year, _ = strconv.Atoi(subject.Date[:4])
+	}
+	poster := subject.Images.Large
+	if poster == "" {
+		poster = subject.Images.Common
+	}
+	raw, _ := json.Marshal(subject)
+	return storage.WorkMatchCandidate{Source: "bangumi", ExternalID: key, Title: subject.Name, TranslatedTitle: subject.NameCN, Type: typ, Year: year, PageURL: "https://bgm.tv/subject/" + key, PosterURL: poster, Score: 100, Evidence: []string{"管理员手动指定 Bangumi 条目"}, Payload: raw}, nil
 }
 
 func bangumiTypes(workType string) []int {

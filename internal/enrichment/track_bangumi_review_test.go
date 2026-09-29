@@ -160,8 +160,14 @@ func TestAlbumSearchKeywordRewritesHyphenButScoreUsesOriginal(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":[{"id":77,"type":3,"name":"only my railgun -version2020-","date":"2020-01-01","infobox":[{"key":"艺术家","value":"fripSide"}]}]}`))
 		case "/v0/subjects/77":
 			_, _ = w.Write([]byte(`{"id":77,"type":3,"name":"only my railgun -version2020-","date":"2020-01-01","infobox":[{"key":"艺术家","value":"fripSide"}]}`))
-		case "/v0/subjects/77/persons", "/v0/subjects/77/subjects":
+		case "/v0/subjects/77/persons":
 			_, _ = w.Write([]byte(`[]`))
+		case "/v0/subjects/77/subjects":
+			_, _ = w.Write([]byte(`[{"id":1,"type":2,"name":"Railgun","relation":"片头曲"}]`))
+		case "/v0/subjects/1":
+			_, _ = w.Write([]byte(`{"id":1,"type":2,"name":"Railgun","platform":"TV"}`))
+		case "/v0/subjects/1/subjects":
+			_, _ = w.Write([]byte(`[{"id":77,"relation":"片头曲"}]`))
 		default:
 			http.NotFound(w, r)
 		}

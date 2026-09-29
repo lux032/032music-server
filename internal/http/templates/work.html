@@ -15,7 +15,7 @@
       </a>
       <span class="detail-context">作品详情</span>
     </nav>
-    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    {{if .ConflictWork}}<div class="toast">该条目已对齐到作品<a href="/admin/works/{{.ConflictWork.ID}}">《{{.ConflictWork.Title}}》</a></div>{{else if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="work-hero">
       <div class="hero-cover work-cover">{{with workPoster .Work 768}}<img class="fade-img" src="{{.}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}</div>
@@ -28,11 +28,13 @@
           {{if .Work.Year}}<span>{{.Work.Year}}年</span>{{end}}
           <span>关联 {{len .Albums}} 张专辑</span>
           <span>{{.Work.TrackCount}} 首关联曲目</span>
-          {{if .Work.ExternalID}}<span>bgm.tv/subject/{{.Work.ExternalID}}</span>{{end}}
+          {{if .BangumiExternalID}}<span>bgm.tv/subject/{{.BangumiExternalID}}</span>{{end}}
         </div>
         <div class="album-actions">
           <a href="#albums" class="primary-round">查看收录专辑</a>
-          <a href="#edit" class="secondary-round">编辑作品</a>
+          {{if .BangumiExternalID}}<a href="https://bgm.tv/subject/{{.BangumiExternalID}}" target="_blank" rel="noopener noreferrer" class="secondary-round">在 Bangumi 查看 ↗</a>{{end}}
+          <button type="button" class="secondary-round" data-dialog-open="work-edit-dialog">编辑作品</button>
+          <button type="button" class="text-action danger-action" data-dialog-open="work-delete-dialog">删除作品</button>
         </div>
       </div>
     </section>
@@ -210,17 +212,29 @@
         <section>
           <p class="kicker">元数据来源</p>
           <dl>
-            <div><dt>Bangumi ID</dt><dd>{{if .Work.ExternalID}}<a href="https://bgm.tv/subject/{{.Work.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Work.ExternalID}} ↗</a>{{else}}未绑定{{end}}</dd></div>
-            <div><dt>类型锁定</dt><dd>{{if .Work.TypeLocked}}已锁定 (人工固定){{else}}未锁定 (跟随 Bangumi){{end}}</dd></div>
+            <div><dt>Bangumi ID</dt><dd>{{if .BangumiExternalID}}<a href="https://bgm.tv/subject/{{.BangumiExternalID}}" target="_blank" rel="noopener noreferrer">{{.BangumiExternalID}} ↗</a>{{else}}未对齐{{end}}</dd></div>
+            <div><dt>类型锁定</dt><dd>{{if .Work.TypeLocked}}已锁定（人工固定）{{else if .BangumiExternalID}}跟随 Bangumi{{else}}未锁定{{end}}</dd></div>
             <div><dt>所属系列</dt><dd>{{if .Series}}{{.Series.Title}} ({{if eq .CurrentMemberSource "manual"}}手动{{else}}自动归组{{end}}){{else if .SeriesLocked}}已拆出 (锁定){{else}}不属于任何系列{{end}}</dd></div>
           </dl>
+          {{if not .BangumiExternalID}}
+          <form class="stack-form subject-id-form" method="post" action="/admin/works/{{.Work.ID}}/bangumi">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/works/{{.Work.ID}}">
+            <label>手动指定 Bangumi 条目<input name="bangumiSubject" required placeholder="条目链接或数字 ID"></label>
+            <button type="submit" class="secondary-button">确认并对齐</button>
+          </form>
+          {{end}}
         </section>
 
         <section>
           <p class="kicker">手动添加关联专辑</p>
           <form class="stack-form" method="post" action="/admin/works/{{.Work.ID}}/albums">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <label>专辑 ID<input name="albumId" type="number" min="1" required placeholder="输入专辑 ID"></label>
+            <div class="work-picker" data-work-picker="/admin/options/albums">
+              <label>搜索专辑<input data-work-search required placeholder="输入专辑名…" autocomplete="off"></label>
+              <input type="hidden" name="albumId" data-work-id-input>
+              <div class="work-picker-results" data-work-results hidden></div>
+            </div>
             <label>角色<select name="role">
               <option value="other" selected>相关</option>
               <option value="ost">原声集</option>
@@ -252,8 +266,8 @@
                   <option value="image_song">印象曲</option>
                   <option value="other">相关</option>
                 </select>
-                <input type="number" name="season" min="0" value="0" title="季数">
-                <input type="number" name="sequence" min="0" value="0" title="序号">
+                <input type="number" name="season" min="0" value="0" title="季数" aria-label="季数" placeholder="季数">
+                <input type="number" name="sequence" min="0" value="0" title="角色序号（例如第 2 首片头曲）" aria-label="角色序号" placeholder="角色序号">
                 <button class="icon-action" title="添加 {{.Title}}" aria-label="添加 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
               </form>
             </article>
@@ -263,52 +277,29 @@
       </aside>
     </div>
 
-    <section id="edit" class="album-editor">
-      <div class="editor-head">
-        <p class="kicker">作品信息</p>
-        <h2>编辑作品</h2>
-      </div>
+    <dialog id="work-edit-dialog" class="work-dialog">
       <form method="post" action="/admin/works/{{.Work.ID}}">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <input type="hidden" name="originalType" value="{{.Work.Type}}">
+        <div class="dialog-head"><div><p class="kicker">作品信息</p><h2>编辑作品</h2></div><button type="button" class="icon-action" data-dialog-close aria-label="关闭">×</button></div>
         <fieldset>
-          <legend>多语言标题</legend>
           <label>原文标题<input name="title" value="{{.Work.Title}}" required></label>
-          <div class="form-grid">
-            <label>假名 / 罗马音<input name="readingTitle" value="{{.Work.ReadingTitle}}"></label>
-            <label>译名<input name="translatedTitle" value="{{.Work.TranslatedTitle}}"></label>
-          </div>
+          <div class="form-grid"><label>假名 / 罗马音<input name="readingTitle" value="{{.Work.ReadingTitle}}"></label><label>译名<input name="translatedTitle" value="{{.Work.TranslatedTitle}}"></label></div>
+          <div class="form-grid"><label>类型<select name="type"><option value="anime" {{if eq .Work.Type "anime"}}selected{{end}}>动画</option><option value="drama" {{if eq .Work.Type "drama"}}selected{{end}}>电视剧</option><option value="movie" {{if eq .Work.Type "movie"}}selected{{end}}>电影</option><option value="game" {{if eq .Work.Type "game"}}selected{{end}}>游戏</option><option value="commercial" {{if eq .Work.Type "commercial"}}selected{{end}}>广告</option><option value="other" {{if eq .Work.Type "other"}}selected{{end}}>其他</option></select></label><label>年份<input type="number" name="year" value="{{.Work.Year}}"></label></div>
+          <details><summary>高级</summary><label>海报 URL<input name="posterUrl" value="{{.Work.PosterURL}}"></label></details>
         </fieldset>
-        <fieldset>
-          <legend>作品信息</legend>
-          <div class="form-grid thirds">
-            <label>类型<select name="type">
-              <option value="anime" {{if eq .Work.Type "anime"}}selected{{end}}>动画</option>
-              <option value="drama" {{if eq .Work.Type "drama"}}selected{{end}}>电视剧</option>
-              <option value="movie" {{if eq .Work.Type "movie"}}selected{{end}}>电影</option>
-              <option value="game" {{if eq .Work.Type "game"}}selected{{end}}>游戏</option>
-              <option value="commercial" {{if eq .Work.Type "commercial"}}selected{{end}}>广告</option>
-              <option value="other" {{if eq .Work.Type "other"}}selected{{end}}>其他</option>
-            </select></label>
-            <label>年份<input type="number" name="year" value="{{.Work.Year}}"></label>
-            <label>外部 ID<input name="externalId" value="{{.Work.ExternalID}}"></label>
-          </div>
-          <label>海报 URL<input name="posterUrl" value="{{.Work.PosterURL}}"></label>
-        </fieldset>
-        <div class="editor-actions"><button>保存作品信息</button></div>
+        <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit">保存作品信息</button></div>
       </form>
-    </section>
+    </dialog>
 
-    <section class="album-editor danger-zone">
-      <div class="editor-head">
-        <p class="kicker">危险操作</p>
-        <h2>删除作品</h2>
-      </div>
+    <dialog id="work-delete-dialog" class="work-dialog danger-dialog">
       <form method="post" action="/admin/works/{{.Work.ID}}/delete">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <div class="editor-actions"><button class="danger-button">删除作品及全部关联</button></div>
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="confirm" value="1">
+        <div class="dialog-head"><div><p class="kicker">危险操作</p><h2>确认删除作品</h2></div><button type="button" class="icon-action" data-dialog-close aria-label="关闭">×</button></div>
+        <p>作品及其专辑关联、曲目用途会被移除；音乐文件和专辑不受影响；之后重扫也不会自动建回这个作品。</p>
+        <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">确认删除</button></div>
       </form>
-    </section>
+    </dialog>
   </main>
 </body>
 </html>

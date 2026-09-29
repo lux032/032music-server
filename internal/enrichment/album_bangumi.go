@@ -356,6 +356,7 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 	}
 	var candidates []storage.AlbumSubjectCandidate
 	var artistMatched []bool
+	allCandidateScores := map[string]int{}
 	for _, hit := range ranked {
 		key := strconv.FormatInt(hit.ID, 10)
 		var detail musicSubject
@@ -375,9 +376,15 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 		if score < 30 {
 			continue
 		}
+		allCandidateScores[key] = score
 		ties, e := m.musicTieups(ctx, setting, hit.ID, force || album.Recheck)
 		if e != nil {
 			return "", e
+		}
+		// A music subject without any anime/game relation cannot create a work
+		// association. Do not put an impossible-to-accept item in review.
+		if len(ties) == 0 {
+			continue
 		}
 		payload, _ := json.Marshal(detail)
 		artists := strings.Join(musicArtists(detail, people), ", ")
@@ -408,9 +415,9 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 		}
 	}
 	second := -1
-	for _, candidate := range candidates {
-		if candidate.ExternalID != best.ExternalID && candidate.Score > second {
-			second = candidate.Score
+	for externalID, score := range allCandidateScores {
+		if externalID != best.ExternalID && score > second {
+			second = score
 		}
 	}
 	specific := []int64{}

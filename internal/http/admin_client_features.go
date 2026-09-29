@@ -22,6 +22,7 @@ type favoritesPageData struct {
 	Albums                 []storage.Album
 	Tracks                 []storage.Track
 	AlbumTotal, TrackTotal int64
+	AlbumCols              int
 }
 
 type playlistsPageData struct {
@@ -62,7 +63,7 @@ func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
 	}
 	a.render(w, http.StatusOK, "favorites.html", favoritesPageData{
 		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"),
-		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal,
+		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal, AlbumCols: albumGridCols(r),
 	})
 }
 

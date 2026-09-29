@@ -19,9 +19,9 @@
     <section class="feature-section">
       <div class="section-title">
         <div><h2>收藏专辑</h2></div>
-        <span>{{.AlbumTotal}} 张</span>
+        <div class="section-title-actions"><span>{{.AlbumTotal}} 张</span><label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}</output></label></div>
       </div>
-      <div class="album-browser favorite-albums">
+      <div class="album-browser favorite-albums"{{if .AlbumCols}} style="--album-cols:{{.AlbumCols}}"{{end}}>
         {{range .Albums}}
         <article class="favorite-album library-album-card">
           <a class="album-tile" href="/admin/albums/{{.ID}}">

@@ -83,6 +83,19 @@
   document.addEventListener('032:pjax-applied', applyGroupState);
   applyGroupState();
 
+  // Native dialogs used by the work detail editor and destructive confirm.
+  document.addEventListener('click', (e) => {
+    if (!(e.target instanceof Element)) return;
+    const opener = e.target.closest('[data-dialog-open]');
+    if (opener) {
+      const dialog = document.getElementById(opener.getAttribute('data-dialog-open') || '');
+      if (dialog instanceof HTMLDialogElement) dialog.showModal();
+      return;
+    }
+    const closer = e.target.closest('[data-dialog-close]');
+    if (closer) closer.closest('dialog')?.close();
+  });
+
   // ------------------------------------------- adaptive scan/status polling
   const statusMap = {
     never: '尚未扫描',

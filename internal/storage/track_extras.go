@@ -108,5 +108,33 @@ func (s *Store) hydrateTracks(ctx context.Context, items []Track) error {
 	for i := range items {
 		ptrs[i] = &items[i]
 	}
-	return hydrateTrackExtras(ctx, s, ptrs)
+	if err := hydrateTrackExtras(ctx, s, ptrs); err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(items))
+	byID := make(map[int64]*Track, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+		byID[items[i].ID] = &items[i]
+	}
+	placeholders, args := inClause(ids)
+	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role='primary' AND ta.track_id IN (`+placeholders+`) AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var trackID int64
+		var artist Artist
+		if err = rows.Scan(&trackID, &artist.ID, &artist.Name); err != nil {
+			return err
+		}
+		if track := byID[trackID]; track != nil {
+			track.Artists = append(track.Artists, artist)
+		}
+	}
+	return rows.Err()
 }

@@ -49,7 +49,7 @@
       </div>
       {{end}}
     </nav>
-    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    {{if .ConflictWork}}<div class="toast">该条目已对齐到作品<a href="/admin/works/{{.ConflictWork.ID}}">《{{.ConflictWork.Title}}》</a></div>{{else if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     {{if eq .ActiveTab "series"}}
     {{/* 系列建议（D54）：与作品对齐 Tab 相同，始终平铺（同作品多条建议按作
@@ -174,6 +174,11 @@
         </header>
         <div class="review-candidate-body">
           <p class="muted" style="margin:0;font-size:var(--fs-sm);">为未绑定 Bangumi 的本地作品选择对应的权威番组条目，以补全海报、译名、播出年份及系列信息：</p>
+          <form class="subject-id-form" method="post" action="/admin/works/{{$item.Work.ID}}/bangumi">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
+            <label>手动指定 Bangumi 条目<input name="bangumiSubject" required placeholder="条目链接或数字 ID"></label>
+            <button type="submit" class="secondary-button">按指定条目对齐</button>
+          </form>
           <div class="work-align-candidates">
             {{range $item.Candidates}}
             <div class="work-align-option">

@@ -618,6 +618,67 @@ func (s *Store) ReplaceWorkMatchCandidates(ctx context.Context, workID int64, ca
 	return tx.Commit()
 }
 
+func (s *Store) AddWorkMatchCandidate(ctx context.Context, workID int64, v WorkMatchCandidate) (int64, error) {
+	evidence, _ := json.Marshal(v.Evidence)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO work_match_candidates(work_id,source,external_id,title,original_title,translated_title,type,year,page_url,poster_url,score,evidence_json,payload_json,status) VALUES(?,?,?, ?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),NULLIF(?,''),?,?,?,'candidate') ON CONFLICT(work_id,source,external_id) DO UPDATE SET title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,page_url=excluded.page_url,poster_url=excluded.poster_url,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status='candidate',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, workID, v.Source, v.ExternalID, v.Title, v.OriginalTitle, v.TranslatedTitle, v.Type, v.Year, v.PageURL, v.PosterURL, v.Score, string(evidence), rawOrEmpty(v.Payload))
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM work_match_candidates WHERE work_id=? AND source=? AND external_id=?`, workID, v.Source, v.ExternalID).Scan(&id)
+	return id, err
+}
+
+func (s *Store) ManualBindWorkBangumi(ctx context.Context, workID int64, v WorkMatchCandidate) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Acquire SQLite's write lock before checking eligibility so concurrent
+	// manual submissions cannot both pass the unbound check.
+	if _, err = tx.ExecContext(ctx, `UPDATE works SET id=id WHERE 0`); err != nil {
+		return err
+	}
+	var alreadyBound bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_external_profiles WHERE work_id=? AND source='bangumi')`, workID).Scan(&alreadyBound); err != nil {
+		return err
+	}
+	if alreadyBound {
+		return ErrWorkAlreadyBangumiBound
+	}
+	var ownerID int64
+	var ownerTitle string
+	err = tx.QueryRowContext(ctx, `SELECT w.id,w.title FROM work_external_profiles p JOIN works w ON w.id=p.work_id WHERE p.source='bangumi' AND p.external_id=? AND p.work_id<>?`, v.ExternalID, workID).Scan(&ownerID, &ownerTitle)
+	if err == nil {
+		return &WorkExternalIDConflictError{Source: "bangumi", ExternalID: v.ExternalID, OwnerWorkID: ownerID, OwnerTitle: ownerTitle}
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	evidence, _ := json.Marshal(v.Evidence)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO work_match_candidates(work_id,source,external_id,title,original_title,translated_title,type,year,page_url,poster_url,score,evidence_json,payload_json,status) VALUES(?,'bangumi',?, ?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),NULLIF(?,''),?,?,?,'candidate') ON CONFLICT(work_id,source,external_id) DO UPDATE SET title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,page_url=excluded.page_url,poster_url=excluded.poster_url,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status='candidate',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, workID, v.ExternalID, v.Title, v.OriginalTitle, v.TranslatedTitle, v.Type, v.Year, v.PageURL, v.PosterURL, v.Score, string(evidence), rawOrEmpty(v.Payload)); err != nil {
+		return err
+	}
+	var candidateID int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND external_id=?`, workID, v.ExternalID).Scan(&candidateID); err != nil {
+		return err
+	}
+	if err = confirmWorkMatchCandidateTx(ctx, tx, workID, candidateID, 0); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) WorkBangumiExternalID(ctx context.Context, workID int64) (string, error) {
+	var externalID string
+	err := s.db.QueryRowContext(ctx, `SELECT external_id FROM work_external_profiles WHERE work_id=? AND source='bangumi'`, workID).Scan(&externalID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return externalID, err
+}
+
 func (s *Store) SetWorkMatchCandidateStatus(ctx context.Context, workID, candidateID int64, status string) error {
 	if status != "confirmed" && status != "rejected" {
 		return fmt.Errorf("invalid work candidate status %q", status)
@@ -653,6 +714,7 @@ func (s *Store) WorkMatchCandidates(ctx context.Context, workID int64) ([]WorkMa
 }
 
 var ErrAutoConfirmConflict = fmt.Errorf("work candidate is no longer eligible for automatic confirmation")
+var ErrWorkAlreadyBangumiBound = errors.New("work is already bound to bangumi")
 
 // WorkExternalIDConflictError reports that the external subject selected for a
 // work is already bound to a different local work (UNIQUE(source,external_id)).

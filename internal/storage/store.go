@@ -158,8 +158,19 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.cleanTrackTagControlChars(ctx); err != nil {
 		return fmt.Errorf("clean track tag control characters: %w", err)
 	}
+	// Batch 9.5: old builds stored album review candidates that had no
+	// anime/game tie-up and therefore could never be accepted. This Go-side
+	// repair needs no schema migration and is safe to run after every migrate.
+	if err := s.cleanEmptyAlbumSubjectCandidates(ctx); err != nil {
+		return fmt.Errorf("clean empty album subject candidates: %w", err)
+	}
 
 	return nil
+}
+
+func (s *Store) cleanEmptyAlbumSubjectCandidates(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM album_subject_candidates WHERE status='candidate' AND CASE WHEN json_valid(tieups_json) THEN json_array_length(tieups_json)=0 ELSE 1 END`)
+	return err
 }
 
 var addColumnPattern = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)`)

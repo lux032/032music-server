@@ -600,6 +600,21 @@
       e.preventDefault();
     }
   });
+  document.addEventListener('submit', e => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    const picker = form.querySelector('[data-work-picker="/admin/options/albums"]');
+    if (!picker) return;
+    const idInput = picker.querySelector('[data-work-id-input]');
+    if (idInput?.value) return;
+    e.preventDefault();
+    const searchInput = picker.querySelector('[data-work-search]');
+    if (searchInput) {
+      searchInput.setCustomValidity('请从搜索结果中选择专辑');
+      searchInput.reportValidity();
+      searchInput.addEventListener('input', () => searchInput.setCustomValidity(''), { once: true });
+    }
+  });
   document.addEventListener('input', e => {
     if (!(e.target instanceof HTMLInputElement) || !e.target.matches('[data-work-search]')) return;
     const picker = e.target.closest('[data-work-picker]');

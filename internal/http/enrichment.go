@@ -32,7 +32,7 @@ type enrichmentArtistReview struct {
 	Candidates []storage.ArtistRelationCandidate
 }
 
-var errAlbumCandidateConflict = errors.New("album subject candidate conflict")
+var errAlbumCandidateConflict = errors.New("没有可写入的作品关联：该条目可能已被拒绝、抑制，或存在作品身份冲突")
 var errTrackCandidateConflict = errors.New("track subject candidate conflict")
 
 type enrichmentPageData struct {
@@ -93,6 +93,7 @@ type workReviewPageData struct {
 	Group                 string // "album" | "work"
 	AlbumID               int64  // optional filter
 	Notice                string
+	ConflictWork          *storage.Work
 	AlbumSubjectCount     int
 	TrackSubjectCount     int
 	WorkCandidateCount    int
@@ -461,6 +462,11 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 		Group:     group,
 		AlbumID:   albumID,
 		Notice:    r.URL.Query().Get("notice"),
+	}
+	if conflictID := parseInt64(r.URL.Query().Get("conflictWorkId")); conflictID > 0 {
+		if conflict, conflictErr := a.store.WorkByID(r.Context(), conflictID); conflictErr == nil {
+			data.ConflictWork = &conflict
+		}
 	}
 
 	var err error

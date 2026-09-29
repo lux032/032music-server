@@ -42,6 +42,34 @@ test('Alt+Down reorders focused queue row and persists it', async ({ page }) => 
   expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex)).toBe(1);
 });
 
+test('current-playing and bottom-bar links navigate without interrupting audio', async ({ page }) => {
+  const audio = page.locator('#global-audio-element');
+  await expect.poll(() => audio.evaluate(el => el.paused)).toBe(false);
+
+  for (const selector of ['#np-album a', '#np-artist a:first-child', '#player-artist span a', '#player-artist > a:first-child']) {
+    const link = page.locator(selector);
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href', /\/admin\/(albums|artists)\/\d+$/);
+    const href = await link.getAttribute('href');
+    const before = await audio.evaluate(el => el.currentTime);
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`${href}$`));
+    await expect.poll(() => audio.evaluate(el => el.paused)).toBe(false);
+    await expect.poll(() => audio.evaluate(el => el.currentTime)).toBeGreaterThan(before);
+  }
+});
+
+test('clicking queue artist text keeps the current track playing', async ({ page }) => {
+  const audio = page.locator('#global-audio-element');
+  const currentID = await page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue[JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex].id);
+  const artistText = page.locator('#np-queue-list li.current .q-artist');
+  await expect(artistText).toBeVisible();
+  await expect(artistText.locator('a')).toHaveCount(0);
+  await artistText.click();
+  await expect.poll(() => audio.evaluate(el => el.paused)).toBe(false);
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('032_player_state')).queue[JSON.parse(sessionStorage.getItem('032_player_state')).currentIndex].id)).toBe(currentID);
+});
+
 test('favorite syncs server state and more menu navigates to album', async ({ page }) => {
   const trackId = await page.locator('#np-queue-list li').first().evaluate(el => JSON.parse(sessionStorage.getItem('032_player_state')).queue[Number(el.dataset.qindex)].id);
   const button = page.locator('#np-favorite');

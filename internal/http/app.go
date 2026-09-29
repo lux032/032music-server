@@ -359,6 +359,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleWorkPage)))
 	mux.Handle("GET /admin/works/{id}/poster", a.requireAdmin(http.HandlerFunc(a.handleWorkPoster)))
 	mux.Handle("POST /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateWork)))
+	mux.Handle("POST /admin/works/{id}/bangumi", a.requireAdmin(http.HandlerFunc(a.handleManualWorkBangumi)))
 	mux.Handle("POST /admin/works/{id}/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteWork)))
 	mux.Handle("POST /admin/works/{id}/albums", a.requireAdmin(http.HandlerFunc(a.handleAddWorkAlbum)))
 	mux.Handle("POST /admin/works/{id}/albums/{albumId}/remove", a.requireAdmin(http.HandlerFunc(a.handleRemoveWorkAlbum)))

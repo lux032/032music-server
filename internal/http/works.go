@@ -49,6 +49,8 @@ type workPageData struct {
 	CurrentMemberSource string
 	SeriesLocked        bool
 	AllSeries           []storage.WorkSeries
+	BangumiExternalID   string
+	ConflictWork        *storage.Work
 }
 
 func workFilters(r *http.Request) storage.WorkFilters {
@@ -261,8 +263,21 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("trackQ"))
-	candidates, _ := a.store.ListTracks(r.Context(), storage.Filters{Query: query, Limit: 30})
-	data := workPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, TrackUsages: trackUsages, Candidates: candidates, Query: query}
+	var candidates []storage.Track
+	if query != "" {
+		candidates, _ = a.store.ListTracks(r.Context(), storage.Filters{Query: query, Limit: 30})
+	}
+	bangumiID, err := a.store.WorkBangumiExternalID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "work unavailable", http.StatusInternalServerError)
+		return
+	}
+	data := workPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Notice: r.URL.Query().Get("notice"), Work: value, Tracks: standalone, Albums: albums, TrackUsages: trackUsages, Candidates: candidates, Query: query, BangumiExternalID: bangumiID}
+	if conflictID := parseInt64(r.URL.Query().Get("conflictWorkId")); conflictID > 0 {
+		if conflict, conflictErr := a.store.WorkByID(r.Context(), conflictID); conflictErr == nil {
+			data.ConflictWork = &conflict
+		}
+	}
 	if series, members, seriesErr := a.store.SeriesForWork(r.Context(), id); seriesErr == nil {
 		seriesCopy := series
 		data.Series = &seriesCopy
@@ -292,7 +307,16 @@ func (a *App) handleUpdateWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	if _, err := a.store.UpdateWork(r.Context(), id, workInputFromForm(r)); err != nil {
+	input := workInputFromForm(r)
+	if _, present := r.Form["externalId"]; !present {
+		current, err := a.store.WorkByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		input.ExternalID = current.ExternalID
+	}
+	if _, err := a.store.UpdateWork(r.Context(), id, input); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -300,9 +324,96 @@ func (a *App) handleUpdateWork(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice=作品信息已保存", http.StatusSeeOther)
 }
 
+func parseBangumiSubjectID(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
+		return id, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" {
+		return 0, errors.New("请输入 Bangumi 条目链接或纯数字 ID")
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "bgm.tv" && host != "bangumi.tv" && host != "chii.in" {
+		return 0, errors.New("请输入 bgm.tv、bangumi.tv 或 chii.in 的条目链接")
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] != "subject" {
+		return 0, errors.New("无法解析 Bangumi 条目链接")
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("无法解析 Bangumi 条目链接")
+	}
+	return id, nil
+}
+
+func adminURLWithParam(target, key, value string) string {
+	u, err := url.Parse(target)
+	if err != nil {
+		return target
+	}
+	query := u.Query()
+	query.Set(key, value)
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+func (a *App) handleManualWorkBangumi(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	workID := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(workID, 10))
+	if a.enrichment == nil {
+		redirectWithNotice(w, r, returnTo, "增强管理器不可用")
+		return
+	}
+	subjectID, err := parseBangumiSubjectID(r.FormValue("bangumiSubject"))
+	if err != nil {
+		redirectWithNotice(w, r, returnTo, err.Error())
+		return
+	}
+	candidate, err := a.enrichment.BangumiWorkCandidateByID(r.Context(), subjectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			redirectWithNotice(w, r, returnTo, "Bangumi 上找不到该条目（可能已删除或需要登录才能查看）")
+		} else if notice, ok := enrichment.RateLimitNotice(err); ok {
+			redirectWithNotice(w, r, returnTo, notice)
+		} else {
+			a.logger.Error("manual Bangumi work lookup", "workId", workID, "subjectId", subjectID, "error", err)
+			redirectWithNotice(w, r, returnTo, "对齐失败，请稍后重试")
+		}
+		return
+	}
+	err = a.store.ManualBindWorkBangumi(r.Context(), workID, candidate)
+	if err != nil {
+		var conflict *storage.WorkExternalIDConflictError
+		if errors.As(err, &conflict) {
+			target := adminURLWithParam(returnTo, "conflictWorkId", strconv.FormatInt(conflict.OwnerWorkID, 10))
+			redirectWithNotice(w, r, target, "该条目已对齐到其他作品")
+			return
+		}
+		if errors.Is(err, storage.ErrWorkAlreadyBangumiBound) {
+			redirectWithNotice(w, r, returnTo, "该作品已经对齐 Bangumi，本次不支持改绑")
+			return
+		}
+		a.logger.Error("manual Bangumi work bind", "workId", workID, "subjectId", subjectID, "error", err)
+		redirectWithNotice(w, r, returnTo, "对齐失败，请稍后重试")
+		return
+	}
+	a.queueWorkPoster(workID)
+	redirectWithNotice(w, r, returnTo, "作品已按指定条目完成对齐")
+}
+
 func (a *App) handleDeleteWork(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if r.FormValue("confirm") != "1" {
+		http.Error(w, "删除作品需要确认", http.StatusBadRequest)
 		return
 	}
 	if err := a.store.DeleteWork(r.Context(), parseInt64(r.PathValue("id"))); err != nil {
