@@ -75,6 +75,71 @@ func TestFlacMetadataPatchesIgnoresNonFLAC(t *testing.T) {
 	}
 }
 
+// id3v2Tag builds an ID3v2 tag with the given body size (zero padding),
+// optionally flagged as having a 10-byte footer.
+func id3v2Tag(version byte, bodySize int, footer bool) []byte {
+	var flags byte
+	if footer {
+		flags = 0x10
+	}
+	tag := []byte{'I', 'D', '3', version, 0, flags,
+		byte(bodySize >> 21 & 0x7f), byte(bodySize >> 14 & 0x7f), byte(bodySize >> 7 & 0x7f), byte(bodySize & 0x7f)}
+	tag = append(tag, make([]byte, bodySize)...)
+	if footer {
+		tag = append(tag, '3', 'D', 'I', version, 0, flags, tag[6], tag[7], tag[8], tag[9])
+	}
+	return tag
+}
+
+func TestFlacMetadataPatchesSkipsLeadingID3(t *testing.T) {
+	cases := []struct {
+		name   string
+		prefix []byte
+	}{
+		{"id3v2.3", id3v2Tag(3, 5034, false)},
+		{"id3v2.4 padding", id3v2Tag(4, 1024, false)},
+		{"id3v2.4 footer", id3v2Tag(4, 200, true)},
+		{"stacked tags", append(id3v2Tag(3, 50, false), id3v2Tag(4, 60, false)...)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			contents := append(append([]byte(nil), tc.prefix...), buildFLACHeader(0xFFFFFFFF)...)
+			file := writeTempFLAC(t, contents)
+			patches := flacMetadataPatches(file)
+			wantOffset := int64(len(tc.prefix)) + 4 + 4 + 34 + 4
+			if patch, ok := patches[wantOffset]; !ok || len(patches) != 1 || binary.BigEndian.Uint32(patch[:]) != 3 {
+				t.Fatalf("patches = %v, want single front-cover patch at %d", patches, wantOffset)
+			}
+
+			reader := &patchedReadSeeker{source: file, size: int64(len(contents)), patches: patches}
+			got, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := append([]byte(nil), contents...)
+			binary.BigEndian.PutUint32(want[wantOffset:wantOffset+4], 3)
+			if !bytes.Equal(got, want) {
+				t.Fatal("patched output differs outside the patched range")
+			}
+		})
+	}
+}
+
+func TestFlacMetadataPatchesID3WithValidPictureUntouched(t *testing.T) {
+	contents := append(id3v2Tag(4, 1024, false), buildFLACHeader(3)...)
+	if patches := flacMetadataPatches(writeTempFLAC(t, contents)); patches != nil {
+		t.Fatalf("patches = %v, want nil", patches)
+	}
+}
+
+func TestFlacMetadataPatchesRejectsBadID3Size(t *testing.T) {
+	// Non-syncsafe size byte (high bit set) must not be trusted.
+	contents := append([]byte{'I', 'D', '3', 4, 0, 0, 0x80, 0, 0, 0}, buildFLACHeader(0xFFFFFFFF)...)
+	if patches := flacMetadataPatches(writeTempFLAC(t, contents)); patches != nil {
+		t.Fatalf("patches = %v, want nil", patches)
+	}
+}
+
 func TestPatchedReadSeekerRewritesBytes(t *testing.T) {
 	contents := buildFLACHeader(0xFFFFFFFF)
 	file := writeTempFLAC(t, contents)

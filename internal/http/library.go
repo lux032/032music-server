@@ -939,13 +939,16 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 // spec range 0-20 and reports the whole file as unplayable, while most
 // desktop players merely warn, so files like this look fine everywhere
 // except the browser.
+//
+// Some files carry one or more ID3v2 tags in front of the "fLaC" marker;
+// those are skipped so the metadata walk starts at the real FLAC stream.
 func flacMetadataPatches(file *os.File) map[int64][4]byte {
-	var magic [4]byte
-	if _, err := file.ReadAt(magic[:], 0); err != nil || string(magic[:]) != "fLaC" {
+	start, ok := flacStreamStart(file)
+	if !ok {
 		return nil
 	}
 	var patches map[int64][4]byte
-	offset := int64(4)
+	offset := start + 4
 	for range 128 { // generous upper bound on metadata block count
 		var header [4]byte
 		if _, err := file.ReadAt(header[:], offset); err != nil {
@@ -969,6 +972,38 @@ func flacMetadataPatches(file *os.File) map[int64][4]byte {
 		}
 	}
 	return patches
+}
+
+// flacStreamStart returns the offset of the "fLaC" marker, skipping any
+// leading ID3v2 tags (header 10 bytes + syncsafe size + optional 10-byte
+// footer).
+func flacStreamStart(file *os.File) (int64, bool) {
+	offset := int64(0)
+	for range 8 { // tolerate a few stacked ID3v2 tags
+		var header [10]byte
+		if _, err := file.ReadAt(header[:4], offset); err != nil {
+			return 0, false
+		}
+		if string(header[:4]) == "fLaC" {
+			return offset, true
+		}
+		if string(header[:3]) != "ID3" {
+			return 0, false
+		}
+		if _, err := file.ReadAt(header[:], offset); err != nil {
+			return 0, false
+		}
+		size := header[6:10]
+		if (size[0]|size[1]|size[2]|size[3])&0x80 != 0 {
+			return 0, false // not a valid syncsafe integer
+		}
+		tagSize := int64(size[0])<<21 | int64(size[1])<<14 | int64(size[2])<<7 | int64(size[3])
+		offset += 10 + tagSize
+		if header[5]&0x10 != 0 { // footer present
+			offset += 10
+		}
+	}
+	return 0, false
 }
 
 // patchedReadSeeker serves the underlying file with a few byte ranges
