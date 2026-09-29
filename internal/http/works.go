@@ -333,15 +333,17 @@ func (a *App) handleDetachWorkSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
+	// M4：支持站内 returnTo，默认回到作品页。
+	fallback := "/admin/works/" + strconv.FormatInt(id, 10)
 	if err := a.store.DetachWorkFromSeries(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("作品不在任何系列中"), http.StatusSeeOther)
+			redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), fallback), "作品不在任何系列中")
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("已从系列中拆出，自动归组不会再把它加回来"), http.StatusSeeOther)
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), fallback), "已从系列中拆出，自动归组不会再把它加回来")
 }
 
 // handleAddWorkSeries manually places the work into an existing series,
@@ -361,7 +363,8 @@ func (a *App) handleAddWorkSeries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/admin/works/"+strconv.FormatInt(id, 10)+"?notice="+url.QueryEscape("已手动加入系列"), http.StatusSeeOther)
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works/"+strconv.FormatInt(id, 10))
+	redirectWithNotice(w, r, target, "已手动加入系列")
 }
 
 // handleRenameWorkSeries records a user-chosen series title; the automatic
@@ -384,7 +387,7 @@ func (a *App) handleRenameWorkSeries(w http.ResponseWriter, r *http.Request) {
 	if series, err := a.store.WorkSeriesByID(r.Context(), seriesID); err == nil && series.RepresentativeWorkID != 0 {
 		redirect = "/admin/works/" + strconv.FormatInt(series.RepresentativeWorkID, 10)
 	}
-	http.Redirect(w, r, redirect+"?notice="+url.QueryEscape("系列已重命名"), http.StatusSeeOther)
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), redirect), "系列已重命名")
 }
 
 // handleDissolveWorkSeries removes the series and locks every member so the
@@ -403,7 +406,8 @@ func (a *App) handleDissolveWorkSeries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/admin/works?notice="+url.QueryEscape("系列已解散，成员不会再被自动归组"), http.StatusSeeOther)
+	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/works")
+	redirectWithNotice(w, r, target, "系列已解散，成员不会再被自动归组")
 }
 
 func workInputFromForm(r *http.Request) storage.WorkInput {

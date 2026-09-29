@@ -39,3 +39,6 @@ track*.bin
 
 # e2e temp artifacts
 .gotmp/
+
+# Phase 4.6 UI reference mockup (local only)
+/预期效果.png

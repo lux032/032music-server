@@ -183,12 +183,12 @@ func TestPendingWorkReviewCountsAndD17TrackArtist(t *testing.T) {
 	}
 
 	// Check review counts
-	albumC, trackC, workC, err := s.PendingWorkReviewCounts(ctx)
+	albumC, trackC, workC, seriesC, err := s.PendingWorkReviewCounts(ctx)
 	if err != nil {
 		t.Fatalf("PendingWorkReviewCounts: %v", err)
 	}
-	if albumC != 1 || trackC != 1 || workC != 0 {
-		t.Fatalf("counts: album=%d track=%d work=%d", albumC, trackC, workC)
+	if albumC != 1 || trackC != 1 || workC != 0 || seriesC != 0 {
+		t.Fatalf("counts: album=%d track=%d work=%d series=%d", albumC, trackC, workC, seriesC)
 	}
 
 	total, err := s.PendingWorkReviewTotal(ctx)

@@ -444,17 +444,31 @@ func (s *Store) AddWorkAlbum(ctx context.Context, workID, albumID int64, role st
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM works WHERE id=?`, workID).Scan(&existing); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM album_work_suppressions WHERE album_id=? AND inferred_key IN (SELECT inferred_key FROM album_works WHERE album_id=? AND work_id=?)`, albumID, albumID, workID)
+	// D-18/D63: when these deletes actually lift suppressions, the bangumi
+	// misses they caused on this album's tracks go away in the same
+	// transaction so the next regular run re-checks the tracks.
+	result, err := tx.ExecContext(ctx, `DELETE FROM album_work_suppressions WHERE album_id=? AND inferred_key IN (SELECT inferred_key FROM album_works WHERE album_id=? AND work_id=?)`, albumID, albumID, workID)
 	if err != nil {
 		return err
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		if err = invalidateTrackBangumiMisses(ctx, tx, albumID, 0); err != nil {
+			return err
+		}
 	}
 	inferredKey := ""
 	if inferred, ok := metadata.InferAlbumWork(input.title, input.folder, input.compilation); ok {
 		var matched int64
 		if e := tx.QueryRowContext(ctx, `SELECT w.id FROM works w LEFT JOIN work_aliases x ON x.work_id=w.id WHERE (w.normalized_title=? OR x.normalized_key=?) AND w.id=? LIMIT 1`, metadata.Normalize(inferred.Title), metadata.Normalize(inferred.Title), workID).Scan(&matched); e == nil {
 			inferredKey = inferredWorkKey(inferred)
-			if _, err = tx.ExecContext(ctx, `DELETE FROM album_work_suppressions WHERE album_id=? AND inferred_key=?`, albumID, inferredKey); err != nil {
-				return err
+			result, e2 := tx.ExecContext(ctx, `DELETE FROM album_work_suppressions WHERE album_id=? AND inferred_key=?`, albumID, inferredKey)
+			if e2 != nil {
+				return e2
+			}
+			if n, _ := result.RowsAffected(); n > 0 {
+				if err = invalidateTrackBangumiMisses(ctx, tx, albumID, 0); err != nil {
+					return err
+				}
 			}
 		} else if !errors.Is(e, sql.ErrNoRows) {
 			return e

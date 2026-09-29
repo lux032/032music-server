@@ -194,7 +194,7 @@
 * [x] 系列只做一层、一个作品只属于一个系列。
 * [ ] 类型作为筛选而非固定层级，单一类型的系列省略类型层（本批未实现）。
 * [x] 季数/剧场版沿续集、前传关系自动归入（4.5.3 已上线：自动归组、拆出、重命名、手动加入、解散，用户意图永久有效）。
-* [ ] 跨媒体关系只生成建议；完整的管理页可手动创建系列、调整归属（部分已由作品详情页的系列操作覆盖）。
+* [ ] 跨媒体关系只生成建议（数据层已完成：migration 031 建议表、白名单配对、接受/拒绝与计数；UI 待批次 6）；完整的管理页可手动创建系列、调整归属（部分已由作品详情页的系列操作覆盖；存储层 CreateWorkSeries/MergeWorkSeries/ListSeriesPage 已就绪）。
 
 ### 待办与已知风险（作品关联“专辑为主”交付时暂缓）
 | # | 项目 | 影响 | 建议 |
@@ -207,7 +207,7 @@
 | D-6 | 相似度中“同作品”信号与“同专辑”信号叠加 | 推荐权重可能偏移 | 上线后观察 |
 | D-7 | 规则 v4→v5 旧格式推断键 | 仅影响未发布的开发数据库，生产库不受影响 | 无需处理 |
 | D-8 | 标题含 `&` 且为 VA 的单部作品专辑（如 `EIGHTY-SIX REARRANGE & OUTTRACKS CD`）放弃自动关联 | 需手动关联 | 视误伤数量再放宽 |
-| D-9 | `catalog_number` 开头含 NUL 字符（如 `\0\0\0\0ARCD0012`） | 展示问题 | 读取标签时清理控制字符 |
+| D-9 | `catalog_number` 开头含 NUL 字符（如 `\0\0\0\0ARCD0012`） | 已解决（批次 5，D62） | rawFirst 统一清理 + Migrate 幂等修复存量 |
 | D-10 | `resolveAutoWork` 为优先复用已绑定 Bangumi 作品会扫描候选作品及别名 | 大型作品库刷新时可能出现性能压力 | 后续增加规范化身份索引或预计算映射，本轮不改语义 |
 | D-11 | 标题含 `\|` 时抑制键被误按旧格式解析，按 anime 解除后改成 game 会失效 | 已解决（批次 1） | 从右往左拆键并验证合法类型/季数 |
 | D-12 | `RemoveWorkAlbum` 不删除专辑级写到曲目上的 bangumi 行 | 已解决（批次 1） | 只清理同作品、同专辑、同 inferred_key 的 bangumi 曲目行 |
@@ -216,7 +216,8 @@
 | D-15 | album scope 还会刷新该专辑已关联作品的资料 | 超出设计 8.2 第 9 条的描述，但行为合理（专辑页一键补齐） | 已在设计文档 8.2 补说明；如要收窄可单独提案 |
 | D-16 | 本地推导遇到曲目上任何 manual 或 bangumi 行就整首跳过，纯手动行也会挡住本地推导去关联其他作品 | 符合 R1 和 D9，是有意为之，只作记录 | 无需处理 |
 | D-17 | `/admin/enrichment` 待审曲目每条都单独调一次 `TrackByID`（最多 200 次查询） | 已解决（批次 3） | 在 `trackCandidateSelect` 里直接带出歌手，省掉逐条查询 |
-| D-18 | 曲目 Bangumi 未命中指纹不包含抑制状态；解除抑制后仍可能命中旧 miss | 解除后要等重查间隔到期才重新查询 | 后续把抑制状态纳入 miss 指纹或解除时清理 miss |
+| D-18 | 曲目 Bangumi 未命中指纹不包含抑制状态；解除抑制后仍可能命中旧 miss | 已解决（批次 5，D63） | 抑制删除时同事务清掉受影响曲目的 bangumi miss |
+| D-19 | metadata/reader.go 里独立的 rawFirst 闭包（LYRICIST/ARRANGER/排序名等曲目级字段）不清理控制字符 | 展示问题，专辑字段已由 D62 覆盖 | 下次动 reader.go 时复用 storage 的清理口径 |
 
 ---
 
@@ -364,6 +365,24 @@
 **验证结果**：`go test ./...` 与 `go build ./...` 全部通过。
 
 ### Phase 4 修订记录（元数据增强收敛与作品关联“专辑为主”）
+
+**第十轮（批次 5 系列建议与数据修复，migration 031）**：
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| D52 跨媒体建议采信范围 | A：只采信双向登记且构成白名单关系对的边（游戏↔动画、衍生↔主线故事、番外篇↔主线故事、总集篇↔全集、不同演绎↔不同演绎）；白名单为常量可扩充；联动/世界观/角色出演/其他/外传/合集/不同版本一律不采信 | 单向登记（蛋仔派对↔鬼滅）与泛关系噪音大（R2） |
+| D53 建议粒度 | A：作品对作品；接受时按两部作品当时的归属决定新建系列 / 加入已有系列 / 合并两个系列 | 归属可能在接受前变化 |
+| D55 决定记忆 | A：接受与拒绝都按 Bangumi subject 对记入 `work_series_suggestion_decisions`，永不再建议 | R3 |
+| D56 锁定作品 | A：被锁定（拆出/解散）的作品不参与建议 | 用户意图永久有效 |
+| D57 合并成员处理 | A：被吸收系列成员一律改 manual 并清锁；保留方 auto 成员不动 | 合并即人工意图 |
+| D58 人工合并名字 | A：可指定任一方名字或新填；单方 manual 默认沿用；双方 manual 未指定返回 ErrSeriesTitleConflict；双方 auto 保留成员多的一方（平数取 id 小），名字保持 auto | 保住用户改过的名字 |
+| D59 B1 修复 | A：ApplyAutoSeries 的重合度只计算未锁定的 auto 成员（D41 冲突检测同口径） | 手动加入的成员是钉在该系列的用户意图，不应把系列“认领”走 |
+| D60 sequel 建议 | A：与系列内 manual 成员存在双向续集/前传关系时生成 kind='sequel' 建议 | 补足合并后被吸收链的新季不会自动加入的局限 |
+| D61 手动新建系列 | A：至少 1 部作品；名字可空（title_source='auto'，跟随代表作） | 与自动系列语义一致 |
+| D62 D-9 控制字符 | A：rawFirst 统一清理（按 NUL 切分取首个非空段、C0 清除、\t 转空格）；存量数据由 Migrate 末尾的 Go 端幂等修复 cleanAlbumTagControlChars 处理（实测 SQL replace 清不掉 NUL）；ImportTrack ON CONFLICT 只在旧值含控制字符时允许空值覆盖 | D-9 关闭 |
+| D63 D-18 抑制解除清 miss | A：AddWorkAlbum 与 clearManualSuppressions 删除抑制时同事务删除受影响曲目的 bangumi miss（invalidateTrackBangumiMisses）；不把抑制状态并进指纹 | D-18 关闭；并指纹会让 ConfirmTrackSubjectCandidate 的指纹比较失效 |
+| 建议生成时机 | enrichBangumiSeries 的 BFS 与 ApplyAutoSeries 完成且未中止时执行；type 2 关系复用 BFS 的 runMemo/缓存，type 4 按需拉取（同样节流/熔断）；建议库另建 suggestLibrary，不动 BFS 的 type-2 library | 游戏不能被续集链拉进自动归组 |
+| 建议落库 | 单事务 upsert；删除“两端本轮都拉取成功但不再产生”的旧建议；拉取失败的作品旧建议保持不动；未变化的行不刷新 updated_at | 幂等 + 部分失败不丢数据 |
+| 第十轮 reviewer 修订（M1～M3/L4/L6/L7） | ReplaceSeriesSuggestions 事务首句即为写操作（顺手删除任一端被锁定的建议，M1）；INSERT 改 INSERT…SELECT…WHERE NOT EXISTS 在事务里复核决定/锁/同系列（M2）；processed 集合改走 json_each(JSON) 避免变量上限（L4）；AcceptSeriesSuggestion/mergeWorkSeriesTx/createWorkSeriesTx/addWorkToSeriesTx 首条语句均为写操作（L6）；合并/新建/加入后同事务删除同系列待审建议（L7）；Accept 重读发现锁定返回 ErrSeriesSuggestionStale 且不清锁；sequel 建议按 D67 收窄 | 批次 5 reviewer APPROVE 条件 |
 
 **第九轮（批次 4 自定义图片，migration 030）**：
 | 决策 | 选择 | 理由 |

@@ -37,7 +37,7 @@ func seriesFixtureServer(t *testing.T, fail map[int64]bool) *httptest.Server {
 			http.Error(w, "upstream down", http.StatusBadGateway)
 			return
 		}
-		for _, name := range []string{fmt.Sprintf("series-%d-subjects.json", id), fmt.Sprintf("%d-subjects.json", id)} {
+		for _, name := range []string{fmt.Sprintf("series46-%d-subjects.json", id), fmt.Sprintf("series-%d-subjects.json", id), fmt.Sprintf("%d-subjects.json", id)} {
 			raw, readErr := os.ReadFile(filepath.Join("testdata", name))
 			if readErr == nil {
 				w.Header().Set("Content-Type", "application/json")

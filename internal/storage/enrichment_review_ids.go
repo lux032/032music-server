@@ -45,22 +45,25 @@ func (s *Store) PendingArtistReviewIDs(ctx context.Context) ([]int64, int, error
 	return ids, count, rows.Err()
 }
 
-func (s *Store) PendingWorkReviewCounts(ctx context.Context) (albumCount, trackCount, workCount int, err error) {
+func (s *Store) PendingWorkReviewCounts(ctx context.Context) (albumCount, trackCount, workCount, seriesCount int, err error) {
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM album_subject_candidates WHERE status='candidate'`).Scan(&albumCount); err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM track_subject_candidates WHERE status='candidate'`).Scan(&trackCount); err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT work_id) FROM work_match_candidates WHERE status='candidate'`).Scan(&workCount); err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
-	return albumCount, trackCount, workCount, nil
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_series_suggestions`).Scan(&seriesCount); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return albumCount, trackCount, workCount, seriesCount, nil
 }
 
 func (s *Store) PendingWorkReviewTotal(ctx context.Context) (int, error) {
-	albumCount, trackCount, workCount, err := s.PendingWorkReviewCounts(ctx)
-	return albumCount + trackCount + workCount, err
+	albumCount, trackCount, workCount, seriesCount, err := s.PendingWorkReviewCounts(ctx)
+	return albumCount + trackCount + workCount + seriesCount, err
 }
 
 func (s *Store) PendingAlbumReviewCounts(ctx context.Context, albumID int64) (albumCandidates, trackCandidates int, err error) {

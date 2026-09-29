@@ -145,6 +145,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 
+	// D-9/D62: SQL migrations cannot remove NUL bytes from TEXT values, so
+	// the control-character cleanup of tag-derived album fields runs here in
+	// Go. It is idempotent: once no row matches the dirty predicate this is a
+	// no-op.
+	if err := s.cleanAlbumTagControlChars(ctx); err != nil {
+		return fmt.Errorf("clean album tag control characters: %w", err)
+	}
+
 	return nil
 }
 

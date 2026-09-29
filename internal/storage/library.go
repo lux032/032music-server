@@ -297,7 +297,14 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 // upsertScannedAlbum creates or refreshes the album for a grouping key and
 // rewrites its album artists from the file tags.
 func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupKey string, m metadata.AudioMetadata, discCount int, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country string) (int64, error) {
-	_, err := tx.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year,disc_count,performed_by,album_type,version,release_date,original_release_date,label,catalog_number,country,is_compilation,is_live,is_bootleg) VALUES(?,?,?,?,NULLIF(?,0),?,?,?,?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?,?) ON CONFLICT(library_id,grouping_key) DO UPDATE SET title=excluded.title,sort_title=excluded.sort_title,release_year=excluded.release_year,disc_count=MAX(albums.disc_count,excluded.disc_count),performed_by=excluded.performed_by,album_type=excluded.album_type,version=COALESCE(excluded.version,albums.version),release_date=COALESCE(excluded.release_date,albums.release_date),original_release_date=COALESCE(excluded.original_release_date,albums.original_release_date),label=COALESCE(excluded.label,albums.label),catalog_number=COALESCE(excluded.catalog_number,albums.catalog_number),country=COALESCE(excluded.country,albums.country),is_compilation=excluded.is_compilation,is_live=excluded.is_live,is_bootleg=excluded.is_bootleg,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, libraryID, m.Album, metadata.Normalize(m.Album), groupKey, m.Year, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country, boolInt(albumType == "compilation"), boolInt(albumType == "live"), boolInt(albumType == "bootleg"))
+	// Tag-missing values normally keep the previously stored one (COALESCE),
+	// but a stored value still containing NUL/C0 control characters (D-9) is
+	// known-dirty and is replaced even by NULL: keeping it would pin the
+	// dirty value forever because the cleaned tag now reads empty.
+	tagColumnUpdate := func(column string) string {
+		return column + `=CASE WHEN excluded.` + column + ` IS NOT NULL OR ` + tagValueDirtySQL(`albums.`+column) + ` THEN excluded.` + column + ` ELSE albums.` + column + ` END`
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year,disc_count,performed_by,album_type,version,release_date,original_release_date,label,catalog_number,country,is_compilation,is_live,is_bootleg) VALUES(?,?,?,?,NULLIF(?,0),?,?,?,?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?,?) ON CONFLICT(library_id,grouping_key) DO UPDATE SET title=excluded.title,sort_title=excluded.sort_title,release_year=excluded.release_year,disc_count=MAX(albums.disc_count,excluded.disc_count),performed_by=excluded.performed_by,album_type=excluded.album_type,`+tagColumnUpdate("version")+`,`+tagColumnUpdate("release_date")+`,`+tagColumnUpdate("original_release_date")+`,`+tagColumnUpdate("label")+`,`+tagColumnUpdate("catalog_number")+`,`+tagColumnUpdate("country")+`,is_compilation=excluded.is_compilation,is_live=excluded.is_live,is_bootleg=excluded.is_bootleg,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, libraryID, m.Album, metadata.Normalize(m.Album), groupKey, m.Year, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country, boolInt(albumType == "compilation"), boolInt(albumType == "live"), boolInt(albumType == "bootleg"))
 	if err != nil {
 		return 0, fmt.Errorf("upsert album: %w", err)
 	}
@@ -982,11 +989,96 @@ func yearDate(year int) string {
 }
 func rawFirst(raw map[string][]string, keys ...string) string {
 	for _, key := range keys {
-		if values := raw[key]; len(values) > 0 {
-			return strings.TrimSpace(values[0])
+		values := raw[key]
+		if len(values) == 0 {
+			continue
+		}
+		// D-9/D62: tag values may contain NUL separators and other C0
+		// control characters (e.g. a catalog number stored as
+		// "\x00\x00\x00\x00ARCD0012"). Split on NUL, take the first
+		// segment that survives cleaning, strip the remaining control
+		// characters (tab becomes a space) and trim.
+		for _, value := range values {
+			if cleaned := cleanTagValue(value); cleaned != "" {
+				return cleaned
+			}
+		}
+		return ""
+	}
+	return ""
+}
+
+// cleanTagValue normalizes one raw tag value: split on NUL bytes and take
+// the first non-empty segment, remove C0 control characters (tab folds to a
+// space), then trim surrounding whitespace.
+func cleanTagValue(value string) string {
+	for _, segment := range strings.Split(value, "\x00") {
+		cleaned := strings.TrimSpace(stripC0Controls(segment))
+		if cleaned != "" {
+			return cleaned
 		}
 	}
 	return ""
+}
+
+func stripC0Controls(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if r < 0x20 {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+// tagValueDirtySQL is a SQLite predicate matching values that still carry
+// NUL bytes or C0 control characters. NUL cannot be found with instr() on a
+// TEXT value (it terminates the string), so the value is cast to BLOB first;
+// the GLOB range covers char(1)..char(31) (tab included).
+func tagValueDirtySQL(column string) string {
+	return `(` + column + ` IS NOT NULL AND (instr(CAST(` + column + ` AS BLOB),x'00')>0 OR ` + column + ` GLOB '*['||char(1)||'-'||char(31)||']*'))`
+}
+
+// cleanAlbumTagControlChars is the idempotent repair half of D-9/D62: albums
+// imported before rawFirst cleaned tag values may hold NUL/C0 bytes in the
+// fields read from tags. The replacement happens in Go because SQL replace()
+// cannot remove NUL bytes. Cleaned-empty values become NULL. user_* columns
+// are user intent and are never touched.
+func (s *Store) cleanAlbumTagControlChars(ctx context.Context) error {
+	columns := []string{"label", "catalog_number", "version", "country", "release_date", "original_release_date"}
+	for _, column := range columns {
+		rows, err := s.db.QueryContext(ctx, `SELECT id,`+column+` FROM albums WHERE `+tagValueDirtySQL(column))
+		if err != nil {
+			return fmt.Errorf("scan albums.%s: %w", column, err)
+		}
+		type fix struct {
+			id    int64
+			value string
+		}
+		var fixes []fix
+		for rows.Next() {
+			var f fix
+			if err = rows.Scan(&f.id, &f.value); err != nil {
+				rows.Close()
+				return err
+			}
+			fixes = append(fixes, f)
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, f := range fixes {
+			cleaned := cleanTagValue(f.value)
+			if _, err = s.db.ExecContext(ctx, `UPDATE albums SET `+column+`=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, cleaned, f.id); err != nil {
+				return fmt.Errorf("clean albums.%s row %d: %w", column, f.id, err)
+			}
+		}
+	}
+	return nil
 }
 func inferAlbumType(raw map[string][]string) string {
 	value := strings.ToLower(rawFirst(raw, "RELEASETYPE", "MUSICBRAINZ_ALBUMTYPE", "ALBUMTYPE"))

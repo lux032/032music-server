@@ -261,6 +261,21 @@ func (s *Store) RejectTrackSubjectCandidate(ctx context.Context, trackID, candid
 	return tx.Commit()
 }
 
+// invalidateTrackBangumiMisses drops cached track-level Bangumi misses whose
+// reason may have been a suppression that was just lifted (D-18/D63). With
+// trackID > 0 only that track's miss is removed; otherwise every track of the
+// album is invalidated. The suppression state is deliberately not folded into
+// the miss fingerprint, which would break the fingerprint comparison in
+// ConfirmTrackSubjectCandidate.
+func invalidateTrackBangumiMisses(ctx context.Context, tx *sql.Tx, albumID, trackID int64) error {
+	if trackID > 0 {
+		_, err := tx.ExecContext(ctx, `DELETE FROM track_enrichment_misses WHERE track_id=? AND source='bangumi'`, trackID)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM track_enrichment_misses WHERE source='bangumi' AND track_id IN (SELECT id FROM tracks WHERE album_id=?)`, albumID)
+	return err
+}
+
 var validBangumiTrackRoles = map[string]bool{"op": true, "ed": true, "insert": true, "theme": true, "character": true, "ost": true, "image_song": true, "other": true}
 
 // clearManualSuppressions drops title identities a manual acceptance may
@@ -297,10 +312,27 @@ func clearManualSuppressions(ctx context.Context, tx *sql.Tx, table, idColumn st
 			drop[stored] = true
 		}
 	}
+	affected := false
 	for stored := range drop {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE `+idColumn+`=? AND inferred_key=?`, ownerID, stored); err != nil {
+		result, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE `+idColumn+`=? AND inferred_key=?`, ownerID, stored)
+		if err != nil {
 			return err
 		}
+		if n, _ := result.RowsAffected(); n > 0 {
+			affected = true
+		}
+	}
+	if !affected {
+		return nil
+	}
+	// D-18/D63: lifting a suppression in the same transaction also drops the
+	// bangumi misses the suppression caused, so the next regular run re-checks
+	// the affected tracks without waiting out the recheck interval.
+	switch table {
+	case "album_work_suppressions":
+		return invalidateTrackBangumiMisses(ctx, tx, ownerID, 0)
+	case "track_work_suppressions":
+		return invalidateTrackBangumiMisses(ctx, tx, 0, ownerID)
 	}
 	return nil
 }

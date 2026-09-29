@@ -243,6 +243,24 @@ S1 存储层（migration 027、屏蔽和去重、共用落地函数）→ S2 匹
 | D47 | 专辑级 ost 与曲目级用途同时存在时怎么显示 | A：两者合并显示（如胶囊/角标显示 "OST · OP"）；只有专辑级 ost 显示 "OST"；只有曲目级用途显示用途；只有专辑级 other 不显示用途；专辑页与作品页调用同一共用函数 `workAlbumUsageLabel` |
 | D48 | 曲目级 role='ost' 能否推出专辑是 OST | A：不能。OST 专辑的身份（胶囊高亮、"原声集 OST"角标、overlay 的 ost 样式）只由 `album_works.role='ost'` 决定（同 D45）；曲目级 role='ost' 只作为该曲目的用途显示 |
 | D49 | 同一首曲目对同一作品有多种用途 | A：所有位置合并显示全部用途（按 WorkRoleRank 排序、去重，如 "OP · ED"）：专辑页胶囊、右栏汇总、曲目行图标、作品页角标和 overlay 一致；展示来源仍按 manual > bangumi > auto 取代表行；专辑级是 ost 而曲目级只有 ost 时统一显示 "原声集 OST" |
+| D50 | 歌手合并后的自定义图片继承 | A：读取优先级 目标自定义 > merged-from 源自定义 > 目标自动缓存；“恢复默认”连同删除 merged-from 行，撤销合并不恢复源行（已知行为） |
+| D51 | 系列内类型展示 | A：类型作为筛选而非固定层级；系列内按类型分组显示，单一类型时省略分组头（UI 在批次 6 实现） |
+| D52 | 跨媒体建议采信哪些关系 | A：只采信双向登记、且两个方向构成白名单关系对的边：游戏↔动画（type 4↔type 2）、衍生↔主线故事、番外篇↔主线故事、总集篇↔全集、不同演绎↔不同演绎；白名单为代码常量可扩充。不同世界观 / 相同世界观 / 联动 / 角色出演 / 其他 / 外传 / 合集 / 不同版本一律不采信（实测：蛋仔派对 351722 与鬼滅 245665 互为“游戏”/“联动”单向口径，不产生建议） |
+| D53 | 建议的粒度 | A：作品对作品；接受时按两部作品当时的归属决定新建系列、加入已有系列或合并两个系列 |
+| D54 | 建议审核位置 | A：放在 /admin/work-review 的第 4 个 Tab（批次 6 实现）；待审计数并入导航角标与两个管理页的待审总数 |
+| D55 | 建议的决定记忆 | A：接受与拒绝都按 Bangumi subject 对记入 `work_series_suggestion_decisions`，以后永不再建议 |
+| D56 | 锁定作品与建议 | A：被锁定（拆出/解散）的作品不参与建议 |
+| D57 | 合并时成员处理 | A：被吸收系列的成员一律改为 manual 并清除锁；保留方的 auto 成员不动 |
+| D58 | 人工合并的名字 | A：可以选任一方的名字或新填；只有一方是 manual 名字时默认用该方；两方都是 manual 且未指定时返回冲突错误（ErrSeriesTitleConflict）；两方都是 auto 时保留成员多的一方（数量相同时保留 id 小的），名字保持 auto |
+| D59 | B1 重合度口径 | A：ApplyAutoSeries 的系列认领重合度只计算未锁定的 auto 成员；D41 冲突检测使用同一口径 |
+| D60 | sequel 建议 | A：作品与某系列内的 manual 成员之间存在双向续集/前传关系时也生成建议（kind='sequel'），补足“合并后被吸收那条链的新季不会自动加入”的局限 |
+| D61 | 手动新建系列 | A：至少包含 1 部作品；名字可以不填（title_source='auto'，跟随代表作） |
+| D62 | D-9 控制字符清理 | A：library.go 的 rawFirst（专辑相关原始标签字段的公共入口：label/catalog_number/version/country/日期）统一清理：按 `\x00` 切分取第一个非空段、去掉 C0 控制字符（\t 改为空格）、TrimSpace；存量数据由 Migrate 末尾的 Go 端幂等修复处理（实测 SQL replace 清不掉 NUL，不能用 SQL 迁移）；清理后为空的字段写 NULL，ImportTrack 重扫时只允许覆盖仍含控制字符的旧脏值。metadata/reader.go 里另有独立的 rawFirst 闭包（作词、编曲、排序名等曲目级字段），不在本批范围（见 plan.md 待办 D-19） |
+| D63 | D-18 解除抑制后的 miss | A：AddWorkAlbum 与 clearManualSuppressions 在删除抑制记录时，同一事务里删掉受影响曲目（专辑级=全专曲目，曲目级=该曲目）的 bangumi miss；不把抑制状态并进 miss 指纹（会让 ConfirmTrackSubjectCandidate 的指纹比较失效） |
+| D64 | 效果图的地位 | A：预期效果.png 只作参考，不作为逐像素验收标准 |
+| D65 | 4.6 交付节奏 | A：分两批：批次 5 数据与逻辑（migration 031、建议生成与接受/拒绝、合并/新建/分页存储接口、B1/D-9/D-18 修复）、批次 6 管理页 UI |
+| D66 | B1 口径的已知副作用 | A：保持修复后口径。系列只剩 manual 成员时 auto 分量不能认领它；同一轮进来 ≥2 部新季会另建 auto 系列，链暂时分成两个系列，靠 sequel 建议（D67a）加人工合并修复；只凭 manual 成员与改名系列重合不再触发 D41 冻结 |
+| D67 | sequel 建议收窄 | A：双向互为续集/前传的作品对只在以下情况生成 kind='sequel' 建议：(a) 至少一端是某系列的 manual 成员（原 D60 场景）；(b) 两端都是 type 4（游戏续作，BFS 不处理）。普通 type 2 续集对由自动归组负责（本轮因 tainted/节点上限未归组的，下一轮自愈） |
 
 ### 9.1 补充风险说明
 
@@ -286,3 +304,28 @@ S1 存储层（migration 027、屏蔽和去重、共用落地函数）→ S2 匹
 - `/works` 列表把同一系列折叠为一行（系列名 + “共 N 部”，可展开成员链接）；分页与总数按折叠后的行数计算，首字母索引与排序都按显示的系列名。
 - 作品详情页显示所属系列与同系列作品（链接），提供拆出、重命名、加入、解散表单（管理员 + CSRF）；解散按钮旁注明“解散后这些作品将不再参与自动归组”。完整系列管理页与跨媒体建议留待 Phase 4.6 后续批次。
 - 剧场总集编之类的条目不会通过 总集篇 关系进组；但若它们彼此之间登记了 续集/前传（如 ぼっち・ざ・ろっく！ 的两部剧场总集编），按 R2 它们会单独组成自己的系列。
+
+### 10.5 跨媒体与 sequel 建议（4.6 批次 5，migration 031）
+
+- 自动归组仍然只沿续集/前传、只覆盖 type 2 条目（D21）。其余关系一律不自动进组，而是生成**建议**进集中审核（R6）：`work_series_suggestions` 一行是作品对作品（D53），记两个方向的 relation 文本与 kind（cross/sequel）。
+- 配对只在两端都在库内、且这一轮都成功拉到关系时进行；必须双向核对：A→B 与 B→A 的 relation 要组成 D52 的白名单关系对（cross），或互为续集/前传且满足 D67 收窄条件（sequel：至少一端是系列 manual 成员，或两端都是 type 4）。配对核心是纯函数 `seriesSuggestionPairs`（internal/enrichment/series_bangumi.go）。
+- 跳过：两部作品已在同一系列；任一方被锁定（D56）；这对 subject 已被接受或拒绝过（D55，`work_series_suggestion_decisions` 按 subject 对永久记忆）。锁定、决定与同系列检查在落库事务里再核对一次（INSERT … SELECT … WHERE NOT EXISTS），生成期的竞态不会把建议写回来；任一端被锁定的旧建议在下一次落库时删除，被锁定的作品产生的建议在 Pending 查询里也会被过滤，接受时重读发现锁定则返回 ErrSeriesSuggestionStale 并删除建议（不清锁）。换绑到非 type 2/4 条目、或 subject 被多个作品绑定的作品，只要本轮解析没有失败就算已处理，其残留旧建议会被删除。
+- 生成时机：enrichBangumiSeries 的 BFS 与 ApplyAutoSeries 完成且未中止时执行；type 2 的关系复用 BFS 的 runMemo 与 `subject-rel:<id>` 缓存（不产生额外请求），type 4 按需拉取（同样走 cachedJSON、节流、取消与熔断）。建议用单独的 suggestLibrary（含 type 4），**不改 BFS 的 type-2 library**，游戏不会被续集链拉进自动归组。落库在一个事务里 upsert；两端本轮都成功、但没再产生的旧建议删除；拉取失败的作品的旧建议保持不动。
+- 接受（AcceptSeriesSuggestion）按两部作品当时的归属：都不在系列里 → CreateWorkSeries；只有一方在 → AddWorkToSeries（manual）；分属两个系列 → MergeWorkSeries（名字按 D58，两方都改过名又没给名字时返回 ErrSeriesTitleConflict）；已在同一系列 → 直接关闭。拒绝只记决定。两者都删除建议行。
+- 计数并入 PendingWorkReviewCounts / 导航角标；审核 Tab 与管理页 UI 在批次 6（D51/D54）。
+- 实测备注：薬屋のひとりごと 剧场版（599894）在 Bangumi 上登记的是“衍生”（TV 侧 420628 登记衍生、剧场版侧登记主线故事），不会自动进组，只能通过建议进入系列。
+
+### 10.6 人工合并与新建（4.6 批次 5 数据层）
+
+- `MergeWorkSeries(keep, drop, title)`：drop 的全部成员移到 keep 并一律改为 manual、清除它们的锁（D57），删除 drop；名字按 D58；移动写 provenance（field `series`，source `manual`，含 mergedFrom）。keep==drop 或任一方不存在都是错误。
+- `CreateWorkSeries(title, workIDs)`（D61）：成员一律 manual 并清锁；成员原在别的系列时先移出，原系列做退化清理或刷新代表作；名字可空（auto，跟随代表作）。
+- `ListSeriesPage(q, limit, offset)`：管理页数据源，返回成员数与类型分布（GROUP BY w.type），支持按系列名或成员名搜索并返回总数。
+
+### 10.7 B1 修正（D59）与 D66 口径说明
+
+ApplyAutoSeries 原先按“全部成员”计算分量与系列的重合度：用户手动加入足够多的作品后，由这些 manual 成员组成的分量会把系列从真正的 auto 分量手里“认领”走。修正后重合度只计算未锁定的 auto 成员（manual 成员是钉在系列上的用户意图，见 P3），D41 的冲突检测用同一口径。回归测试：TestApplyAutoSeriesManualAdditionsDoNotStealSeries。
+
+保持该口径的两个已知行为（D66）：
+
+1. **manual-only 系列不会被 auto 分量认领**：同一轮从同一续集链进来 ≥2 部新季时，新季会另建一个 auto 系列，链暂时分成两个系列；靠 sequel 建议（D67a）提示用户，人工合并（MergeWorkSeries）修复。
+2. **只凭 manual 成员与改名系列重合不再触发 D41 冻结**：D41 冻结保护的是“auto 归属被两个改名系列争抢”的冲突；manual 成员不构成归属争抢，因此不再冻结（分叉 3）。固定行为的测试：TestSeriesManualOnlySeriesNotStolenAndSequelSuggested。

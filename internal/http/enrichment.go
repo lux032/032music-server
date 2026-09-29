@@ -85,19 +85,20 @@ type workReviewWorkGroup struct {
 
 type workReviewPageData struct {
 	Chrome
-	ActiveTab          string // "albums" | "tracks" | "works"
-	Group              string // "album" | "work"
-	AlbumID            int64  // optional filter
-	Notice             string
-	AlbumSubjectCount  int
-	TrackSubjectCount  int
-	WorkCandidateCount int
-	TotalPendingCount  int
-	AlbumSubjects      []storage.AlbumSubjectCandidate
-	TrackSubjects      []storage.TrackSubjectCandidate
-	WorkReviews        []enrichmentWorkReview
-	AlbumGroups        []workReviewAlbumGroup
-	WorkGroups         []workReviewWorkGroup
+	ActiveTab             string // "albums" | "tracks" | "works"
+	Group                 string // "album" | "work"
+	AlbumID               int64  // optional filter
+	Notice                string
+	AlbumSubjectCount     int
+	TrackSubjectCount     int
+	WorkCandidateCount    int
+	SeriesSuggestionCount int
+	TotalPendingCount     int
+	AlbumSubjects         []storage.AlbumSubjectCandidate
+	TrackSubjects         []storage.TrackSubjectCandidate
+	WorkReviews           []enrichmentWorkReview
+	AlbumGroups           []workReviewAlbumGroup
+	WorkGroups            []workReviewWorkGroup
 }
 
 func safeAdminReturnTo(raw, fallback string) string {
@@ -405,11 +406,11 @@ func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	data := enrichmentPageData{Chrome: a.chromeFor(r.Context(), session, "enrichment"), Notice: r.URL.Query().Get("notice")}
 	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
-	albumCount, trackCount, workCount, _ := a.store.PendingWorkReviewCounts(r.Context())
+	albumCount, trackCount, workCount, seriesCount, _ := a.store.PendingWorkReviewCounts(r.Context())
 	data.AlbumCount = albumCount
 	data.TrackCount = trackCount
 	data.WorkCount = workCount
-	data.TotalPendingCount = albumCount + trackCount + workCount
+	data.TotalPendingCount = albumCount + trackCount + workCount + seriesCount
 	// D44：艺术家关系候选的审核保留在 /admin/enrichment，不迁到作品关联审核页。
 	var reviewErr error
 	_, data.Artists, _, data.PendingArtistCount, reviewErr = a.enrichmentReviews(r.Context())
@@ -441,7 +442,8 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var err error
-	data.AlbumSubjectCount, data.TrackSubjectCount, data.WorkCandidateCount, err = a.store.PendingWorkReviewCounts(r.Context())
+	var seriesCount int
+	data.AlbumSubjectCount, data.TrackSubjectCount, data.WorkCandidateCount, seriesCount, err = a.store.PendingWorkReviewCounts(r.Context())
 	if err != nil {
 		a.logger.Error("work review counts", "error", err)
 		http.Error(w, "work review unavailable", http.StatusInternalServerError)
@@ -456,7 +458,8 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data.TotalPendingCount = data.AlbumSubjectCount + data.TrackSubjectCount + data.WorkCandidateCount
+	data.SeriesSuggestionCount = seriesCount
+	data.TotalPendingCount = data.AlbumSubjectCount + data.TrackSubjectCount + data.WorkCandidateCount + data.SeriesSuggestionCount
 
 	switch tab {
 	case "albums":

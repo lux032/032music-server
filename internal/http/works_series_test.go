@@ -214,3 +214,46 @@ func postForm(handler http.Handler, cookie *http.Cookie, path string, form url.V
 	handler.ServeHTTP(rec, req)
 	return rec
 }
+
+// M4: the series handlers honor a safe in-site returnTo and fall back to
+// their default target otherwise (batch 6's management page reuses them).
+func TestWorksSeriesReturnTo(t *testing.T) {
+	app, store, handler := credentialTestApp(t)
+	series, groupedA, groupedB, solo := seriesHTTPFixture(t, store)
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+	workPath := func(id int64) string { return "/admin/works/" + strconv.FormatInt(id, 10) }
+
+	// Detach honors returnTo, including an existing query string.
+	rec := postSecurity(t, app, handler, cookie, workPath(groupedB.ID)+"/series/detach", url.Values{"returnTo": {"/admin/work-review?tab=series"}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/admin/work-review?tab=series&notice=") {
+		t.Fatalf("detach returnTo location=%q", loc)
+	}
+	// An external or non-admin returnTo is refused; the fallback is the work page.
+	rec = postSecurity(t, app, handler, cookie, workPath(solo.ID)+"/series/detach", url.Values{"returnTo": {"https://evil.example/x"}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, workPath(solo.ID)+"?notice=") {
+		t.Fatalf("detach unsafe returnTo location=%q", loc)
+	}
+	// Manual add joins the series and returns to the given admin page.
+	rec = postSecurity(t, app, handler, cookie, workPath(groupedB.ID)+"/series", url.Values{"seriesId": {strconv.FormatInt(series.ID, 10)}, "returnTo": {"/admin/works?group=series"}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/admin/works?group=series&notice=") {
+		t.Fatalf("add returnTo location=%q", loc)
+	}
+	// Rename: returnTo beats the representative-work default.
+	rec = postSecurity(t, app, handler, cookie, "/admin/series/"+strconv.FormatInt(series.ID, 10)+"/rename", url.Values{"title": {"改名"}, "returnTo": {"/admin/enrichment"}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/admin/enrichment?notice=") {
+		t.Fatalf("rename returnTo location=%q", loc)
+	}
+	// Rename without returnTo keeps the old default: the representative work page.
+	rec = postSecurity(t, app, handler, cookie, "/admin/series/"+strconv.FormatInt(series.ID, 10)+"/rename", url.Values{"title": {"再改名"}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, workPath(groupedA.ID)+"?notice=") {
+		t.Fatalf("rename default location=%q", loc)
+	}
+	// Dissolve: returnTo honored, default /admin/works preserved otherwise.
+	rec = postSecurity(t, app, handler, cookie, "/admin/series/"+strconv.FormatInt(series.ID, 10)+"/dissolve", url.Values{"returnTo": {"/admin/enrichment"}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/admin/enrichment?notice=") {
+		t.Fatalf("dissolve returnTo location=%q", loc)
+	}
+	if all, _ := store.ListSeries(context.Background()); len(all) != 0 {
+		t.Fatalf("series left=%+v", all)
+	}
+}

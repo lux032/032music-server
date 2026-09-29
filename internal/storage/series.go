@@ -178,8 +178,16 @@ func (s *Store) ApplyAutoSeries(ctx context.Context, runID int64, components [][
 			compSet[id] = true
 		}
 		for _, row := range series {
+			// B1/D59: overlap counts only unlocked automatic members. Manual
+			// members are user intent pinned to this series (P3); counting them
+			// would let a component made purely of manual additions claim the
+			// series away from the component holding its automatic members.
+			// The D41 conflict detection below shares this same counting.
 			overlap := 0
 			for _, member := range members[row.id] {
+				if member.source != "auto" || locks[member.workID] {
+					continue
+				}
 				if compSet[member.workID] {
 					overlap++
 				}
@@ -648,43 +656,7 @@ func (s *Store) AddWorkToSeries(ctx context.Context, workID, seriesID int64) err
 		return err
 	}
 	defer tx.Rollback()
-	var exists bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM works WHERE id=?)`, workID).Scan(&exists); err != nil {
-		return err
-	} else if !exists {
-		return sql.ErrNoRows
-	}
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_series WHERE id=?)`, seriesID).Scan(&exists); err != nil {
-		return err
-	} else if !exists {
-		return sql.ErrNoRows
-	}
-	var previous int64
-	previousErr := tx.QueryRowContext(ctx, `SELECT series_id FROM work_series_members WHERE work_id=?`, workID).Scan(&previous)
-	if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
-		return previousErr
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM work_series_locks WHERE work_id=?`, workID); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM work_series_members WHERE work_id=?`, workID); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO work_series_members(work_id,series_id,source) VALUES(?,?,'manual')`, workID, seriesID); err != nil {
-		return err
-	}
-	if previousErr == nil && previous != seriesID {
-		deleted, delErr := deleteDegenerateSeries(ctx, tx, previous)
-		if delErr != nil {
-			return delErr
-		}
-		if !deleted {
-			if err = refreshSeriesRow(ctx, tx, previous); err != nil {
-				return err
-			}
-		}
-	}
-	if err = refreshSeriesRow(ctx, tx, seriesID); err != nil {
+	if err = addWorkToSeriesTx(ctx, tx, workID, seriesID); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -299,7 +300,10 @@ func TestMergeAlbumsCustomArtworkRules(t *testing.T) {
 		f.importFileWithArtwork(t, "T/01.flac", "Target", "A", "emb-t", 1)
 		f.importFileWithArtwork(t, "S/01.flac", "Source", "B", "emb-s", 1)
 		target, source := f.albumID(t, "Target"), f.albumID(t, "Source")
-		customID, _, _ := f.store.SaveCustomAlbumArtwork(f.ctx, target, f.customImage("t.png"))
+		customID, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, target, f.customImage("t.png"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, source, f.customImage("s.png")); err != nil {
 			t.Fatal(err)
 		}
@@ -322,7 +326,10 @@ func TestMergeAlbumsCustomArtworkRules(t *testing.T) {
 		f.importFileWithArtwork(t, "T/01.flac", "Target", "A", "emb-t", 1)
 		f.importFileWithArtwork(t, "S/01.flac", "Source", "B", "emb-s", 1)
 		target, source := f.albumID(t, "Target"), f.albumID(t, "Source")
-		customID, _, _ := f.store.SaveCustomAlbumArtwork(f.ctx, source, f.customImage("s.png"))
+		customID, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, source, f.customImage("s.png"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := f.store.MergeAlbums(f.ctx, target, []int64{source}); err != nil {
 			t.Fatal(err)
 		}
@@ -345,7 +352,10 @@ func TestMergeAlbumsCustomArtworkRules(t *testing.T) {
 		f.importFileWithArtwork(t, "S2/01.flac", "Source2", "C", "emb-s2", 1)
 		target := f.albumID(t, "Target")
 		source1, source2 := f.albumID(t, "Source1"), f.albumID(t, "Source2")
-		customID, _, _ := f.store.SaveCustomAlbumArtwork(f.ctx, source1, f.customImage("s1.png"))
+		customID, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, source1, f.customImage("s1.png"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, source2, f.customImage("s2.png")); err != nil {
 			t.Fatal(err)
 		}
@@ -381,7 +391,10 @@ func TestMergeAlbumsCustomArtworkRules(t *testing.T) {
 		f.importFile(t, "T/01.flac", "Target", "A", 1, 1)
 		f.importFileWithArtwork(t, "S/01.flac", "Source", "B", "emb-s", 1)
 		target, source := f.albumID(t, "Target"), f.albumID(t, "Source")
-		customID, _, _ := f.store.SaveCustomAlbumArtwork(f.ctx, target, f.customImage("t.png"))
+		customID, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, target, f.customImage("t.png"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := f.store.MergeAlbums(f.ctx, target, []int64{source}); err != nil {
 			t.Fatal(err)
 		}
@@ -432,7 +445,10 @@ func TestMergeAlbumsCustomArtworkRules(t *testing.T) {
 		f.importFile(t, "T/01.flac", "Target", "A", 1, 1)
 		f.importFileWithArtwork(t, "S/01.flac", "Source", "B", "emb-s", 1)
 		target, source := f.albumID(t, "Target"), f.albumID(t, "Source")
-		customID, _, _ := f.store.SaveCustomAlbumArtwork(f.ctx, source, f.customImage("s.png"))
+		customID, _, err := f.store.SaveCustomAlbumArtwork(f.ctx, source, f.customImage("s.png"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := f.store.MergeAlbums(f.ctx, target, []int64{source}); err != nil {
 			t.Fatal(err)
 		}
@@ -605,9 +621,9 @@ func TestArtistMergeInheritsCustomImage(t *testing.T) {
 		if _, err := f.store.MergeArtists(f.ctx, sourceID, targetID); err != nil {
 			t.Fatal(err)
 		}
-		gotName, _, _, err := f.store.ArtistImagePath(f.ctx, targetID)
-		if err != nil || gotName != "s.png" {
-			t.Fatalf("ArtistImagePath = %q, %v, want inherited s.png", gotName, err)
+		gotName, _, isCustom, err := f.store.ArtistImagePath(f.ctx, targetID)
+		if err != nil || gotName != "s.png" || !isCustom {
+			t.Fatalf("ArtistImagePath = %q, custom=%v, %v, want inherited custom s.png", gotName, isCustom, err)
 		}
 		detail, err := f.store.ArtistDetail(f.ctx, targetID)
 		if err != nil {
@@ -754,5 +770,45 @@ func TestSyncAlbumsReflectsCustomArtwork(t *testing.T) {
 	}
 	if reset.Items[0].UpdatedAt < after.Items[0].UpdatedAt || reset.Items[0].UpdatedAt == "2000-01-01T00:00:00.000Z" {
 		t.Fatalf("updated_at not bumped on reset: %q -> %q", after.Items[0].UpdatedAt, reset.Items[0].UpdatedAt)
+	}
+}
+
+// TestCustomArtistImageWithRelativeCachePath mirrors the HTTP-layer relative
+// data dir case at storage level: an automatic cache row may carry a
+// relative cache_path (the scanner stores paths verbatim when the data dir is
+// relative). A custom upload still wins and is stored as a bare file name;
+// after a reset the relative cache path comes back verbatim — the storage
+// layer never absolutizes it.
+func TestCustomArtistImageWithRelativeCachePath(t *testing.T) {
+	f := newAlbumMergeFixture(t)
+	f.importFile(t, "A/01.flac", "Album", "Song", 1, 1)
+	var artistID int64
+	if err := f.store.db.QueryRowContext(f.ctx, `SELECT id FROM artists WHERE display_name='Singer'`).Scan(&artistID); err != nil {
+		t.Fatal(err)
+	}
+	relativeCache := "artist-cache/singer.jpg"
+	if err := f.store.SaveArtistImage(f.ctx, ArtistImageInput{ArtistID: artistID, Source: "lastfm", RemoteURL: "https://img", Hash: "h1", MIMEType: "image/jpeg", CachePath: relativeCache, ByteSize: 10}); err != nil {
+		t.Fatal(err)
+	}
+	gotName, _, isCustom, err := f.store.ArtistImagePath(f.ctx, artistID)
+	if err != nil || gotName != relativeCache || isCustom {
+		t.Fatalf("cache image = %q custom=%v, want the relative path verbatim", gotName, isCustom)
+	}
+	if _, err = f.store.SaveCustomArtistImage(f.ctx, artistID, f.customImage("rel-artist.png")); err != nil {
+		t.Fatal(err)
+	}
+	gotName, _, isCustom, err = f.store.ArtistImagePath(f.ctx, artistID)
+	if err != nil || gotName != "rel-artist.png" || !isCustom {
+		t.Fatalf("custom image = %q custom=%v, want bare name rel-artist.png", gotName, isCustom)
+	}
+	if filepath.IsAbs(gotName) || strings.ContainsAny(gotName, `/\`) {
+		t.Fatalf("custom image path must stay a bare file name, got %q", gotName)
+	}
+	if _, err = f.store.ResetCustomArtistImage(f.ctx, artistID); err != nil {
+		t.Fatal(err)
+	}
+	gotName, _, isCustom, err = f.store.ArtistImagePath(f.ctx, artistID)
+	if err != nil || gotName != relativeCache || isCustom {
+		t.Fatalf("after reset = %q custom=%v, want relative cache path verbatim", gotName, isCustom)
 	}
 }

@@ -810,3 +810,55 @@ func TestCreateWorkExplicitTypeLocks(t *testing.T) {
 		t.Fatalf("auto correction changed=%v err=%v", changed, err)
 	}
 }
+
+// B1/D59: overlap matching counts only unlocked automatic members. A
+// component made purely of works the user added by hand must not steal the
+// series away from the component holding its automatic members.
+func TestApplyAutoSeriesManualAdditionsDoNotStealSeries(t *testing.T) {
+	store, ctx := newSeriesStore(t)
+	a1 := mustWork(t, store, ctx, "Auto One", 2019)
+	a2 := mustWork(t, store, ctx, "Auto Two", 2021)
+	b1 := mustWork(t, store, ctx, "Manual One", 2018)
+	b2 := mustWork(t, store, ctx, "Manual Two", 2020)
+	b3 := mustWork(t, store, ctx, "Manual Three", 2022)
+	if _, err := store.ApplyAutoSeries(ctx, 0, [][]int64{{a1.ID, a2.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	series := onlySeries(t, store, ctx)
+	for _, work := range []Work{b1, b2, b3} {
+		if err := store.AddWorkToSeries(ctx, work.ID, series.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The manual additions already refreshed the representative (earliest
+	// member) and the automatic title follows it (D25); capture that state.
+	series = onlySeries(t, store, ctx)
+	// The next run reports two components: the automatic pair and the three
+	// works the user added by hand (e.g. they are sequel-linked to each
+	// other). The series must stay exactly as the user arranged it.
+	stats, err := store.ApplyAutoSeries(ctx, 0, [][]int64{{a1.ID, a2.ID}, {b1.ID, b2.ID, b3.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.SeriesCreated != 0 || stats.SeriesDeleted != 0 || stats.MembersAdded != 0 || stats.MembersRemoved != 0 {
+		t.Fatalf("stats=%+v, want a no-op", stats)
+	}
+	fresh := onlySeries(t, store, ctx)
+	if fresh.ID != series.ID || fresh.Title != series.Title {
+		t.Fatalf("series changed: before=%+v after=%+v", series, fresh)
+	}
+	members := seriesIDs(t, store, ctx, series.ID)
+	if len(members) != 5 {
+		t.Fatalf("members=%v, want all 5 works", members)
+	}
+	for _, id := range []int64{a1.ID, a2.ID} {
+		if members[id] != "auto" {
+			t.Fatalf("work %d source=%q, want auto", id, members[id])
+		}
+	}
+	for _, id := range []int64{b1.ID, b2.ID, b3.ID} {
+		if members[id] != "manual" {
+			t.Fatalf("work %d source=%q, want manual", id, members[id])
+		}
+	}
+}
