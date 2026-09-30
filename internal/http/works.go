@@ -13,19 +13,13 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
-type worksListRow struct {
-	storage.WorkListRow
-	// MemberGroups 是 D51 的类型分组展开区（只有一种类型时不显示分组头）。
-	MemberGroups []seriesMemberGroup
-}
-
 type worksPageData struct {
 	Chrome
 	Query, Type, Index, Sort, Notice string
 	KanaIndex                        bool
 	Year, Page, PageCount, PageSize  int
 	Total                            int64
-	Rows                             []worksListRow
+	Works                            []storage.Work
 	Unreferenced                     []storage.Work
 	UnreferencedTotal                int64
 	Years                            []int
@@ -178,25 +172,19 @@ func (a *App) handleWorksPage(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	filter.Limit, filter.Offset = size, (page-1)*size
-	rows, err := a.store.ListWorksFolded(r.Context(), filter)
+	// 作品页只平铺作品本身，不再把系列折叠/穿插进网格；系列在系列页和作品详情页管理。
+	works, err := a.store.ListWorks(r.Context(), filter)
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
-	total, err := a.store.CountWorksFolded(r.Context(), filter)
+	total, err := a.store.CountWorks(r.Context(), filter)
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)
 		return
 	}
 	data := worksPageData{Chrome: a.chromeFor(r.Context(), session, "works"), Query: filter.Query, Type: filter.Type, Index: filter.Index, KanaIndex: isKanaIndex(filter.Index), Sort: filter.Sort, Year: filter.Year, Total: total, Page: page, PageSize: size, Notice: r.URL.Query().Get("notice")}
-	data.Rows = make([]worksListRow, 0, len(rows))
-	for _, row := range rows {
-		view := worksListRow{WorkListRow: row}
-		if row.Series != nil {
-			view.MemberGroups = groupSeriesMembersByType(row.Members)
-		}
-		data.Rows = append(data.Rows, view)
-	}
+	data.Works = works
 	data.Unreferenced, data.UnreferencedTotal, err = a.store.UnreferencedProtectedWorks(r.Context())
 	if err != nil {
 		http.Error(w, "works unavailable", http.StatusInternalServerError)

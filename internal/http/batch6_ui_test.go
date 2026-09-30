@@ -655,16 +655,10 @@ func TestSeriesTypeGroupingSingleTypeHidesHeader(t *testing.T) {
 	if strings.Contains(body, "series-type-group-head") {
 		t.Fatal("single-type work page series bar must not show group headers")
 	}
-	// 作品列表展开区：无分组头。
-	body = getAdmin(t, handler, cookie, "/admin/works")
-	if strings.Contains(body, "series-type-group-head") {
-		t.Fatal("single-type works list expansion must not show group headers")
-	}
 }
 
-// D51：/works 按类型筛选时，系列行显示“共 N 部，其中 K 部为<类型>”，展开区
-// 只列符合类型的成员；无筛选时按类型分组显示。
-func TestWorksTypeFilterSeriesRowD51(t *testing.T) {
+// 作品页只平铺作品本身：系列成员不折叠、不插入系列条，类型筛选按作品计数。
+func TestWorksPageListsWorksWithoutSeriesRows(t *testing.T) {
 	_, store, handler := credentialTestApp(t)
 	cookie := mustLogin(t, handler, "admin", testAdminPassword)
 	ctx := context.Background()
@@ -674,44 +668,35 @@ func TestWorksTypeFilterSeriesRowD51(t *testing.T) {
 	if _, err := store.ApplyAutoSeries(ctx, 0, [][]int64{{anime1.ID, movie.ID, anime2.ID}}); err != nil {
 		t.Fatal(err)
 	}
-
-	// 按 movie 筛选：系列行计数收窄；展开区只列符合类型的成员（系列名
-	// 跟随代表作，可能与非符合成员同名，所以断言限定在展开区内；页面上方
-	// 的“受保护但无引用的作品”区也不参与筛选）。
-	body := getAdmin(t, handler, cookie, "/admin/works?type=movie")
-	grid := body
-	if start := strings.Index(body, `class="works-grid"`); start >= 0 {
-		grid = body[start:]
+	gridOf := func(body string) string {
+		if start := strings.Index(body, `class="works-grid"`); start >= 0 {
+			body = body[start:]
+		}
+		if end := strings.Index(body, "</section>"); end >= 0 {
+			body = body[:end]
+		}
+		return body
 	}
-	if !strings.Contains(grid, "共 3 部，其中 1 部为电影") {
-		t.Fatalf("filtered count text missing: %s", grid)
-	}
-	drawer := grid
-	if start := strings.Index(grid, "works-series-expanded-drawer"); start >= 0 {
-		drawer = grid[start:]
-		if end := strings.Index(drawer, "</details>"); end >= 0 {
-			drawer = drawer[:end]
+	body := getAdmin(t, handler, cookie, "/admin/works")
+	grid := gridOf(body)
+	for _, fragment := range []string{"works-series-row", "series-badge", "works-member-card"} {
+		if strings.Contains(grid, fragment) {
+			t.Fatalf("works grid must not render series rows, found %q", fragment)
 		}
 	}
-	if !strings.Contains(drawer, "Filter Movie") {
-		t.Fatal("matching member missing from the expansion")
+	if n := strings.Count(grid, `class="work-card"`); n != 3 {
+		t.Fatalf("work cards=%d, want 3", n)
 	}
-	if strings.Contains(drawer, "Filter Anime Two") {
-		t.Fatal("non-matching members must not render in the expansion under the type filter")
+	if !strings.Contains(body, "共 3 个动画、影视或游戏作品") {
+		t.Fatal("total must count individual works")
 	}
-	if n := strings.Count(drawer, "works-member-card"); n != 1 {
-		t.Fatalf("expansion member cards=%d, want 1", n)
+	body = getAdmin(t, handler, cookie, "/admin/works?type=movie")
+	grid = gridOf(body)
+	if n := strings.Count(grid, `class="work-card"`); n != 1 || !strings.Contains(grid, "Filter Movie") {
+		t.Fatalf("type filter should list only the movie, cards=%d", n)
 	}
-	// 折叠总数仍按行计：只有 1 行。
 	if !strings.Contains(body, "共 1 个动画、影视或游戏作品") {
-		t.Fatal("folded total under filter incorrect")
-	}
-	// 无筛选：全部成员 + 类型分组头。
-	body = getAdmin(t, handler, cookie, "/admin/works")
-	for _, fragment := range []string{"共 3 部作品", "Filter Anime One", "Filter Movie", "series-type-group-head", ">动画</h3>", ">电影</h3>"} {
-		if !strings.Contains(body, fragment) {
-			t.Fatalf("unfiltered works list missing %q", fragment)
-		}
+		t.Fatal("filtered total incorrect")
 	}
 }
 

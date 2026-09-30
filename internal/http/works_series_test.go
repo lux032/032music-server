@@ -150,24 +150,24 @@ func TestWorksSeriesDissolve(t *testing.T) {
 	}
 }
 
-// The works list folds a series into one row and the detail page shows the
-// series section with its operations.
+// The works list shows every work flat (no series rows) and the detail page
+// shows the series section with its operations.
 func TestWorksPagesRenderSeries(t *testing.T) {
 	_, store, handler := credentialTestApp(t)
 	series, groupedA, _, solo := seriesHTTPFixture(t, store)
 	cookie := mustLogin(t, handler, "admin", testAdminPassword)
 	body := getWithCookie(handler, "/admin/works", cookie).Body.String()
-	if !strings.Contains(body, "共 3 部") {
-		t.Fatal("folded series row missing")
+	if strings.Contains(body, "works-series-row") {
+		t.Fatal("works list must not fold series into rows")
 	}
-	if !strings.Contains(body, ">Series One<") || !strings.Contains(body, ">Standalone<") {
-		t.Fatal("expected series title and standalone work")
+	if !strings.Contains(body, ">Standalone<") {
+		t.Fatal("expected standalone work")
 	}
-	// The folded list counts rows, not works: 2 rows for 3 works.
-	if !strings.Contains(body, "2 个动画、影视或游戏作品") {
-		t.Fatal("folded total incorrect")
+	// The list counts works, not folded rows.
+	if !strings.Contains(body, "4 个动画、影视或游戏作品") {
+		t.Fatal("works total incorrect")
 	}
-	// Members are reachable from the expanded row.
+	// Series members are listed directly as work cards.
 	if !strings.Contains(body, "/admin/works/"+strconv.FormatInt(groupedA.ID, 10)) {
 		t.Fatal("member link missing")
 	}

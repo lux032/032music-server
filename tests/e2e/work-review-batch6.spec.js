@@ -76,12 +76,9 @@ test('captures batch 6 screenshots to .local/mockups/impl46/', async ({ page }, 
   await settleMain(page);
   await page.screenshot({ path: path.join(IMPL46_DIR, '14-series-admin-detail.png'), fullPage: false });
 
-  // 15: /works 按类型筛选后的系列行
+  // 15: /works 按类型筛选后的作品网格
   await page.goto('/admin/works?type=movie');
-  const seriesRow = page.locator('details.works-series-row').first();
-  await expect(seriesRow).toBeVisible();
-  await seriesRow.locator('summary.works-series-bar').click();
-  await expect(seriesRow.locator('.works-series-expanded-drawer')).toBeVisible();
+  await expect(page.locator('.works-grid .work-card').first()).toBeVisible();
   await settleMain(page);
   await page.screenshot({ path: path.join(IMPL46_DIR, '15-works-type-filter.png'), fullPage: false });
 });
@@ -103,28 +100,17 @@ test('captures batch 7 works create-card screenshots to .local/mockups/impl47/',
   }
 });
 
-// ---- D51：/works 按类型筛选时的系列行（声明在接受建议的用例之前）----
-test('works list type filter narrows series row count and members', async ({ page }) => {
+// ---- /works 只平铺作品，不穿插系列行（声明在接受建议的用例之前）----
+test('works list shows plain work cards without series rows', async ({ page }) => {
   await page.goto('/admin/works?type=movie');
-  const seriesRow = page.locator('details.works-series-row', { hasText: '鬼滅の刃' }).first();
-  await expect(seriesRow).toBeVisible();
-  await expect(seriesRow).toContainText('共 3 部，其中 1 部为电影');
-  await seriesRow.locator('summary.works-series-bar').click();
-  const drawer = seriesRow.locator('.works-series-expanded-drawer');
-  await expect(drawer).toBeVisible();
-  await expect(drawer.locator('.works-member-card')).toHaveCount(1);
-  await expect(drawer).toContainText('無限列車編');
-  await expect(drawer).not.toContainText('遊郭編');
+  const grid = page.locator('.works-grid');
+  await expect(grid.locator('details.works-series-row')).toHaveCount(0);
+  await expect(grid.locator('.work-card', { hasText: '無限列車編' })).toBeVisible();
+  await expect(grid).not.toContainText('遊郭編');
 
-  // 无筛选：系列行显示全部成员并按类型分组。
   await page.goto('/admin/works');
-  const fullRow = page.locator('details.works-series-row', { hasText: '鬼滅の刃' }).first();
-  await expect(fullRow).toContainText('共 3 部作品');
-  await fullRow.locator('summary.works-series-bar').click();
-  const fullDrawer = fullRow.locator('.works-series-expanded-drawer');
-  await expect(fullDrawer.locator('.works-member-card')).toHaveCount(3);
-  await expect(fullDrawer.locator('.series-type-group-head', { hasText: '动画' })).toBeVisible();
-  await expect(fullDrawer.locator('.series-type-group-head', { hasText: '电影' })).toBeVisible();
+  await expect(page.locator('.works-grid details.works-series-row')).toHaveCount(0);
+  await expect(page.locator('.works-grid .work-card', { hasText: '遊郭編' })).toBeVisible();
 });
 
 // ---- 系列建议 Tab ----
