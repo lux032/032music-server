@@ -54,7 +54,7 @@ func (s *Store) FavoriteArtists(ctx context.Context, limit, offset int) ([]Artis
 
 // ArtistAlbums returns albums where this artist has the album-artist role.
 func (s *Store) ArtistAlbums(ctx context.Context, id int64) ([]Album, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT album_id FROM album_artists WHERE artist_id=? ORDER BY album_id`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?) ORDER BY `+albumOrder(Filters{Sort: "date"}), id)
 	if err != nil {
 		return nil, err
 	}

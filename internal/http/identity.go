@@ -19,8 +19,9 @@ type matchReviewItem struct {
 	Candidates []storage.ArtistCandidate
 }
 type artistReleaseGroup struct {
-	Title    string
-	Releases []storage.Album
+	Title       string
+	Description string
+	Releases    []storage.Album
 }
 type identityPageData struct {
 	Chrome
@@ -328,11 +329,41 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 			data.Notice = "身份冲突已变化，请重新核对候选"
 		}
 	}
-	data.Albums, _ = a.store.ListAlbums(r.Context(), storage.Filters{ArtistID: id, Limit: 500})
-	data.ReleaseGroups = groupArtistReleases(data.Albums)
+	releases, err := a.store.ArtistDiscography(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.ReleaseGroups = groupArtistDiscography(releases)
 	data.Tracks, _ = a.store.ListTracks(r.Context(), storage.Filters{ArtistID: id, Limit: 20})
 	data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{Limit: 500})
 	a.render(w, 200, "artist.html", data)
+}
+
+// groupArtistDiscography preserves the date order supplied by storage within
+// every group. Ownership is classified before release type, so a guest track
+// on someone else's album never becomes a personal album or single.
+func groupArtistDiscography(releases []storage.ArtistRelease) []artistReleaseGroup {
+	personal := []storage.Album{}
+	collaborations := artistReleaseGroup{Title: "合作发行", Description: "与其他专辑艺人共同署名的发行"}
+	appearances := artistReleaseGroup{Title: "参与作品", Description: "曲目演唱参与及多人合辑，不计入个人发行"}
+	for _, release := range releases {
+		switch release.Relation {
+		case "personal":
+			personal = append(personal, release.Album)
+		case "collaboration":
+			collaborations.Releases = append(collaborations.Releases, release.Album)
+		case "appearance":
+			appearances.Releases = append(appearances.Releases, release.Album)
+		}
+	}
+	groups := groupArtistReleases(personal)
+	for _, group := range []artistReleaseGroup{collaborations, appearances} {
+		if len(group.Releases) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	return groups
 }
 
 func groupArtistReleases(albums []storage.Album) []artistReleaseGroup {
