@@ -296,6 +296,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 		return MatchResult{}, errors.New("no metadata source is enabled")
 	}
 	var candidates []storage.ArtistCandidate
+	unsafeTaggedIdentity := false
 	queriedSources := 0
 	successfulSources := 0
 	var mbProfiles = map[string]storage.ExternalArtistProfile{}
@@ -314,6 +315,11 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 					candidate.ArtistID = artistID
 					candidate.Score = 100
 					candidate.Evidence = []string{"文件标签包含 MusicBrainz ID"}
+					if !artistProfileNameMatches(artist.Name, profile) {
+						unsafeTaggedIdentity = true
+						candidate.Score = 85
+						candidate.Evidence = append(candidate.Evidence, "标签身份与歌手名称不一致，需要人工核对")
+					}
 					found = append(found, candidate)
 					mbProfiles[candidate.MBID] = profile
 				} else if asRateLimited(e) != nil {
@@ -375,6 +381,14 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 					candidates[i].Score = 98
 					candidates[i].Evidence = append(candidates[i].Evidence, "Last.fm MBID 与已确认的 MusicBrainz 身份一致")
 				}
+			}
+		}
+	}
+	// Agreement between sources does not validate a misattributed file tag.
+	if unsafeTaggedIdentity {
+		for i := range candidates {
+			if candidates[i].Score >= 92 {
+				candidates[i].Score = 85
 			}
 		}
 	}
@@ -1030,6 +1044,19 @@ func (m *Manager) spotifyImage(ctx context.Context, artistURL string) (string, e
 	}
 	return strings.TrimSpace(response.ThumbnailURL), nil
 }
+func artistProfileNameMatches(name string, profile storage.ExternalArtistProfile) bool {
+	local := normalize(name)
+	if local == "" {
+		return false
+	}
+	for _, value := range append([]string{profile.DisplayName, profile.SortName}, profile.Aliases...) {
+		if normalize(value) == local {
+			return true
+		}
+	}
+	return false
+}
+
 func normalize(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
 }

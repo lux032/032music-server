@@ -190,14 +190,14 @@ func TestMatchArtistConfirmedThenRateLimitNotice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "Artist/Album/02.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Track 2", Album: "Album", Artists: []string{"Artist"}, AlbumArtists: []string{"Artist"}, DiscNumber: 1, TrackNumber: 2, Raw: map[string][]string{"MUSICBRAINZ_ARTISTID": {"mbid-confirmed-1"}}}}); err != nil {
+	if err = store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "Artist/Album/02.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Track 2", Album: "Album", Artists: []string{"Artist"}, AlbumArtists: []string{"Artist"}, DiscNumber: 1, TrackNumber: 2, Raw: map[string][]string{"MUSICBRAINZ_ARTISTID": {"11111111-1111-4111-8111-111111111111"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	// The lookup (inc=aliases...) succeeds; the biography relations request
 	// (inc=url-rels) after the confirmation is rate limited.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.RawQuery, "aliases") {
-			_, _ = io.WriteString(w, `{"id":"mbid-confirmed-1","name":"Artist","sort-name":"Artist","aliases":[],"tags":[],"relations":[]}`)
+			_, _ = io.WriteString(w, `{"id":"11111111-1111-4111-8111-111111111111","name":"Artist","sort-name":"Artist","aliases":[],"tags":[],"relations":[]}`)
 			return
 		}
 		w.Header().Set("Retry-After", "60")

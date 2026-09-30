@@ -123,6 +123,30 @@
         </div>
       </section>
       <aside>
+        {{with .IdentityConflict}}
+        <section class="identity-panel danger-panel" aria-label="外部身份冲突">
+          <p class="kicker">身份已绑定，请先核对</p>
+          <p>该身份（{{.Source}} · <code>{{.ExternalID}}</code>）已绑定到歌手
+            <a href="/admin/artists/{{.TargetArtistID}}" target="_blank" rel="noopener noreferrer">{{.TargetName}}</a>。
+          </p>
+          {{if ne .OwnerArtistID .TargetArtistID}}<p>原绑定歌手 {{.OwnerName}} 已合并到 {{.TargetName}}。</p>{{end}}
+          <p>点击歌手名称在新标签页查看。身份相同不代表歌手相同；只有核对确为同一歌手后才合并。</p>
+          {{if .CanMerge}}
+          <button type="button" data-dialog-open="identity-merge-dialog">将 {{$.Artist.Name}} 合并到 {{.TargetName}}</button>
+          <dialog id="identity-merge-dialog" class="work-dialog danger-dialog">
+            <form method="post" action="/admin/artists/{{$.Artist.ID}}/identity-conflict/{{.CandidateID}}/merge">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
+              <input type="hidden" name="confirm" value="1">
+              <div class="dialog-head"><h2>确认合并歌手</h2><button type="button" class="icon-action" data-dialog-close aria-label="关闭">×</button></div>
+              <p>将 <strong>{{$.Artist.Name}}</strong> 合并到 <strong>{{.TargetName}}</strong>。</p>
+              <p>专辑和歌曲关联会迁移到目标歌手。源歌手不会删除，可在合并历史中回退。此操作不会新增或迁移候选身份绑定。</p>
+              <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">已核对是同一歌手，确认合并</button></div>
+            </form>
+          </dialog>
+          {{else}}<p>该身份所属歌手已合并到当前歌手，无需再次合并；身份绑定保持不变。</p>{{end}}
+        </section>
+        {{end}}
         <section class="identity-panel">
           <p class="kicker">外部身份</p>
           {{range .Artist.Profiles}}

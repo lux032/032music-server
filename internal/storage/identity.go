@@ -189,7 +189,11 @@ func (s *Store) SaveMetadataSourceSetting(ctx context.Context, value MetadataSou
 }
 
 func (s *Store) ArtistsForMatching(ctx context.Context) ([]ArtistMatchInput, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),COALESCE((SELECT aft.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags aft ON aft.audio_file_id=af.id WHERE ta.artist_id=ar.id AND aft.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') LIMIT 1),'') FROM artists ar WHERE ar.merged_into_artist_id IS NULL ORDER BY ar.id`)
+	return s.artistsForMatching(ctx, 0)
+}
+
+func (s *Store) artistsForMatching(ctx context.Context, id int64) ([]ArtistMatchInput, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),'' FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (?=0 OR ar.id=?) ORDER BY ar.id`, id, id)
 	if err != nil {
 		return nil, err
 	}
@@ -202,13 +206,32 @@ func (s *Store) ArtistsForMatching(ctx context.Context) ([]ArtistMatchInput, err
 		}
 		list = append(list, v)
 	}
-	return list, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ids, err := s.artistTaggedMBIDs(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].TaggedMBID = ids[list[i].ID]
+	}
+	return list, nil
 }
 
 func (s *Store) ArtistForMatching(ctx context.Context, id int64) (ArtistMatchInput, error) {
-	var v ArtistMatchInput
-	err := s.db.QueryRowContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),COALESCE((SELECT aft.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags aft ON aft.audio_file_id=af.id WHERE ta.artist_id=ar.id AND aft.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') LIMIT 1),'') FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND ar.id=?`, id).Scan(&v.ID, &v.Name, &v.TaggedMBID)
-	return v, err
+	if id <= 0 {
+		return ArtistMatchInput{}, sql.ErrNoRows
+	}
+	values, err := s.artistsForMatching(ctx, id)
+	if err != nil {
+		return ArtistMatchInput{}, err
+	}
+	if len(values) == 0 {
+		return ArtistMatchInput{}, sql.ErrNoRows
+	}
+	return values[0], nil
 }
 
 func (s *Store) ReplaceArtistCandidates(ctx context.Context, artistID int64, candidates []ArtistCandidate) error {
@@ -288,6 +311,10 @@ func (s *Store) UpsertExternalArtistProfile(ctx context.Context, artistID int64,
 }
 
 func (s *Store) ConfirmArtistCandidate(ctx context.Context, artistID, candidateID int64) error {
+	return withBusyRetry(ctx, func() error { return s.confirmArtistCandidate(ctx, artistID, candidateID) })
+}
+
+func (s *Store) confirmArtistCandidate(ctx context.Context, artistID, candidateID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -295,8 +322,11 @@ func (s *Store) ConfirmArtistCandidate(ctx context.Context, artistID, candidateI
 	defer tx.Rollback()
 	var p ExternalArtistProfile
 	var aliases, tags, raw string
-	err = tx.QueryRowContext(ctx, `SELECT source,external_id,display_name,COALESCE(sort_name,''),COALESCE(json_extract(payload_json,'$.pageUrl'),''),COALESCE(json_extract(payload_json,'$.imageUrl'),''),COALESCE(json_extract(payload_json,'$.biography'),''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(disambiguation,''),COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),payload_json FROM artist_match_candidates WHERE id=? AND artist_id=?`, candidateID, artistID).Scan(&p.Source, &p.ExternalID, &p.DisplayName, &p.SortName, &p.PageURL, &p.RemoteImageURL, &p.Biography, &p.Country, &p.ArtistType, &p.Disambiguation, &aliases, &tags, &raw)
+	err = tx.QueryRowContext(ctx, `SELECT source,external_id,display_name,COALESCE(sort_name,''),COALESCE(json_extract(payload_json,'$.pageUrl'),''),COALESCE(json_extract(payload_json,'$.imageUrl'),''),COALESCE(json_extract(payload_json,'$.biography'),''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(disambiguation,''),COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),payload_json FROM artist_match_candidates WHERE id=? AND artist_id=? AND status IN ('candidate','confirmed')`, candidateID, artistID).Scan(&p.Source, &p.ExternalID, &p.DisplayName, &p.SortName, &p.PageURL, &p.RemoteImageURL, &p.Biography, &p.Country, &p.ArtistType, &p.Disambiguation, &aliases, &tags, &raw)
 	if err != nil {
+		return err
+	}
+	if err = artistIdentityOwnerCheck(ctx, tx, artistID, p.Source, p.ExternalID); err != nil {
 		return err
 	}
 	_ = json.Unmarshal([]byte(aliases), &p.Aliases)
@@ -306,6 +336,12 @@ func (s *Store) ConfirmArtistCandidate(ctx context.Context, artistID, candidateI
 	aliasesJSON, _ := json.Marshal(p.Aliases)
 	tagsJSON, _ := json.Marshal(p.Tags)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_external_profiles(artist_id,source,external_id,display_name,sort_name,page_url,remote_image_url,image_checked_at,biography,country,artist_type,disambiguation,aliases_json,tags_json,raw_json,fetched_at) VALUES(?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,source) DO UPDATE SET external_id=excluded.external_id,display_name=excluded.display_name,sort_name=excluded.sort_name,page_url=excluded.page_url,remote_image_url=excluded.remote_image_url,image_checked_at=excluded.image_checked_at,biography=excluded.biography,country=excluded.country,artist_type=excluded.artist_type,disambiguation=excluded.disambiguation,aliases_json=excluded.aliases_json,tags_json=excluded.tags_json,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, artistID, p.Source, p.ExternalID, p.DisplayName, p.SortName, p.PageURL, p.RemoteImageURL, p.Biography, p.Country, p.ArtistType, p.Disambiguation, string(aliasesJSON), string(tagsJSON), raw, p.FetchedAt); err != nil {
+		// Preserve BUSY_SNAPSHOT so the entire transaction is retried.
+		if !isBusyError(err) {
+			if conflictErr := artistIdentityOwnerCheck(ctx, tx, artistID, p.Source, p.ExternalID); conflictErr != nil {
+				return conflictErr
+			}
+		}
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=?`, candidateID, artistID); err != nil {
@@ -459,14 +495,23 @@ func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error
 }
 
 func (s *Store) MergeArtists(ctx context.Context, sourceID, targetID int64) (int64, error) {
-	if sourceID == targetID {
-		return 0, errors.New("source and target artist must differ")
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	operation, err := mergeArtistsTx(ctx, tx, sourceID, targetID)
+	if err != nil {
+		return 0, err
+	}
+	return operation, tx.Commit()
+}
+
+func mergeArtistsTx(ctx context.Context, tx *sql.Tx, sourceID, targetID int64) (int64, error) {
+	if sourceID == targetID {
+		return 0, errors.New("source and target artist must differ")
+	}
+	var err error
 	var sourceName, targetName string
 	var sourceMerged, targetMerged sql.NullInt64
 	var sourceFavorite, targetFavorite int
@@ -601,7 +646,7 @@ func (s *Store) MergeArtists(ctx context.Context, sourceID, targetID int64) (int
 	if _, err = tx.ExecContext(ctx, `UPDATE artists SET merged_into_artist_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, targetID, sourceID); err != nil {
 		return 0, err
 	}
-	return operationID, tx.Commit()
+	return operationID, nil
 }
 
 func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) error {

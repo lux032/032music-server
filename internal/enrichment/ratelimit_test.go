@@ -673,7 +673,7 @@ func TestWikidataImageRateLimitStopsStartAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, mbid := range []string{"mbid-wd-1", "mbid-wd-2"} {
+	for i, mbid := range []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"} {
 		name := fmt.Sprintf("WD Artist %d", i)
 		if err = store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: fmt.Sprintf("WD%d/01.flac", i), FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Song", Album: "WD", Artists: []string{name}, AlbumArtists: []string{name}, DiscNumber: 1, TrackNumber: 1, Raw: map[string][]string{"MUSICBRAINZ_ARTISTID": {mbid}}}}); err != nil {
 			t.Fatal(err)
@@ -827,7 +827,7 @@ func TestPhase4WorkPosterRateLimitStopsRun(t *testing.T) {
 func TestArtistMatchConfirmedThenRateLimitCountsMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.RawQuery, "aliases") {
-			io.WriteString(w, `{"id":"mbid-count-1","name":"Artist","sort-name":"Artist","aliases":[],"tags":[],"relations":[]}`)
+			io.WriteString(w, `{"id":"33333333-3333-4333-8333-333333333333","name":"Count Artist","sort-name":"Count Artist","aliases":[],"tags":[],"relations":[]}`)
 			return
 		}
 		w.Header().Set("Retry-After", "60")
@@ -847,7 +847,7 @@ func TestArtistMatchConfirmedThenRateLimitCountsMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "Count/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Song", Album: "Count", Artists: []string{"Count Artist"}, AlbumArtists: []string{"Count Artist"}, DiscNumber: 1, TrackNumber: 1, Raw: map[string][]string{"MUSICBRAINZ_ARTISTID": {"mbid-count-1"}}}}); err != nil {
+	if err = store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "Count/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Song", Album: "Count", Artists: []string{"Count Artist"}, AlbumArtists: []string{"Count Artist"}, DiscNumber: 1, TrackNumber: 1, Raw: map[string][]string{"MUSICBRAINZ_ARTISTID": {"33333333-3333-4333-8333-333333333333"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	setting, err := store.MetadataSourceSetting(ctx, "musicbrainz")

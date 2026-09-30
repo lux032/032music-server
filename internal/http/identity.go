@@ -28,6 +28,7 @@ type identityPageData struct {
 	Settings          []storage.MetadataSourceSetting
 	BiographySettings storage.BiographySettings
 	LastFMScrobble    lastFMScrobbleView
+	IdentityConflict  *storage.ArtistIdentityConflict
 	Artist            *storage.ArtistDetail
 	Artists           []storage.Artist
 	Albums            []storage.Album
@@ -215,8 +216,17 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	if err := a.store.ConfirmArtistCandidate(r.Context(), id, parseInt64(r.PathValue("candidate"))); err != nil {
-		http.Error(w, err.Error(), 500)
+	candidateID := parseInt64(r.PathValue("candidate"))
+	if err := a.store.ConfirmArtistCandidate(r.Context(), id, candidateID); err != nil {
+		var conflict *storage.ArtistExternalIDConflictError
+		if errors.As(err, &conflict) {
+			http.Redirect(w, r, fmt.Sprintf("/admin/artists/%d?identityConflict=%d", id, candidateID), http.StatusSeeOther)
+		} else if errors.Is(err, sql.ErrNoRows) {
+			redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", id), "候选不存在或已变化，请重新匹配")
+		} else {
+			a.logger.Error("confirm artist identity", "artistId", id, "error", err)
+			http.Error(w, "确认身份失败，请稍后重试", http.StatusInternalServerError)
+		}
 		return
 	}
 	rateLimitedSource := ""
@@ -308,6 +318,14 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.Artist = &detail
+	if candidateID := parseInt64(r.URL.Query().Get("identityConflict")); candidateID > 0 {
+		conflict, conflictErr := a.store.ArtistIdentityConflict(r.Context(), id, candidateID)
+		if conflictErr == nil {
+			data.IdentityConflict = &conflict
+		} else {
+			data.Notice = "身份冲突已变化，请重新核对候选"
+		}
+	}
 	data.Albums, _ = a.store.ListAlbums(r.Context(), storage.Filters{ArtistID: id, Limit: 500})
 	data.ReleaseGroups = groupArtistReleases(data.Albums)
 	data.Tracks, _ = a.store.ListTracks(r.Context(), storage.Filters{ArtistID: id, Limit: 20})
@@ -356,6 +374,33 @@ func (a *App) handleMergeArtist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(targetID, 10), "歌手合并完成，可在合并历史中回退；操作 #"+strconv.FormatInt(operation, 10))
+}
+
+func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	sourceID := parseInt64(r.PathValue("id"))
+	candidateID := parseInt64(r.PathValue("candidate"))
+	returnTo := fmt.Sprintf("/admin/artists/%d?identityConflict=%d", sourceID, candidateID)
+	if r.FormValue("confirm") != "1" {
+		redirectWithNotice(w, r, returnTo, "请核对歌手并二次确认，尚未执行合并")
+		return
+	}
+	targetID := parseInt64(r.FormValue("expectedTarget"))
+	operation, err := a.store.MergeArtistsForIdentityConflict(r.Context(), sourceID, candidateID, targetID)
+	if err != nil {
+		message := "合并失败，未执行合并，请刷新后重新核对"
+		if errors.Is(err, storage.ErrIdentityConflictStale) {
+			message = err.Error()
+		} else {
+			a.logger.Error("merge identity conflict", "artistId", sourceID, "error", err)
+		}
+		redirectWithNotice(w, r, returnTo, message)
+		return
+	}
+	redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", targetID), fmt.Sprintf("歌手合并完成（操作 #%d），可在合并历史回退；未新增或迁移候选身份绑定", operation))
 }
 
 func (a *App) handleMergeHistory(w http.ResponseWriter, r *http.Request) {
