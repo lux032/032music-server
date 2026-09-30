@@ -143,6 +143,8 @@ type Track struct {
 }
 
 type Filters struct {
+	// PerformerOnly: 仅网页 handler 设置，永不从 query 解析。
+	PerformerOnly                         bool
 	Focus                                 TrackFocus
 	Query, Genre, Sort, ArtistRole, Index string
 	ArtistID, AlbumID                     int64
@@ -596,7 +598,11 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	}
 	where, args := artistWhere(f, role)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id) track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	trackCount := "(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id)"
+	if f.PerformerOnly {
+		trackCount = "(SELECT COUNT(*) FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id))"
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,`+trackCount+` track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -658,6 +664,9 @@ func (s *Store) CountArtists(ctx context.Context, f Filters) (int64, error) {
 func artistWhere(f Filters, role string) (string, []any) {
 	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id)))"}
 	args := []any{role, role, role}
+	if f.PerformerOnly {
+		clauses[1] = strings.ReplaceAll(clauses[1], "ta.artist_id=ar.id", "ta.artist_id=ar.id AND ta.role='primary'")
+	}
 	if f.Favorite {
 		clauses = append(clauses, "ar.is_favorite=1")
 	}

@@ -18,6 +18,9 @@ import (
 )
 
 type libraryPageData struct {
+	CreditRole   string
+	CreditTabs   []indexLink
+	CreditHintID int64
 	Chrome
 	Section, Query, Genre, Sort, Index, Notice, ReturnTo string
 	ArtistRole, ArtistRoleLabel, ClearPath               string
@@ -237,6 +240,9 @@ func filterQuery(r *http.Request) url.Values {
 			values.Set(name, value)
 		}
 	}
+	if r.URL.Path == "/admin/credits" && storage.IsCreditRole(source.Get("credit")) {
+		values.Set("credit", source.Get("credit"))
+	}
 	if r.URL.Path == "/admin/tracks" {
 		for _, name := range trackFocusNames {
 			for _, value := range focusValues(source, name) {
@@ -375,7 +381,16 @@ func filterTags(r *http.Request, path string) []filterTag {
 		add("index", "首字母："+value)
 	}
 	if value := base.Get("sort"); value != "" {
-		add("sort", "排序："+librarySortLabel(value))
+		label := librarySortLabel(value)
+		if value == "tracks" && r.URL.Path == "/admin/credits" {
+			label = "作品数"
+		} else if value == "tracks" && strings.HasPrefix(r.URL.Path, "/admin/artists/") {
+			label = "演唱曲目数"
+		}
+		add("sort", "排序："+label)
+	}
+	if r.URL.Path == "/admin/credits" && base.Get("credit") != "" {
+		add("credit", "幕后角色："+creditLabel(base.Get("credit")))
 	}
 	if r.URL.Path == "/admin/tracks" {
 		for _, name := range trackFocusNames {
@@ -574,6 +589,7 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	rememberSort(w, r, "artists-"+role)
 	data, err := a.pageBase(r, "artists")
 	f := filters(r)
+	f.PerformerOnly = true
 	f.ArtistRole = role
 	f.Favorite = false // The favorite query parameter belongs to the public artists API.
 	data.ArtistRole = role
@@ -599,6 +615,20 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 	data, err := a.pageBase(r, "albums")
 	data.AlbumCols = albumGridCols(r)
 	f := filters(r)
+	f.PerformerOnly = true
+	if f.ArtistID > 0 {
+		if id, e := a.store.CanonicalArtistID(r.Context(), f.ArtistID); e == nil {
+			f.ArtistID = id
+			data.ArtistID = id
+			q := r.URL.Query()
+			q.Set("artist", strconv.FormatInt(id, 10))
+			r.URL.RawQuery = q.Encode()
+			data.FilterTags = filterTags(r, r.URL.Path)
+			data.SearchFields = searchFields(r)
+		} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
+			err = e
+		}
+	}
 	applyPage(r, &f, 48)
 	if err == nil {
 		data.Albums, err = a.store.ListAlbums(r.Context(), f)
@@ -619,10 +649,38 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
 }
+
+// A filtered empty result cannot establish that the artist has no performances.
+func hasAdditionalTrackFilters(r *http.Request) bool {
+	q := r.URL.Query()
+	for _, name := range append([]string{"q", "album", "year", "genre", "index"}, trackFocusNames...) {
+		for _, value := range q[name] {
+			if value != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 	rememberSort(w, r, "tracks")
 	data, err := a.pageBase(r, "tracks")
 	f := filters(r)
+	f.PerformerOnly = true
+	if f.ArtistID > 0 {
+		if id, e := a.store.CanonicalArtistID(r.Context(), f.ArtistID); e == nil {
+			f.ArtistID = id
+			data.ArtistID = id
+			q := r.URL.Query()
+			q.Set("artist", strconv.FormatInt(id, 10))
+			r.URL.RawQuery = q.Encode()
+			data.FilterTags = filterTags(r, r.URL.Path)
+			data.SearchFields = searchFields(r)
+		} else if !errors.Is(e, sql.ErrNoRows) && err == nil {
+			err = e
+		}
+	}
 	var invalid []string
 	f.Focus, invalid = parseTrackFocus(r.URL.Query())
 	if len(invalid) > 0 {
@@ -642,7 +700,7 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 		data.Total, err = a.store.CountTracks(r.Context(), f)
 	}
 	if err == nil {
-		data.Artists, _ = a.store.ListArtistOptions(r.Context(), "track", "", adminOptionsPageLimit)
+		data.Artists, _ = a.store.ListArtistOptions(r.Context(), "performer", "", adminOptionsPageLimit)
 		data.Albums, _ = a.store.ListAlbumOptions(r.Context(), "", adminOptionsPageLimit)
 	}
 	if err == nil {
@@ -661,6 +719,11 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 			if name, e := a.store.ArtistNameByID(r.Context(), parseInt64(idText)); e == nil {
 				tag.Label = creditLabel(role) + "：" + name
 			}
+		}
+	}
+	if err == nil && data.Total == 0 && f.ArtistID > 0 && !hasAdditionalTrackFilters(r) {
+		if roles, e := a.store.ArtistCreditRoles(r.Context(), f.ArtistID); e == nil && len(roles) > 0 {
+			data.CreditHintID = f.ArtistID
 		}
 	}
 	data.TotalLabel = formatLibraryCount(data.Total)

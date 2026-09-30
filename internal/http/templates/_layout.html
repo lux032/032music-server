@@ -21,6 +21,7 @@
   <nav aria-label="音乐库">
     <a href="/admin/albums" data-nav="albums" data-mp="1" class="{{if eq .Nav "albums"}}active{{end}}"{{if eq .Nav "albums"}} aria-current="page"{{end}} title="专辑" aria-label="专辑"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg> 专辑</a>
     <a href="/admin/artists/album" data-nav="artists" data-mp="1" class="{{if eq .Nav "artists"}}active{{end}}"{{if eq .Nav "artists"}} aria-current="page"{{end}} title="歌手" aria-label="歌手"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 歌手</a>
+    <a href="/admin/credits" data-nav="credits" class="{{if eq .Nav "credits"}}active{{end}}"{{if eq .Nav "credits"}} aria-current="page"{{end}} title="幕后人员" aria-label="幕后人员"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 幕后人员</a>
     <a href="/admin/tracks" data-nav="tracks" data-mp="1" class="{{if eq .Nav "tracks"}}active{{end}}"{{if eq .Nav "tracks"}} aria-current="page"{{end}} title="歌曲" aria-label="歌曲"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-tracks"></use></svg> 歌曲</a>
     <a href="/admin/works" data-nav="works" class="{{if eq .Nav "works"}}active{{end}}"{{if eq .Nav "works"}} aria-current="page"{{end}} title="作品" aria-label="作品"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品</a>
     <a href="/admin/favorites" data-nav="favorites" data-mp="1" class="{{if eq .Nav "favorites"}}active{{end}}"{{if eq .Nav "favorites"}} aria-current="page"{{end}} title="收藏" aria-label="收藏"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart"></use></svg> 收藏</a>
@@ -68,6 +69,7 @@
       the account/logout entry that the bottom bar cannot fit. */}}
   <div class="sidebar-more-sheet" id="sidebar-more-sheet" hidden>
     <nav aria-label="更多导航">
+      <a href="/admin/credits" data-nav="credits" class="{{if eq .Nav "credits"}}active{{end}}"{{if eq .Nav "credits"}} aria-current="page"{{end}} title="幕后人员" aria-label="幕后人员"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 幕后人员</a>
       <a href="/admin/works" data-nav="works" class="{{if eq .Nav "works"}}active{{end}}"{{if eq .Nav "works"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品</a>
       <a href="/admin/playlists" data-nav="playlists" class="{{if eq .Nav "playlists"}}active{{end}}"{{if eq .Nav "playlists"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg> 歌单</a>
       <a href="/admin/playback" data-nav="playback" class="{{if eq .Nav "playback"}}active{{end}}"{{if eq .Nav "playback"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-history"></use></svg> 播放记录</a>

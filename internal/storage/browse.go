@@ -50,8 +50,12 @@ func albumWhere(f Filters) (string, []any) {
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
+	trackRole := ""
+	if f.PerformerOnly {
+		trackRole = " AND tax.role='primary'"
+	}
 	clauses = append(clauses,
-		"(?=0 OR EXISTS(SELECT 1 FROM album_artists ax WHERE ax.album_id=a.id AND ax.artist_id=?) OR EXISTS(SELECT 1 FROM tracks tx JOIN track_artists tax ON tax.track_id=tx.id WHERE tx.album_id=a.id AND tax.artist_id=?))",
+		"(?=0 OR EXISTS(SELECT 1 FROM album_artists ax WHERE ax.album_id=a.id AND ax.artist_id=?) OR EXISTS(SELECT 1 FROM tracks tx JOIN track_artists tax ON tax.track_id=tx.id WHERE tx.album_id=a.id AND tax.artist_id=?"+trackRole+"))",
 		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
 		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+albumHasEffectiveGenre+"))")
 	args = append(args, f.ArtistID, f.ArtistID, f.ArtistID, f.Year, f.Year, f.Genre, f.Genre)
@@ -88,7 +92,7 @@ func albumOrder(f Filters) string {
 }
 
 // trackWhere builds the WHERE clause shared by ListTracks and CountTracks.
-// Artist predicates match any credit role (not just primary) and respect
+// Artist predicates preserve API any-role behavior unless PerformerOnly is set, and respect
 // user_display_name; the genre predicate uses effective (override-aware)
 // track genres.
 func trackWhere(f Filters) (string, []any) {
@@ -100,18 +104,28 @@ func trackWhere(f Filters) (string, []any) {
 			parts = append(parts,
 				"COALESCE(t.user_title,t.title) LIKE '%'||?||'%'",
 				"COALESCE(a.user_title,a.title) LIKE '%'||?||'%'",
-				"EXISTS(SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')")
+				"EXISTS(SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id"+trackNameRole(f)+" AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')")
 			args = append(args, variant, variant, variant)
+			if f.PerformerOnly {
+				parts = append(parts, "EXISTS(SELECT 1 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=t.album_id AND COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%')")
+				args = append(args, variant)
+			}
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
+	if f.PerformerOnly {
+		clauses = append(clauses, "(?=0 OR t.id IN (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=?) OR t.album_id IN (SELECT album_id FROM album_artists WHERE artist_id=?))")
+		args = append(args, f.ArtistID, f.ArtistID, f.ArtistID)
+	} else {
+		clauses = append(clauses, "(?=0 OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?))")
+		args = append(args, f.ArtistID, f.ArtistID)
+	}
 	clauses = append(clauses,
-		"(?=0 OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?))",
 		"(?=0 OR a.id=?)",
 		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
 		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+trackHasEffectiveGenreT+"))",
 		"(?=0 OR "+effectiveTrackTypeSQL+" NOT IN ('instrumental','off_vocal'))")
-	args = append(args, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental))
+	args = append(args, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental))
 	appendTrackFocus(&clauses, &args, f.Focus)
 	return strings.Join(clauses, " AND "), args
 }
@@ -297,11 +311,15 @@ func (s *Store) ListArtistOptions(ctx context.Context, role, query string, limit
 		limit = 500
 	}
 	creditRole := IsCreditRole(role)
-	if !creditRole {
+	if !creditRole && role != "performer" {
 		role = normalizeArtistRole(role)
 	}
 	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id)))"}
 	args := []any{role, role, role}
+	if role == "performer" {
+		clauses[1] = "(EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id) OR ar.id IN (SELECT artist_id FROM track_artists WHERE role='primary'))"
+		args = nil
+	}
 	if creditRole {
 		// Start from the role index once, then follow only credited artists' merge chains.
 		clauses = []string{"ar.merged_into_artist_id IS NULL", `ar.id IN (WITH RECURSIVE credited(id,next) AS (SELECT a.id,a.merged_into_artist_id FROM artists a WHERE a.id IN (SELECT ta.artist_id FROM track_artists ta WHERE ta.role=?) UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN credited c ON a.id=c.next) SELECT id FROM credited WHERE next IS NULL)`}
@@ -382,4 +400,11 @@ func (s *Store) AlbumTitleByID(ctx context.Context, id int64) (string, error) {
 	var title string
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(user_title,title) FROM albums WHERE id=?`, id).Scan(&title)
 	return title, err
+}
+
+func trackNameRole(f Filters) string {
+	if f.PerformerOnly {
+		return " AND ta.role='primary'"
+	}
+	return ""
 }

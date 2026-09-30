@@ -11,7 +11,7 @@
     <header class="browser-header">
       <div>
         <h1>{{if eq .Section "artists"}}{{.ArtistRoleLabel}}{{else if eq .Section "albums"}}专辑{{else}}歌曲{{end}}</h1>
-        <p class="result-count">共 {{.TotalLabel}} {{if eq .Section "albums"}}张专辑{{else if eq .Section "artists"}}位歌手{{else}}首歌曲{{end}}</p>
+        <p class="result-count">共 {{.TotalLabel}} {{if eq .Section "albums"}}张专辑{{else if eq .Section "artists"}}{{if eq .ArtistRole "credits"}}位幕后人员{{else}}位歌手{{end}}{{else}}首歌曲{{end}}</p>
       </div>
       <form class="instant-search" method="get">
         <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
@@ -22,28 +22,31 @@
 
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    {{if eq .Section "artists"}}
+    {{if and (eq .Section "artists") (ne .ArtistRole "credits")}}
     <nav class="artist-role-tabs" aria-label="歌手分类">
       <a href="/admin/artists/album" class="{{if eq .ArtistRole "album"}}active{{end}}">专辑歌手</a>
       <a href="/admin/artists/track" class="{{if eq .ArtistRole "track"}}active{{end}}">单曲歌手</a>
     </nav>
     {{end}}
 
+    {{if eq .ArtistRole "credits"}}<nav class="artist-role-tabs" aria-label="幕后角色">{{range .CreditTabs}}<a href="{{.URL}}" class="{{if .Current}}active{{end}}">{{.Value}}</a>{{end}}</nav>{{end}}
+    {{if .CreditHintID}}<div class="zero-state">该人员没有演唱曲目。<a href="/admin/artists/{{.CreditHintID}}#credits">查看幕后作品</a></div>{{end}}
     <div class="browser-filters" aria-label="筛选">
       {{if ne .Section "artists"}}
-      <div class="filter-control" data-filter="artist" data-options-url="/admin/options/artists?role={{if eq .Section "albums"}}album{{else}}track{{end}}"><button type="button" class="filter-trigger {{if .ArtistID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-artist">{{if .ArtistID}}{{range .FilterTags}}{{if eq .Name "artist"}}{{.Value}}{{end}}{{end}}{{else}}歌手{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-controls="filter-list-artist" aria-label="搜索歌手" placeholder="搜索歌手"><div id="filter-list-artist" role="listbox" aria-label="歌手"></div></div></div>
+      <div class="filter-control" data-filter="artist" data-options-url="/admin/options/artists?role={{if eq .Section "albums"}}album{{else}}performer{{end}}"><button type="button" class="filter-trigger {{if .ArtistID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-artist">{{if .ArtistID}}{{range .FilterTags}}{{if eq .Name "artist"}}{{.Value}}{{end}}{{end}}{{else}}歌手{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-controls="filter-list-artist" aria-label="搜索歌手" placeholder="搜索歌手"><div id="filter-list-artist" role="listbox" aria-label="歌手"></div></div></div>
       <div class="filter-control" data-filter="year"><button type="button" class="filter-trigger {{if .Year}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-year">{{if .Year}}{{.Year}}{{else}}年份{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-year" role="listbox" aria-label="年份" hidden><button type="button" role="option" aria-selected="false" data-value="">全部年份</button>{{range .Years}}<button type="button" role="option" aria-selected="false" data-value="{{.}}">{{.}}</button>{{end}}</div></div>
       <div class="filter-control" data-filter="genre"><button type="button" class="filter-trigger {{if .Genre}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-genre">{{if .Genre}}{{.Genre}}{{else}}流派{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-genre" role="listbox" aria-label="流派" hidden><button type="button" role="option" aria-selected="false" data-value="">全部流派</button>{{range .Genres}}<button type="button" role="option" aria-selected="false" data-value="{{.}}">{{.}}</button>{{end}}</div></div>
       {{end}}
       {{if eq .Section "tracks"}}<div class="filter-control" data-filter="album" data-options-url="/admin/options/albums"><button type="button" class="filter-trigger {{if .AlbumID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-album">{{if .AlbumID}}{{range .FilterTags}}{{if eq .Name "album"}}{{.Value}}{{end}}{{end}}{{else}}专辑{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-label="搜索专辑" aria-controls="filter-list-album" placeholder="搜索专辑"><div id="filter-list-album" role="listbox" aria-label="专辑"></div></div></div>{{end}}
       <div class="filter-control" data-filter="sort"><button type="button" class="filter-trigger {{if .Sort}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-sort">{{if .Sort}}{{range .FilterTags}}{{if eq .Name "sort"}}{{.Value}}{{end}}{{end}}{{else}}排序{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-sort" role="listbox" aria-label="排序" hidden>
-        {{if eq .Section "artists"}}<button type="button" role="option" aria-selected="false" data-value="name">名称</button><button type="button" role="option" aria-selected="false" data-value="{{if eq .ArtistRole "album"}}albums{{else}}tracks{{end}}">{{if eq .ArtistRole "album"}}专辑关联数量{{else}}单曲关联数量{{end}}</button>{{else}}<button type="button" role="option" aria-selected="false" data-value="title">标题</button><button type="button" role="option" aria-selected="false" data-value="year">发行年份</button><button type="button" role="option" aria-selected="false" data-value="date">发行日期</button>{{if eq .Section "albums"}}<button type="button" role="option" aria-selected="false" data-value="added">加入时间</button>{{end}}{{end}}
+        {{if eq .Section "artists"}}<button type="button" role="option" aria-selected="false" data-value="name">名称</button><button type="button" role="option" aria-selected="false" data-value="{{if eq .ArtistRole "album"}}albums{{else}}tracks{{end}}">{{if eq .ArtistRole "album"}}专辑关联数量{{else}}{{if eq .ArtistRole "credits"}}作品数{{else}}演唱曲目数{{end}}{{end}}</button>{{else}}<button type="button" role="option" aria-selected="false" data-value="title">标题</button><button type="button" role="option" aria-selected="false" data-value="year">发行年份</button><button type="button" role="option" aria-selected="false" data-value="date">发行日期</button>{{if eq .Section "albums"}}<button type="button" role="option" aria-selected="false" data-value="added">加入时间</button>{{end}}{{end}}
       </div></div>
       {{if .FilterTags}}<a class="filter-clear" href="{{.ClearPath}}">清除筛选 ×</a>{{end}}
       {{if eq .Section "albums"}}<label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}</output></label>{{end}}
     </div>
     <form class="focus-bar library-focus" method="get">
       <input type="hidden" name="q" value="{{.Query}}">
+      {{if .CreditRole}}<input type="hidden" name="credit" value="{{.CreditRole}}">{{end}}
       {{if .Index}}<input type="hidden" name="index" value="{{.Index}}">{{end}}
 
       {{if ne .Section "artists"}}
@@ -57,7 +60,7 @@
       <label class="sort-control"><span>排序</span><select name="sort">
         {{if eq .Section "artists"}}
         <option value="name" {{if eq .Sort "name"}}selected{{end}}>名称</option>
-        {{if eq .ArtistRole "album"}}<option value="albums" {{if eq .Sort "albums"}}selected{{end}}>专辑关联数量</option>{{else}}<option value="tracks" {{if eq .Sort "tracks"}}selected{{end}}>单曲关联数量</option>{{end}}
+        {{if eq .ArtistRole "album"}}<option value="albums" {{if eq .Sort "albums"}}selected{{end}}>专辑关联数量</option>{{else}}<option value="tracks" {{if eq .Sort "tracks"}}selected{{end}}>{{if eq .ArtistRole "credits"}}作品数{{else}}演唱曲目数{{end}}</option>{{end}}
         {{else}}
         <option value="title" {{if eq .Sort "title"}}selected{{end}}>标题</option>
         <option value="year" {{if eq .Sort "year"}}selected{{end}}>发行年份</option>
@@ -118,10 +121,10 @@
       <article class="artist-row">
         {{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="{{.Name}}" loading="lazy" decoding="async">{{else}}<div class="artist-avatar">{{.Name}}</div>{{end}}
         <div>
-          <a href="/admin/artists/{{.ID}}"><h2>{{.Name}}</h2></a>
-          <p>{{.AlbumCount}} 张专辑 · {{.TrackCount}} 首单曲</p>
+          <a href="/admin/artists/{{.ID}}{{if eq $.ArtistRole "credits"}}{{if $.CreditRole}}?credit={{$.CreditRole}}{{end}}#credits{{end}}"><h2>{{.Name}}</h2></a>
+          <p>{{if eq $.ArtistRole "credits"}}幕后 {{.TrackCount}} 首{{else}}{{.AlbumCount}} 张专辑 · 演唱 {{.TrackCount}} 首{{end}}</p>
         </div>
-        <a href="/admin/artists/{{.ID}}">资料与匹配</a>
+        <a href="/admin/artists/{{.ID}}{{if eq $.ArtistRole "credits"}}{{if $.CreditRole}}?credit={{$.CreditRole}}{{end}}#credits{{end}}">资料与匹配</a>
         <details class="edit-drawer row-drawer">
           <summary class="drawer-trigger">编辑</summary>
           <div class="drawer-backdrop" data-drawer-close></div>

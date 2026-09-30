@@ -45,6 +45,7 @@ type ArtistImageInput struct {
 }
 
 type ArtistDetail struct {
+	PerformedTrackCount, CreditTrackCount int64
 	Artist
 	Biography, BiographySource, BiographyLanguage, BiographyURL, BiographyFetchedAt string
 	Country, ArtistType                                                             string
@@ -430,6 +431,12 @@ func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error
 	var preferredSource, preferredLanguage string
 	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(user_display_name,display_name),`+artistImageURLSQL("artists")+`,COALESCE(user_biography,biography,''),COALESCE(TRIM(user_biography),'')<>'',COALESCE(country,''),COALESCE(artist_type,''),merged_into_artist_id,is_favorite,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=artists.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=artists.id),COALESCE(preferred_biography_source,''),COALESCE(preferred_biography_language,'') FROM artists WHERE id=?`, id).Scan(&d.ID, &d.Name, &d.ImageURL, &d.Biography, &hasLocalBiography, &d.Country, &d.ArtistType, &merged, &favorite, &d.AlbumCount, &d.TrackCount, &preferredSource, &preferredLanguage)
 	if err != nil {
+		return d, err
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+artistTrackIDs+`)`, id, id).Scan(&d.PerformedTrackCount); err != nil {
+		return d, err
+	}
+	if err = s.db.QueryRowContext(ctx, `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE role IN ('composer','lyricist','arranger','producer') AND artist_id IN (SELECT id FROM m)`, id).Scan(&d.CreditTrackCount); err != nil {
 		return d, err
 	}
 	// D50: HasCustomImage follows the same effective-image rule as the URL

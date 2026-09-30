@@ -385,7 +385,7 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.ReleaseGroups = groupArtistDiscography(releases)
-	data.Tracks, _ = a.store.ListTracks(r.Context(), storage.Filters{ArtistID: id, Limit: 20})
+	data.Tracks, _ = a.store.ListTracks(r.Context(), storage.Filters{ArtistID: id, Limit: 20, PerformerOnly: true})
 	data.Artists, _ = a.store.ListArtists(r.Context(), storage.Filters{Limit: 500})
 	a.render(w, 200, "artist.html", data)
 }

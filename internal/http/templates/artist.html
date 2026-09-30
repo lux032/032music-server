@@ -23,8 +23,8 @@
         <h1>{{.Artist.Name}}</h1>
         <p>{{.Artist.ArtistType}} {{.Artist.Country}}</p>
         <div class="album-facts">
-          <span>{{.Artist.AlbumCount}} 张专辑歌手关联</span>
-          <span>{{.Artist.TrackCount}} 首单曲歌手关联</span>
+          {{if .Artist.AlbumCount}}<span>{{.Artist.AlbumCount}} 张专辑</span>{{end}}
+          {{if .Artist.PerformedTrackCount}}<span>{{if .Artist.AlbumCount}}· {{end}}演唱 {{.Artist.PerformedTrackCount}} 首</span>{{end}}{{if .Artist.CreditTrackCount}}<span>{{if or .Artist.AlbumCount .Artist.PerformedTrackCount}}· {{end}}幕后 {{.Artist.CreditTrackCount}} 首</span>{{end}}
         </div>
         <div class="artist-hero-actions">
           <form method="post" action="/admin/artists/{{.Artist.ID}}/match">
@@ -79,7 +79,7 @@
         </details>
         {{end}}
 
-        <div class="artist-discography">
+        {{if .ReleaseGroups}}<div class="artist-discography">
           {{range .ReleaseGroups}}
           <section class="artist-release-group">
             <div class="section-title">
@@ -101,10 +101,11 @@
           {{end}}
         </div>
 
-        <section class="artist-tracks-section">
+        {{end}}
+        {{if .Tracks}}<section class="artist-tracks-section">
           <div class="section-title">
             <div><h2>歌曲</h2></div>
-            <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.TrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+            <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.PerformedTrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
           </div>
           <div class="artist-track-list">
             {{range .Tracks}}
@@ -121,7 +122,7 @@
             <div class="zero-state"><strong>暂时没有关联歌曲</strong></div>
             {{end}}
           </div>
-        </section>
+        </section>{{end}}
       </section>
       <aside>
         {{with .IdentityConflict}}

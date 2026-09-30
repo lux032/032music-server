@@ -41,3 +41,22 @@ test('focus keeps multiple values and removes only one condition', async ({ page
   await expect(page.locator('.filter-tags')).toContainText('普通曲目');
   await expect(page.locator('[data-track-id]')).toHaveCount(20);
 });
+
+test('backstage navigation and role directory lead to credits detail', async ({ page }) => {
+  await page.goto('/admin/tracks');
+  const backstage = page.locator('.sidebar a[data-nav="credits"]').first();
+  if (!(await backstage.isVisible())) {
+    await page.getByRole('button', { name: '更多导航', exact: true }).click();
+    await page.locator('#sidebar-more-sheet a[data-nav="credits"]').click();
+  } else {
+    await backstage.click();
+  }
+  await expect(page).toHaveURL(/\/admin\/credits/);
+  await page.getByRole('link', { name: '作曲', exact: true }).click();
+  await expect(page).toHaveURL(/credit=composer/);
+  await expect(page.locator('.result-count')).toContainText('位幕后人员');
+  await page.locator('.artist-row h2').filter({ hasText: 'E2E Composer' }).click();
+  await expect(page).toHaveURL(/credit=composer#credits$/);
+  await expect(page.locator('#credits')).toBeInViewport();
+  await expect(page.locator('#credits')).toContainText('幕后作品');
+});
