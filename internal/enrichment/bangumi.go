@@ -283,6 +283,14 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 			date = *v.Date
 		}
 		score, evidence := scoreBangumi(work, v.Name, v.NameCN, date, v.Type)
+		// Type/year alone are not identity evidence. Search hits without any
+		// title match must not become an administrative review task.
+		titleTarget := work
+		titleTarget.Type, titleTarget.Year = "", 0
+		titleScore, _ := scoreBangumi(titleTarget, v.Name, v.NameCN, "", v.Type)
+		if titleScore == 0 {
+			continue
+		}
 		raw, _ := json.Marshal(v)
 		poster := v.Images.Large
 		if poster == "" {
@@ -301,6 +309,13 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		return "", err
 	}
 	if len(candidates) == 0 {
+		// Clear obsolete pending search hits, but preserve prior decisions.
+		if err = m.store.ReplaceWorkMatchCandidates(ctx, work.ID, nil); err != nil {
+			if m.workGone(ctx, work.ID) {
+				return "skipped", nil
+			}
+			return "", err
+		}
 		if m.testWorkWriteHook != nil {
 			m.testWorkWriteHook()
 		}

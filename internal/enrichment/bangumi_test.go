@@ -37,7 +37,8 @@ func TestBangumiCandidateMatching(t *testing.T) {
 		{"unique original and translation", "葬送のフリーレン", `{"data":[{"id":123,"type":2,"name":"葬送のフリーレン","name_cn":"葬送的芙莉莲","date":null}]}`, "succeeded"},
 		{"duplicate originals", "Test", `{"data":[{"id":1,"type":2,"name":"Test"},{"id":2,"type":2,"name":"Test"}]}`, "review"},
 		{"exclamation distinguishes seasons", "けいおん!", `{"data":[{"id":1,"type":2,"name":"けいおん！"},{"id":2,"type":2,"name":"けいおん！！"}]}`, "succeeded"},
-		{"kana not folded", "ｹｲｵﾝ!", `{"data":[{"id":1,"type":2,"name":"けいおん！"}]}`, "review"},
+		{"kana not folded", "ｹｲｵﾝ!", `{"data":[{"id":1,"type":2,"name":"けいおん！"}]}`, "skipped"},
+		{"type alone is not a candidate", "EVOLUTION Я", `{"data":[{"id":1,"type":2,"name":"X-Men: Evolution Season 1"}]}`, "skipped"},
 		{"wave dash", "CLANNAD ～AFTER STORY～", `{"data":[{"id":1,"type":2,"name":"CLANNAD 〜AFTER STORY〜"}]}`, "succeeded"},
 		{"translated only", "葬送のフリーレン", `{"data":[{"id":1,"type":2,"name":"Frieren","name_cn":"葬送のフリーレン"}]}`, "review"},
 	}
@@ -150,7 +151,7 @@ func TestStartRunReviewIsNotRetried(t *testing.T) {
 	var requests atomic.Int32
 	manager, store, _, id := phase4TestManager(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		io.WriteString(w, `{"data":[{"id":1,"type":2,"name":"Unrelated"}]}`)
+		io.WriteString(w, `{"data":[{"id":1,"type":2,"name":"葬送のフリーレン 第2期"}]}`)
 	}))
 	ctx := context.Background()
 	first, err := manager.StartRun(ctx, RunRequest{Scope: "work", TargetID: id})

@@ -34,7 +34,7 @@
           <span class="review-tab-badge">{{.TrackSubjectCount}}</span>
         </a>
         <a href="/admin/work-review?tab=works" class="review-tab {{if eq .ActiveTab "works"}}active{{end}}">
-          <span>作品对齐候选</span>
+          <span>作品对齐候选 · 身份匹配</span>
           <span class="review-tab-badge">{{.WorkCandidateCount}}</span>
         </a>
         <a href="/admin/work-review?tab=series" class="review-tab {{if eq .ActiveTab "series"}}active{{end}}">
@@ -159,6 +159,7 @@
     </section>
     {{else if eq .ActiveTab "works"}}
     {{/* 作品对齐候选与专辑无关，按专辑分组没有意义：本 Tab 始终是平铺列表，忽略 group/albumId。 */}}
+    <p class="muted">这里确认的是“本地作品与 Bangumi 条目是同一个作品”，不是给专辑或歌曲添加关联。一部具体作品只绑定一个条目；音乐可以关联多部作品。上方数字为待审作品数。</p>
     <section class="review-group-list">
       {{range $item := .WorkReviews}}
       <article class="review-group-card">
@@ -170,10 +171,20 @@
               <p>本地作品 #{{$item.Work.ID}} · 当前类型：{{workTypeLabel $item.Work.Type}} · 关联 {{$item.Work.TrackCount}} 首曲目 · 来源：{{workSourceLabel $item.Work.Origin}}</p>
             </div>
           </div>
-          <span class="score-pill">待审核</span>
+          <span class="score-pill">{{len $item.Candidates}} 个候选</span>
         </header>
         <div class="review-candidate-body">
-          <p class="muted" style="margin:0;font-size:var(--fs-sm);">为未绑定 Bangumi 的本地作品选择对应的权威番组条目，以补全海报、译名、播出年份及系列信息：</p>
+          <p class="muted" style="margin:0;font-size:var(--fs-sm);">只有两者代表同一部动画／游戏时才确认。确认将补全作品资料，现有音乐关联保持不变，其余候选自动关闭。专辑的 Volume 2 不等于动画第二季。</p>
+          <div class="candidate-footer-actions">
+            <a class="secondary-button" href="/admin/works/{{$item.Work.ID}}">查看关联专辑与曲目／检查本地作品</a>
+            <form method="post" action="/admin/enrichment/works/{{$item.Work.ID}}/candidates/reject-all">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
+              {{range $item.Candidates}}<input type="hidden" name="candidateIds" value="{{.ID}}">{{end}}
+              <button class="secondary-button danger-text-button" type="submit">以上都不是 · 忽略当前全部 {{len $item.Candidates}} 项</button>
+            </form>
+          </div>
+          <p class="muted">忽略只关闭当前候选，不删除作品或音乐关联，也不禁止以后出现新的候选。若本地名字其实是专辑名，请先检查本地作品，不要强行绑定。</p>
           <form class="subject-id-form" method="post" action="/admin/works/{{$item.Work.ID}}/bangumi">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
             <label>手动指定 Bangumi 条目<input name="bangumiSubject" required placeholder="条目链接或数字 ID"></label>
@@ -187,16 +198,18 @@
                 <strong>{{.Title}}</strong>
                 {{if .TranslatedTitle}}<span class="cn-title">{{.TranslatedTitle}}</span>{{end}}
                 <div class="meta-line">
-                  <span class="score-pill">置信度 {{.Score}}</span>
+                  <span class="score-pill {{if lt .Score 50}}medium{{end}}">匹配分 {{.Score}} / 100</span>
                   <span>{{if .Year}}{{.Year}}年 · {{end}}{{workTypeLabel .Type}}</span>
                   <a href="https://bgm.tv/subject/{{.ExternalID}}" target="_blank" rel="noopener noreferrer" class="bgm-id-pill">bgm.tv/subject/{{.ExternalID}} ↗</a>
                 </div>
+                {{if .Evidence}}<div class="evidence-pills">{{range .Evidence}}<span class="evidence-pill">{{.}}</span>{{end}}</div>{{end}}
+                {{if .OwnerWorkID}}<p class="muted">已绑定本地作品 <a href="/admin/works/{{.OwnerWorkID}}">《{{.OwnerTitle}}》</a>。请检查是否重复或本地推导有误，不能重复绑定。</p>{{end}}
                 <div class="candidate-btn-group">
-                  <form method="post" action="/admin/enrichment/works/{{$item.Work.ID}}/candidates/{{.ID}}/accept">
+                  {{if not .OwnerWorkID}}<form method="post" action="/admin/enrichment/works/{{$item.Work.ID}}/candidates/{{.ID}}/accept">
                     <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                     <input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
-                    <button type="submit" class="primary-button">确认对齐</button>
-                  </form>
+                    <button type="submit" class="primary-button">确认是同一作品</button>
+                  </form>{{end}}
                   <form method="post" action="/admin/enrichment/works/{{$item.Work.ID}}/candidates/{{.ID}}/reject">
                     <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                     <input type="hidden" name="returnTo" value="/admin/work-review?tab=works">
@@ -210,7 +223,7 @@
         </div>
       </article>
       {{else}}
-      <div class="zero-state"><strong>没有待审核作品</strong><span>未绑定的作品若在 Bangumi 查到高置信候选，将在此等待对齐。</span></div>
+      <div class="zero-state"><strong>没有待审核作品</strong><span>未绑定的作品查到具有标题匹配依据的 Bangumi 候选时，将在此等待确认；不会要求审核仅类型一致的搜索结果。</span></div>
       {{end}}
     </section>
     {{end}}

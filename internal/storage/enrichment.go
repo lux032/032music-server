@@ -106,6 +106,8 @@ type ExternalWorkProfile struct {
 }
 
 type WorkMatchCandidate struct {
+	OwnerWorkID                                                     int64  `json:"ownerWorkId,omitempty"`
+	OwnerTitle                                                      string `json:"ownerTitle,omitempty"`
 	ID, WorkID                                                      int64
 	Source, ExternalID, Title, OriginalTitle, TranslatedTitle, Type string
 	PageURL, PosterURL, Status                                      string
@@ -679,6 +681,25 @@ func (s *Store) WorkBangumiExternalID(ctx context.Context, workID int64) (string
 	return externalID, err
 }
 
+// RejectWorkMatchCandidates changes only pending candidates from the submitted snapshot.
+func (s *Store) RejectWorkMatchCandidates(ctx context.Context, workID int64, ids []int64) (int64, error) {
+	if workID <= 0 || len(ids) == 0 || len(ids) > 200 {
+		return 0, fmt.Errorf("请选择要忽略的候选")
+	}
+	args := []any{workID}
+	for _, id := range ids {
+		if id <= 0 {
+			return 0, fmt.Errorf("无效候选")
+		}
+		args = append(args, id)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE work_match_candidates SET status='rejected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE work_id=? AND status='candidate' AND id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *Store) SetWorkMatchCandidateStatus(ctx context.Context, workID, candidateID int64, status string) error {
 	if status != "confirmed" && status != "rejected" {
 		return fmt.Errorf("invalid work candidate status %q", status)
@@ -919,7 +940,7 @@ func (s *Store) ArtistRelationCandidates(ctx context.Context, artistID int64) ([
 // PendingWorkMatchCandidates returns all status='candidate' work matches in
 // a single query (N+1 fix for the enrichment review page).
 func (s *Store) PendingWorkMatchCandidates(ctx context.Context, workIDs ...int64) (map[int64][]WorkMatchCandidate, error) {
-	query := `SELECT id,work_id,source,external_id,title,COALESCE(original_title,''),COALESCE(translated_title,''),COALESCE(type,''),COALESCE(year,0),COALESCE(page_url,''),COALESCE(poster_url,''),score,evidence_json,payload_json,status FROM work_match_candidates WHERE status='candidate'`
+	query := `SELECT id,work_id,source,external_id,title,COALESCE(original_title,''),COALESCE(translated_title,''),COALESCE(type,''),COALESCE(year,0),COALESCE(page_url,''),COALESCE(poster_url,''),score,evidence_json,payload_json,status,COALESCE((SELECT p.work_id FROM work_external_profiles p WHERE p.source=c.source AND p.external_id=c.external_id AND p.work_id<>c.work_id),0),COALESCE((SELECT w.title FROM work_external_profiles p JOIN works w ON w.id=p.work_id WHERE p.source=c.source AND p.external_id=c.external_id AND p.work_id<>c.work_id),'') FROM work_match_candidates c WHERE status='candidate'`
 	var args []any
 	if len(workIDs) > 0 {
 		query += ` AND work_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(workIDs)), ",") + `)`
@@ -937,7 +958,7 @@ func (s *Store) PendingWorkMatchCandidates(ctx context.Context, workIDs ...int64
 	for rows.Next() {
 		var v WorkMatchCandidate
 		var evidence, payload string
-		if err = rows.Scan(&v.ID, &v.WorkID, &v.Source, &v.ExternalID, &v.Title, &v.OriginalTitle, &v.TranslatedTitle, &v.Type, &v.Year, &v.PageURL, &v.PosterURL, &v.Score, &evidence, &payload, &v.Status); err != nil {
+		if err = rows.Scan(&v.ID, &v.WorkID, &v.Source, &v.ExternalID, &v.Title, &v.OriginalTitle, &v.TranslatedTitle, &v.Type, &v.Year, &v.PageURL, &v.PosterURL, &v.Score, &evidence, &payload, &v.Status, &v.OwnerWorkID, &v.OwnerTitle); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(evidence), &v.Evidence)

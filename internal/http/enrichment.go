@@ -569,6 +569,23 @@ func (a *App) handleAdminCancelEnrichment(w http.ResponseWriter, r *http.Request
 	redirectWithNotice(w, r, "/admin/enrichment", message)
 }
 
+func (a *App) handleAdminWorkCandidatesRejectAll(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	ids := make([]int64, 0, len(r.Form["candidateIds"]))
+	for _, raw := range r.Form["candidateIds"] {
+		ids = append(ids, parseInt64(raw))
+	}
+	count, err := a.store.RejectWorkMatchCandidates(r.Context(), parseInt64(r.PathValue("workId")), ids)
+	message := fmt.Sprintf("已忽略当前 %d 个候选，保留本地作品及音乐关联；以后不会重新建议这些条目", count)
+	if err != nil {
+		message = err.Error()
+	}
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/work-review?tab=works"), message)
+}
+
 func (a *App) handleAdminWorkCandidateDecision(w http.ResponseWriter, r *http.Request, status string) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -590,6 +607,10 @@ func (a *App) handleAdminWorkCandidateDecision(w http.ResponseWriter, r *http.Re
 		message = err.Error()
 	}
 	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/work-review?tab=works")
+	var conflict *storage.WorkExternalIDConflictError
+	if errors.As(err, &conflict) {
+		returnTo = adminURLWithParam(returnTo, "conflictWorkId", strconv.FormatInt(conflict.OwnerWorkID, 10))
+	}
 	redirectWithNotice(w, r, returnTo, message)
 }
 

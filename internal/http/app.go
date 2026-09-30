@@ -349,6 +349,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/enrichment/tracks/{trackId}/subjects/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminTrackSubjectDecision(w, r, true) })))
 	mux.Handle("POST /admin/enrichment/tracks/{trackId}/subjects/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminTrackSubjectDecision(w, r, false) })))
 	mux.Handle("POST /admin/enrichment/works/{workId}/candidates/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminWorkCandidateDecision(w, r, "confirmed") })))
+	mux.Handle("POST /admin/enrichment/works/{workId}/candidates/reject-all", a.requireAdmin(http.HandlerFunc(a.handleAdminWorkCandidatesRejectAll)))
 	mux.Handle("POST /admin/enrichment/works/{workId}/candidates/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminWorkCandidateDecision(w, r, "rejected") })))
 	mux.Handle("POST /admin/enrichment/artists/{artistId}/relations/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminArtistRelationDecision(w, r, "confirmed") })))
 	mux.Handle("POST /admin/enrichment/artists/{artistId}/relations/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminArtistRelationDecision(w, r, "rejected") })))

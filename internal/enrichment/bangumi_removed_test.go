@@ -103,8 +103,8 @@ func TestBangumiZeroCandidateMissWriteAfterWorkDeletedIsSkipped(t *testing.T) {
 // review 之前被清理，级联删除后没有东西可审，结果必须是 skipped 而非 review。
 func TestBangumiReviewReturnAfterWorkDeletedIsSkipped(t *testing.T) {
 	manager, s, _, workID := phase4TestManager(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 标题不匹配的候选：pending=1、matches=0，走 review 分支。
-		fmt.Fprint(w, `{"data":[{"id":456,"name":"まったく別の作品","type":2}]}`)
+		// 标题部分匹配的候选：pending=1、matches=0，走 review 分支。
+		fmt.Fprint(w, `{"data":[{"id":456,"name":"葬送のフリーレン 第2期","type":2}]}`)
 	}))
 	manager.testWorkWriteHook = func() {
 		if e := s.DeleteWork(context.Background(), workID); e != nil {
@@ -120,7 +120,7 @@ func TestBangumiReviewReturnAfterWorkDeletedIsSkipped(t *testing.T) {
 // 对照：钩子不删除作品时，pending>0 依旧返回 review（复查不改变正常路径）。
 func TestBangumiReviewReturnNormallyReview(t *testing.T) {
 	manager, _, _, workID := phase4TestManager(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"data":[{"id":456,"name":"まったく別の作品","type":2}]}`)
+		fmt.Fprint(w, `{"data":[{"id":456,"name":"葬送のフリーレン 第2期","type":2}]}`)
 	}))
 	manager.testWorkWriteHook = func() {}
 	outcome, e := manager.enrichBangumiWork(context.Background(), 0, storage.WorkEnrichmentTarget{ID: workID, Title: "葬送のフリーレン", Type: "anime"}, true)
