@@ -91,7 +91,7 @@ func TestWebPerformerSeparationKeepsAPI(t *testing.T) {
 		t.Fatal("web query matched composer")
 	}
 	body = get(fmt.Sprintf("/admin/tracks?artist=%d", composer), false).Body.String()
-	if !strings.Contains(body, "查看幕后作品") || !strings.Contains(body, fmt.Sprintf("/admin/artists/%d#credits", composer)) {
+	if !strings.Contains(body, "查看幕后作品") || !strings.Contains(body, fmt.Sprintf("/admin/credits/%d", composer)) {
 		t.Fatal("missing backstage hint")
 	}
 	for _, condition := range append([]string{"q=missing", "album=999999", "year=1900", "genre=missing", "index=A"}, func() []string {
@@ -108,7 +108,7 @@ func TestWebPerformerSeparationKeepsAPI(t *testing.T) {
 			}
 		})
 	}
-	body = get(fmt.Sprintf("/admin/artists/%d", composer), false).Body.String()
+	body = get(fmt.Sprintf("/admin/artists/%d?view=profile", composer), false).Body.String()
 	if !strings.Contains(body, "幕后 1 首") || strings.Contains(body, `class="artist-tracks-section"`) || strings.Contains(body, `class="artist-discography"`) {
 		t.Fatalf("pure credit detail %s", body)
 	}

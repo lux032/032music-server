@@ -113,7 +113,7 @@ func parseTrackFocus(q url.Values) (storage.TrackFocus, []string) {
 	seen := map[string]bool{}
 	for _, c := range credits {
 		parts := strings.Split(c, ":")
-		if len(parts) != 2 || !storage.IsCreditRole(parts[0]) {
+		if len(parts) != 2 || (!storage.IsCreditRole(parts[0]) && parts[0] != "any") {
 			bad = append(bad, "credit="+c)
 			continue
 		}
@@ -132,6 +132,8 @@ func parseTrackFocus(q url.Values) (storage.TrackFocus, []string) {
 }
 func creditLabel(role string) string {
 	switch role {
+	case "any":
+		return "幕后"
 	case "lyricist":
 		return "作词"
 	case "composer":

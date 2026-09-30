@@ -101,6 +101,7 @@
   font-size: var(--fs-xs);
   transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
+.filter-tag.active { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }
 .filter-tag:hover { border-color: var(--accent-line); color: var(--accent); }
 .filter-tag .tag-remove { color: var(--muted); font-size: 0.9rem; }
 .filter-tag.clear-all { border-style: dashed; color: var(--muted); background: transparent; }
@@ -2913,3 +2914,11 @@ a.series-suggestion-work:hover {
 #np-credits { font-size:12px; opacity:.85; }
 
 body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap; }
+
+.credit-fact-link { color: var(--muted); }
+.credit-fact-link:hover { text-decoration: underline; }
+.credit-collaborators { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.credit-collaborators > a { display: flex; align-items: center; gap: 12px; }
+.credit-collaborators img, .credit-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+.credit-avatar { display: grid; place-items: center; overflow: hidden; background: var(--surface); font-size: 12px; }
+.credit-collaborators small { display: block; color: var(--muted); }

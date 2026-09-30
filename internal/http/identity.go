@@ -25,23 +25,19 @@ type artistReleaseGroup struct {
 }
 type identityPageData struct {
 	Chrome
-	Section, Notice              string
-	Settings                     []storage.MetadataSourceSetting
-	BiographySettings            storage.BiographySettings
-	LastFMScrobble               lastFMScrobbleView
-	IdentityConflict             *storage.ArtistIdentityConflict
-	Artist                       *storage.ArtistDetail
-	Artists                      []storage.Artist
-	Albums                       []storage.Album
-	ReleaseGroups                []artistReleaseGroup
-	CreditTracks                 []storage.Track
-	CreditRoles                  []storage.CreditRoleCount
-	CreditRole                   string
-	CreditPrevURL, CreditNextURL string
-	Tracks                       []storage.Track
-	Review                       []matchReviewItem
-	Merges                       []storage.MergeOperation
-	MatchRuns                    []storage.ArtistMatchRun
+	Section, Notice   string
+	Settings          []storage.MetadataSourceSetting
+	BiographySettings storage.BiographySettings
+	LastFMScrobble    lastFMScrobbleView
+	IdentityConflict  *storage.ArtistIdentityConflict
+	Artist            *storage.ArtistDetail
+	Artists           []storage.Artist
+	Albums            []storage.Album
+	ReleaseGroups     []artistReleaseGroup
+	Tracks            []storage.Track
+	Review            []matchReviewItem
+	Merges            []storage.MergeOperation
+	MatchRuns         []storage.ArtistMatchRun
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -202,17 +198,17 @@ func (a *App) handleMatchArtist(w http.ResponseWriter, r *http.Request) {
 				source, minutes, _ := enrichment.RateLimitNoticeParts(err)
 				notice = fmt.Sprintf("已自动确认匹配，但图片/简介因 %s 限流暂未获取，约 %d 分钟后可重试", source, minutes)
 			}
-			redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), notice)
+			redirectWithNotice(w, r, artistProfilePath(id), notice)
 			return
 		}
-		redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), err.Error())
+		redirectWithNotice(w, r, artistProfilePath(id), err.Error())
 		return
 	}
 	message := "已生成候选，需要人工确认"
 	if result.AutoMatched {
 		message = "两个来源身份一致，已自动匹配"
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), message)
+	redirectWithNotice(w, r, artistProfilePath(id), message)
 }
 
 func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
@@ -225,11 +221,11 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.ConfirmArtistCandidate(r.Context(), id, candidateID); err != nil {
 		var conflict *storage.ArtistExternalIDConflictError
 		if errors.As(err, &conflict) {
-			http.Redirect(w, r, fmt.Sprintf("/admin/artists/%d?identityConflict=%d", id, candidateID), http.StatusSeeOther)
+			http.Redirect(w, r, artistProfilePath(id)+"&identityConflict="+strconv.FormatInt(candidateID, 10), http.StatusSeeOther)
 		} else if errors.Is(err, storage.ErrCompositeArtistIdentity) {
-			redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", id), err.Error())
+			redirectWithNotice(w, r, artistProfilePath(id), err.Error())
 		} else if errors.Is(err, sql.ErrNoRows) {
-			redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", id), "候选不存在或已变化，请重新匹配")
+			redirectWithNotice(w, r, artistProfilePath(id), "候选不存在或已变化，请重新匹配")
 		} else {
 			a.logger.Error("confirm artist identity", "artistId", id, "error", err)
 			http.Error(w, "确认身份失败，请稍后重试", http.StatusInternalServerError)
@@ -253,7 +249,7 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 	if rateLimitedSource != "" {
 		message = fmt.Sprintf("已确认匹配；%s 限流中，图片/简介可稍后手动刷新，或在下次自动匹配时补全", rateLimitedSource)
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), message)
+	redirectWithNotice(w, r, artistProfilePath(id), message)
 }
 
 func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Request) {
@@ -264,13 +260,13 @@ func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Requ
 	id := parseInt64(r.PathValue("id"))
 	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil {
 		if notice, ok := enrichment.RateLimitNotice(err); ok {
-			redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), notice)
+			redirectWithNotice(w, r, artistProfilePath(id), notice)
 			return
 		}
-		redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), "简介刷新失败："+err.Error())
+		redirectWithNotice(w, r, artistProfilePath(id), "简介刷新失败："+err.Error())
 		return
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), "简介缓存已刷新")
+	redirectWithNotice(w, r, artistProfilePath(id), "简介缓存已刷新")
 }
 
 func (a *App) handleSelectArtistBiography(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +288,7 @@ func (a *App) handleSelectArtistBiography(w http.ResponseWriter, r *http.Request
 	if source == "" {
 		message = "已恢复全局简介优先级"
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), message)
+	redirectWithNotice(w, r, artistProfilePath(id), message)
 }
 
 func (a *App) handleRejectArtistMatch(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +301,7 @@ func (a *App) handleRejectArtistMatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(id, 10), "候选已拒绝")
+	redirectWithNotice(w, r, artistProfilePath(id), "候选已拒绝")
 }
 
 func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
@@ -320,56 +316,34 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	q := r.URL.Query()
 	if detail.MergedIntoID != 0 {
-		destination := "/admin/artists/" + strconv.FormatInt(detail.MergedIntoID, 10) + "?notice=" + url.QueryEscape("该歌手已合并，正在显示目标歌手")
-		if r.URL.Query().Has("credit") {
-			destination += "&credit=" + url.QueryEscape(r.URL.Query().Get("credit")) + "#credits"
-		}
-		http.Redirect(w, r, destination, 303)
-		return
-	}
-	data.Artist = &detail
-	data.CreditRoles, err = a.store.ArtistCreditRoles(r.Context(), id)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if len(data.CreditRoles) > 0 {
-		data.CreditRole = r.URL.Query().Get("credit")
-		valid := false
-		for _, c := range data.CreditRoles {
-			if c.Role == data.CreditRole {
-				valid = true
-			}
-		}
-		if !valid {
-			data.CreditRole = data.CreditRoles[0].Role
-		}
-		offset := int(parseInt64(r.URL.Query().Get("creditOffset")))
-		if offset < 0 {
-			offset = 0
-		}
-		f := storage.Filters{Limit: 20, Offset: offset, Focus: storage.TrackFocus{Credits: []storage.CreditFilter{{Role: data.CreditRole, ArtistID: id}}}}
-		data.CreditTracks, err = a.store.ListTracks(r.Context(), f)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		total, e := a.store.CountTracks(r.Context(), f)
+		target, e := a.store.CanonicalArtistID(r.Context(), id)
 		if e != nil {
 			http.Error(w, e.Error(), 500)
 			return
 		}
-		link := func(n int) string {
-			return "/admin/artists/" + strconv.FormatInt(id, 10) + "?credit=" + data.CreditRole + "&creditOffset=" + strconv.Itoa(n) + "#credits"
+		if q.Has("credit") {
+			if q.Get("notice") == "" {
+				q.Set("notice", "该歌手已合并，正在显示目标歌手")
+			}
+			http.Redirect(w, r, creditDetailPath(target, q, true), 303)
+		} else {
+			path := "/admin/artists/" + strconv.FormatInt(target, 10)
+			if q.Get("view") == "profile" {
+				path = artistProfilePath(target)
+			}
+			redirectWithNotice(w, r, path, "该歌手已合并，正在显示目标歌手")
 		}
-		if offset > 0 {
-			data.CreditPrevURL = link(max(0, offset-20))
-		}
-		if int64(offset+20) < total {
-			data.CreditNextURL = link(offset + 20)
+		return
+	}
+	if !q.Has("identityConflict") {
+		if q.Has("credit") || (q.Get("view") != "profile" && detail.AlbumCount == 0 && detail.PerformedTrackCount == 0 && detail.CreditTrackCount > 0) {
+			http.Redirect(w, r, creditDetailPath(id, q, true), 303)
+			return
 		}
 	}
+	data.Artist = &detail
 
 	if candidateID := parseInt64(r.URL.Query().Get("identityConflict")); candidateID > 0 {
 		conflict, conflictErr := a.store.ArtistIdentityConflict(r.Context(), id, candidateID)
@@ -458,10 +432,10 @@ func (a *App) handleMergeArtist(w http.ResponseWriter, r *http.Request) {
 	targetID := parseInt64(r.FormValue("targetArtist"))
 	operation, err := a.store.MergeArtists(r.Context(), sourceID, targetID)
 	if err != nil {
-		redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(sourceID, 10), err.Error())
+		redirectWithNotice(w, r, artistProfilePath(sourceID), err.Error())
 		return
 	}
-	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(targetID, 10), "歌手合并完成，可在合并历史中回退；操作 #"+strconv.FormatInt(operation, 10))
+	redirectWithNotice(w, r, artistProfilePath(targetID), "歌手合并完成，可在合并历史中回退；操作 #"+strconv.FormatInt(operation, 10))
 }
 
 func (a *App) handleResetArtistIdentity(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +444,7 @@ func (a *App) handleResetArtistIdentity(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	returnTo := fmt.Sprintf("/admin/artists/%d", id)
+	returnTo := artistProfilePath(id)
 	if r.FormValue("confirm") != "1" {
 		redirectWithNotice(w, r, returnTo, "请二次确认解除身份，未修改数据")
 		return
@@ -490,7 +464,7 @@ func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request
 	}
 	sourceID := parseInt64(r.PathValue("id"))
 	candidateID := parseInt64(r.PathValue("candidate"))
-	returnTo := fmt.Sprintf("/admin/artists/%d?identityConflict=%d", sourceID, candidateID)
+	returnTo := artistProfilePath(sourceID) + "&identityConflict=" + strconv.FormatInt(candidateID, 10)
 	if r.FormValue("confirm") != "1" {
 		redirectWithNotice(w, r, returnTo, "请核对歌手并二次确认，尚未执行合并")
 		return
@@ -507,7 +481,7 @@ func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request
 		redirectWithNotice(w, r, returnTo, message)
 		return
 	}
-	redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", targetID), fmt.Sprintf("歌手合并完成（操作 #%d），可在合并历史回退；未新增或迁移候选身份绑定", operation))
+	redirectWithNotice(w, r, artistProfilePath(targetID), fmt.Sprintf("歌手合并完成（操作 #%d），可在合并历史回退；未新增或迁移候选身份绑定", operation))
 }
 
 func (a *App) handleMergeHistory(w http.ResponseWriter, r *http.Request) {

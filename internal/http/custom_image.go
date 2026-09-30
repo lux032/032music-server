@@ -326,7 +326,7 @@ func (a *App) handleResetAlbumArtwork(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleUploadArtistImage(w http.ResponseWriter, r *http.Request) {
 	id := parseInt64(r.PathValue("id"))
-	fallback := "/admin/artists/" + strconv.FormatInt(id, 10)
+	fallback := artistProfilePath(id)
 	upload, back, ok := a.readCustomImageUpload(w, r, fallback)
 	if !ok {
 		return
@@ -379,10 +379,10 @@ func (a *App) handleResetArtistImage(w http.ResponseWriter, r *http.Request) {
 	oldNames, err := a.store.ResetCustomArtistImage(r.Context(), id)
 	if err != nil {
 		a.logger.Error("reset custom artist image failed", "artistId", id, "error", err)
-		redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/artists/"+strconv.FormatInt(id, 10)), "恢复默认歌手图片失败，请重试")
+		redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), artistProfilePath(id)), "恢复默认歌手图片失败，请重试")
 		return
 	}
 	a.removeUnreferenced(r.Context(), oldNames)
 	a.gcCustomImages(r.Context())
-	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/artists/"+strconv.FormatInt(id, 10)), "已恢复默认歌手图片")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), artistProfilePath(id)), "已恢复默认歌手图片")
 }

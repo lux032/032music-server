@@ -36,7 +36,7 @@
       {{range $item := .Review}}
       <article>
         <header>
-          <a href="/admin/artists/{{$item.Artist.ID}}"><strong>{{$item.Artist.Name}}</strong></a>
+          <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
           <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
         </header>
         <div>

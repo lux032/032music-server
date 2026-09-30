@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN"><head>{{template "head" .}}<title>{{.Artist.Name}} · 幕后人员 · 032</title></head>
+<body class="roon-shell artist-page" data-nav="{{.Nav}}">
+{{template "sidebar" .}}{{template "nowplaying" .}}
+<main id="app-main" class="browser-main identity-main">
+<nav class="detail-toolbar" aria-label="页面导航">
+  <a class="back-button" href="/admin/credits" data-history-back="/admin/credits">
+    <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
+    <span>返回幕后人员</span>
+  </a>
+  <span class="detail-context">幕后人员</span>
+</nav>
+{{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+<section class="artist-hero">
+{{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait">{{.Artist.Name}}</div>{{end}}
+<div><p class="kicker">幕后人员</p><h1>{{.Artist.Name}}</h1><div class="album-facts">{{range .Roles}}<span>{{creditLabel .Role}} {{.Count}}</span>{{end}}{{if gt (len .Roles) 1}}<span>全部 {{.Artist.CreditTrackCount}} 首</span>{{end}}{{if .SelfCount}}<span>自唱 {{.SelfCount}} 首</span>{{end}}</div>
+<div class="artist-hero-actions">{{if or .Artist.AlbumCount .Artist.PerformedTrackCount}}<a class="secondary-button" href="/admin/artists/{{.Artist.ID}}">歌手页 →</a>{{end}}<a class="section-link" href="/admin/artists/{{.Artist.ID}}?view=profile">资料与身份管理</a></div></div>
+</section>
+<section id="credits" class="artist-tracks-section">
+<div class="section-title"><h2>幕后作品</h2><a class="section-link" href="/admin/tracks?credit={{.FocusRole}}:{{.Artist.ID}}">在歌曲列表中筛选</a></div>
+{{if .Tabs}}<nav class="filter-tags">{{range .Tabs}}<a class="filter-tag {{if .Current}}active{{end}}" href="{{.URL}}" {{if .Current}}aria-current="page"{{end}}>{{.Value}}</a>{{end}}</nav>{{end}}
+<div class="artist-track-list">{{range .Tracks}}
+<article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
+<a class="artist-track-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
+<div class="artist-track-copy"><strong>{{.Title}}</strong><small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}</small></div>
+{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
+<button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+</article>{{else}}<div class="zero-state">暂无该角色作品</div>{{end}}</div>
+{{if .Pages}}<nav class="pagination" aria-label="分页">{{if .PrevURL}}<a href="{{.PrevURL}}">‹ 上一页</a>{{else}}<span>‹ 上一页</span>{{end}}<div>{{range .Pages}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}">{{.Number}}</a>{{end}}</div>{{if .NextURL}}<a href="{{.NextURL}}">下一页 ›</a>{{else}}<span>下一页 ›</span>{{end}}</nav>{{end}}
+</section>
+{{if .Collaborators}}<section id="credit-collaborators" class="artist-release-group"><div class="section-title"><h2>合作歌手</h2></div><div class="credit-collaborators">{{range .Collaborators}}{{template "credit-collaborator" .}}{{end}}</div>{{if .MoreCollaborators}}<details><summary>更多</summary><div class="credit-collaborators">{{range .MoreCollaborators}}{{template "credit-collaborator" .}}{{end}}</div></details>{{end}}</section>
+{{end}}
+{{if .Albums}}<section id="credit-albums" class="artist-release-group"><div class="section-title"><h2>参与的专辑</h2><span>共 {{.AlbumTotal}} 张</span></div><div class="mini-albums">{{range .Albums}}{{template "credit-album" .}}{{end}}</div>{{if .MoreAlbums}}<details><summary>更多（共 {{.AlbumTotal}} 张）</summary><div class="mini-albums">{{range .MoreAlbums}}{{template "credit-album" .}}{{end}}</div></details>{{end}}</section>
+{{end}}
+</main></body></html>
+{{define "credit-collaborator"}}<a href="/admin/artists/{{.ID}}">{{if .ImageURL}}<img class="fade-img" src="{{thumb .ImageURL 128}}" alt="" loading="lazy">{{else}}<span class="credit-avatar">{{.Name}}</span>{{end}}<div><strong>{{.Name}}</strong><small>{{.TrackCount}} 首</small></div></a>{{end}}
+{{define "credit-album"}}<a href="/admin/albums/{{.ID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}<strong>{{.Title}}</strong><small>{{if .Year}}{{.Year}} · {{end}}{{albumTypeLabel .ReleaseKind}}</small></a>{{end}}

@@ -136,7 +136,7 @@ func TestTracksFocusAPIAndArtistCredits(t *testing.T) {
 	body := rec.Body.String()
 	composerOptions, _ := store.ListArtistOptions(ctx, "composer", "", 20)
 	composerID := composerOptions[0].ID
-	if rec.Code != 200 || !strings.Contains(body, fmt.Sprintf("/admin/artists/%d?credit=composer#credits", composerID)) {
+	if rec.Code != 200 || !strings.Contains(body, fmt.Sprintf("/admin/credits/%d?role=composer", composerID)) {
 		t.Fatalf("album credits %d %s", rec.Code, body)
 	}
 	if strings.Contains(body, fmt.Sprintf("href=\"/admin/artists/%d\"", composerID)) {
@@ -257,17 +257,16 @@ func TestMergedArtistRedirectPreservesOnlyRequestedCredit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if u.Path != fmt.Sprintf("/admin/artists/%d", target) || u.Query().Get("notice") == "" {
-			t.Fatalf("location %s", u)
-		}
-		if suffix == "" {
-			if u.Query().Has("credit") || u.Fragment != "" {
-				t.Fatalf("unrequested credit redirect %s", u)
-			}
-		} else {
-			if !u.Query().Has("credit") || u.Fragment != "credits" || u.Query().Get("credit") != req.URL.Query().Get("credit") {
+		if suffix == "?credit=arranger" {
+			if u.Path != fmt.Sprintf("/admin/credits/%d", target) || u.Query().Get("role") != "arranger" || u.Query().Get("notice") == "" {
 				t.Fatalf("lost credit %s", u)
 			}
+		} else if suffix == "?credit=" {
+			if u.Path != fmt.Sprintf("/admin/credits/%d", target) || u.Query().Has("role") || u.Query().Get("notice") == "" {
+				t.Fatalf("invalid role leaked %s", u)
+			}
+		} else if u.Path != fmt.Sprintf("/admin/artists/%d", target) || u.Query().Get("notice") == "" || u.Fragment != "" || u.Query().Has("credit") {
+			t.Fatalf("location %s", u)
 		}
 	}
 }

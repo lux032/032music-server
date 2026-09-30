@@ -330,7 +330,7 @@ document.addEventListener('input', (event) => {
   const role = picker.querySelector('[data-credit-role]').value;
   const query = input.value;
   try {
-   const response = await fetch(`/admin/options/artists?role=${role}&q=${encodeURIComponent(query)}`);
+   const response = await fetch(`/admin/options/artists?role=${role === 'any' ? 'credit' : role}&q=${encodeURIComponent(query)}`);
    const data = await response.json();
    if (!picker.isConnected || input.value !== query || picker.querySelector('[data-credit-role]').value !== role) return;
    const select = picker.querySelector('[data-credit-results]'); select.replaceChildren();

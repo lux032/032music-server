@@ -30,7 +30,7 @@
     {{end}}
 
     {{if eq .ArtistRole "credits"}}<nav class="artist-role-tabs" aria-label="幕后角色">{{range .CreditTabs}}<a href="{{.URL}}" class="{{if .Current}}active{{end}}">{{.Value}}</a>{{end}}</nav>{{end}}
-    {{if .CreditHintID}}<div class="zero-state">该人员没有演唱曲目。<a href="/admin/artists/{{.CreditHintID}}#credits">查看幕后作品</a></div>{{end}}
+    {{if .CreditHintID}}<div class="zero-state">该人员没有演唱曲目。<a href="/admin/credits/{{.CreditHintID}}">查看幕后作品</a></div>{{end}}
     <div class="browser-filters" aria-label="筛选">
       {{if ne .Section "artists"}}
       <div class="filter-control" data-filter="artist" data-options-url="/admin/options/artists?role={{if eq .Section "albums"}}album{{else}}performer{{end}}"><button type="button" class="filter-trigger {{if .ArtistID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-artist">{{if .ArtistID}}{{range .FilterTags}}{{if eq .Name "artist"}}{{.Value}}{{end}}{{end}}{{else}}歌手{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-controls="filter-list-artist" aria-label="搜索歌手" placeholder="搜索歌手"><div id="filter-list-artist" role="listbox" aria-label="歌手"></div></div></div>
@@ -72,7 +72,7 @@
  {{range .SearchFields}}{{if or (eq .Name "yearFrom") (eq .Name "yearTo") (eq .Name "hideInstrumental")}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}{{end}}
  <details class="focus-more"><summary>更多筛选</summary><div class="focus-options">
  {{range .FocusGroups}}<label><span>{{.Label}}</span><select name="{{.Name}}" {{if .Multiple}}multiple{{end}}>{{range .Options}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}</select></label>{{end}}
- <div data-credit-picker><label>幕后角色<select data-credit-role><option value="composer">作曲</option><option value="lyricist">作词</option><option value="arranger">编曲</option><option value="producer">制作</option></select></label><label>搜索人员<input type="search" data-credit-search autocomplete="off"></label><select data-credit-results aria-label="幕后人员搜索结果"></select><button type="button" data-credit-add>添加条件</button><div data-credit-selected>{{range .FocusCredits}}<label>{{.Name}}<input type="hidden" name="credit" value="{{.Value}}"><button type="button" data-credit-remove>移除</button></label>{{end}}</div></div>
+ <div data-credit-picker><label>幕后角色<select data-credit-role><option value="any">全部幕后</option><option value="composer">作曲</option><option value="lyricist">作词</option><option value="arranger">编曲</option><option value="producer">制作</option></select></label><label>搜索人员<input type="search" data-credit-search autocomplete="off"></label><select data-credit-results aria-label="幕后人员搜索结果"></select><button type="button" data-credit-add>添加条件</button><div data-credit-selected>{{range .FocusCredits}}<label>{{.Name}}<input type="hidden" name="credit" value="{{.Value}}"><button type="button" data-credit-remove>移除</button></label>{{end}}</div></div>
  </div></details>{{end}}
  <button class="apply-focus">筛选</button>
 
@@ -121,10 +121,10 @@
       <article class="artist-row">
         {{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="{{.Name}}" loading="lazy" decoding="async">{{else}}<div class="artist-avatar">{{.Name}}</div>{{end}}
         <div>
-          <a href="/admin/artists/{{.ID}}{{if eq $.ArtistRole "credits"}}{{if $.CreditRole}}?credit={{$.CreditRole}}{{end}}#credits{{end}}"><h2>{{.Name}}</h2></a>
+          <a href="{{if eq $.ArtistRole "credits"}}/admin/credits/{{.ID}}{{if $.CreditRole}}?role={{$.CreditRole}}{{end}}{{else}}/admin/artists/{{.ID}}{{end}}"><h2>{{.Name}}</h2></a>
           <p>{{if eq $.ArtistRole "credits"}}幕后 {{.TrackCount}} 首{{else}}{{.AlbumCount}} 张专辑 · 演唱 {{.TrackCount}} 首{{end}}</p>
         </div>
-        <a href="/admin/artists/{{.ID}}{{if eq $.ArtistRole "credits"}}{{if $.CreditRole}}?credit={{$.CreditRole}}{{end}}#credits{{end}}">资料与匹配</a>
+        <a href="/admin/artists/{{.ID}}?view=profile">资料与匹配</a>
         <details class="edit-drawer row-drawer">
           <summary class="drawer-trigger">编辑</summary>
           <div class="drawer-backdrop" data-drawer-close></div>

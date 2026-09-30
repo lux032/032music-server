@@ -468,7 +468,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         creditsEl.append(document.createTextNode(`${labels[credit.role]}：`));
         credit.artists.forEach((artist,index) => {
           if (index) creditsEl.append(document.createTextNode('、'));
-          const link = document.createElement('a');link.href = `/admin/artists/${artist.id}?credit=${credit.role}#credits`;link.textContent = artist.name;link.dataset.playerNav='1';creditsEl.append(link);
+          const link = document.createElement('a');link.href = `/admin/credits/${artist.id}?role=${credit.role}`;link.textContent = artist.name;link.dataset.playerNav='1';creditsEl.append(link);
         });
         creditsEl.append(document.createElement('br'));
       }

@@ -310,7 +310,7 @@ func (s *Store) ListArtistOptions(ctx context.Context, role, query string, limit
 	if limit > 500 {
 		limit = 500
 	}
-	creditRole := IsCreditRole(role)
+	creditRole := IsCreditRole(role) || role == "credit"
 	if !creditRole && role != "performer" {
 		role = normalizeArtistRole(role)
 	}
@@ -324,6 +324,10 @@ func (s *Store) ListArtistOptions(ctx context.Context, role, query string, limit
 		// Start from the role index once, then follow only credited artists' merge chains.
 		clauses = []string{"ar.merged_into_artist_id IS NULL", `ar.id IN (WITH RECURSIVE credited(id,next) AS (SELECT a.id,a.merged_into_artist_id FROM artists a WHERE a.id IN (SELECT ta.artist_id FROM track_artists ta WHERE ta.role=?) UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN credited c ON a.id=c.next) SELECT id FROM credited WHERE next IS NULL)`}
 		args = []any{role}
+		if role == "credit" {
+			clauses[1] = strings.Replace(clauses[1], "ta.role=?", "ta.role IN ('composer','lyricist','arranger','producer')", 1)
+			args = nil
+		}
 	}
 	if variants := SearchVariants(query); len(variants) > 0 {
 		parts := make([]string, 0, len(variants)*2)

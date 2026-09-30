@@ -112,6 +112,8 @@ func main() {
 					Year:           year,
 					DiscNumber:     1,
 					TrackNumber:    i + 1,
+					Composer:       map[string]string{"LiSA": "LiSA"}[artist],
+					Lyricist:       map[string]string{"LiSA": "LiSA"}[artist],
 					DurationMillis: 240000,
 				},
 			})

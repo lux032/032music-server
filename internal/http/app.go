@@ -310,6 +310,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/options/works", a.requireAdminJSON(http.HandlerFunc(a.handleAdminWorkOptions)))
 	mux.Handle("GET /admin/options/series", a.requireAdminJSON(http.HandlerFunc(a.handleAdminSeriesOptions)))
 	mux.Handle("POST /admin/scan", a.requireAdmin(http.HandlerFunc(a.handleStartScan)))
+	mux.Handle("GET /admin/credits/{id}", a.requireAdmin(http.HandlerFunc(a.handleCreditArtistPage)))
 	mux.Handle("GET /admin/credits", a.requireAdmin(http.HandlerFunc(a.handleCreditArtistsPage)))
 	mux.Handle("GET /admin/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistsPage)))
 	mux.Handle("GET /admin/artists/album", a.requireAdmin(http.HandlerFunc(a.handleAlbumArtistsPage)))

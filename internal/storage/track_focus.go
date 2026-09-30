@@ -104,7 +104,13 @@ func appendTrackFocus(clauses *[]string, args *[]any, f TrackFocus) {
 		add(`t.id IN (SELECT track_id FROM track_artists WHERE role IN ('lyricist','composer','arranger','producer') AND artist_id IN (WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT id FROM m))`, f.CreditArtistID)
 	}
 	for _, c := range f.Credits { // Resolve both the requested merge chain and all historical incoming IDs in SQL.
-		add(`t.id IN (SELECT track_id FROM track_artists WHERE role=? AND artist_id IN (WITH RECURSIVE up(id,next) AS (SELECT id,merged_into_artist_id FROM artists WHERE id=? UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN up ON a.id=up.next), m(id) AS (SELECT id FROM up WHERE next IS NULL UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT id FROM m))`, c.Role, c.ArtistID)
+		roleSQL := "role=?"
+		roleArgs := []any{c.Role, c.ArtistID}
+		if c.Role == "any" {
+			roleSQL = "role IN ('composer','lyricist','arranger','producer')"
+			roleArgs = []any{c.ArtistID}
+		}
+		add(`t.id IN (SELECT track_id FROM track_artists WHERE `+roleSQL+` AND artist_id IN (WITH RECURSIVE up(id,next) AS (SELECT id,merged_into_artist_id FROM artists WHERE id=? UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN up ON a.id=up.next), m(id) AS (SELECT id FROM up WHERE next IS NULL UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT id FROM m))`, roleArgs...)
 	}
 }
 func (s *Store) hydrateTrackCredits(ctx context.Context, items []Track) error {

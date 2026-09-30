@@ -50,7 +50,7 @@ func TestArtistIdentityConflictVerifyAndExplicitMerge(t *testing.T) {
 	candidate := candidates[0].ID
 	confirmPath := fmt.Sprintf("/admin/artists/%d/confirm/%d", source, candidate)
 	rec := postAdminForm(t, handler, cookie, csrf, confirmPath, nil)
-	page := fmt.Sprintf("/admin/artists/%d?identityConflict=%d", source, candidate)
+	page := fmt.Sprintf("/admin/artists/%d?view=profile&identityConflict=%d", source, candidate)
 	if rec.Code != 303 || rec.Header().Get("Location") != page {
 		t.Fatalf("confirm: %d %s", rec.Code, rec.Header().Get("Location"))
 	}

@@ -42,7 +42,7 @@ async function restoreArtistImage(page, artistUrl) {
   const reset = drawer.getByRole('button', { name: '恢复默认图片' });
   if (!(await reset.count())) return;
   await Promise.all([
-    page.waitForURL(/\/admin\/artists\/\d+\?notice=/),
+    page.waitForURL(/\/admin\/artists\/\d+\?view=profile&notice=/),
     reset.click()
   ]);
 }
@@ -107,7 +107,7 @@ test('artist drawer uploads a custom image and restores the default', async ({ p
 
     await drawer.locator('input[type="file"][name="image"]').setInputFiles(PNG_FILE);
     await Promise.all([
-      page.waitForURL(/\/admin\/artists\/\d+\?notice=/),
+      page.waitForURL(/\/admin\/artists\/\d+\?view=profile&notice=/),
       drawer.getByRole('button', { name: '上传图片' }).click()
     ]);
     await expect(page.locator('.toast')).toContainText('歌手图片已更新');
