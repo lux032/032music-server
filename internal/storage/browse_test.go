@@ -671,3 +671,60 @@ func TestUpdateTrackKeepsAlbumOnlyGenreOverride(t *testing.T) {
 		t.Fatalf("genres = %q", album.Genres)
 	}
 }
+
+func TestListArtistOptionsCreditRoleFollowsMergeChain(t *testing.T) {
+	s, ctx := openEnrichmentTestStore(t)
+	if err := s.EnsureLibrary(ctx, "Credit options", "/credit-options"); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.LibraryByRoot(ctx, "/credit-options")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, ImportInput{LibraryID: lib.ID, RelativePath: "song.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Song", Album: "Album", Artists: []string{"Uncredited Singer"}, Composer: "Original Composer", DiscNumber: 1, TrackNumber: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	var original int64
+	if err := s.db.QueryRowContext(ctx, "SELECT id FROM artists WHERE display_name='Original Composer'").Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(key, name string) int64 {
+		t.Helper()
+		result, err := s.db.ExecContext(ctx, "INSERT INTO artists(identity_key,display_name,sort_name) VALUES (?,?,?)", key, name, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	middle := insert("credit-options-middle", "Intermediate Composer")
+	current := insert("credit-options-current", "Canonical Composer")
+	insert("credit-options-uncredited", "Uncredited Composer")
+	for _, edge := range [][2]int64{{original, middle}, {middle, current}} {
+		if _, err := s.db.ExecContext(ctx, "UPDATE artists SET merged_into_artist_id=? WHERE id=?", edge[1], edge[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The only composer record is on A, not B or C.
+	var creditedID int64
+	if err := s.db.QueryRowContext(ctx, "SELECT artist_id FROM track_artists WHERE role='composer'").Scan(&creditedID); err != nil || creditedID != original {
+		t.Fatalf("credit seed %d %v", creditedID, err)
+	}
+	for _, tc := range []struct {
+		role, query string
+		want        int
+	}{{"composer", "Canonical Composer", 1}, {"composer", "", 1}, {"composer", "Original Composer", 0}, {"composer", "Intermediate Composer", 0}, {"composer", "Uncredited", 0}, {"arranger", "Canonical Composer", 0}} {
+		t.Run(tc.role+"/"+tc.query, func(t *testing.T) {
+			options, err := s.ListArtistOptions(ctx, tc.role, tc.query, 20)
+			if err != nil || len(options) != tc.want {
+				t.Fatalf("options %+v want %d: %v", options, tc.want, err)
+			}
+			if tc.want == 1 && (options[0].ID != current || options[0].Name != "Canonical Composer") {
+				t.Fatalf("not canonical: %+v", options)
+			}
+		})
+	}
+}

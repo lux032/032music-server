@@ -75,6 +75,7 @@ export async function setup(options = {}) {
   const fixture = path.join(music, 'fixture-01.mp3');
   run(ffmpeg, ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=60',
     '-metadata', 'title=E2E Track 01', '-metadata', 'artist=E2E Artist', '-metadata', 'album=E2E Album',
+    ...(options.credits ? ['-metadata', 'composer=E2E Composer'] : []),
     '-y', fixture], 'ffmpeg fixture generation');
   for (let i = 2; i <= 20; i++) {
     fs.copyFileSync(fixture, path.join(music, `fixture-${String(i).padStart(2, '0')}.mp3`));

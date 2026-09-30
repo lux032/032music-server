@@ -111,6 +111,9 @@ func (s *Store) hydrateTracks(ctx context.Context, items []Track) error {
 	if err := hydrateTrackExtras(ctx, s, ptrs); err != nil {
 		return err
 	}
+	if err := s.hydrateTrackCredits(ctx, items); err != nil {
+		return err
+	}
 	if len(items) == 0 {
 		return nil
 	}

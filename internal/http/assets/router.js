@@ -124,7 +124,11 @@ import { updateTrackRowsUI } from './player-bar.js';
       // false on structural failures; the latter two both need a full
       // navigation, which also picks up fresh assets on a new deployment.
       if (!res.ok) { window.location.href = res.url || url; return; }
-      const destination = res.url || url;
+      // fetch response URLs omit fragments: preserve the requested in-page target.
+      const destinationURL = new URL(res.url || url, window.location.href);
+      const requestedURL = new URL(url, window.location.href);
+      if (!destinationURL.hash && requestedURL.hash) destinationURL.hash = requestedURL.hash;
+      const destination = destinationURL.href;
       // A composing search must keep its live input; the browse controls
       // cancel only their own stale response, not unrelated navigation.
       if (!document.dispatchEvent(new CustomEvent('032:pjax-before-swap', { cancelable: true, detail: { url: destination } }))) return;

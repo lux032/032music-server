@@ -134,6 +134,9 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	templates, err := template.New("admin").Funcs(template.FuncMap{
 		"formatDurationMillis":   formatDurationMillis,
 		"firstGenre":             firstGenre,
+		"creditLabel":            creditLabel,
+		"creditPeople":           creditPeople,
+		"focusLabel":             focusLabel,
 		"formatAdminTime":        formatAdminTime,
 		"formatTime":             formatAdminTime,
 		"albumTypeLabel":         albumTypeLabel,
@@ -310,6 +313,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistsPage)))
 	mux.Handle("GET /admin/artists/album", a.requireAdmin(http.HandlerFunc(a.handleAlbumArtistsPage)))
 	mux.Handle("GET /admin/artists/track", a.requireAdmin(http.HandlerFunc(a.handleTrackArtistsPage)))
+	mux.Handle("GET /api/v1/artists/{id}/credits", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIArtistCredits)))
 	mux.Handle("GET /admin/artists/{id}", a.requireAdmin(http.HandlerFunc(a.handleArtistPage)))
 	mux.Handle("POST /admin/artists/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateArtist)))
 	mux.Handle("POST /admin/artists/{id}/match", a.requireAdmin(http.HandlerFunc(a.handleMatchArtist)))

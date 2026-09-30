@@ -138,10 +138,12 @@ type Track struct {
 	PlayCount      int64  `json:"playCount"`
 	IsFavorite     bool   `json:"isFavorite"`
 	TrackExtras
-	Artists []Artist `json:"artists,omitempty"`
+	Artists []Artist      `json:"artists,omitempty"`
+	Credits []TrackCredit `json:"credits,omitempty"`
 }
 
 type Filters struct {
+	Focus                                 TrackFocus
 	Query, Genre, Sort, ArtistRole, Index string
 	ArtistID, AlbumID                     int64
 	Year, Limit, Offset                   int
@@ -694,9 +696,14 @@ func (s *Store) CountAlbums(ctx context.Context, f Filters) (int64, error) {
 }
 
 func (s *Store) CountTracks(ctx context.Context, f Filters) (int64, error) {
+	var err error
+	f, err = s.canonicalTrackFocus(ctx, f)
+	if err != nil {
+		return 0, err
+	}
 	var total int64
 	where, args := trackWhere(f)
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE `+where, args...).Scan(&total)
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE `+where, args...).Scan(&total)
 	return total, err
 }
 
@@ -806,7 +813,7 @@ func (s *Store) ArtistsForAlbum(ctx context.Context, albumID int64) ([]Artist, e
 }
 
 func (s *Store) ArtistsForAlbumTracks(ctx context.Context, albumID int64) (map[int64][]Artist, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists ar ON ar.id=ta.artist_id WHERE t.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, albumID)
+	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists ar ON ar.id=ta.artist_id WHERE t.album_id=? AND ta.role='primary' AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, albumID)
 	if err != nil {
 		return nil, err
 	}
@@ -824,6 +831,11 @@ func (s *Store) ArtistsForAlbumTracks(ctx context.Context, albumID int64) (map[i
 }
 
 func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
+	var canonicalErr error
+	f, canonicalErr = s.canonicalTrackFocus(ctx, f)
+	if canonicalErr != nil {
+		return nil, canonicalErr
+	}
 	limit, offset := page(f)
 	order := "COALESCE(a.user_title,a.title),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id"
 	if f.Sort == "title" {
@@ -837,7 +849,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	}
 	where, args := trackWhere(f)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(t.user_track_type,t.track_type,'regular'),COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),`+effectiveTrackTypeSQL+`,COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}

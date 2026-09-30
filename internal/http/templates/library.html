@@ -65,7 +65,13 @@
         {{if eq .Section "albums"}}<option value="added" {{if eq .Sort "added"}}selected{{end}}>加入时间</option>{{end}}
         {{end}}
       </select></label>
-      <button class="apply-focus">筛选</button>
+      {{if eq .Section "tracks"}}
+ {{range .SearchFields}}{{if or (eq .Name "yearFrom") (eq .Name "yearTo") (eq .Name "hideInstrumental")}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}{{end}}
+ <details class="focus-more"><summary>更多筛选</summary><div class="focus-options">
+ {{range .FocusGroups}}<label><span>{{.Label}}</span><select name="{{.Name}}" {{if .Multiple}}multiple{{end}}>{{range .Options}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}</select></label>{{end}}
+ <div data-credit-picker><label>幕后角色<select data-credit-role><option value="composer">作曲</option><option value="lyricist">作词</option><option value="arranger">编曲</option><option value="producer">制作</option></select></label><label>搜索人员<input type="search" data-credit-search autocomplete="off"></label><select data-credit-results aria-label="幕后人员搜索结果"></select><button type="button" data-credit-add>添加条件</button><div data-credit-selected>{{range .FocusCredits}}<label>{{.Name}}<input type="hidden" name="credit" value="{{.Value}}"><button type="button" data-credit-remove>移除</button></label>{{end}}</div></div>
+ </div></details>{{end}}
+ <button class="apply-focus">筛选</button>
 
     </form>
 
@@ -161,7 +167,7 @@
           <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
           <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
         </span>
-        <div><strong>{{.Title}}</strong><small>{{.Artist}}</small></div>
+        <div><strong>{{.Title}}</strong><small>{{.Artist}}</small><small class="track-credit-links">{{template "track-credits" .}}</small></div>
         <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>
         {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
         <span>{{formatDurationMillis .DurationMillis}}</span>

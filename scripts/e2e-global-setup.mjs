@@ -74,6 +74,7 @@ export default async function setup() {
     port: BATCH3_PORT,
     stateFile: BATCH3_STATE_FILE,
     tempPrefix: '032music-e2e-batch3-',
+    credits: true,
     go,
     ffmpeg,
     serverBin

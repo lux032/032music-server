@@ -2905,3 +2905,11 @@ a.series-suggestion-work:hover {
   gap: 12px;
   max-width: 560px;
 }
+
+.focus-options { display:flex; flex-wrap:wrap; gap:12px; padding:12px; }
+.focus-options select[multiple] { min-height:90px; }
+.focus-more { flex-basis:100%; }
+.track-credit-links { font-size:12px; }
+#np-credits { font-size:12px; opacity:.85; }
+
+body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap; }

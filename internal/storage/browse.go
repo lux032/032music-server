@@ -110,8 +110,9 @@ func trackWhere(f Filters) (string, []any) {
 		"(?=0 OR a.id=?)",
 		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
 		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+trackHasEffectiveGenreT+"))",
-		"(?=0 OR COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal'))")
+		"(?=0 OR "+effectiveTrackTypeSQL+" NOT IN ('instrumental','off_vocal'))")
 	args = append(args, f.ArtistID, f.ArtistID, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental))
+	appendTrackFocus(&clauses, &args, f.Focus)
 	return strings.Join(clauses, " AND "), args
 }
 
@@ -295,9 +296,17 @@ func (s *Store) ListArtistOptions(ctx context.Context, role, query string, limit
 	if limit > 500 {
 		limit = 500
 	}
-	role = normalizeArtistRole(role)
+	creditRole := IsCreditRole(role)
+	if !creditRole {
+		role = normalizeArtistRole(role)
+	}
 	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id)))"}
 	args := []any{role, role, role}
+	if creditRole {
+		// Start from the role index once, then follow only credited artists' merge chains.
+		clauses = []string{"ar.merged_into_artist_id IS NULL", `ar.id IN (WITH RECURSIVE credited(id,next) AS (SELECT a.id,a.merged_into_artist_id FROM artists a WHERE a.id IN (SELECT ta.artist_id FROM track_artists ta WHERE ta.role=?) UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN credited c ON a.id=c.next) SELECT id FROM credited WHERE next IS NULL)`}
+		args = []any{role}
+	}
 	if variants := SearchVariants(query); len(variants) > 0 {
 		parts := make([]string, 0, len(variants)*2)
 		for _, variant := range variants {

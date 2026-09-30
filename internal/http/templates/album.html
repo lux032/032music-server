@@ -73,7 +73,7 @@
               <div class="track-title-line">
                 <strong>{{.Title}}</strong>
               </div>
-              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{if .Lyricist}} · 作词 {{.Lyricist}}{{end}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}{{if .Arranger}} · 编曲 {{.Arranger}}{{end}}</small>
+              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{template "track-credits" .}}</small>
             </div>
             <div class="track-tieup-cell">
               {{if $tieups}}
@@ -328,3 +328,9 @@
   </main>
 </body>
 </html>
+
+{{define "track-credits"}}
+{{with creditPeople . "lyricist"}} · 作词 {{range .}}<a href="/admin/artists/{{.ID}}?credit=lyricist#credits">{{.Name}}</a> {{end}}{{else}}{{if .Lyricist}} · 作词 {{.Lyricist}}{{end}}{{end}}
+{{with creditPeople . "composer"}} · 作曲 {{range .}}<a href="/admin/artists/{{.ID}}?credit=composer#credits">{{.Name}}</a> {{end}}{{else}}{{if .Composer}} · 作曲 {{.Composer}}{{end}}{{end}}
+{{with creditPeople . "arranger"}} · 编曲 {{range .}}<a href="/admin/artists/{{.ID}}?credit=arranger#credits">{{.Name}}</a> {{end}}{{else}}{{if .Arranger}} · 编曲 {{.Arranger}}{{end}}{{end}}
+{{end}}

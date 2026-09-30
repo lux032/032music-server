@@ -49,6 +49,8 @@ type libraryPageData struct {
 	IndexLinks                                           []indexLink
 	KanaIndex                                            bool
 	AlbumCols                                            int
+	FocusGroups                                          []focusGroup
+	FocusCredits                                         []queryField
 	FilterTags                                           []filterTag
 }
 
@@ -235,6 +237,15 @@ func filterQuery(r *http.Request) url.Values {
 			values.Set(name, value)
 		}
 	}
+	if r.URL.Path == "/admin/tracks" {
+		for _, name := range trackFocusNames {
+			for _, value := range focusValues(source, name) {
+				if value != "0" {
+					values.Add(name, value)
+				}
+			}
+		}
+	}
 	return values
 }
 
@@ -245,8 +256,8 @@ func searchFields(r *http.Request) []queryField {
 	values := filterQuery(r)
 	values.Del("q")
 	fields := make([]queryField, 0, len(values))
-	for _, name := range []string{"artist", "album", "year", "genre", "sort", "index"} {
-		if value := values.Get(name); value != "" {
+	for _, name := range append([]string{"artist", "album", "year", "genre", "sort", "index"}, trackFocusNames...) {
+		for _, value := range values[name] {
 			fields = append(fields, queryField{Name: name, Value: value})
 		}
 	}
@@ -318,6 +329,15 @@ func librarySortLabel(value string) string {
 // handler has loaded the option lists.
 func filterTags(r *http.Request, path string) []filterTag {
 	base := filterQuery(r)
+	if r.URL.Path == "/admin/tracks" {
+		focus, invalid := parseTrackFocus(r.URL.Query())
+		for _, item := range invalid {
+			if strings.HasPrefix(item, "trackType/excludeTypes=") {
+				base["trackType"] = focus.TrackTypes
+				break
+			}
+		}
+	}
 	tags := []filterTag{}
 	add := func(name, label string) {
 		values := url.Values{}
@@ -356,6 +376,28 @@ func filterTags(r *http.Request, path string) []filterTag {
 	}
 	if value := base.Get("sort"); value != "" {
 		add("sort", "排序："+librarySortLabel(value))
+	}
+	if r.URL.Path == "/admin/tracks" {
+		for _, name := range trackFocusNames {
+			for _, value := range base[name] {
+				values := url.Values{}
+				for key, list := range base {
+					values[key] = append([]string(nil), list...)
+				}
+				rest := []string{}
+				for _, v := range values[name] {
+					if v != value {
+						rest = append(rest, v)
+					}
+				}
+				values[name] = rest
+				u := path
+				if encoded := values.Encode(); encoded != "" {
+					u += "?" + encoded
+				}
+				tags = append(tags, filterTag{Name: name, Value: value, Label: focusLabel(name, value), RemoveURL: u})
+			}
+		}
 	}
 	return tags
 }
@@ -581,6 +623,17 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 	rememberSort(w, r, "tracks")
 	data, err := a.pageBase(r, "tracks")
 	f := filters(r)
+	var invalid []string
+	f.Focus, invalid = parseTrackFocus(r.URL.Query())
+	if len(invalid) > 0 {
+		data.Notice = "已忽略无效筛选：" + strings.Join(invalid, ", ")
+	}
+	data.FocusGroups = trackFocusGroups(r.URL.Query(), data.Years)
+	for _, c := range f.Focus.Credits {
+		v := c.Role + ":" + strconv.FormatInt(c.ArtistID, 10)
+		name, _ := a.store.ArtistNameByID(r.Context(), c.ArtistID)
+		data.FocusCredits = append(data.FocusCredits, queryField{Name: creditLabel(c.Role) + "：" + name, Value: v})
+	}
 	applyPage(r, &f, 50)
 	if err == nil {
 		data.Tracks, err = a.store.ListTracks(r.Context(), f)
@@ -597,6 +650,19 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 		a.ensureSelectedAlbum(r, &data)
 	}
 	data.resolveFilterTagNames()
+	for i := range data.FilterTags {
+		tag := &data.FilterTags[i]
+		if tag.Name == "credit" || strings.HasSuffix(tag.Name, "Artist") {
+			role, idText, _ := strings.Cut(tag.Value, ":")
+			if tag.Name != "credit" {
+				role = strings.TrimSuffix(tag.Name, "Artist")
+				idText = tag.Value
+			}
+			if name, e := a.store.ArtistNameByID(r.Context(), parseInt64(idText)); e == nil {
+				tag.Label = creditLabel(role) + "：" + name
+			}
+		}
+	}
 	data.TotalLabel = formatLibraryCount(data.Total)
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
@@ -802,6 +868,12 @@ func (a *App) handleAPIAlbum(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) handleAPITracks(w http.ResponseWriter, r *http.Request) {
 	f := filters(r)
+	var invalid []string
+	f.Focus, invalid = parseTrackFocus(r.URL.Query())
+	if len(invalid) > 0 {
+		writeAPIError(w, 400, "invalid_filter", strings.Join(invalid, ", "))
+		return
+	}
 	limit, offset := pageValues(r)
 	f.Limit, f.Offset = limit, offset
 	values, err := a.store.ListTracks(r.Context(), f)

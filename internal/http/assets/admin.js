@@ -319,3 +319,33 @@
     }
   }, true);
 })();
+
+// Delegated events survive PJAX replacement; option names remain plain text.
+let creditSearchTimer;
+document.addEventListener('input', (event) => {
+ const input = event.target.closest('[data-credit-search]'); if (!input) return;
+ clearTimeout(creditSearchTimer);
+ const picker = input.closest('[data-credit-picker]');
+ creditSearchTimer = setTimeout(async () => {
+  const role = picker.querySelector('[data-credit-role]').value;
+  const query = input.value;
+  try {
+   const response = await fetch(`/admin/options/artists?role=${role}&q=${encodeURIComponent(query)}`);
+   const data = await response.json();
+   if (!picker.isConnected || input.value !== query || picker.querySelector('[data-credit-role]').value !== role) return;
+   const select = picker.querySelector('[data-credit-results]'); select.replaceChildren();
+   for (const artist of data || []) { const option = document.createElement('option'); option.value = artist.id; option.textContent = artist.label; select.append(option); }
+  } catch (_) { picker.querySelector('[data-credit-results]').replaceChildren(); }
+ }, 200);
+});
+document.addEventListener('change', (event) => {if (event.target.matches('[data-credit-role]')) {const input = event.target.closest('[data-credit-picker]').querySelector('[data-credit-search]');input.dispatchEvent(new Event('input', {bubbles:true}));}});
+document.addEventListener('click', (event) => {
+ const remove = event.target.closest('[data-credit-remove]'); if (remove) {remove.closest('label').remove();return;}
+ const add = event.target.closest('[data-credit-add]'); if (!add) return;
+ const picker = add.closest('[data-credit-picker]'); const option = picker.querySelector('[data-credit-results]').selectedOptions[0]; if (!option) return;
+ const role = picker.querySelector('[data-credit-role]'); const value = `${role.value}:${option.value}`;
+ if (Array.from(picker.querySelectorAll('input[name="credit"]')).some(input => input.value === value)) return;
+ const label = document.createElement('label');label.textContent = `${role.selectedOptions[0].textContent}：${option.textContent}`;
+ const hidden = document.createElement('input');hidden.type='hidden';hidden.name='credit';hidden.value=value;
+ const button = document.createElement('button');button.type='button';button.dataset.creditRemove='';button.textContent='移除';label.append(hidden,button);picker.querySelector('[data-credit-selected]').append(label);
+});

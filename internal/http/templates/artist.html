@@ -36,7 +36,8 @@
       </div>
     </section>
 
-    <div class="identity-columns">
+    {{if .CreditRoles}}<section id="credits"><h2>幕后作品</h2><nav class="filter-tags">{{range .CreditRoles}}<a class="filter-tag {{if eq .Role $.CreditRole}}active{{end}}" href="/admin/artists/{{$.Artist.ID}}?credit={{.Role}}#credits">{{creditLabel .Role}} ({{.Count}})</a>{{end}}</nav><a href="/admin/tracks?credit={{.CreditRole}}:{{.Artist.ID}}">在歌曲列表中筛选</a><div class="track-table">{{range .CreditTracks}}<article class="track-table-row" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-duration-ms="{{.DurationMillis}}"><button type="button" class="row-play-btn" aria-label="播放 {{.Title}}">▶</button><strong>{{.Title}}</strong><a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></article>{{end}}</div><nav class="pagination">{{if .CreditPrevURL}}<a href="{{.CreditPrevURL}}">上一页</a>{{end}}{{if .CreditNextURL}}<a href="{{.CreditNextURL}}">下一页</a>{{end}}</nav></section>{{end}}
+ <div class="identity-columns">
       <section>
         <div class="section-title">
           <h2>简介</h2>

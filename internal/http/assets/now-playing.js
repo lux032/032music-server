@@ -458,6 +458,21 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     if (titleEl) titleEl.textContent = track ? (track.title || '未知曲目') : '未在播放';
     const detail = track && trackDetails.get(String(track.id));
     renderArtistLinks(artistEl, detail, track ? track.artist : '—');
+    let creditsEl = document.getElementById('np-credits');
+    if (!creditsEl && artistEl) { creditsEl = document.createElement('div'); creditsEl.id = 'np-credits'; artistEl.after(creditsEl); }
+    if (creditsEl) {
+      creditsEl.replaceChildren();
+      const labels = {lyricist:'作词',composer:'作曲',arranger:'编曲'};
+      for (const credit of detail?.credits || []) {
+        if (!labels[credit.role]) continue;
+        creditsEl.append(document.createTextNode(`${labels[credit.role]}：`));
+        credit.artists.forEach((artist,index) => {
+          if (index) creditsEl.append(document.createTextNode('、'));
+          const link = document.createElement('a');link.href = `/admin/artists/${artist.id}?credit=${credit.role}#credits`;link.textContent = artist.name;link.dataset.playerNav='1';creditsEl.append(link);
+        });
+        creditsEl.append(document.createElement('br'));
+      }
+    }
     renderAlbumLink(albumEl, detail, track?.album, detail?.year ? ` · ${detail.year}` : '');
     const playerArtist = document.getElementById('player-artist');
     if (playerArtist && track) {

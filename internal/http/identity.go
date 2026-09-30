@@ -25,19 +25,23 @@ type artistReleaseGroup struct {
 }
 type identityPageData struct {
 	Chrome
-	Section, Notice   string
-	Settings          []storage.MetadataSourceSetting
-	BiographySettings storage.BiographySettings
-	LastFMScrobble    lastFMScrobbleView
-	IdentityConflict  *storage.ArtistIdentityConflict
-	Artist            *storage.ArtistDetail
-	Artists           []storage.Artist
-	Albums            []storage.Album
-	ReleaseGroups     []artistReleaseGroup
-	Tracks            []storage.Track
-	Review            []matchReviewItem
-	Merges            []storage.MergeOperation
-	MatchRuns         []storage.ArtistMatchRun
+	Section, Notice              string
+	Settings                     []storage.MetadataSourceSetting
+	BiographySettings            storage.BiographySettings
+	LastFMScrobble               lastFMScrobbleView
+	IdentityConflict             *storage.ArtistIdentityConflict
+	Artist                       *storage.ArtistDetail
+	Artists                      []storage.Artist
+	Albums                       []storage.Album
+	ReleaseGroups                []artistReleaseGroup
+	CreditTracks                 []storage.Track
+	CreditRoles                  []storage.CreditRoleCount
+	CreditRole                   string
+	CreditPrevURL, CreditNextURL string
+	Tracks                       []storage.Track
+	Review                       []matchReviewItem
+	Merges                       []storage.MergeOperation
+	MatchRuns                    []storage.ArtistMatchRun
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -317,10 +321,56 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if detail.MergedIntoID != 0 {
-		http.Redirect(w, r, "/admin/artists/"+strconv.FormatInt(detail.MergedIntoID, 10)+"?notice="+url.QueryEscape("该歌手已合并，正在显示目标歌手"), 303)
+		destination := "/admin/artists/" + strconv.FormatInt(detail.MergedIntoID, 10) + "?notice=" + url.QueryEscape("该歌手已合并，正在显示目标歌手")
+		if r.URL.Query().Has("credit") {
+			destination += "&credit=" + url.QueryEscape(r.URL.Query().Get("credit")) + "#credits"
+		}
+		http.Redirect(w, r, destination, 303)
 		return
 	}
 	data.Artist = &detail
+	data.CreditRoles, err = a.store.ArtistCreditRoles(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if len(data.CreditRoles) > 0 {
+		data.CreditRole = r.URL.Query().Get("credit")
+		valid := false
+		for _, c := range data.CreditRoles {
+			if c.Role == data.CreditRole {
+				valid = true
+			}
+		}
+		if !valid {
+			data.CreditRole = data.CreditRoles[0].Role
+		}
+		offset := int(parseInt64(r.URL.Query().Get("creditOffset")))
+		if offset < 0 {
+			offset = 0
+		}
+		f := storage.Filters{Limit: 20, Offset: offset, Focus: storage.TrackFocus{Credits: []storage.CreditFilter{{Role: data.CreditRole, ArtistID: id}}}}
+		data.CreditTracks, err = a.store.ListTracks(r.Context(), f)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		total, e := a.store.CountTracks(r.Context(), f)
+		if e != nil {
+			http.Error(w, e.Error(), 500)
+			return
+		}
+		link := func(n int) string {
+			return "/admin/artists/" + strconv.FormatInt(id, 10) + "?credit=" + data.CreditRole + "&creditOffset=" + strconv.Itoa(n) + "#credits"
+		}
+		if offset > 0 {
+			data.CreditPrevURL = link(max(0, offset-20))
+		}
+		if int64(offset+20) < total {
+			data.CreditNextURL = link(offset + 20)
+		}
+	}
+
 	if candidateID := parseInt64(r.URL.Query().Get("identityConflict")); candidateID > 0 {
 		conflict, conflictErr := a.store.ArtistIdentityConflict(r.Context(), id, candidateID)
 		if conflictErr == nil {
