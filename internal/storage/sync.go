@@ -17,9 +17,12 @@ type SyncAlbum struct {
 	IsFavorite   bool   `json:"isFavorite"`
 	TrackCount   int64  `json:"trackCount"`
 	AlbumType    string `json:"albumType"`
-	Compilation  bool   `json:"compilation"`
-	Live         bool   `json:"live"`
-	Formats      string `json:"formats"`
+	// ReleaseKind 是服务端判定的生效发行类型（手动 > 标签/补全 > 推断），
+	// 客户端分类应优先使用；AlbumType 保持原语义。
+	ReleaseKind string `json:"releaseKind"`
+	Compilation bool   `json:"compilation"`
+	Live        bool   `json:"live"`
+	Formats     string `json:"formats"`
 }
 
 type SyncAlbumsParams struct {
@@ -89,7 +92,8 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 		a.updated_at,
 		COALESCE((SELECT MAX(pp.last_played_at) FROM tracks t JOIN playback_progress pp ON pp.track_id=t.id WHERE t.album_id=a.id), ''),
 		a.is_favorite,
- (SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_is_compilation,a.is_compilation,0),COALESCE(a.user_is_live,a.is_live,0),COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),'')
+ (SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_is_compilation,a.is_compilation,0),COALESCE(a.user_is_live,a.is_live,0),COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),''),
+ COALESCE(a.user_album_type,''),COALESCE(a.album_type,''),COALESCE(a.album_type_source,''),a.disc_count,`+releaseKindCoreTracksSQL+`,`+releaseKindDurationSQL+`
  FROM albums a
 	WHERE a.id > ?
 	ORDER BY a.id ASC
@@ -103,9 +107,12 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 	for rows.Next() {
 		var item SyncAlbum
 		var favorite, compilation, live int
-		if err := rows.Scan(&item.ID, &item.Title, &item.Artist, &item.Year, &item.ArtworkURL, &item.AddedAt, &item.UpdatedAt, &item.LastPlayedAt, &favorite, &item.TrackCount, &item.AlbumType, &compilation, &live, &item.Formats); err != nil {
+		kind := releaseKindInput{}
+		if err := rows.Scan(&item.ID, &item.Title, &item.Artist, &item.Year, &item.ArtworkURL, &item.AddedAt, &item.UpdatedAt, &item.LastPlayedAt, &favorite, &item.TrackCount, &item.AlbumType, &compilation, &live, &item.Formats, &kind.UserType, &kind.StoredType, &kind.Source, &kind.DiscCount, &kind.CoreTracks, &kind.DurationMillis); err != nil {
 			return SyncAlbumsResult{}, err
 		}
+		kind.Title, kind.TotalTracks = item.Title, item.TrackCount
+		item.ReleaseKind = resolveReleaseKind(kind)
 		item.IsFavorite = favorite != 0
 		item.Compilation = compilation != 0
 		item.Live = live != 0

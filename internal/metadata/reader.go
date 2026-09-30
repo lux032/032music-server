@@ -900,6 +900,31 @@ func flattenRaw(raw map[string]interface{}) map[string][]string {
 		}
 		result[strings.ToUpper(strings.TrimSpace(key))] = values
 	}
+	// ID3v2 TXXX 用户自定义帧：dhowden/tag 以 TXXX / TXXX_0… 为 key、*tag.Comm
+	// 为值保存，描述（如 "MusicBrainz Album Type"、"RELEASETYPE"）藏在值里。
+	// 额外按描述建立一个 key，使 MP3 与 FLAC/M4A 的自定义字段可以统一查找；
+	// 原 TXXX key 保持不变。与已有同名 key 冲突时不覆盖。
+	txxx := make(map[string][]string)
+	for key, value := range raw {
+		upper := strings.ToUpper(key)
+		if upper != "TXXX" && upper != "TXX" && !strings.HasPrefix(upper, "TXXX_") && !strings.HasPrefix(upper, "TXX_") {
+			continue
+		}
+		comm, ok := value.(*tag.Comm)
+		if !ok || comm == nil {
+			continue
+		}
+		desc := strings.ToUpper(strings.TrimSpace(comm.Description))
+		if desc == "" {
+			continue
+		}
+		txxx[desc] = append(txxx[desc], strings.TrimSpace(comm.Text))
+	}
+	for desc, values := range txxx {
+		if _, exists := result[desc]; !exists {
+			result[desc] = values
+		}
+	}
 	return result
 }
 

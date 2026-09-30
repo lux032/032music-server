@@ -394,7 +394,7 @@ func (s *Store) ConservativelyFillAlbum(ctx context.Context, albumID int64, patc
 		{"catalog_number", `COALESCE(NULLIF(user_catalog_number,''),NULLIF(catalog_number,'')) IS NULL`, patch.CatalogNumber, patch.CatalogNumber},
 		{"label", `COALESCE(NULLIF(user_label,''),NULLIF(label,'')) IS NULL`, patch.Label, patch.Label},
 		{"country", `COALESCE(NULLIF(user_country,''),NULLIF(country,'')) IS NULL`, patch.Country, patch.Country},
-		{"album_type", `user_album_type IS NULL AND (album_type IS NULL OR album_type='' OR album_type='album')`, patch.AlbumType, patch.AlbumType},
+		{"album_type", `user_album_type IS NULL AND (album_type_source IS NULL OR album_type IS NULL OR album_type='' OR album_type='album')`, patch.AlbumType, patch.AlbumType},
 		{"performed_by", `COALESCE(NULLIF(user_performed_by,''),NULLIF(performed_by,'')) IS NULL`, patch.PerformedBy, patch.PerformedBy},
 	}
 	for _, f := range fields {
@@ -406,6 +406,11 @@ func (s *Store) ConservativelyFillAlbum(ctx context.Context, albumID int64, patc
 			return e
 		}
 		if n, _ := result.RowsAffected(); n > 0 {
+			if f.name == "album_type" {
+				if _, e = tx.ExecContext(ctx, `UPDATE albums SET album_type_source=? WHERE id=?`, albumTypeSourceEnrichment, albumID); e != nil {
+					return e
+				}
+			}
 			if e = putProvenance(ctx, tx, "album", albumID, f.name, source, externalID, runID, f.arg); e != nil {
 				return e
 			}

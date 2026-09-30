@@ -112,7 +112,7 @@
               <a href="/admin/albums/{{.ID}}">
                 {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}
                 <strong>{{.Title}}</strong>
-                <small>{{if .Year}}{{.Year}} · {{end}}{{albumTypeLabel .AlbumType}}</small>
+                <small>{{if .Year}}{{.Year}} · {{end}}{{albumTypeLabel .ReleaseKind}}</small>
               </a>
               {{end}}
             </div>

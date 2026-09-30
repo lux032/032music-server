@@ -177,7 +177,7 @@
         <section>
           <p class="kicker">发行信息</p>
           <dl>
-            {{if .AlbumDetail.AlbumType}}<div><dt>类型</dt><dd>{{albumTypeLabel .AlbumDetail.AlbumType}}</dd></div>{{end}}
+            {{if .AlbumDetail.ReleaseKind}}<div><dt>类型</dt><dd>{{albumTypeLabel .AlbumDetail.ReleaseKind}}</dd></div>{{end}}
             <div><dt>演出者</dt><dd class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.PerformedBy}}{{end}}</dd></div>
             {{if .AlbumDetail.ReleaseDate}}<div><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}
             {{if .AlbumDetail.OriginalReleaseDate}}<div><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}
@@ -218,14 +218,15 @@
               <label>演出者 / Performed by<input name="performedBy" value="{{.AlbumDetail.PerformedBy}}"></label>
               <div class="form-grid">
                 <label>专辑类型<select name="albumType">
-                  <option value="album" {{if eq .AlbumDetail.AlbumType "album"}}selected{{end}}>专辑</option>
-                  <option value="single" {{if eq .AlbumDetail.AlbumType "single"}}selected{{end}}>单曲</option>
-                  <option value="ep" {{if eq .AlbumDetail.AlbumType "ep"}}selected{{end}}>EP</option>
-                  <option value="soundtrack" {{if eq .AlbumDetail.AlbumType "soundtrack"}}selected{{end}}>原声</option>
-                  <option value="compilation" {{if eq .AlbumDetail.AlbumType "compilation"}}selected{{end}}>合辑</option>
-                  <option value="live" {{if eq .AlbumDetail.AlbumType "live"}}selected{{end}}>现场</option>
-                  <option value="bootleg" {{if eq .AlbumDetail.AlbumType "bootleg"}}selected{{end}}>Bootleg</option>
-                  <option value="other" {{if eq .AlbumDetail.AlbumType "other"}}selected{{end}}>其他</option>
+                  <option value="" {{if eq .AlbumDetail.UserAlbumType ""}}selected{{end}}>自动</option>
+                  <option value="album" {{if eq .AlbumDetail.UserAlbumType "album"}}selected{{end}}>专辑</option>
+                  <option value="single" {{if eq .AlbumDetail.UserAlbumType "single"}}selected{{end}}>单曲</option>
+                  <option value="ep" {{if eq .AlbumDetail.UserAlbumType "ep"}}selected{{end}}>EP</option>
+                  <option value="soundtrack" {{if eq .AlbumDetail.UserAlbumType "soundtrack"}}selected{{end}}>原声</option>
+                  <option value="compilation" {{if eq .AlbumDetail.UserAlbumType "compilation"}}selected{{end}}>合辑</option>
+                  <option value="live" {{if eq .AlbumDetail.UserAlbumType "live"}}selected{{end}}>现场</option>
+                  <option value="bootleg" {{if eq .AlbumDetail.UserAlbumType "bootleg"}}selected{{end}}>Bootleg</option>
+                  <option value="other" {{if eq .AlbumDetail.UserAlbumType "other"}}selected{{end}}>其他</option>
                 </select></label>
                 <label>版本 / Edition<input name="version" value="{{.AlbumDetail.Version}}" placeholder="Deluxe Edition, Remaster…"></label>
               </div>

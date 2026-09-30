@@ -62,16 +62,21 @@ type Artist struct {
 }
 
 type Album struct {
-	ID                  int64  `json:"id"`
-	Title               string `json:"title"`
-	Artist              string `json:"artist"`
-	Genres              string `json:"genres"`
-	ArtworkURL          string `json:"artworkUrl"`
-	Year                int    `json:"year"`
-	DiscCount           int    `json:"discCount"`
-	TrackCount          int64  `json:"trackCount"`
-	PerformedBy         string `json:"performedBy"`
-	AlbumType           string `json:"albumType"`
+	ID          int64  `json:"id"`
+	Title       string `json:"title"`
+	Artist      string `json:"artist"`
+	Genres      string `json:"genres"`
+	ArtworkURL  string `json:"artworkUrl"`
+	Year        int    `json:"year"`
+	DiscCount   int    `json:"discCount"`
+	TrackCount  int64  `json:"trackCount"`
+	PerformedBy string `json:"performedBy"`
+	AlbumType   string `json:"albumType"`
+	// ReleaseKind 是生效发行类型：手动纠正 > 标签/外部补全 > 本地推断（见
+	// release_kind.go）。AlbumType 保持原语义，不含推断。
+	ReleaseKind string `json:"releaseKind"`
+	// UserAlbumType 是手动纠正值（空 = 自动），只有专辑详情查询填充。
+	UserAlbumType       string `json:"userAlbumType,omitempty"`
 	Version             string `json:"version"`
 	ReleaseDate         string `json:"releaseDate"`
 	OriginalReleaseDate string `json:"originalReleaseDate"`
@@ -254,7 +259,11 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 	country := rawFirst(m.Raw, "RELEASECOUNTRY", "COUNTRY")
 	releaseDate := rawFirst(m.Raw, "DATE", "RELEASEDATE")
 	originalDate := rawFirst(m.Raw, "ORIGINALDATE", "ORIGINALYEAR")
-	albumType := inferAlbumType(m.Raw)
+	albumType, albumTypeTagged := inferAlbumType(m.Raw)
+	albumTypeSource := ""
+	if albumTypeTagged {
+		albumTypeSource = albumTypeSourceTag
+	}
 	// A merge/delete made in the library outlives rescans: the grouping key
 	// either points at the merged album or marks the files as removed.
 	rule, hasRule, err := lookupAlbumKeyRule(ctx, tx, input.LibraryID, groupKey)
@@ -269,7 +278,7 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 		if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE id=?`, rule.target).Scan(&albumID); err != nil {
 			return fmt.Errorf("merged album %d: %w", rule.target, err)
 		}
-	} else if albumID, err = upsertScannedAlbum(ctx, tx, input.LibraryID, groupKey, m, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country); err != nil {
+	} else if albumID, err = upsertScannedAlbum(ctx, tx, input.LibraryID, groupKey, m, discCount, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country); err != nil {
 		return err
 	}
 
@@ -298,7 +307,7 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 
 // upsertScannedAlbum creates or refreshes the album for a grouping key and
 // rewrites its album artists from the file tags.
-func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupKey string, m metadata.AudioMetadata, discCount int, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country string) (int64, error) {
+func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupKey string, m metadata.AudioMetadata, discCount int, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country string) (int64, error) {
 	// Tag-missing values normally keep the previously stored one (COALESCE),
 	// but a stored value still containing NUL/C0 control characters (D-9) is
 	// known-dirty and is replaced even by NULL: keeping it would pin the
@@ -306,7 +315,9 @@ func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupK
 	tagColumnUpdate := func(column string) string {
 		return column + `=CASE WHEN excluded.` + column + ` IS NOT NULL OR ` + tagValueDirtySQL(`albums.`+column) + ` THEN excluded.` + column + ` ELSE albums.` + column + ` END`
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year,disc_count,performed_by,album_type,version,release_date,original_release_date,label,catalog_number,country,is_compilation,is_live,is_bootleg) VALUES(?,?,?,?,NULLIF(?,0),?,?,?,?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?,?) ON CONFLICT(library_id,grouping_key) DO UPDATE SET title=excluded.title,sort_title=excluded.sort_title,release_year=excluded.release_year,disc_count=MAX(albums.disc_count,excluded.disc_count),performed_by=excluded.performed_by,album_type=excluded.album_type,`+tagColumnUpdate("version")+`,`+tagColumnUpdate("release_date")+`,`+tagColumnUpdate("original_release_date")+`,`+tagColumnUpdate("label")+`,`+tagColumnUpdate("catalog_number")+`,`+tagColumnUpdate("country")+`,is_compilation=excluded.is_compilation,is_live=excluded.is_live,is_bootleg=excluded.is_bootleg,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, libraryID, m.Album, metadata.Normalize(m.Album), groupKey, m.Year, discCount, performedBy, albumType, version, releaseDate, originalDate, label, catalog, country, boolInt(albumType == "compilation"), boolInt(albumType == "live"), boolInt(albumType == "bootleg"))
+	// 发行类型：文件没有类型标签时不覆盖外部补全写入的类型。
+	keepEnrichedType := `excluded.album_type_source IS NULL AND albums.album_type_source='` + albumTypeSourceEnrichment + `'`
+	_, err := tx.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year,disc_count,performed_by,album_type,album_type_source,version,release_date,original_release_date,label,catalog_number,country,is_compilation,is_live,is_bootleg) VALUES(?,?,?,?,NULLIF(?,0),?,?,?,NULLIF(?,''),?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?,?) ON CONFLICT(library_id,grouping_key) DO UPDATE SET title=excluded.title,sort_title=excluded.sort_title,release_year=excluded.release_year,disc_count=MAX(albums.disc_count,excluded.disc_count),performed_by=excluded.performed_by,album_type=CASE WHEN `+keepEnrichedType+` THEN albums.album_type ELSE excluded.album_type END,album_type_source=CASE WHEN `+keepEnrichedType+` THEN albums.album_type_source ELSE excluded.album_type_source END,`+tagColumnUpdate("version")+`,`+tagColumnUpdate("release_date")+`,`+tagColumnUpdate("original_release_date")+`,`+tagColumnUpdate("label")+`,`+tagColumnUpdate("catalog_number")+`,`+tagColumnUpdate("country")+`,is_compilation=excluded.is_compilation,is_live=excluded.is_live,is_bootleg=excluded.is_bootleg,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, libraryID, m.Album, metadata.Normalize(m.Album), groupKey, m.Year, discCount, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country, boolInt(albumType == "compilation"), boolInt(albumType == "live"), boolInt(albumType == "bootleg"))
 	if err != nil {
 		return 0, fmt.Errorf("upsert album: %w", err)
 	}
@@ -703,14 +714,19 @@ const albumByIDSelect = `SELECT
 	COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),''),
 	COALESCE((SELECT SUM(af.file_size) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),0),
 	a.added_at,a.updated_at,a.is_favorite,COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),''),
-	EXISTS(SELECT 1 FROM artworks caw WHERE caw.album_id=a.id AND caw.source_type='custom')
+	EXISTS(SELECT 1 FROM artworks caw WHERE caw.album_id=a.id AND caw.source_type='custom'),
+	COALESCE(a.user_album_type,''), COALESCE(a.album_type,''), COALESCE(a.album_type_source,''),
+	` + releaseKindCoreTracksSQL + `, ` + releaseKindDurationSQL + `
 	FROM albums a`
 
 func scanAlbum(row interface{ Scan(...any) error }) (Album, error) {
 	var a Album
 	var compilation, live, bootleg, favorite int
 	var customCover int
-	err := row.Scan(&a.ID, &a.Title, &a.PerformedBy, &a.Year, &a.DiscCount, &a.TrackCount, &a.Genres, &a.ArtworkURL, &a.AlbumType, &a.Version, &a.ReleaseDate, &a.OriginalReleaseDate, &a.Label, &a.CatalogNumber, &a.Country, &a.Review, &compilation, &live, &bootleg, &a.Formats, &a.TotalBytes, &a.AddedAt, &a.UpdatedAt, &favorite, &a.LastPlayedAt, &customCover)
+	var storedType, typeSource string
+	var coreTracks, durationMillis int64
+	err := row.Scan(&a.ID, &a.Title, &a.PerformedBy, &a.Year, &a.DiscCount, &a.TrackCount, &a.Genres, &a.ArtworkURL, &a.AlbumType, &a.Version, &a.ReleaseDate, &a.OriginalReleaseDate, &a.Label, &a.CatalogNumber, &a.Country, &a.Review, &compilation, &live, &bootleg, &a.Formats, &a.TotalBytes, &a.AddedAt, &a.UpdatedAt, &favorite, &a.LastPlayedAt, &customCover, &a.UserAlbumType, &storedType, &typeSource, &coreTracks, &durationMillis)
+	a.ReleaseKind = resolveReleaseKind(releaseKindInput{UserType: a.UserAlbumType, StoredType: storedType, Source: typeSource, Title: a.Title, DiscCount: a.DiscCount, CoreTracks: coreTracks, TotalTracks: a.TrackCount, DurationMillis: durationMillis})
 	a.HasCustomArtwork = customCover != 0
 	a.Artist = a.PerformedBy
 	a.Compilation = compilation != 0
@@ -1086,15 +1102,6 @@ func (s *Store) cleanTagControlCharColumns(ctx context.Context, table string, co
 		}
 	}
 	return nil
-}
-func inferAlbumType(raw map[string][]string) string {
-	value := strings.ToLower(rawFirst(raw, "RELEASETYPE", "MUSICBRAINZ_ALBUMTYPE", "ALBUMTYPE"))
-	for _, kind := range []string{"single", "ep", "soundtrack", "compilation", "live", "bootleg"} {
-		if strings.Contains(value, kind) {
-			return kind
-		}
-	}
-	return "album"
 }
 func boolInt(value bool) int {
 	if value {

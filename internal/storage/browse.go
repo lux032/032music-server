@@ -122,19 +122,22 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 	placeholders, args := inClause(ids)
 	byID := make(map[int64]*Album, len(ids))
 
-	base, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE(a.user_release_year,a.release_year,0),a.disc_count,COALESCE(a.user_performed_by,a.performed_by,''),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_version,a.version,''),a.added_at,a.updated_at,a.is_favorite FROM albums a WHERE a.id IN (`+placeholders+`)`, args...)
+	base, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE(a.user_release_year,a.release_year,0),a.disc_count,COALESCE(a.user_performed_by,a.performed_by,''),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_version,a.version,''),a.added_at,a.updated_at,a.is_favorite,COALESCE(a.user_album_type,''),COALESCE(a.album_type,''),COALESCE(a.album_type_source,'') FROM albums a WHERE a.id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
+	kindInputs := make(map[int64]*releaseKindInput, len(ids))
 	for base.Next() {
 		v := Album{Artist: "Unknown Artist"}
 		var favorite int
-		if err = base.Scan(&v.ID, &v.Title, &v.Year, &v.DiscCount, &v.PerformedBy, &v.AlbumType, &v.Version, &v.AddedAt, &v.UpdatedAt, &favorite); err != nil {
+		in := &releaseKindInput{}
+		if err = base.Scan(&v.ID, &v.Title, &v.Year, &v.DiscCount, &v.PerformedBy, &v.AlbumType, &v.Version, &v.AddedAt, &v.UpdatedAt, &favorite, &in.UserType, &in.StoredType, &in.Source); err != nil {
 			base.Close()
 			return nil, err
 		}
 		v.IsFavorite = favorite != 0
 		byID[v.ID] = &v
+		kindInputs[v.ID] = in
 	}
 	if err = base.Err(); err != nil {
 		base.Close()
@@ -206,6 +209,24 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 		func() error {
 			return numberHydration(`SELECT t.album_id, COUNT(*) FROM tracks t WHERE t.album_id IN (`+placeholders+`) GROUP BY t.album_id`, func(a *Album, v int64) { a.TrackCount = v })
 		},
+		// 发行类型推断输入：核心曲目数与时长（不含伴奏/off vocal/TV size）。
+		func() error {
+			rows, qerr := s.db.QueryContext(ctx, `SELECT t.album_id, COUNT(*), COALESCE(SUM(t.duration_ms),0) FROM tracks t WHERE t.album_id IN (`+placeholders+`) AND COALESCE(t.user_track_type,t.track_type,'regular') NOT IN ('instrumental','off_vocal','tv_size') GROUP BY t.album_id`, args...)
+			if qerr != nil {
+				return qerr
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var albumID, count, duration int64
+				if err = rows.Scan(&albumID, &count, &duration); err != nil {
+					return err
+				}
+				if in, ok := kindInputs[albumID]; ok {
+					in.CoreTracks, in.DurationMillis = count, duration
+				}
+			}
+			return rows.Err()
+		},
 		func() error {
 			return stringHydration(`SELECT pt.album_id, COALESCE(MAX(pp.last_played_at),'') FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id IN (`+placeholders+`) GROUP BY pt.album_id`, args, func(a *Album, v string) { a.LastPlayedAt = v })
 		},
@@ -222,6 +243,12 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 	}
 	if err = s.hydrateAlbumArtistLinks(ctx, placeholders, args, byID); err != nil {
 		return nil, err
+	}
+	for id, album := range byID {
+		if in, ok := kindInputs[id]; ok {
+			in.Title, in.DiscCount, in.TotalTracks = album.Title, album.DiscCount, album.TrackCount
+			album.ReleaseKind = resolveReleaseKind(*in)
+		}
 	}
 
 	result := make([]Album, 0, len(ids))

@@ -339,16 +339,21 @@ func groupArtistReleases(albums []storage.Album) []artistReleaseGroup {
 	groups := []artistReleaseGroup{
 		{Title: "专辑"},
 		{Title: "单曲与 EP"},
-		{Title: "合辑"},
+		{Title: "合辑与现场"},
 		{Title: "其他发行"},
 	}
 	for _, album := range albums {
-		switch strings.ToLower(strings.TrimSpace(album.AlbumType)) {
+		// ReleaseKind 已合并手动纠正、标签与本地推断；为空时回退 AlbumType。
+		kind := album.ReleaseKind
+		if kind == "" {
+			kind = album.AlbumType
+		}
+		switch strings.ToLower(strings.TrimSpace(kind)) {
 		case "single", "ep":
 			groups[1].Releases = append(groups[1].Releases, album)
-		case "compilation":
+		case "compilation", "live":
 			groups[2].Releases = append(groups[2].Releases, album)
-		case "soundtrack", "other":
+		case "soundtrack", "bootleg", "other":
 			groups[3].Releases = append(groups[3].Releases, album)
 		default:
 			groups[0].Releases = append(groups[0].Releases, album)
