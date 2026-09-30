@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type MetadataSourceSetting struct {
@@ -320,11 +322,18 @@ func (s *Store) confirmArtistCandidate(ctx context.Context, artistID, candidateI
 		return err
 	}
 	defer tx.Rollback()
+	var localName string
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, artistID).Scan(&localName); err != nil {
+		return err
+	}
 	var p ExternalArtistProfile
 	var aliases, tags, raw string
 	err = tx.QueryRowContext(ctx, `SELECT source,external_id,display_name,COALESCE(sort_name,''),COALESCE(json_extract(payload_json,'$.pageUrl'),''),COALESCE(json_extract(payload_json,'$.imageUrl'),''),COALESCE(json_extract(payload_json,'$.biography'),''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(disambiguation,''),COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),payload_json FROM artist_match_candidates WHERE id=? AND artist_id=? AND status IN ('candidate','confirmed')`, candidateID, artistID).Scan(&p.Source, &p.ExternalID, &p.DisplayName, &p.SortName, &p.PageURL, &p.RemoteImageURL, &p.Biography, &p.Country, &p.ArtistType, &p.Disambiguation, &aliases, &tags, &raw)
 	if err != nil {
 		return err
+	}
+	if metadata.CompositeArtistCredit(localName) {
+		return ErrCompositeArtistIdentity
 	}
 	if err = artistIdentityOwnerCheck(ctx, tx, artistID, p.Source, p.ExternalID); err != nil {
 		return err

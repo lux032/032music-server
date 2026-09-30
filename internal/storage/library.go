@@ -231,6 +231,7 @@ func (s *Store) LatestScanJob(ctx context.Context) (ScanJob, error) {
 }
 
 func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
+	input.Metadata.Artists = metadata.ArtistNames(input.Metadata.Raw, input.Metadata.Artists)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

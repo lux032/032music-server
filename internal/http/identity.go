@@ -221,6 +221,8 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 		var conflict *storage.ArtistExternalIDConflictError
 		if errors.As(err, &conflict) {
 			http.Redirect(w, r, fmt.Sprintf("/admin/artists/%d?identityConflict=%d", id, candidateID), http.StatusSeeOther)
+		} else if errors.Is(err, storage.ErrCompositeArtistIdentity) {
+			redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", id), err.Error())
 		} else if errors.Is(err, sql.ErrNoRows) {
 			redirectWithNotice(w, r, fmt.Sprintf("/admin/artists/%d", id), "候选不存在或已变化，请重新匹配")
 		} else {
@@ -374,6 +376,25 @@ func (a *App) handleMergeArtist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectWithNotice(w, r, "/admin/artists/"+strconv.FormatInt(targetID, 10), "歌手合并完成，可在合并历史中回退；操作 #"+strconv.FormatInt(operation, 10))
+}
+
+func (a *App) handleResetArtistIdentity(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	returnTo := fmt.Sprintf("/admin/artists/%d", id)
+	if r.FormValue("confirm") != "1" {
+		redirectWithNotice(w, r, returnTo, "请二次确认解除身份，未修改数据")
+		return
+	}
+	err := a.store.ResetArtistIdentity(r.Context(), id, r.FormValue("source"), r.FormValue("expectedID"))
+	if err != nil {
+		redirectWithNotice(w, r, returnTo, "身份已变化或解除失败，请刷新后核对")
+		return
+	}
+	redirectWithNotice(w, r, returnTo, "已解除指定来源的身份并清除相关自动资料；歌曲关联和自定义资料保持不变，请重新匹配。其他来源如有错误需分别解除。")
 }
 
 func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request) {

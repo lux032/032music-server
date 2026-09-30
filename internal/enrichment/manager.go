@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -297,6 +298,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	}
 	var candidates []storage.ArtistCandidate
 	unsafeTaggedIdentity := false
+	compositeCredit := metadata.CompositeArtistCredit(artist.Name)
 	queriedSources := 0
 	successfulSources := 0
 	var mbProfiles = map[string]storage.ExternalArtistProfile{}
@@ -365,8 +367,10 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	if queriedSources > 0 && successfulSources == 0 {
 		return MatchResult{}, errors.New("all enabled metadata sources failed")
 	}
+	confirmedMBID, _ := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
+	independentLastFM := confirmedMBID == ""
 	for i := range candidates {
-		if candidates[i].MBID != "" && lastProfile != nil && lastProfile.ExternalID == candidates[i].MBID {
+		if independentLastFM && candidates[i].Source == "musicbrainz" && candidates[i].MBID != "" && lastProfile != nil && lastProfile.ExternalID == candidates[i].MBID && artistProfileNameMatches(artist.Name, *lastProfile) {
 			candidates[i].Score = 98
 			candidates[i].Evidence = append(candidates[i].Evidence, "MusicBrainz 与 Last.fm 返回相同 MBID")
 		}
@@ -374,19 +378,21 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	if lastProfile != nil && lastProfile.ExternalID != "" {
 		for i := range candidates {
 			if candidates[i].Source == "lastfm" {
-				if _, ok := mbProfiles[lastProfile.ExternalID]; ok {
+				if profile, ok := mbProfiles[lastProfile.ExternalID]; ok && independentLastFM && artistProfileNameMatches(artist.Name, profile) && artistProfileNameMatches(artist.Name, *lastProfile) {
 					candidates[i].Score = 98
 					candidates[i].Evidence = append(candidates[i].Evidence, "MusicBrainz 与 Last.fm 返回相同 MBID")
-				} else if confirmedMBID, confirmedErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz"); confirmedErr == nil && confirmedMBID == lastProfile.ExternalID {
-					candidates[i].Score = 98
-					candidates[i].Evidence = append(candidates[i].Evidence, "Last.fm MBID 与已确认的 MusicBrainz 身份一致")
+				} else if confirmedMBID == lastProfile.ExternalID {
+					candidates[i].Evidence = append(candidates[i].Evidence, "Last.fm 查询沿用已绑定 MusicBrainz 身份，不作为独立确认依据")
 				}
 			}
 		}
 	}
 	// Agreement between sources does not validate a misattributed file tag.
-	if unsafeTaggedIdentity {
+	if unsafeTaggedIdentity || compositeCredit {
 		for i := range candidates {
+			if compositeCredit {
+				candidates[i].Evidence = append(candidates[i].Evidence, "疑似合作署名，禁止自动绑定个人身份；请先修正艺术家关系")
+			}
 			if candidates[i].Score >= 92 {
 				candidates[i].Score = 85
 			}

@@ -144,7 +144,7 @@
               <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">已核对是同一歌手，确认合并</button></div>
             </form>
           </dialog>
-          {{else}}<p>该身份所属歌手已合并到当前歌手，无需再次合并；身份绑定保持不变。</p>{{end}}
+          {{else}}<p>当前情况不适合直接合并：可能涉及合作署名，或身份所属歌手已合并到当前歌手。请打开已绑定歌手页面核对并解除错误身份；不要将个人歌手合并到合作署名。</p>{{end}}
         </section>
         {{end}}
         <section class="identity-panel">
@@ -154,6 +154,19 @@
             <strong>{{.Source}}</strong>
             <span>{{.DisplayName}}</span>
             <code>{{.ExternalID}}</code>
+            <button type="button" class="secondary-button" data-dialog-open="identity-reset-{{.Source}}">解除错误身份</button>
+            <dialog id="identity-reset-{{.Source}}" class="work-dialog danger-dialog">
+              <form method="post" action="/admin/artists/{{$.Artist.ID}}/identity/reset">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="source" value="{{.Source}}">
+                <input type="hidden" name="expectedID" value="{{.ExternalID}}">
+                <input type="hidden" name="confirm" value="1">
+                <h2>确认解除 {{.Source}} 身份</h2>
+                <p>本地歌手：{{$.Artist.Name}}；外部资料：{{.DisplayName}}（{{.ExternalID}}）。</p>
+                <p>移除此来源的绑定与审核记录，并清除相关自动简介和图片缓存。不会删除歌曲、变更艺术家关联或修改自定义资料。其他来源不会自动解绑。</p>
+                <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">确认解除，重新审核</button></div>
+              </form>
+            </dialog>
             {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
           </article>
           {{else}}
@@ -168,6 +181,7 @@
             <strong>{{.DisplayName}}</strong>
             <span>{{.Source}} · {{.Score}} 分</span>
             <small>{{.Disambiguation}} {{.Country}}</small>
+            {{range .Evidence}}<p class="field-hint">{{.}}</p>{{end}}
             <div class="candidate-actions">
               <form method="post" action="/admin/artists/{{$.Artist.ID}}/confirm/{{.ID}}">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type ArtistExternalIDConflictError struct {
@@ -17,6 +18,7 @@ func (e *ArtistExternalIDConflictError) Error() string {
 }
 
 var ErrIdentityConflictStale = errors.New("身份归属或候选已变化，未执行合并")
+var ErrCompositeArtistIdentity = errors.New("疑似合作署名，不能绑定单个艺术家的身份；请先核对 ARTISTS 标签并完整重扫，或手动修正署名")
 
 type artistIdentityQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -59,7 +61,12 @@ func artistIdentityConflict(ctx context.Context, db artistIdentityQuerier, artis
 	if err = db.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, v.TargetArtistID).Scan(&v.TargetName); err != nil {
 		return v, err
 	}
-	v.CanMerge = !sourceMerged.Valid && v.TargetArtistID != artistID
+	var sourceName string
+	if err = db.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, artistID).Scan(&sourceName); err != nil {
+		return v, err
+	}
+	// A formatted collaboration is not an alias of one of its contributors.
+	v.CanMerge = !sourceMerged.Valid && v.TargetArtistID != artistID && !metadata.CompositeArtistCredit(v.TargetName) && !metadata.CompositeArtistCredit(sourceName)
 	return v, nil
 }
 func (s *Store) ArtistIdentityConflict(ctx context.Context, artistID, candidateID int64) (ArtistIdentityConflict, error) {

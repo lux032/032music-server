@@ -707,6 +707,7 @@ func parseNumberPair(number, total string) (int, int) {
 }
 
 func applyFallbacks(result AudioMetadata, path string) AudioMetadata {
+	result.Artists = ArtistNames(result.Raw, result.Artists)
 	if result.TrackNumber < 0 {
 		result.TrackNumber = 0
 	}

@@ -319,6 +319,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/artists/{id}/image/reset", a.requireAdmin(http.HandlerFunc(a.handleResetArtistImage)))
 	mux.Handle("POST /admin/artists/{id}/confirm/{candidate}", a.requireAdmin(http.HandlerFunc(a.handleConfirmArtistMatch)))
 	mux.Handle("POST /admin/artists/{id}/identity-conflict/{candidate}/merge", a.requireAdmin(http.HandlerFunc(a.handleMergeIdentityConflict)))
+	mux.Handle("POST /admin/artists/{id}/identity/reset", a.requireAdmin(http.HandlerFunc(a.handleResetArtistIdentity)))
 	mux.Handle("POST /admin/artists/{id}/reject/{candidate}", a.requireAdmin(http.HandlerFunc(a.handleRejectArtistMatch)))
 	mux.Handle("POST /admin/artists/{id}/merge", a.requireAdmin(http.HandlerFunc(a.handleMergeArtist)))
 	mux.Handle("GET /admin/settings/metadata", a.requireAdmin(http.HandlerFunc(a.handleMetadataSettings)))
