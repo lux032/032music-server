@@ -10,6 +10,9 @@
 .run
 .idea
 .vscode
+.claude
+.pi
+docker设备数据库
 data
 bin
 *.db
