@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -230,4 +233,71 @@ func TestEnrichmentPageRunningCardRender(t *testing.T) {
 		}
 	}
 	_ = run
+}
+
+// 限流暂停的活动卡片显示"将于 … 自动继续"，重复启动给出自动恢复提示；
+// 轮次用尽的暂停原因有中文映射。
+func TestRunTasksAutoResumeUIAndNotice(t *testing.T) {
+	_, s, handler, _, cookie, csrf := rateLimitTestApp(t)
+	ctx := context.Background()
+	if got := pauseReasonLabel("rate_limit_exhausted"); got != "自动重试已用尽" {
+		t.Fatal(got)
+	}
+	// 匹配页：带 waiting_until 的限流暂停任务。
+	artists, _ := s.ArtistsForMatching(ctx)
+	artistRun, err := s.CreateDurableArtistRun(ctx, []storage.ArtistRunItemInput{{Artist: artists[0]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.ClaimArtistRunItem(ctx, artistRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Minute).UTC()
+	if err = s.RecordArtistRunWait(ctx, storage.ArtistRunCheckpoint{RunID: artistRun, ItemID: item.ID, ClaimToken: item.ClaimToken}, "musicbrainz", deadline, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.TransitionArtistRun(ctx, artistRun, "pause", "rate_limit_count"); err != nil {
+		t.Fatal(err)
+	}
+	body := adminGetBody(t, handler, cookie, "/admin/matches")
+	if !strings.Contains(body, "自动继续") || !strings.Contains(body, "暂停原因：同一对象连续限流") {
+		t.Fatal("paused rate-limit card must announce auto resume")
+	}
+	rec := postAdminForm(t, handler, cookie, csrf, "/admin/matches/run", nil)
+	notice, _ := url.QueryUnescape(rec.Header().Get("Location"))
+	if rec.Code != 303 || !strings.Contains(notice, "自动继续") {
+		t.Fatalf("start conflict notice: %d %s", rec.Code, notice)
+	}
+	if err = s.TransitionArtistRun(ctx, artistRun, "cancel", "manual"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 增强页：同样的限流暂停任务与启动提示。
+	enrichmentRun, err := s.CreateDurableEnrichmentRun(ctx, "works", 0, true, []string{"works"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PrepareEnrichmentStage(ctx, enrichmentRun.ID, enrichmentRun.Epoch, "works", []storage.EnrichmentItemInput{{ObjectID: 1, Parameters: json.RawMessage(`{}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	enrichmentItem, err := s.ClaimEnrichmentItem(ctx, enrichmentRun.ID, enrichmentRun.Epoch, "works")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RecordEnrichmentWait(ctx, storage.EnrichmentCheckpoint{RunID: enrichmentRun.ID, ItemID: enrichmentItem.ID, Epoch: enrichmentRun.Epoch, Token: enrichmentItem.Token}, "bangumi", deadline, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.TransitionEnrichmentRun(ctx, enrichmentRun.ID, "pause", "rate_limit_wait_budget"); err != nil {
+		t.Fatal(err)
+	}
+	body = adminGetBody(t, handler, cookie, "/admin/enrichment")
+	if !strings.Contains(body, "自动继续") {
+		t.Fatal("enrichment paused rate-limit card must announce auto resume")
+	}
+	rec = postAdminForm(t, handler, cookie, csrf, "/admin/enrichment/run", url.Values{"scope": {"all"}})
+	notice, _ = url.QueryUnescape(rec.Header().Get("Location"))
+	if rec.Code != 303 || !strings.Contains(notice, "自动继续") {
+		t.Fatalf("enrichment start conflict notice: %d %s", rec.Code, notice)
+	}
 }

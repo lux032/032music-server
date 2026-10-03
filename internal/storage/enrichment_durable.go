@@ -29,6 +29,24 @@ type DurableEnrichmentRun struct {
 	Epoch                                 int64
 	PauseReason, WaitSource, WaitingUntil string
 	WaitTotalMS, BudgetBaselineMS         int64
+	AutoResumeCount                       int
+}
+
+// MaxEnrichmentAutoResumeRounds caps automatic rate-limit recovery per run.
+const MaxEnrichmentAutoResumeRounds = 3
+
+// EnrichmentRunAutoResumeEligible reports whether a paused run may be resumed
+// by the automatic rate-limit scheduler. Manual pauses, storage errors and
+// exhausted rounds always wait for the user.
+func EnrichmentRunAutoResumeEligible(r DurableEnrichmentRun) bool {
+	if r.Status != "paused" || r.WaitingUntil == "" || r.AutoResumeCount >= MaxEnrichmentAutoResumeRounds {
+		return false
+	}
+	switch r.PauseReason {
+	case "rate_limit_count", "rate_limit_wait_budget", "server_restart":
+		return true
+	}
+	return false
 }
 
 func enrichmentWriteLock(ctx context.Context, tx *sql.Tx) error {
@@ -240,7 +258,7 @@ func (s *Store) DurableEnrichmentRun(ctx context.Context, id int64) (DurableEnri
 		return r, err
 	}
 	r.EnrichmentRun = base
-	err = s.db.QueryRowContext(ctx, `SELECT durable_version,epoch,pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms FROM enrichment_runs WHERE id=?`, id).Scan(&r.Version, &r.Epoch, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS)
+	err = s.db.QueryRowContext(ctx, `SELECT durable_version,epoch,pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM enrichment_runs WHERE id=?`, id).Scan(&r.Version, &r.Epoch, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
 	return r, err
 }
 func (s *Store) TransitionEnrichmentRun(ctx context.Context, id int64, action, reason string) error {
@@ -289,6 +307,32 @@ func (s *Store) transitionEnrichmentRun(ctx context.Context, id, epoch int64, ac
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE enrichment_runs SET status='running',epoch=epoch+1,pause_reason='',budget_baseline_ms=wait_total_ms WHERE id=?`, id)
+	case "auto_resume":
+		// Automatic recovery re-validates the persisted state instead of
+		// trusting the scheduler: a user pause/cancel that landed first wins.
+		if status != "paused" {
+			return ErrEnrichmentRunState
+		}
+		var reason, waiting string
+		var autoCount int
+		if err = tx.QueryRowContext(ctx, `SELECT pause_reason,COALESCE(waiting_until,''),auto_resume_count FROM enrichment_runs WHERE id=?`, id).Scan(&reason, &waiting, &autoCount); err != nil {
+			return err
+		}
+		eligible := DurableEnrichmentRun{EnrichmentRun: EnrichmentRun{Status: status}, PauseReason: reason, WaitingUntil: waiting, AutoResumeCount: autoCount}
+		if !EnrichmentRunAutoResumeEligible(eligible) {
+			return ErrEnrichmentRunState
+		}
+		var active int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM enrichment_runs WHERE id<>? AND status IN ('queued','running')`, id).Scan(&active); err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrEnrichmentRunState
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE enrichment_run_items SET status='pending',claim_token=claim_token+1,rate_limit_count=0 WHERE run_id=? AND status<>'completed'`, id); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE enrichment_runs SET status='running',epoch=epoch+1,pause_reason='',budget_baseline_ms=wait_total_ms,auto_resume_count=auto_resume_count+1 WHERE id=?`, id)
 	case "pause", "cancel", "fail":
 		if status != "running" && !(action == "cancel" && status == "paused") {
 			return ErrEnrichmentRunState
@@ -328,7 +372,9 @@ func (s *Store) transitionEnrichmentRun(ctx context.Context, id, epoch int64, ac
 	return tx.Commit()
 }
 func (s *Store) RecoverDurableEnrichmentRuns(ctx context.Context) (int64, error) {
-	r, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status='paused',pause_reason='server_restart' WHERE durable_version=1 AND status IN ('queued','running')`)
+	// 与 RecoverDurableArtistRuns 同一规则：轮次已尽的限流等待任务标记为
+	// rate_limit_exhausted，页面与后端对“是否自动继续”保持一致。
+	r, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status='paused',pause_reason=CASE WHEN pause_reason='' AND waiting_until IS NOT NULL AND waiting_until<>'' AND auto_resume_count>=? THEN 'rate_limit_exhausted' WHEN pause_reason='' THEN 'server_restart' ELSE pause_reason END WHERE durable_version=1 AND status IN ('queued','running')`, MaxEnrichmentAutoResumeRounds)
 	if err != nil {
 		return 0, err
 	}
@@ -450,6 +496,14 @@ func (s *Store) RecordEnrichmentWait(ctx context.Context, c EnrichmentCheckpoint
 		reason = "rate_limit_wait_budget"
 	}
 	if reason != "" {
+		var autoCount int
+		if err = tx.QueryRowContext(ctx, `SELECT auto_resume_count FROM enrichment_runs WHERE id=?`, c.RunID).Scan(&autoCount); err != nil {
+			return err
+		}
+		if autoCount >= MaxEnrichmentAutoResumeRounds {
+			// 自动恢复轮次用尽：标记为需人工处理，绝不无限自动重试。
+			reason = "rate_limit_exhausted"
+		}
 		if _, err = tx.ExecContext(ctx, `UPDATE enrichment_runs SET status='paused',pause_reason=? WHERE id=?`, reason, c.RunID); err != nil {
 			return err
 		}
@@ -584,6 +638,36 @@ func (s *Store) UnfinishedDurableEnrichmentRun(ctx context.Context) (DurableEnri
 		return DurableEnrichmentRun{}, err
 	}
 	return s.DurableEnrichmentRun(ctx, id)
+}
+
+// EnrichmentRunsAwaitingAutoResume lists paused rate-limit runs the automatic
+// scheduler should arm a timer for, including runs recovered after a restart.
+func (s *Store) EnrichmentRunsAwaitingAutoResume(ctx context.Context) ([]DurableEnrichmentRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM enrichment_runs WHERE durable_version=1 AND status='paused' AND waiting_until IS NOT NULL AND waiting_until<>'' AND pause_reason IN ('rate_limit_count','rate_limit_wait_budget','server_restart') AND auto_resume_count<? ORDER BY id`, MaxEnrichmentAutoResumeRounds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	var runs []DurableEnrichmentRun
+	for _, id := range ids {
+		run, e := s.DurableEnrichmentRun(ctx, id)
+		if e != nil {
+			return nil, e
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
 }
 
 func (s *Store) CountEnrichmentRuns(ctx context.Context) (int, error) {

@@ -41,6 +41,25 @@ type DurableArtistRun struct {
 	DurableVersion                        int
 	PauseReason, WaitSource, WaitingUntil string
 	WaitTotalMS, BudgetBaselineMS         int64
+	AutoResumeCount                       int
+}
+
+// MaxArtistAutoResumeRounds caps automatic rate-limit recovery per run.
+const MaxArtistAutoResumeRounds = 3
+
+// ArtistRunAutoResumeEligible reports whether a paused run may be resumed by
+// the automatic rate-limit scheduler: it carries a rate-limit deadline and a
+// pause cause that is never a human or storage decision. Manual pauses,
+// storage errors and exhausted rounds always wait for the user.
+func ArtistRunAutoResumeEligible(r DurableArtistRun) bool {
+	if r.Status != "paused" || r.WaitingUntil == "" || r.AutoResumeCount >= MaxArtistAutoResumeRounds {
+		return false
+	}
+	switch r.PauseReason {
+	case "rate_limit_count", "rate_limit_wait_budget", "server_restart":
+		return true
+	}
+	return false
 }
 
 func artistRunWriteLock(ctx context.Context, tx *sql.Tx) error {
@@ -217,6 +236,32 @@ func (s *Store) TransitionArtistRun(ctx context.Context, id int64, action, reaso
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE artist_match_runs SET status='running',pause_reason='',budget_baseline_ms=wait_total_ms WHERE id=?`, id)
+	case "auto_resume":
+		// Automatic recovery re-validates the persisted state instead of
+		// trusting the scheduler: a user pause/cancel that landed first wins.
+		if status != "paused" {
+			return ErrArtistRunState
+		}
+		var reason, waiting string
+		var autoCount int
+		if err = tx.QueryRowContext(ctx, `SELECT pause_reason,COALESCE(waiting_until,''),auto_resume_count FROM artist_match_runs WHERE id=?`, id).Scan(&reason, &waiting, &autoCount); err != nil {
+			return err
+		}
+		eligible := DurableArtistRun{ArtistMatchRun: ArtistMatchRun{Status: status}, PauseReason: reason, WaitingUntil: waiting, AutoResumeCount: autoCount}
+		if !ArtistRunAutoResumeEligible(eligible) {
+			return ErrArtistRunState
+		}
+		var active int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM artist_match_runs WHERE status IN ('running','queued') AND id<>?`, id).Scan(&active); err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrArtistRunState
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_run_items SET status='pending',rate_limit_count=0,claim_token=claim_token+1 WHERE run_id=? AND status<>'completed'`, id); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE artist_match_runs SET status='running',pause_reason='',budget_baseline_ms=wait_total_ms,auto_resume_count=auto_resume_count+1 WHERE id=?`, id)
 	case "pause", "cancel", "fail":
 		if status != "running" && !(action == "cancel" && status == "paused") {
 			return ErrArtistRunState
@@ -251,7 +296,11 @@ func (s *Store) TransitionArtistRun(ctx context.Context, id int64, action, reaso
 }
 
 // RecoverDurableArtistRuns never resumes network work and preserves deadlines
-// and historical wait. Resume alone grants a new budget baseline.
+// and historical wait. An existing pause cause is preserved so the automatic
+// rate-limit scheduler can still tell a waiting run apart from a manual stop.
+// A run that already spent its auto-resume rounds is marked exhausted: its
+// rounds are genuinely used up, and the page must not promise an automatic
+// continuation the backend will never perform.
 func (s *Store) RecoverDurableArtistRuns(ctx context.Context) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -261,7 +310,7 @@ func (s *Store) RecoverDurableArtistRuns(ctx context.Context) (int64, error) {
 	if err = artistRunWriteLock(ctx, tx); err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE artist_match_runs SET status='paused',pause_reason='server_restart' WHERE durable_version=1 AND status IN ('running','queued')`)
+	result, err := tx.ExecContext(ctx, `UPDATE artist_match_runs SET status='paused',pause_reason=CASE WHEN pause_reason='' AND waiting_until IS NOT NULL AND waiting_until<>'' AND auto_resume_count>=? THEN 'rate_limit_exhausted' WHEN pause_reason='' THEN 'server_restart' ELSE pause_reason END WHERE durable_version=1 AND status IN ('running','queued')`, MaxArtistAutoResumeRounds)
 	if err != nil {
 		return 0, err
 	}
@@ -276,7 +325,7 @@ func (s *Store) RecoverDurableArtistRuns(ctx context.Context) (int64, error) {
 }
 func (s *Store) DurableArtistRun(ctx context.Context, id int64) (DurableArtistRun, error) {
 	var r DurableArtistRun
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,skipped_artists,no_result_artists,COALESCE(current_artist,''),COALESCE(error_message,''),durable_version,pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms FROM artist_match_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Total, &r.Processed, &r.Matched, &r.Review, &r.Failed, &r.Skipped, &r.NoResult, &r.Current, &r.ErrorMessage, &r.DurableVersion, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS)
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,skipped_artists,no_result_artists,COALESCE(current_artist,''),COALESCE(error_message,''),durable_version,pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_match_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Total, &r.Processed, &r.Matched, &r.Review, &r.Failed, &r.Skipped, &r.NoResult, &r.Current, &r.ErrorMessage, &r.DurableVersion, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
 	return r, err
 }
 
@@ -352,6 +401,14 @@ func (s *Store) RecordArtistRunWait(ctx context.Context, c ArtistRunCheckpoint, 
 		reason = "rate_limit_wait_budget"
 	}
 	if reason != "" && runStatus == "running" {
+		var autoCount int
+		if err = tx.QueryRowContext(ctx, `SELECT auto_resume_count FROM artist_match_runs WHERE id=?`, c.RunID).Scan(&autoCount); err != nil {
+			return err
+		}
+		if autoCount >= MaxArtistAutoResumeRounds {
+			// 自动恢复轮次用尽：标记为需人工处理，绝不无限自动重试。
+			reason = "rate_limit_exhausted"
+		}
 		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_runs SET status='paused',pause_reason=? WHERE id=?`, reason, c.RunID); err != nil {
 			return err
 		}
@@ -429,6 +486,36 @@ func (s *Store) UnfinishedDurableArtistRun(ctx context.Context) (DurableArtistRu
 		return DurableArtistRun{}, err
 	}
 	return s.DurableArtistRun(ctx, id)
+}
+
+// ArtistRunsAwaitingAutoResume lists paused rate-limit runs the automatic
+// scheduler should arm a timer for, including runs recovered after a restart.
+func (s *Store) ArtistRunsAwaitingAutoResume(ctx context.Context) ([]DurableArtistRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM artist_match_runs WHERE durable_version=1 AND status='paused' AND waiting_until IS NOT NULL AND waiting_until<>'' AND pause_reason IN ('rate_limit_count','rate_limit_wait_budget','server_restart') AND auto_resume_count<? ORDER BY id`, MaxArtistAutoResumeRounds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	var runs []DurableArtistRun
+	for _, id := range ids {
+		run, e := s.DurableArtistRun(ctx, id)
+		if e != nil {
+			return nil, e
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
 }
 
 // ArtistRunItemHasSource distinguishes unfinished work in this run from a

@@ -103,7 +103,10 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 					deadline = shared
 				}
 				if e = m.store.RecordArtistRunWait(ctx, checkpoint, rate.Source, deadline, 0, !rate.CooldownOnly); e != nil {
-					if !errors.Is(e, storage.ErrArtistWaitBudget) {
+					if errors.Is(e, storage.ErrArtistWaitBudget) {
+						// 预算耗尽已持久化暂停：到点后自动继续，不再等人。
+						m.scheduleArtistAutoResume(runID)
+					} else if !errors.Is(e, storage.ErrArtistRunState) {
 						m.artistRuntimeFailure(runID, e)
 					}
 					return
@@ -167,7 +170,9 @@ func (m *Manager) waitArtistSource(ctx context.Context, c storage.ArtistRunCheck
 		}
 		err = m.store.RecordArtistRunWait(context.Background(), c, source, deadline, elapsed, false)
 		if err != nil {
-			if !errors.Is(err, storage.ErrArtistWaitBudget) && !errors.Is(err, storage.ErrArtistRunState) {
+			if errors.Is(err, storage.ErrArtistWaitBudget) {
+				m.scheduleArtistAutoResume(c.RunID)
+			} else if !errors.Is(err, storage.ErrArtistRunState) {
 				m.artistRuntimeFailure(c.RunID, err)
 			}
 			return err

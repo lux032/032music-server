@@ -28,6 +28,9 @@ type Manager struct {
 	cooldownMu   sync.Mutex
 	blockedUntil map[string]time.Time
 	now          func() time.Time
+	// autoResumeTimers 管理限流自动恢复的唤醒定时器（key 为 kind:runID）。
+	autoResumeMu     sync.Mutex
+	autoResumeTimers map[string]*autoResumeEntry
 
 	baseCtx             context.Context
 	store               *storage.Store
@@ -105,7 +108,7 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
 	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {
 		logger.Error("pause interrupted enrichment runs", "error", err)
 	}
@@ -277,6 +280,7 @@ func (m *Manager) stopArtistRun(runID int64, action string) error {
 		}
 		return err
 	}
+	m.cancelAutoResume(artistAutoResumeKind, runID)
 	if m.artistRunID == runID && m.artistCancel != nil {
 		m.artistCancel()
 	}
@@ -303,6 +307,7 @@ func (m *Manager) ResumeArtistMatching(ctx context.Context, runID int64) error {
 	if err := m.store.TransitionArtistRun(ctx, runID, "resume", ""); err != nil {
 		return err
 	}
+	m.cancelAutoResume(artistAutoResumeKind, runID)
 	m.launchArtistRunLocked(runID)
 	return nil
 }

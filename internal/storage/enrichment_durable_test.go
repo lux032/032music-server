@@ -203,7 +203,7 @@ func TestMigration038RunnerForeignKeysAndLegacyRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, err := s.DurableEnrichmentRun(ctx, legacy.ID)
-	if err != nil || row.Version != 0 || !row.Force || row.Status != "completed" {
+	if err != nil || row.Version != 0 || !row.Force || row.Status != "completed" || row.AutoResumeCount != 0 {
 		t.Fatal(row, err)
 	}
 	for _, index := range []string{"idx_enrichment_runs_status", "idx_enrichment_items_pending"} {
@@ -222,5 +222,135 @@ func TestMigration038RunnerForeignKeysAndLegacyRows(t *testing.T) {
 	}
 	if _, err = s.db.ExecContext(ctx, `INSERT INTO enrichment_run_items(run_id,stage,object_id,parameters_json) VALUES(999999,'tracks',1,'{}')`); err == nil {
 		t.Fatal("run FK not enforced")
+	}
+}
+
+// 限流预算耗尽后自动恢复：auto_resume 增加轮次计数；轮次用尽后进入
+// rate_limit_exhausted，不再允许自动恢复，但手动继续始终可用。
+func TestDurableEnrichmentAutoResumeRoundsAndExhausted(t *testing.T) {
+	s, ctx := openEnrichmentTestStore(t)
+	run, err := s.CreateDurableEnrichmentRun(ctx, "works", 0, true, []string{"works"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PrepareEnrichmentStage(ctx, run.ID, run.Epoch, "works", []EnrichmentItemInput{{ObjectID: 1, Parameters: json.RawMessage(`{}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Hour).UTC()
+	claim := func() EnrichmentCheckpoint {
+		t.Helper()
+		current, err := s.DurableEnrichmentRun(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		item, err := s.ClaimEnrichmentItem(ctx, run.ID, current.Epoch, "works")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return EnrichmentCheckpoint{run.ID, item.ID, current.Epoch, item.Token}
+	}
+	pauseOnce := func(c EnrichmentCheckpoint) {
+		t.Helper()
+		for {
+			err = s.RecordEnrichmentWait(ctx, c, "bangumi", deadline, time.Minute, true)
+			if errors.Is(err, ErrEnrichmentWaitBudget) {
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	c := claim()
+	pauseOnce(c)
+	paused, _ := s.DurableEnrichmentRun(ctx, run.ID)
+	if paused.Status != "paused" || paused.PauseReason != "rate_limit_count" || !EnrichmentRunAutoResumeEligible(paused) {
+		t.Fatal(paused)
+	}
+	for round := 1; round <= MaxEnrichmentAutoResumeRounds; round++ {
+		if err = s.TransitionEnrichmentRun(ctx, run.ID, "auto_resume", ""); err != nil {
+			t.Fatal(round, err)
+		}
+		resumed, _ := s.DurableEnrichmentRun(ctx, run.ID)
+		if resumed.Status != "running" || resumed.AutoResumeCount != round {
+			t.Fatal(round, resumed)
+		}
+		c = claim()
+		pauseOnce(c)
+	}
+	paused, _ = s.DurableEnrichmentRun(ctx, run.ID)
+	if paused.Status != "paused" || paused.PauseReason != "rate_limit_exhausted" || EnrichmentRunAutoResumeEligible(paused) {
+		t.Fatal(paused)
+	}
+	if err = s.TransitionEnrichmentRun(ctx, run.ID, "auto_resume", ""); !errors.Is(err, ErrEnrichmentRunState) {
+		t.Fatal("exhausted run must not auto resume", err)
+	}
+	if err = s.TransitionEnrichmentRun(ctx, run.ID, "resume", ""); err != nil {
+		t.Fatal("manual resume stays available after exhaustion", err)
+	}
+	// 扫描过滤：手动暂停（即使有 waiting_until）与轮次用尽都不被拾起。
+	if err = s.TransitionEnrichmentRun(ctx, run.ID, "pause", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := s.EnrichmentRunsAwaitingAutoResume(ctx)
+	if err != nil || len(runs) != 0 {
+		t.Fatal(runs, err)
+	}
+	// Recover 不覆盖已有暂停原因。
+	if _, err = s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status='running' WHERE id=?`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RecoverDurableEnrichmentRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered, _ := s.DurableEnrichmentRun(ctx, run.ID)
+	if recovered.PauseReason != "manual" {
+		t.Fatal("recover must not overwrite an existing pause reason", recovered.PauseReason)
+	}
+}
+
+// M-1 回归（增强侧镜像）：轮次已尽的限流等待任务经 Recover 后标记
+// rate_limit_exhausted，不再被扫描选中；轮次未尽仍为 server_restart。
+func TestDurableEnrichmentRecoverMarksExhaustedWaitingRun(t *testing.T) {
+	s, ctx := openEnrichmentTestStore(t)
+	run, err := s.CreateDurableEnrichmentRun(ctx, "works", 0, true, []string{"works"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PrepareEnrichmentStage(ctx, run.ID, run.Epoch, "works", []EnrichmentItemInput{{ObjectID: 1, Parameters: json.RawMessage(`{}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.ClaimEnrichmentItem(ctx, run.ID, run.Epoch, "works")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := EnrichmentCheckpoint{run.ID, item.ID, run.Epoch, item.Token}
+	deadline := time.Now().Add(time.Hour).UTC()
+	if err = s.RecordEnrichmentWait(ctx, c, "bangumi", deadline, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE enrichment_runs SET auto_resume_count=? WHERE id=?`, MaxEnrichmentAutoResumeRounds, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.RecoverDurableEnrichmentRuns(ctx); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	r, _ := s.DurableEnrichmentRun(ctx, run.ID)
+	if r.Status != "paused" || r.PauseReason != "rate_limit_exhausted" || EnrichmentRunAutoResumeEligible(r) {
+		t.Fatal(r)
+	}
+	runs, err := s.EnrichmentRunsAwaitingAutoResume(ctx)
+	if err != nil || len(runs) != 0 {
+		t.Fatal("exhausted run must not be picked by the auto-resume scan", runs, err)
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status='running',pause_reason='',auto_resume_count=1 WHERE id=?`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RecoverDurableEnrichmentRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.DurableEnrichmentRun(ctx, run.ID)
+	if r.PauseReason != "server_restart" || !EnrichmentRunAutoResumeEligible(r) {
+		t.Fatal(r)
 	}
 }

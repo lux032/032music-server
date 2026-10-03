@@ -199,6 +199,9 @@ func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 			message = "没有需要检查的艺术家"
 		} else if errors.Is(err, storage.ErrArtistRunState) || errors.Is(err, enrichment.ErrRunNotActive) {
 			message = "已有活动或暂停任务，请查看任务并手动继续"
+			if run, e := a.store.UnfinishedDurableArtistRun(r.Context()); e == nil && storage.ArtistRunAutoResumeEligible(run) {
+				message = autoResumeNotice(run.WaitingUntil)
+			}
 		} else {
 			a.logger.Error("start artist matching", "error", err)
 		}

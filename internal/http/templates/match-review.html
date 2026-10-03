@@ -35,7 +35,7 @@
         <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
         <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
         <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
-        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}</small>
+        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
         <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
         <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
         <div class="run-actions">

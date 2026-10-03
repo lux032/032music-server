@@ -158,6 +158,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"percentDone":            percentDone,
 		"clockOf":                clockOf,
 		"waitTotalLabel":         waitTotalLabel,
+		"runAutoResumes":         runAutoResumes,
 		"add":                    func(a, b int) int { return a + b },
 		"mul":                    func(a, b int) int { return a * b },
 		"subtract":               func(a, b int) int { return a - b },

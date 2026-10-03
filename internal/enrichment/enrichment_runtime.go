@@ -272,7 +272,10 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 						deadline = shared
 					}
 					if e = m.store.RecordEnrichmentWait(ctx, c, rate.Source, deadline, 0, !rate.CooldownOnly); e != nil {
-						if !errors.Is(e, storage.ErrEnrichmentWaitBudget) {
+						if errors.Is(e, storage.ErrEnrichmentWaitBudget) {
+							// 预算耗尽已持久化暂停：到点后自动继续，不再等人。
+							m.scheduleEnrichmentAutoResume(run.ID)
+						} else if !errors.Is(e, storage.ErrEnrichmentRunState) {
 							m.phaseRuntimeFailure(run.ID, run.Epoch, e)
 						}
 						return
@@ -352,7 +355,9 @@ func (m *Manager) waitEnrichmentSource(ctx context.Context, c storage.Enrichment
 			elapsed = 0
 		}
 		if err = m.store.RecordEnrichmentWait(context.Background(), c, source, deadline, elapsed, false); err != nil {
-			if !errors.Is(err, storage.ErrEnrichmentWaitBudget) && !errors.Is(err, storage.ErrEnrichmentRunState) {
+			if errors.Is(err, storage.ErrEnrichmentWaitBudget) {
+				m.scheduleEnrichmentAutoResume(c.RunID)
+			} else if !errors.Is(err, storage.ErrEnrichmentRunState) {
 				m.phaseRuntimeFailure(c.RunID, c.Epoch, err)
 			}
 			return err

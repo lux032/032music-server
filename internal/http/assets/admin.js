@@ -287,7 +287,7 @@
   // a leisurely 30s check; hidden tabs never poll. All updates use
   // textContent only — no untrusted markup is ever built.
   const RUN_STATUS_LABELS = { running: '进行中', paused: '已暂停', completed: '已完成', failed: '已失败', cancelled: '已停止', queued: '排队中' };
-  const RUN_PAUSE_REASONS = { manual: '手动暂停', server_restart: '服务重启中断', shutdown: '服务关闭', rate_limit_count: '同一对象连续限流', rate_limit_wait_budget: '限流等待超出 30 分钟预算', storage_or_runtime_error: '存储或运行错误' };
+  const RUN_PAUSE_REASONS = { manual: '手动暂停', server_restart: '服务重启中断', shutdown: '服务关闭', rate_limit_count: '同一对象连续限流', rate_limit_wait_budget: '限流等待超出 30 分钟预算', rate_limit_exhausted: '自动重试已用尽', storage_or_runtime_error: '存储或运行错误' };
   let runPollTimer = null;
   let runCountdownTimer = null;
 
@@ -301,12 +301,16 @@
     const source = el.dataset.waitSource || '';
     const until = Date.parse(el.dataset.waitingUntil || '');
     const total = runWaitTotalText(Number(el.dataset.waitTotalMs || 0));
+    // 只有限流原因的暂停才会到点自动继续；手动暂停绝不这样宣称。
+    const autoResume = el.dataset.runStatus === 'paused' && ['rate_limit_count', 'rate_limit_wait_budget', 'server_restart'].includes(el.dataset.pauseReason || '');
     if (source && Number.isFinite(until)) {
       const remaining = Math.max(0, Math.round((until - Date.now()) / 1000));
       if (remaining > 0) {
         const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
         const ss = String(remaining % 60).padStart(2, '0');
-        el.textContent = `限流 ${source} · 等待 ${mm}:${ss}（累计等待 ${total}）`;
+        el.textContent = autoResume
+          ? `限流 ${source} · ${mm}:${ss} 后自动继续（累计等待 ${total}）`
+          : `限流 ${source} · 等待 ${mm}:${ss}（累计等待 ${total}）`;
         return;
       }
     }
@@ -387,6 +391,8 @@
       wait.dataset.waitSource = run.waitSource || '';
       wait.dataset.waitingUntil = run.waitingUntil || '';
       wait.dataset.waitTotalMs = String(run.waitTotalMs || 0);
+      wait.dataset.runStatus = run.status || '';
+      wait.dataset.pauseReason = run.pauseReason || '';
       runWaitLine(wait);
     }
     setRunText(card, 'pauseReason', run.status === 'paused' && run.pauseReason ? `暂停原因：${RUN_PAUSE_REASONS[run.pauseReason] || run.pauseReason}` : '');

@@ -66,6 +66,9 @@ func run() error {
 
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
+	// 重启前处于限流等待的任务：恢复倒计时，到点自动继续；人工暂停与存储
+	// 错误的任务不会被扫描拾起，仍需在管理页手动处理。
+	enrichmentManager.ScanAutoResumeRuns()
 	enrichmentManager.SetPosterBackfillEnabled(cfg.WorkPosterBackfill)
 	// 批次 8：启动约 30 秒后自动补一次缺失的作品海报（替代原来的立即补全，
 	// 避免与启动扫描争抢）；开关关闭时不排期。

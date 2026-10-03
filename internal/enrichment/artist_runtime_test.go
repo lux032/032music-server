@@ -26,7 +26,9 @@ func artistFakeClock(m *Manager) {
 		return nil
 	}
 }
-func TestArtistRuntimeRateLimitWaitResumeBudget(t *testing.T) {
+
+// 限流预算耗尽后不再等人：持久化的 waiting_until 到点后自动继续同一任务。
+func TestArtistRuntimeRateLimitWaitAutoResume(t *testing.T) {
 	m, artist := independentArtistManager(t, false)
 	artistFakeClock(m)
 	calls := 0
@@ -43,16 +45,8 @@ func TestArtistRuntimeRateLimitWaitResumeBudget(t *testing.T) {
 	}
 	m.Wait()
 	state, err := m.store.DurableArtistRun(context.Background(), run)
-	if err != nil || state.Status != "paused" || state.Processed != 0 || calls != 3 || state.WaitTotalMS != 120000 {
+	if err != nil || state.Status != "completed" || state.Matched != 1 || state.AutoResumeCount != 1 || calls != 5 || state.WaitTotalMS != 120000 || state.BudgetBaselineMS != 120000 {
 		t.Fatal(state, calls, err)
-	}
-	if err = m.ResumeArtistMatching(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
-	m.Wait()
-	state, err = m.store.DurableArtistRun(context.Background(), run)
-	if err != nil || state.Status != "completed" || state.Matched != 1 || state.WaitTotalMS < 180000 || state.BudgetBaselineMS != 120000 {
-		t.Fatal(state, err)
 	}
 	if _, err = m.store.ArtistExternalID(context.Background(), artist, "musicbrainz"); err != nil {
 		t.Fatal(err)
@@ -135,7 +129,8 @@ func TestArtistRuntimePauseCancelInterruptWait(t *testing.T) {
 	}
 }
 
-func TestArtistRuntimeSharedExtensionAndWaitBudget(t *testing.T) {
+// 共享冷却拉长等待时同样自动恢复；自动轮次用尽后停在 rate_limit_exhausted。
+func TestArtistRuntimeSharedExtensionAutoResumeExhausted(t *testing.T) {
 	m, _ := independentArtistManager(t, false)
 	artistFakeClock(m)
 	baseSleep := m.sleep
@@ -147,7 +142,9 @@ func TestArtistRuntimeSharedExtensionAndWaitBudget(t *testing.T) {
 		}
 		return baseSleep(ctx, d)
 	}
+	calls := 0
 	m.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
 		return cannedResponse(429, http.Header{"Retry-After": {"60"}}, `{}`), nil
 	})
 	run, err := m.StartAll(context.Background())
@@ -156,14 +153,22 @@ func TestArtistRuntimeSharedExtensionAndWaitBudget(t *testing.T) {
 	}
 	m.Wait()
 	state, _ := m.store.DurableArtistRun(context.Background(), run)
-	if state.Status != "paused" || state.PauseReason != "rate_limit_wait_budget" || state.WaitTotalMS != 1800000 {
-		t.Fatal(state)
+	if state.Status != "paused" || state.PauseReason != "rate_limit_exhausted" || state.AutoResumeCount != 3 || calls != 10 {
+		t.Fatal(state, calls)
 	}
 	var count int
 	db := writableSafetyDB(t, m)
-	if err := db.QueryRow(`SELECT rate_limit_count FROM artist_match_run_items WHERE run_id=?`, run).Scan(&count); err != nil || count != 1 {
+	if err := db.QueryRow(`SELECT rate_limit_count FROM artist_match_run_items WHERE run_id=?`, run).Scan(&count); err != nil || count != 3 {
 		t.Fatal(count, err)
 	}
+	// 轮次用尽后自动恢复被拒绝，但手动继续始终可用。
+	if err = m.store.TransitionArtistRun(context.Background(), run, "auto_resume", ""); !errors.Is(err, storage.ErrArtistRunState) {
+		t.Fatal("exhausted run must not auto resume", err)
+	}
+	if err = m.ResumeArtistMatching(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
 }
 func TestArtistRuntimeCheckpointFailureStopsMoreRequests(t *testing.T) {
 	m, _ := independentArtistManager(t, false)
@@ -452,4 +457,184 @@ func TestArtistRuntimeRecoveredSourceSurvivesOtherFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 自动恢复定时器与用户取消竞态：取消先到时定时器必须静默放弃，绝不恢复。
+func TestArtistRuntimeAutoResumeCancelWins(t *testing.T) {
+	m, _ := independentArtistManager(t, false)
+	var mu sync.Mutex
+	now := time.Now()
+	m.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	sleeps := 0
+	var once sync.Once
+	timerStarted := make(chan struct{})
+	m.sleep = func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		sleeps++
+		n := sleeps
+		now = now.Add(d)
+		mu.Unlock()
+		if n <= 2 {
+			return nil
+		}
+		once.Do(func() { close(timerStarted) })
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	calls := 0
+	m.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return cannedResponse(429, http.Header{"Retry-After": {"60"}}, `{}`), nil
+	})
+	run, err := m.StartAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-timerStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto resume timer never armed")
+	}
+	state, _ := m.store.DurableArtistRun(context.Background(), run)
+	if state.Status != "paused" || state.PauseReason != "rate_limit_count" {
+		t.Fatal(state)
+	}
+	if err = m.CancelArtistMatching(run); err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	state, _ = m.store.DurableArtistRun(context.Background(), run)
+	if state.Status != "cancelled" || state.AutoResumeCount != 0 || calls != 3 {
+		t.Fatal(state, calls)
+	}
+}
+
+// 重复注册只保留最新定时器：到点后恰好自动恢复一次。
+func TestArtistRuntimeAutoResumeTimerReplaced(t *testing.T) {
+	m, _ := independentArtistManager(t, false)
+	var mu sync.Mutex
+	now := time.Now()
+	m.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	sleeps := 0
+	release := make(chan struct{})
+	timerWaiting := make(chan struct{}, 10)
+	m.sleep = func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		sleeps++
+		n := sleeps
+		now = now.Add(d)
+		mu.Unlock()
+		if n <= 2 {
+			return nil
+		}
+		timerWaiting <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			return nil
+		}
+	}
+	calls := 0
+	m.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls <= 3 {
+			return cannedResponse(429, http.Header{"Retry-After": {"60"}}, `{}`), nil
+		}
+		return cannedResponse(200, http.Header{}, `{"id":"`+safetyMBID+`","name":"ACE+","relations":[]}`), nil
+	})
+	run, err := m.StartAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-timerWaiting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto resume timer never armed")
+	}
+	// 重复调度替换旧定时器，最终只保留一个。
+	m.scheduleArtistAutoResume(run)
+	m.scheduleArtistAutoResume(run)
+	m.autoResumeMu.Lock()
+	armed := len(m.autoResumeTimers)
+	m.autoResumeMu.Unlock()
+	if armed != 1 {
+		t.Fatal("duplicate auto resume timers", armed)
+	}
+	close(release)
+	m.Wait()
+	state, _ := m.store.DurableArtistRun(context.Background(), run)
+	if state.Status != "completed" || state.AutoResumeCount != 1 || calls != 5 {
+		t.Fatal(state, calls)
+	}
+}
+
+// 重启扫描：限流等待中的任务自动恢复；手动暂停的任务绝不被拾起。
+func TestArtistRuntimeRestartScanAutoResume(t *testing.T) {
+	t.Run("rate limit wait auto resumes", func(t *testing.T) {
+		m, _ := independentArtistManager(t, false)
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var once sync.Once
+		m.sleep = func(ctx context.Context, d time.Duration) error {
+			once.Do(func() { close(entered) })
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-release:
+				return nil
+			}
+		}
+		calls := 0
+		m.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return cannedResponse(429, http.Header{"Retry-After": {"60"}}, `{}`), nil
+			}
+			return cannedResponse(200, http.Header{}, `{"id":"`+safetyMBID+`","name":"ACE+","relations":[]}`), nil
+		})
+		run, err := m.StartAll(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("worker never entered rate-limit wait")
+		}
+		// 模拟重启：Recover 暂停运行中的等待任务，扫描后到点自动恢复。
+		restarted := New(context.Background(), m.store, m.logger, t.TempDir())
+		restarted.client = &http.Client{Transport: m.client.Transport}
+		artistFakeClock(restarted)
+		restarted.ScanAutoResumeRuns()
+		restarted.Wait()
+		state, _ := m.store.DurableArtistRun(context.Background(), run)
+		if state.Status != "completed" || state.Matched != 1 || state.AutoResumeCount != 1 {
+			t.Fatal(state)
+		}
+		close(release)
+		m.Wait()
+	})
+	t.Run("manual pause stays manual", func(t *testing.T) {
+		m, artist := independentArtistManager(t, false)
+		ctx := context.Background()
+		input, err := m.store.ArtistForMatching(ctx, artist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := m.store.CreateDurableArtistRun(ctx, []storage.ArtistRunItemInput{{Artist: input}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = m.store.TransitionArtistRun(ctx, run, "pause", "manual"); err != nil {
+			t.Fatal(err)
+		}
+		restarted := New(ctx, m.store, m.logger, t.TempDir())
+		restarted.ScanAutoResumeRuns()
+		restarted.Wait()
+		state, _ := m.store.DurableArtistRun(ctx, run)
+		if state.Status != "paused" || state.PauseReason != "manual" || state.AutoResumeCount != 0 {
+			t.Fatal(state)
+		}
+	})
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -256,12 +257,26 @@ func TestMigration037PreservesLegacyRowsAndForeignKeys(t *testing.T) {
 	if _, err = s.db.ExecContext(ctx, string(script)); err != nil {
 		t.Fatal(err)
 	}
+	// 039 在 037 重建后的表上补列：旧数据保留，计数默认为 0。直接执行时
+	// 只应用本表语句（迁移 runner 的逐行探测在生产中保证幂等）。
+	autoScript, err := migrationFiles.ReadFile("migrations/039_run_auto_resume.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(autoScript), "\n") {
+		if !strings.Contains(line, "artist_match_runs") {
+			continue
+		}
+		if _, err = s.db.ExecContext(ctx, line); err != nil {
+			t.Fatal(err)
+		}
+	}
 	runs, err := s.ListArtistMatchRuns(ctx, 1)
 	if err != nil || len(runs) != 1 || runs[0].Processed != 3 || runs[0].Matched != 1 || runs[0].Skipped != 1 || runs[0].NoResult != 1 {
 		t.Fatal(runs, err)
 	}
 	r, err := s.DurableArtistRun(ctx, runs[0].ID)
-	if err != nil || r.DurableVersion != 0 {
+	if err != nil || r.DurableVersion != 0 || r.AutoResumeCount != 0 {
 		t.Fatal(r, err)
 	}
 	if _, err = s.db.ExecContext(ctx, `INSERT INTO artist_match_run_items(run_id,object_id,input_json) VALUES(999999,1,'{}')`); err == nil {
@@ -401,5 +416,171 @@ func TestArtistDurableConcurrentClaimsAndPause(t *testing.T) {
 	}
 	if _, err := s.ClaimArtistRunItem(ctx, run); !errors.Is(err, ErrArtistRunState) {
 		t.Fatal(err)
+	}
+}
+
+// 限流预算耗尽后自动恢复：auto_resume 增加轮次计数；轮次用尽后预算再次
+// 耗尽标记 rate_limit_exhausted，不再允许自动恢复，但手动继续始终可用。
+func TestDurableArtistAutoResumeRoundsAndExhausted(t *testing.T) {
+	s, run, _ := durableArtistFixture(t)
+	ctx := t.Context()
+	item, err := s.ClaimArtistRunItem(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ArtistRunCheckpoint{RunID: run, ItemID: item.ID, ClaimToken: item.ClaimToken}
+	deadline := time.Now().Add(time.Hour).UTC()
+	pauseOnce := func() {
+		t.Helper()
+		for {
+			err = s.RecordArtistRunWait(ctx, c, "musicbrainz", deadline, time.Minute, true)
+			if errors.Is(err, ErrArtistWaitBudget) {
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pauseOnce()
+	r, err := s.DurableArtistRun(ctx, run)
+	if err != nil || r.Status != "paused" || r.PauseReason != "rate_limit_count" || !ArtistRunAutoResumeEligible(r) {
+		t.Fatal(r, err)
+	}
+	// 手动 resume 不消耗自动轮次。
+	if err = s.TransitionArtistRun(ctx, run, "resume", ""); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.DurableArtistRun(ctx, run)
+	if r.AutoResumeCount != 0 {
+		t.Fatal("manual resume must not consume auto rounds", r.AutoResumeCount)
+	}
+	item, err = s.ClaimArtistRunItem(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ClaimToken = item.ClaimToken
+	// 三轮自动恢复后，第四次预算耗尽进入 rate_limit_exhausted。
+	for round := 1; round <= MaxArtistAutoResumeRounds; round++ {
+		pauseOnce()
+		if err = s.TransitionArtistRun(ctx, run, "auto_resume", ""); err != nil {
+			t.Fatal(round, err)
+		}
+		r, _ = s.DurableArtistRun(ctx, run)
+		if r.Status != "running" || r.AutoResumeCount != round {
+			t.Fatal(round, r)
+		}
+		item, err = s.ClaimArtistRunItem(ctx, run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.ClaimToken = item.ClaimToken
+	}
+	pauseOnce()
+	r, _ = s.DurableArtistRun(ctx, run)
+	if r.Status != "paused" || r.PauseReason != "rate_limit_exhausted" || ArtistRunAutoResumeEligible(r) {
+		t.Fatal(r)
+	}
+	if err = s.TransitionArtistRun(ctx, run, "auto_resume", ""); !errors.Is(err, ErrArtistRunState) {
+		t.Fatal("exhausted run must not auto resume", err)
+	}
+	if err = s.TransitionArtistRun(ctx, run, "resume", ""); err != nil {
+		t.Fatal("manual resume stays available after exhaustion", err)
+	}
+}
+
+// 自动恢复扫描只拾起限流等待的暂停任务；手动暂停、轮次用尽与存储错误都
+// 不在其列，Recover 也不得覆盖已有暂停原因。
+func TestDurableArtistAutoResumeScanAndRecoverPreserve(t *testing.T) {
+	s, run, _ := durableArtistFixture(t)
+	ctx := t.Context()
+	item, err := s.ClaimArtistRunItem(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ArtistRunCheckpoint{RunID: run, ItemID: item.ID, ClaimToken: item.ClaimToken}
+	deadline := time.Now().Add(time.Hour).UTC()
+	if err = s.RecordArtistRunWait(ctx, c, "musicbrainz", deadline, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	// 运行中带 waiting_until 被 Recover：原因记为 server_restart，可自动恢复。
+	if n, err := s.RecoverDurableArtistRuns(ctx); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	r, _ := s.DurableArtistRun(ctx, run)
+	if r.PauseReason != "server_restart" || !ArtistRunAutoResumeEligible(r) {
+		t.Fatal(r)
+	}
+	runs, err := s.ArtistRunsAwaitingAutoResume(ctx)
+	if err != nil || len(runs) != 1 || runs[0].ID != run {
+		t.Fatal(runs, err)
+	}
+	// 手动暂停同一条 run：即使有 waiting_until 也不得被扫描拾起。
+	if err = s.TransitionArtistRun(ctx, run, "resume", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.TransitionArtistRun(ctx, run, "pause", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.DurableArtistRun(ctx, run)
+	if r.PauseReason != "manual" || r.WaitingUntil == "" || ArtistRunAutoResumeEligible(r) {
+		t.Fatal(r)
+	}
+	if runs, err = s.ArtistRunsAwaitingAutoResume(ctx); err != nil || len(runs) != 0 {
+		t.Fatal(runs, err)
+	}
+	// 已有非空 pause_reason 的 run 再次被 Recover 时原因保留（running 状态
+	// 下才会被 Recover，这里直接验证 CASE 保护不覆盖 manual）。
+	if _, err = s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status='running' WHERE id=?`, run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RecoverDurableArtistRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.DurableArtistRun(ctx, run)
+	if r.PauseReason != "manual" {
+		t.Fatal("recover must not overwrite an existing pause reason", r.PauseReason)
+	}
+}
+
+// M-1 回归：轮次已尽的限流等待任务经 Recover 后必须标记 rate_limit_exhausted
+// （前端因此不再宣称自动继续，与后端永不恢复一致）；轮次未尽仍是
+// server_restart 并可被扫描拾起。
+func TestDurableArtistRecoverMarksExhaustedWaitingRun(t *testing.T) {
+	s, run, _ := durableArtistFixture(t)
+	ctx := t.Context()
+	item, err := s.ClaimArtistRunItem(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ArtistRunCheckpoint{RunID: run, ItemID: item.ID, ClaimToken: item.ClaimToken}
+	deadline := time.Now().Add(time.Hour).UTC()
+	if err = s.RecordArtistRunWait(ctx, c, "musicbrainz", deadline, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE artist_match_runs SET auto_resume_count=? WHERE id=?`, MaxArtistAutoResumeRounds, run); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.RecoverDurableArtistRuns(ctx); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	r, _ := s.DurableArtistRun(ctx, run)
+	if r.Status != "paused" || r.PauseReason != "rate_limit_exhausted" || ArtistRunAutoResumeEligible(r) {
+		t.Fatal(r)
+	}
+	runs, err := s.ArtistRunsAwaitingAutoResume(ctx)
+	if err != nil || len(runs) != 0 {
+		t.Fatal("exhausted run must not be picked by the auto-resume scan", runs, err)
+	}
+	// 轮次未尽：仍为 server_restart 且可自动恢复。
+	if _, err = s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status='running',pause_reason='',auto_resume_count=1 WHERE id=?`, run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RecoverDurableArtistRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.DurableArtistRun(ctx, run)
+	if r.PauseReason != "server_restart" || !ArtistRunAutoResumeEligible(r) {
+		t.Fatal(r)
 	}
 }

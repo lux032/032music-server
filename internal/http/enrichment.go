@@ -587,6 +587,14 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 	a.render(w, http.StatusOK, "work-review.html", data)
 }
 
+// autoResumeNotice 是限流等待中的任务被重复启动时的固定中文提示。
+func autoResumeNotice(waitingUntil string) string {
+	if t, err := time.Parse(time.RFC3339Nano, waitingUntil); err == nil {
+		return "任务正在等待限流恢复，将于 " + t.Local().Format("15:04:05") + " 自动继续"
+	}
+	return "任务正在等待限流恢复，到点后将自动继续"
+}
+
 func (a *App) handleAdminStartEnrichment(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -604,6 +612,9 @@ func (a *App) handleAdminStartEnrichment(w http.ResponseWriter, r *http.Request)
 			// 双击或已有暂停任务是可预期的用户状态，不是系统错误。
 			a.logger.Warn("start enrichment run conflict", "error", err)
 			message = "已存在进行或暂停中的任务，请先恢复或取消该任务"
+			if run, e := a.store.UnfinishedDurableEnrichmentRun(r.Context()); e == nil && storage.EnrichmentRunAutoResumeEligible(run) {
+				message = autoResumeNotice(run.WaitingUntil)
+			}
 		} else {
 			a.logger.Error("start enrichment run", "error", err)
 		}
@@ -733,6 +744,8 @@ func pauseReasonLabel(reason string) string {
 		return "同一对象连续限流"
 	case "rate_limit_wait_budget":
 		return "限流等待超出 30 分钟预算"
+	case "rate_limit_exhausted":
+		return "自动重试已用尽"
 	case "storage_or_runtime_error":
 		return "存储或运行错误"
 	default:
@@ -787,6 +800,19 @@ func clockOf(value string) string {
 		return value
 	}
 	return parsed.Local().Format("15:04:05")
+}
+
+// runAutoResumes 报告暂停任务是否由限流自动恢复机制接管：只有限流原因
+// 的暂停才允许页面宣称“将于某时刻自动继续”，手动暂停绝不能这样写。
+func runAutoResumes(status, pauseReason string) bool {
+	if status != "paused" {
+		return false
+	}
+	switch pauseReason {
+	case "rate_limit_count", "rate_limit_wait_budget", "server_restart":
+		return true
+	}
+	return false
 }
 
 // waitTotalLabel 将累计限流等待毫秒数渲染为可读时长。

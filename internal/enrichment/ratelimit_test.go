@@ -251,16 +251,15 @@ func TestPhase4RunStopsOnRateLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.Wait()
-	finished, _ := store.EnrichmentRun(ctx, run.ID)
-	manager.Wait()
-	if finished.Status != "paused" {
+	finished, _ := store.DurableEnrichmentRun(ctx, run.ID)
+	if finished.Status != "paused" || finished.PauseReason != "rate_limit_exhausted" || finished.AutoResumeCount != 3 {
 		t.Fatalf("run=%+v", finished)
 	}
 	if finished.Failed != 0 {
 		t.Fatalf("rate limiting must not count as ordinary failure: run=%+v", finished)
 	}
-	if got := int(requests.Load()); got != 3 {
-		t.Fatalf("requests=%d, want 3 (same item pauses on third response)", got)
+	if got := int(requests.Load()); got != 12 {
+		t.Fatalf("requests=%d, want 12 (three responses per round across the initial round and three auto resumes)", got)
 	}
 }
 
@@ -300,22 +299,14 @@ func TestArtistMatchStopsOnRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	var finished storage.ArtistMatchRun
-	for time.Now().Before(deadline) {
-		runs, listErr := store.ListArtistMatchRuns(ctx, 1)
-		if listErr == nil && len(runs) == 1 && runs[0].ID == runID && runs[0].Status != "running" {
-			finished = runs[0]
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 	manager.Wait()
-	if finished.Status != "paused" {
-		t.Fatalf("run=%+v", finished)
+	// 同一对象连续限流后自动退避恢复；自动轮次用尽后停在 rate_limit_exhausted。
+	finished, err := store.DurableArtistRun(ctx, runID)
+	if err != nil || finished.Status != "paused" || finished.PauseReason != "rate_limit_exhausted" || finished.AutoResumeCount != 3 || finished.Failed != 0 {
+		t.Fatalf("run=%+v err=%v", finished, err)
 	}
-	if got := int(requests.Load()); got != 3 {
-		t.Fatalf("requests=%d, want 3 (same item pauses after three responses)", got)
+	if got := int(requests.Load()); got != 12 {
+		t.Fatalf("requests=%d, want 12 (three responses per round across the initial round and three auto resumes)", got)
 	}
 }
 
@@ -617,13 +608,13 @@ func TestArtistMatchBiographyRateLimitStopsRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	if finished.Status != "paused" {
-		t.Fatalf("run=%+v", finished)
+	finished, err := store.DurableArtistRun(ctx, runID)
+	if err != nil || finished.Status != "paused" || finished.PauseReason != "rate_limit_exhausted" || finished.AutoResumeCount != 3 {
+		t.Fatalf("run=%+v err=%v", finished, err)
 	}
-	if got := int(requests.Load()); got != 3 {
-		t.Fatalf("requests=%d, want 1 (biography-refresh rate limit stopped the run)", got)
+	if got := int(requests.Load()); got != 12 {
+		t.Fatalf("requests=%d, want 12 (biography-refresh limit retries three times per round across four rounds)", got)
 	}
 }
 
@@ -696,16 +687,16 @@ func TestWikidataImageRateLimitStopsStartAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	if finished.Status != "paused" {
-		t.Fatalf("run=%+v", finished)
+	finished, err := store.DurableArtistRun(ctx, runID)
+	if err != nil || finished.Status != "paused" || finished.PauseReason != "rate_limit_exhausted" || finished.AutoResumeCount != 3 {
+		t.Fatalf("run=%+v err=%v", finished, err)
 	}
-	if got := int(wikidataRequests.Load()); got != 3 {
-		t.Fatalf("wikidata requests=%d, want 1 (second artist never reached Wikidata)", got)
+	if got := int(wikidataRequests.Load()); got != 12 {
+		t.Fatalf("wikidata requests=%d, want 12 (three per round across four rounds)", got)
 	}
-	if got := int(mbRequests.Load()); got != 3 {
-		t.Fatalf("mb requests=%d, want 1", got)
+	if got := int(mbRequests.Load()); got != 12 {
+		t.Fatalf("mb requests=%d, want 12", got)
 	}
 }
 

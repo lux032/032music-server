@@ -87,7 +87,8 @@ func TestEnrichmentRuntimeForceTracksSameRunAfterRestart(t *testing.T) {
 	}
 }
 
-func TestEnrichmentRuntimeRateLimitBudgetResume(t *testing.T) {
+// 限流预算耗尽后不再等人：waiting_until 到点后自动继续并完成。
+func TestEnrichmentRuntimeRateLimitBudgetAutoResume(t *testing.T) {
 	calls := 0
 	m, s, _, work := phase4TestManager(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -104,17 +105,9 @@ func TestEnrichmentRuntimeRateLimitBudgetResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Wait()
-	paused, _ := s.DurableEnrichmentRun(context.Background(), run.ID)
-	if paused.Status != "paused" || paused.Processed != 0 || calls != 3 || paused.WaitTotalMS != 120000 {
-		t.Fatal(paused, calls)
-	}
-	if err = m.ResumeRun(context.Background(), run.ID); err != nil {
-		t.Fatal(err)
-	}
-	m.Wait()
 	done, _ := s.DurableEnrichmentRun(context.Background(), run.ID)
-	if done.Status != "completed" || done.Processed != 1 || done.BudgetBaselineMS != 120000 || done.WaitTotalMS < 180000 {
-		t.Fatal(done)
+	if done.Status != "completed" || done.Processed != 1 || done.AutoResumeCount != 1 || done.BudgetBaselineMS != 120000 || done.WaitTotalMS != 120000 || calls != 4 {
+		t.Fatal(done, calls)
 	}
 }
 
@@ -234,7 +227,7 @@ func TestEnrichmentRuntimeStagePrepareOnceAfterPauseRestart(t *testing.T) {
 // 30 minutes without three consecutive responses on one item: the run pauses
 // on the window budget, keeps history, and a manual resume opens a new
 // 30-minute window that lets the remaining item finish.
-func TestEnrichmentRuntimeWaitWindowPauseAndManualResume(t *testing.T) {
+func TestEnrichmentRuntimeWaitWindowPauseAndAutoResume(t *testing.T) {
 	var mu sync.Mutex
 	limited := map[string]bool{}
 	calls := 0
@@ -266,25 +259,13 @@ func TestEnrichmentRuntimeWaitWindowPauseAndManualResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Wait()
-	pausedRun, err := s.DurableEnrichmentRun(ctx, run.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pausedRun.Status != "paused" || pausedRun.PauseReason != "rate_limit_wait_budget" || pausedRun.Processed != 2 || pausedRun.WaitTotalMS != int64(30*time.Minute/time.Millisecond) {
-		t.Fatalf("paused=%+v", pausedRun)
-	}
-	if err = m.ResumeRun(ctx, run.ID); err != nil {
-		t.Fatal(err)
-	}
-	m.Wait()
-	// The fixture track is a fourth limited item: its wait lands in the resumed
-	// window (baseline 30min), adding one more 10-minute wait.
+	// 预算耗尽后无人工干预：自动恢复处理剩余曲目，历史等待保留。
 	done, err := s.DurableEnrichmentRun(ctx, run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	baseline := int64(30 * time.Minute / time.Millisecond)
-	if done.Status != "completed" || done.Processed != 4 || done.BudgetBaselineMS != baseline || done.WaitTotalMS != baseline+int64(10*time.Minute/time.Millisecond) {
+	if done.Status != "completed" || done.Processed != 4 || done.AutoResumeCount != 1 || done.BudgetBaselineMS != baseline || done.WaitTotalMS != baseline+int64(10*time.Minute/time.Millisecond) {
 		t.Fatalf("done=%+v", done)
 	}
 	mu.Lock()

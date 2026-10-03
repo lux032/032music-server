@@ -114,6 +114,7 @@ func (m *Manager) stopPhaseRun(runID int64, action string) error {
 		}
 		return err
 	}
+	m.cancelAutoResume(enrichmentAutoResumeKind, runID)
 	if m.phaseRunID == runID && m.phaseCancel != nil {
 		m.phaseCancel()
 	}
@@ -152,6 +153,7 @@ func (m *Manager) ResumeRun(ctx context.Context, runID int64) error {
 	if err != nil {
 		return err
 	}
+	m.cancelAutoResume(enrichmentAutoResumeKind, runID)
 	m.launchDurablePhaseLocked(run)
 	return nil
 }
