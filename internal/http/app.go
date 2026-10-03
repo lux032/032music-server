@@ -152,6 +152,14 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"enrichmentRunProgress":  enrichmentRunProgress,
 		"enrichmentTargetLabel":  enrichmentTargetLabel,
 		"enrichmentStageLine":    enrichmentStageLine,
+		"runStatusLabel":         runStatusLabel,
+		"pauseReasonLabel":       pauseReasonLabel,
+		"enrichmentScopeLabel":   enrichmentScopeLabel,
+		"percentDone":            percentDone,
+		"clockOf":                clockOf,
+		"waitTotalLabel":         waitTotalLabel,
+		"add":                    func(a, b int) int { return a + b },
+		"mul":                    func(a, b int) int { return a * b },
 		"subtract":               func(a, b int) int { return a - b },
 		"scanStatusLabel":        scanStatusLabel,
 		// indexValues and kanaIndexValues split indexLetters the same way the
@@ -345,11 +353,23 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/security/reset/{key}", a.requireAdmin(http.HandlerFunc(a.handleSecurityReset)))
 	mux.Handle("POST /admin/matches/run", a.requireAdmin(http.HandlerFunc(a.handleRunArtistMatching)))
 	mux.Handle("POST /admin/matches/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistMatching)))
+	mux.Handle("POST /admin/matches/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseArtistRun)))
+	mux.Handle("POST /admin/matches/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeArtistRun)))
+	mux.Handle("GET /admin/matches/runs/active.json", a.requireAdmin(http.HandlerFunc(a.handleActiveArtistRun)))
+	mux.Handle("GET /admin/matches/runs", a.requireAdmin(http.HandlerFunc(a.handleArtistRunList)))
+	mux.Handle("GET /admin/matches/runs/{id}", a.requireAdmin(http.HandlerFunc(a.handleArtistRunDetail)))
+
 	mux.Handle("GET /admin/matches", a.requireAdmin(http.HandlerFunc(a.handleMatchReview)))
 	mux.Handle("GET /admin/work-review", a.requireAdmin(http.HandlerFunc(a.handleAdminWorkReview)))
 	mux.Handle("GET /admin/enrichment", a.requireAdmin(http.HandlerFunc(a.handleAdminEnrichment)))
 	mux.Handle("POST /admin/enrichment/run", a.requireAdmin(http.HandlerFunc(a.handleAdminStartEnrichment)))
 	mux.Handle("POST /admin/enrichment/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleAdminCancelEnrichment)))
+	mux.Handle("POST /admin/enrichment/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseEnrichmentRun)))
+	mux.Handle("POST /admin/enrichment/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeEnrichmentRun)))
+	mux.Handle("GET /admin/enrichment/runs/active.json", a.requireAdmin(http.HandlerFunc(a.handleActiveEnrichmentRun)))
+	mux.Handle("GET /admin/enrichment/runs", a.requireAdmin(http.HandlerFunc(a.handleEnrichmentRunList)))
+	mux.Handle("GET /admin/enrichment/runs/{id}", a.requireAdmin(http.HandlerFunc(a.handleEnrichmentRunDetail)))
+
 	mux.Handle("POST /admin/enrichment/posters/backfill", a.requireAdmin(http.HandlerFunc(a.handleWorkPosterBackfill)))
 	mux.Handle("POST /admin/enrichment/albums/{albumId}/subjects/{candidateId}/accept", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminAlbumSubjectDecision(w, r, true) })))
 	mux.Handle("POST /admin/enrichment/albums/{albumId}/subjects/{candidateId}/reject", a.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleAdminAlbumSubjectDecision(w, r, false) })))

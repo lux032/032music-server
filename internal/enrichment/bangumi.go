@@ -379,13 +379,17 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 			return "", err
 		}
 		if posterErr := m.CacheWorkPoster(ctx, work.ID); posterErr != nil && ctx.Err() == nil {
-			// 确认结果已经写入，这里返回错误让 phase4 循环停止本轮并不会造成
-			// 数据不一致：海报之后由海报回填任务补上（与回填遇 429 停止本轮的
-			// 处理方式一致）。
-			if asRateLimited(posterErr) != nil {
+			// 确认结果已经写入。持久化 run 内：海报主机限流只记 warning，
+			// 绝不能把已确认的 work item 拖进限流等待预算；海报由后续回填
+			// 任务补上（与回填遇 429 停止本轮的处理方式一致）。非持久化路径
+			// （手动刷新/旧循环）保持立即上报限流的原语义。
+			if _, durable := storage.EnrichmentCheckpointFromContext(ctx); durable {
+				m.logger.Warn("cache work poster deferred to backfill", "workId", work.ID, "error", posterErr)
+			} else if asRateLimited(posterErr) != nil {
 				return "", posterErr
+			} else {
+				m.logger.Warn("cache work poster", "workId", work.ID, "error", posterErr)
 			}
-			m.logger.Warn("cache work poster", "workId", work.ID, "error", posterErr)
 		}
 		return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 	}

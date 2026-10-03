@@ -413,7 +413,18 @@ func (m *Manager) enrichBangumiSeries(ctx context.Context, runID int64, force bo
 			}
 		}
 	}
-	stats, err := m.store.ApplyAutoSeries(ctx, runID, components)
+	var stats storage.SeriesApplyStats
+	if c, ok := storage.EnrichmentCheckpointFromContext(ctx); ok {
+		if _, e := m.store.EnrichmentEffect(ctx, c, "series_members"); e == nil {
+			stats = storage.SeriesApplyStats{}
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return "", e
+		} else {
+			stats, err = m.store.ApplyAutoSeries(ctx, runID, components)
+		}
+	} else {
+		stats, err = m.store.ApplyAutoSeries(ctx, runID, components)
+	}
 	if err != nil {
 		return "", err
 	}

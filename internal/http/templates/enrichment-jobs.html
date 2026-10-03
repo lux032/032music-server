@@ -57,26 +57,66 @@
       </div>
     </section>
 
-    <section class="feature-section">
-      <div class="section-title"><div><h2>任务记录</h2></div></div>
-      <div class="enrichment-runs">
-        {{range .Runs}}
-        <article>
-          <header>
-            <strong>#{{.ID}} · {{enrichmentTargetLabel .}}</strong>
-            <span class="run-status status-{{.Status}}">{{if eq .Status "running"}}进行中{{else if eq .Status "completed"}}已完成{{else if eq .Status "failed"}}失败{{else if eq .Status "cancelled"}}已停止{{else}}{{.Status}}{{end}}</span>
-          </header>
-          <div class="progress"><span style="width:{{enrichmentRunProgress .}}%"></span></div>
-          <p>{{if and (eq .Status "running") (eq .Total 0) (eq .Processed 0)}}收集中 · {{end}}处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
-          {{with enrichmentStageLine .}}<p class="muted" style="margin:0;font-size:var(--fs-xs);">{{.}}</p>{{end}}
-          {{if eq .Status "running"}}<form method="post" action="/admin/enrichment/runs/{{.ID}}/cancel"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">停止</button></form>{{end}}
-          {{if .Current}}<small>当前：{{.Current}}</small>{{end}}
-          {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
-        </article>
-        {{else}}
-        <div class="zero-state"><strong>还没有增强任务</strong><span>选择范围并启动第一次任务。</span></div>
+    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/enrichment/runs/active.json" data-run-kind="enrichment">
+      <div class="section-title"><div><h2>当前任务</h2></div></div>
+      {{with .ActiveRun}}
+      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+        <header>
+          <strong>#{{.ID}} · {{enrichmentScopeLabel .}}{{if .Force}} · 强制刷新{{end}}</strong>
+          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+        </header>
+        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
+        <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
+        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}</small>
+        <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
+        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
+        <div class="run-actions">
+          <form method="post" action="/admin/enrichment/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button class="secondary-button">暂停</button>
+          </form>
+          <form method="post" action="/admin/enrichment/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button>继续</button>
+          </form>
+          <form method="post" action="/admin/enrichment/runs/{{.ID}}/cancel" data-run-action="cancel">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button class="secondary-button">停止</button>
+          </form>
+        </div>
+      </article>
+      {{else}}
+      <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的任务。</p>
+      {{end}}
+      {{with .LastRun}}
+      <p class="muted run-last">最近任务：#{{.ID}} · {{enrichmentScopeLabel .}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      {{end}}
+      <details class="run-history">
+        <summary>任务记录（共 {{$.HistoryTotal}} 条）</summary>
+        <div class="enrichment-runs">
+          {{range .History}}
+          <article>
+            <header>
+              <strong>#{{.ID}} · {{enrichmentScopeLabel .}}{{if .Force}} · 强制刷新{{end}}</strong>
+              <span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span>
+            </header>
+            <div class="progress"><span style="width:{{percentDone .Processed .Total}}%"></span></div>
+            <p>处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
+            {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
+          </article>
+          {{else}}
+          <div class="zero-state"><strong>还没有增强任务</strong><span>选择范围并启动第一次任务。</span></div>
+          {{end}}
+        </div>
+        {{if gt $.HistoryTotal $.HistoryLimit}}
+        <nav class="page-nav run-history-pages" aria-label="任务记录分页">
+          {{if gt $.HistoryPage 1}}<a href="/admin/enrichment?runsPage={{subtract $.HistoryPage 1}}">上一页</a>{{end}}
+          <span>第 {{$.HistoryPage}} 页 · 共 {{$.HistoryTotal}} 条</span>
+          {{if lt (mul $.HistoryPage $.HistoryLimit) $.HistoryTotal}}<a href="/admin/enrichment?runsPage={{add $.HistoryPage 1}}">下一页</a>{{end}}
+        </nav>
         {{end}}
-      </div>
+      </details>
     </section>
 
     {{if .Artists}}

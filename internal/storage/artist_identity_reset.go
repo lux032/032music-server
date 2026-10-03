@@ -32,6 +32,7 @@ func (s *Store) ResetArtistIdentity(ctx context.Context, artistID int64, source,
 		// reviewed again. Cross-source bindings require their own explicit reset.
 		for _, statement := range []string{
 			`DELETE FROM artist_match_candidates WHERE artist_id=? AND source=?`,
+			`DELETE FROM artist_source_match_state WHERE artist_id=? AND source=?`,
 			`DELETE FROM artist_image_cache WHERE artist_id=? AND source=?`,
 		} {
 			if _, err = tx.ExecContext(ctx, statement, artistID, source); err != nil {

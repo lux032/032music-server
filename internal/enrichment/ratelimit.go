@@ -21,9 +21,10 @@ var ErrRateLimited = errors.New("remote source rate limited")
 
 // RateLimitError describes one rate-limit response from a remote source.
 type RateLimitError struct {
-	Source     string
-	StatusCode int
-	RetryAfter time.Duration
+	CooldownOnly bool
+	Source       string
+	StatusCode   int
+	RetryAfter   time.Duration
 }
 
 func (e *RateLimitError) Error() string {
@@ -105,7 +106,8 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // blocked-until timestamp; other sources are a no-op here because nothing
 // serializes their requests.
 func (m *Manager) noteRateLimited(source string, retryAfter time.Duration) {
-	until := time.Now().Add(retryAfter)
+	until := m.clockNow().Add(retryAfter)
+	m.blockSourceUntil(source, until)
 	switch source {
 	case "bangumi":
 		m.bangumiMu.Lock()
@@ -152,6 +154,9 @@ func (m *Manager) rateLimitedError(source string, statusCode int, retryAfter tim
 // with Retry-After) into a RateLimitError and pushing back the source's next
 // allowed request time.
 func (m *Manager) doSourceJSON(client *http.Client, req *http.Request, source string, target any) error {
+	if err := m.checkSourceCooldown(source); err != nil {
+		return err
+	}
 	response, err := client.Do(req)
 	if err != nil {
 		return err
@@ -286,4 +291,34 @@ func bangumiIntervalFromEnv(logger *slog.Logger) time.Duration {
 	}
 	logger.Warn("invalid MUSIC_SERVER_BANGUMI_INTERVAL_MS, using default", "value", raw, "default", defaultBangumiInterval.String())
 	return defaultBangumiInterval
+}
+
+func (m *Manager) blockSourceUntil(source string, until time.Time) {
+	m.cooldownMu.Lock()
+	defer m.cooldownMu.Unlock()
+	if m.blockedUntil == nil {
+		m.blockedUntil = map[string]time.Time{}
+	}
+	if until.After(m.blockedUntil[source]) {
+		m.blockedUntil[source] = until
+	}
+}
+func (m *Manager) sourceBlockedUntil(source string) time.Time {
+	m.cooldownMu.Lock()
+	defer m.cooldownMu.Unlock()
+	return m.blockedUntil[source]
+}
+func (m *Manager) checkSourceCooldown(source string) error {
+	until := m.sourceBlockedUntil(source)
+	if until.After(m.clockNow()) {
+		return &RateLimitError{CooldownOnly: true, Source: source, StatusCode: 429, RetryAfter: until.Sub(m.clockNow())}
+	}
+	return nil
+}
+
+func (m *Manager) clockNow() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }

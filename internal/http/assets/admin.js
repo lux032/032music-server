@@ -281,6 +281,171 @@
   window.addEventListener('pagehide', removeSecurityFlashes);
   window.addEventListener('pageshow', (e) => { if (e.persisted) removeSecurityFlashes(); });
 
+  // ------------------------------------------- durable run task polling
+  // /admin/matches and /admin/enrichment pin their active run on top. While a
+  // card is visible we poll its active.json every 2s; idle pages fall back to
+  // a leisurely 30s check; hidden tabs never poll. All updates use
+  // textContent only — no untrusted markup is ever built.
+  const RUN_STATUS_LABELS = { running: '进行中', paused: '已暂停', completed: '已完成', failed: '已失败', cancelled: '已停止', queued: '排队中' };
+  const RUN_PAUSE_REASONS = { manual: '手动暂停', server_restart: '服务重启中断', shutdown: '服务关闭', rate_limit_count: '同一对象连续限流', rate_limit_wait_budget: '限流等待超出 30 分钟预算', storage_or_runtime_error: '存储或运行错误' };
+  let runPollTimer = null;
+  let runCountdownTimer = null;
+
+  function runWaitTotalText(ms) {
+    const seconds = Math.floor((ms || 0) / 1000);
+    if (seconds >= 90) return `${Math.round(seconds / 60)} 分钟`;
+    return `${seconds} 秒`;
+  }
+
+  function runWaitLine(el) {
+    const source = el.dataset.waitSource || '';
+    const until = Date.parse(el.dataset.waitingUntil || '');
+    const total = runWaitTotalText(Number(el.dataset.waitTotalMs || 0));
+    if (source && Number.isFinite(until)) {
+      const remaining = Math.max(0, Math.round((until - Date.now()) / 1000));
+      if (remaining > 0) {
+        const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+        const ss = String(remaining % 60).padStart(2, '0');
+        el.textContent = `限流 ${source} · 等待 ${mm}:${ss}（累计等待 ${total}）`;
+        return;
+      }
+    }
+    if (source && (el.dataset.waitTotalMs || '0') !== '0') {
+      el.textContent = `限流 ${source} · 累计等待 ${total}`;
+      return;
+    }
+    el.textContent = '';
+  }
+
+  function runCountdownTick() {
+    const lines = document.querySelectorAll('[data-run-field="wait"]');
+    lines.forEach(runWaitLine);
+    if (!document.querySelector('[data-run-card]') && runCountdownTimer) {
+      clearInterval(runCountdownTimer);
+      runCountdownTimer = null;
+    }
+  }
+
+  function ensureRunCountdown() {
+    if (!runCountdownTimer && document.querySelector('[data-run-card]')) {
+      runCountdownTimer = setInterval(runCountdownTick, 1000);
+    }
+  }
+
+  function runCountsText(kind, run) {
+    if (kind === 'artist') {
+      return `处理 ${run.processed} / ${run.total} · 匹配 ${run.matched} · 审核 ${run.review} · 无结果 ${run.noResult} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+    }
+    return `处理 ${run.processed} / ${run.total} · 成功 ${run.succeeded} · 跳过 ${run.skipped} · 审核 ${run.review} · 失败 ${run.failed}`;
+  }
+
+  function runField(card, name) { return card.querySelector(`[data-run-field="${name}"]`); }
+  function setRunText(card, name, text) { const el = runField(card, name); if (el) el.textContent = text; }
+
+  function showRunHint(container, text) {
+    let hint = container.querySelector('.run-update-hint');
+    if (!hint) {
+      hint = document.createElement('small');
+      hint.className = 'run-update-hint';
+      container.append(hint);
+    }
+    hint.textContent = text;
+  }
+  function clearRunHint(container) { container.querySelector('.run-update-hint')?.remove(); }
+
+  // updateRunCard returns 'reload' when the visible card no longer matches
+  // the server state (new run id), true when an active card is shown.
+  function updateRunCard(container, run, kind) {
+    const card = container.querySelector('[data-run-card]');
+    if (!run) {
+      if (card) {
+        // 任务已结束：不宣称具体结果，避免把未知结局误报为“完成”。
+        const done = document.createElement('p');
+        done.className = 'muted run-empty';
+        done.setAttribute('data-run-empty', '');
+        done.textContent = '任务已结束，刷新页面查看最新结果。';
+        card.replaceWith(done);
+      }
+      return false;
+    }
+    if (!card || card.dataset.runId !== String(run.id)) return 'reload';
+    card.dataset.runStatus = run.status;
+    const statusEl = runField(card, 'status');
+    if (statusEl) {
+      statusEl.textContent = RUN_STATUS_LABELS[run.status] || run.status;
+      statusEl.className = `run-status status-${run.status}`;
+    }
+    const bar = runField(card, 'progressBar');
+    if (bar) {
+      const percent = run.total > 0 ? Math.min(100, Math.round((run.processed * 100) / run.total)) : 0;
+      bar.style.width = `${percent}%`;
+    }
+    setRunText(card, 'counts', runCountsText(kind, run));
+    setRunText(card, 'current', run.current ? `当前：${run.current}` : '');
+    const wait = runField(card, 'wait');
+    if (wait) {
+      wait.dataset.waitSource = run.waitSource || '';
+      wait.dataset.waitingUntil = run.waitingUntil || '';
+      wait.dataset.waitTotalMs = String(run.waitTotalMs || 0);
+      runWaitLine(wait);
+    }
+    setRunText(card, 'pauseReason', run.status === 'paused' && run.pauseReason ? `暂停原因：${RUN_PAUSE_REASONS[run.pauseReason] || run.pauseReason}` : '');
+    setRunText(card, 'error', run.errorMessage || '');
+    card.querySelectorAll('[data-run-action]').forEach((form) => {
+      const action = form.getAttribute('data-run-action');
+      form.hidden = (action === 'pause' && run.status !== 'running') || (action === 'resume' && run.status !== 'paused');
+    });
+    return true;
+  }
+
+  async function pollRunTasks() {
+    const containers = Array.from(document.querySelectorAll('[data-run-tasks]'));
+    let failed = false;
+    for (const container of containers) {
+      try {
+        const response = await fetch(container.getAttribute('data-active-url'), { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('fetch failed');
+        const payload = await response.json();
+        clearRunHint(container);
+        const result = updateRunCard(container, payload.run, container.getAttribute('data-run-kind'));
+        if (result === 'reload') { location.reload(); return 'reload'; }
+      } catch (_) {
+        failed = true;
+        // 失败时保留现有卡片，绝不能把未知状态误报为完成。
+        showRunHint(container, '状态更新中断，重试连接中…');
+      }
+    }
+    ensureRunCountdown();
+    return failed ? 'failed' : 'ok';
+  }
+
+  function scheduleRunPoll(delay) {
+    if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
+    if (document.hidden || !document.querySelector('[data-run-tasks]')) return;
+    runPollTimer = setTimeout(runPollTick, delay);
+  }
+
+  async function runPollTick() {
+    const result = await pollRunTasks();
+    if (result === 'reload' || document.hidden || !document.querySelector('[data-run-tasks]')) return;
+    if (result === 'failed') { scheduleRunPoll(8000); return; }
+    // running/waiting 卡片 2s 高频；paused 卡片与空闲页面 30s 低频；没有容器不轮询。
+    // paused→running 的变化最迟 30s 被发现，随后回到 2s（reload 仅发生在 run id 变化时）。
+    const card = document.querySelector('[data-run-card]');
+    scheduleRunPoll(card && card.dataset.runStatus !== 'paused' ? 2000 : 30000);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
+    } else {
+      scheduleRunPoll(0);
+    }
+  });
+  // PJAX 换页后容器可能新增/消失：重新评估并重查一次，不重复计时器。
+  document.addEventListener('032:pjax-applied', () => scheduleRunPoll(0));
+  scheduleRunPoll(0);
+
   // Password input masks custom tokens even when CSS masking is unsupported.
   document.addEventListener('click', (e) => {
     const button = e.target instanceof Element ? e.target.closest('[data-mask-toggle]') : null;

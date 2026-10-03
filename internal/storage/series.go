@@ -513,6 +513,9 @@ func (s *Store) ApplyAutoSeries(ctx context.Context, runID int64, components [][
 			return stats, err
 		}
 	}
+	if err = RecordEnrichmentEffectTx(ctx, tx, "series_members", "matched"); err != nil {
+		return stats, err
+	}
 	if err = tx.Commit(); err != nil {
 		return stats, err
 	}

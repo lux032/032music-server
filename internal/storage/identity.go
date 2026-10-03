@@ -20,8 +20,10 @@ type MetadataSourceSetting struct {
 }
 
 type ArtistMatchInput struct {
-	ID               int64
-	Name, TaggedMBID string
+	ID                  int64
+	Name, TaggedMBID    string
+	LastFMQueryMBID     string
+	LastFMQueryCaptured bool
 }
 
 type ArtistCandidate struct {
@@ -67,14 +69,14 @@ type MergeOperation struct {
 }
 
 type ArtistMatchRun struct {
-	ID                                        int64
-	Status                                    string
-	Total, Processed, Matched, Review, Failed int
-	Current, ErrorMessage                     string
+	ID                                                           int64
+	Status                                                       string
+	Total, Processed, Matched, Review, Failed, Skipped, NoResult int
+	Current, ErrorMessage                                        string
 }
 
 func (s *Store) ListArtistMatchRuns(ctx context.Context, limit int) ([]ArtistMatchRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,COALESCE(current_artist,''),COALESCE(error_message,'') FROM artist_match_runs ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,COALESCE(current_artist,''),COALESCE(error_message,''),skipped_artists,no_result_artists FROM artist_match_runs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +84,7 @@ func (s *Store) ListArtistMatchRuns(ctx context.Context, limit int) ([]ArtistMat
 	var result []ArtistMatchRun
 	for rows.Next() {
 		var v ArtistMatchRun
-		if err = rows.Scan(&v.ID, &v.Status, &v.Total, &v.Processed, &v.Matched, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage); err != nil {
+		if err = rows.Scan(&v.ID, &v.Status, &v.Total, &v.Processed, &v.Matched, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage, &v.Skipped, &v.NoResult); err != nil {
 			return nil, err
 		}
 		result = append(result, v)
@@ -95,7 +97,7 @@ func (s *Store) FailRunningArtistMatchRuns(ctx context.Context, message string) 
 	if strings.TrimSpace(message) == "" {
 		message = "artist matching interrupted by process restart"
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status='failed',error_message=?,current_artist=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('running','queued')`, message)
+	result, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status='failed',error_message=?,current_artist=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE durable_version=0 AND status IN ('running','queued')`, message)
 	if err != nil {
 		return 0, err
 	}
@@ -110,11 +112,11 @@ func (s *Store) CreateArtistMatchRun(ctx context.Context, total int) (int64, err
 	return result.LastInsertId()
 }
 func (s *Store) UpdateArtistMatchRun(ctx context.Context, id int64, processed, matched, review, failed int, current string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET processed_artists=?,matched_artists=?,review_artists=?,failed_artists=?,current_artist=? WHERE id=?`, processed, matched, review, failed, current, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET processed_artists=?,matched_artists=?,review_artists=?,failed_artists=?,current_artist=? WHERE id=? AND durable_version=0`, processed, matched, review, failed, current, id)
 	return err
 }
 func (s *Store) FinishArtistMatchRun(ctx context.Context, id int64, status, message string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status=?,error_message=NULLIF(?,''),current_artist=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, status, message, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET status=?,error_message=NULLIF(?,''),current_artist=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND durable_version=0`, status, message, id)
 	return err
 }
 
@@ -238,24 +240,61 @@ func (s *Store) ArtistForMatching(ctx context.Context, id int64) (ArtistMatchInp
 }
 
 func (s *Store) ReplaceArtistCandidates(ctx context.Context, artistID int64, candidates []ArtistCandidate) error {
+	sources := map[string]bool{}
+	for _, candidate := range candidates {
+		sources[candidate.Source] = true
+	}
+	var refreshed []string
+	for source := range sources {
+		refreshed = append(refreshed, source)
+	}
+	return s.ReplaceArtistCandidatesForSources(ctx, artistID, candidates, refreshed)
+}
+
+// ReplaceArtistCandidatesForSources only prunes successful source snapshots.
+// Failed sources must not appear in refreshedSources; manual states survive.
+func (s *Store) ReplaceArtistCandidatesForSources(ctx context.Context, artistID int64, candidates []ArtistCandidate, refreshedSources []string) error {
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `DELETE FROM artist_match_candidates WHERE artist_id=? AND status='candidate'`, artistID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=status WHERE 0`); err != nil {
 		return err
+	}
+	if err = replaceArtistCandidatesTx(ctx, tx, artistID, candidates, refreshedSources); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func replaceArtistCandidatesTx(ctx context.Context, tx *sql.Tx, artistID int64, candidates []ArtistCandidate, refreshedSources []string) error {
+	var err error
+	for _, source := range refreshedSources {
+		ids := []string{}
+		for _, candidate := range candidates {
+			if candidate.Source == source {
+				ids = append(ids, candidate.ExternalID)
+			}
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM artist_match_candidates WHERE artist_id=? AND source=? AND status='candidate' AND external_id NOT IN (SELECT value FROM json_each(?))`, artistID, source, string(encoded)); err != nil {
+			return err
+		}
 	}
 	for _, v := range candidates {
 		evidence, _ := json.Marshal(v.Evidence)
 		if len(v.Payload) == 0 {
 			v.Payload = json.RawMessage(`{}`)
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,sort_name,disambiguation,country,artist_type,mbid,score,evidence_json,payload_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'candidate') ON CONFLICT(artist_id,source,external_id) DO UPDATE SET display_name=excluded.display_name,sort_name=excluded.sort_name,disambiguation=excluded.disambiguation,country=excluded.country,artist_type=excluded.artist_type,mbid=excluded.mbid,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status=artist_match_candidates.status,created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, artistID, v.Source, v.ExternalID, v.DisplayName, v.SortName, v.Disambiguation, v.Country, v.ArtistType, v.MBID, v.Score, string(evidence), string(v.Payload)); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,sort_name,disambiguation,country,artist_type,mbid,score,evidence_json,payload_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'candidate') ON CONFLICT(artist_id,source,external_id) DO UPDATE SET display_name=excluded.display_name,sort_name=excluded.sort_name,disambiguation=excluded.disambiguation,country=excluded.country,artist_type=excluded.artist_type,mbid=excluded.mbid,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status=artist_match_candidates.status`, artistID, v.Source, v.ExternalID, v.DisplayName, v.SortName, v.Disambiguation, v.Country, v.ArtistType, v.MBID, v.Score, string(evidence), string(v.Payload)); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) ArtistCandidates(ctx context.Context, artistID int64) ([]ArtistCandidate, error) {
@@ -301,6 +340,12 @@ func (s *Store) PendingArtistCandidates(ctx context.Context) (map[int64][]Artist
 }
 
 func (s *Store) UpsertExternalArtistProfile(ctx context.Context, artistID int64, p ExternalArtistProfile) error {
+	return upsertExternalArtistProfile(ctx, s.db, artistID, p)
+}
+
+func upsertExternalArtistProfile(ctx context.Context, executor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, artistID int64, p ExternalArtistProfile) error {
 	aliases, _ := json.Marshal(p.Aliases)
 	tags, _ := json.Marshal(p.Tags)
 	if p.FetchedAt == "" {
@@ -309,7 +354,7 @@ func (s *Store) UpsertExternalArtistProfile(ctx context.Context, artistID int64,
 	if len(p.Raw) == 0 {
 		p.Raw = json.RawMessage(`{}`)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO artist_external_profiles(artist_id,source,external_id,display_name,sort_name,page_url,remote_image_url,image_checked_at,biography,country,artist_type,disambiguation,aliases_json,tags_json,raw_json,fetched_at) VALUES(?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,source) DO UPDATE SET external_id=excluded.external_id,display_name=excluded.display_name,sort_name=excluded.sort_name,page_url=excluded.page_url,remote_image_url=excluded.remote_image_url,image_checked_at=excluded.image_checked_at,biography=excluded.biography,country=excluded.country,artist_type=excluded.artist_type,disambiguation=excluded.disambiguation,aliases_json=excluded.aliases_json,tags_json=excluded.tags_json,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, artistID, p.Source, p.ExternalID, p.DisplayName, p.SortName, p.PageURL, p.RemoteImageURL, p.Biography, p.Country, p.ArtistType, p.Disambiguation, string(aliases), string(tags), string(p.Raw), p.FetchedAt)
+	_, err := executor.ExecContext(ctx, `INSERT INTO artist_external_profiles(artist_id,source,external_id,display_name,sort_name,page_url,remote_image_url,image_checked_at,biography,country,artist_type,disambiguation,aliases_json,tags_json,raw_json,fetched_at) VALUES(?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,source) DO UPDATE SET external_id=excluded.external_id,display_name=excluded.display_name,sort_name=excluded.sort_name,page_url=excluded.page_url,remote_image_url=excluded.remote_image_url,image_checked_at=excluded.image_checked_at,biography=excluded.biography,country=excluded.country,artist_type=excluded.artist_type,disambiguation=excluded.disambiguation,aliases_json=excluded.aliases_json,tags_json=excluded.tags_json,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, artistID, p.Source, p.ExternalID, p.DisplayName, p.SortName, p.PageURL, p.RemoteImageURL, p.Biography, p.Country, p.ArtistType, p.Disambiguation, string(aliases), string(tags), string(p.Raw), p.FetchedAt)
 	return err
 }
 
@@ -394,7 +439,7 @@ func (s *Store) ArtistExternalID(ctx context.Context, artistID int64, source str
 
 func (s *Store) ArtistImageCheckNeeded(ctx context.Context, artistID int64) (bool, error) {
 	var needed bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=? AND (p.image_checked_at IS NULL OR NOT EXISTS(SELECT 1 FROM artist_image_cache i WHERE i.artist_id=p.artist_id)) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=p.artist_id))`, artistID).Scan(&needed)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=? AND (p.image_checked_at IS NULL OR p.image_checked_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-' || COALESCE((SELECT cache_days FROM metadata_source_settings WHERE source=p.source),30) || ' days')) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=p.artist_id))`, artistID).Scan(&needed)
 	return needed, err
 }
 
@@ -793,4 +838,103 @@ func canonicalArtistID(ctx context.Context, db interface {
 
 func normalizeArtistName(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+}
+
+// AutoBindArtistCandidate rechecks manual decisions and ownership under the
+// same write lock as the profile and candidate writes. A confirmed candidate
+// may refresh only an existing identical profile. False means no binding was
+// performed (manual decision, identity conflict, or a deleted/merged artist).
+func (s *Store) AutoBindArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile) (bool, error) {
+	return s.bindArtistCandidate(ctx, artistID, p, false, nil)
+}
+
+// RefreshArtistCandidate never creates an identity, even if it was reset while
+// a remote lookup was in flight. Manual rejection also prohibits refresh.
+func (s *Store) RefreshArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile) (bool, error) {
+	return s.bindArtistCandidate(ctx, artistID, p, true, nil)
+}
+
+func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile, refreshOnly bool, checkpoint *ArtistRunCheckpoint) (bool, error) {
+	var bound bool
+	err := withBusyRetry(ctx, func() error {
+		bound = false
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=status WHERE 0`); err != nil {
+			return err
+		}
+		if err = requireArtistCheckpoint(ctx, tx, checkpoint, artistID); err != nil {
+			return err
+		}
+		var name string
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=? AND merged_into_artist_id IS NULL`, artistID).Scan(&name); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if metadata.CompositeArtistCredit(name) {
+			return nil
+		}
+		var status string
+		err = tx.QueryRowContext(ctx, `SELECT status FROM artist_match_candidates WHERE artist_id=? AND source=? AND external_id=?`, artistID, p.Source, p.ExternalID).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if status != "candidate" && status != "confirmed" {
+			return nil
+		}
+		var existing string
+		err = tx.QueryRowContext(ctx, `SELECT external_id FROM artist_external_profiles WHERE artist_id=? AND source=?`, artistID, p.Source).Scan(&existing)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if (refreshOnly || status == "confirmed") && errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err == nil && existing != p.ExternalID {
+			return nil
+		}
+		if err = artistIdentityOwnerCheck(ctx, tx, artistID, p.Source, p.ExternalID); err != nil {
+			var conflict *ArtistExternalIDConflictError
+			if errors.As(err, &conflict) {
+				return nil
+			}
+			return err
+		}
+		if err = upsertExternalArtistProfile(ctx, tx, artistID, p); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN external_id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND source=? AND status='candidate'`, p.ExternalID, artistID, p.Source); err != nil {
+			return err
+		}
+		if checkpoint != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE artist_match_run_items SET matched_fact=1 WHERE id=?`, checkpoint.ItemID); err != nil {
+				return err
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		bound = true
+		return nil
+	})
+	return bound, err
+}
+
+func (s *Store) UpdateArtistMatchRunOutcomes(ctx context.Context, id int64, matched, review, noResult, skipped, failed int, current string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE artist_match_runs SET processed_artists=?,matched_artists=?,review_artists=?,failed_artists=?,no_result_artists=?,skipped_artists=?,current_artist=? WHERE id=? AND durable_version=0`, matched+review+noResult+skipped+failed, matched, review, failed, noResult, skipped, current, id)
+	return err
+}
+
+// AutoBindArtistRunCandidate commits identity and recoverable matched fact in
+// one transaction; item completion can follow after secondary sources finish.
+func (s *Store) AutoBindArtistRunCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile, c ArtistRunCheckpoint) (bool, error) {
+	return s.bindArtistCandidate(ctx, artistID, p, false, &c)
 }

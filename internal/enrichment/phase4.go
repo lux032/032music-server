@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -93,29 +94,65 @@ func (m *Manager) StartRun(ctx context.Context, request RunRequest) (storage.Enr
 	m.phaseMu.Lock()
 	defer m.phaseMu.Unlock()
 	if m.phaseRunning {
-		return storage.EnrichmentRun{}, errors.New("metadata enrichment is already running")
+		return storage.EnrichmentRun{}, storage.ErrEnrichmentRunState
 	}
-	run, err := m.store.CreateEnrichmentRun(ctx, request.Scope, request.TargetID, request.Force, 0)
+	run, err := m.store.CreateDurableEnrichmentRun(ctx, request.Scope, request.TargetID, request.Force, phaseStages(request))
 	if err != nil {
 		return storage.EnrichmentRun{}, err
 	}
-	runCtx, cancel := context.WithCancel(m.baseCtx)
-	m.phaseRunning, m.phaseRunID, m.phaseCancel = true, run.ID, cancel
-	m.goBackground("metadata-enrichment", func() { m.executePhase4Run(runCtx, run.ID, request) })
-	return run, nil
+	m.launchDurablePhaseLocked(run)
+	return run.EnrichmentRun, nil
 }
-
-func (m *Manager) CancelRun(runID int64) error {
+func (m *Manager) CancelRun(runID int64) error { return m.stopPhaseRun(runID, "cancel") }
+func (m *Manager) PauseRun(runID int64) error  { return m.stopPhaseRun(runID, "pause") }
+func (m *Manager) stopPhaseRun(runID int64, action string) error {
 	m.phaseMu.Lock()
 	defer m.phaseMu.Unlock()
-	if !m.phaseRunning || m.phaseRunID != runID || m.phaseCancel == nil {
-		return ErrRunNotActive
+	if err := m.store.TransitionEnrichmentRun(context.Background(), runID, action, "manual"); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, storage.ErrEnrichmentRunState) {
+			return ErrRunNotActive
+		}
+		return err
 	}
-	run, err := m.store.EnrichmentRun(context.Background(), runID)
-	if err != nil || run.Status != "running" {
-		return ErrRunNotActive
+	if m.phaseRunID == runID && m.phaseCancel != nil {
+		m.phaseCancel()
 	}
-	m.phaseCancel()
+	return nil
+}
+func (m *Manager) ResumeRun(ctx context.Context, runID int64) error {
+	// State first: a running (or missing/terminal) run is rejected immediately
+	// instead of blocking the caller on the old worker's done channel.
+	run, err := m.store.DurableEnrichmentRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run.Status != "paused" {
+		return storage.ErrEnrichmentRunState
+	}
+	// Join before transitioning: no old loop can claim a new generation/token.
+	m.phaseMu.Lock()
+	done, id := m.phaseDone, m.phaseRunID
+	m.phaseMu.Unlock()
+	if id == runID && done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	m.phaseMu.Lock()
+	defer m.phaseMu.Unlock()
+	if m.phaseRunning {
+		return storage.ErrEnrichmentRunState
+	}
+	if err := m.store.TransitionEnrichmentRun(ctx, runID, "resume", ""); err != nil {
+		return err
+	}
+	run, err = m.store.DurableEnrichmentRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	m.launchDurablePhaseLocked(run)
 	return nil
 }
 
@@ -446,6 +483,19 @@ func (m *Manager) executePhase4Run(ctx context.Context, runID int64, request Run
 }
 
 func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, setting storage.MetadataSourceSetting, force bool, body any, target any) (int, error) {
+	if c, ok := storage.EnrichmentCheckpointFromContext(ctx); ok {
+		ik, ck := enrichmentRequestKeys(endpoint, body, setting)
+		status, raw, e := m.store.EnrichmentRequestChecked(ctx, c.RunID, source, key, endpoint, ik, ck, setting.CacheDays)
+		if e == nil {
+			if status == 404 {
+				return status, sql.ErrNoRows
+			}
+			return status, json.Unmarshal(raw, target)
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return 0, e
+		}
+	}
 	// M4: force skips the persistent cache, but a key already fetched in this run
 	// is reused so one refresh does not repeat the same request.
 	if force && m.runMemo != nil && m.runMemo[source+"\x00"+key] {
@@ -478,7 +528,8 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 	// 这里——429 仍然立即停止本轮。重试间隔用 Bangumi 请求间隔，并通过
 	// m.sleep 让测试可以观察到等待而不真的睡眠。
 	attempt := func() (int, error) {
-		return m.cachedJSONAttempt(ctx, source, key, endpoint, setting, method, reader, target)
+		ik, ck := enrichmentRequestKeys(endpoint, body, setting)
+		return m.cachedJSONAttempt(context.WithValue(ctx, enrichmentRequestKeysContext{}, [2]string{ik, ck}), source, key, endpoint, setting, method, reader, target)
 	}
 	status, err := attempt()
 	if err != nil && isTransientTransportError(err) && ctx.Err() == nil {
@@ -519,6 +570,9 @@ func (m *Manager) cachedJSONAttempt(ctx context.Context, source, key, endpoint s
 			return 0, err
 		}
 	}
+	if err = m.checkSourceCooldown(source); err != nil {
+		return 0, err
+	}
 	resp, err := m.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -547,6 +601,15 @@ func (m *Manager) cachedJSONAttempt(ctx context.Context, source, key, endpoint s
 		}
 	}
 	if (resp.StatusCode >= 200 && resp.StatusCode < 300) || resp.StatusCode == http.StatusNotFound {
+		if c, ok := storage.EnrichmentCheckpointFromContext(ctx); ok {
+			ik, ck := enrichmentRequestKeys(endpoint, nil, setting)
+			if keys, ok := ctx.Value(enrichmentRequestKeysContext{}).([2]string); ok {
+				ik, ck = keys[0], keys[1]
+			}
+			if e := m.store.SaveEnrichmentRequestChecked(ctx, c, source, key, endpoint, ik, ck, resp.StatusCode, raw); e != nil {
+				return resp.StatusCode, e
+			}
+		}
 		if m.runMemo != nil {
 			m.runMemo[source+"\x00"+key] = true
 		}
@@ -577,4 +640,13 @@ func isTransientTransportError(err error) bool {
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+type enrichmentRequestKeysContext struct{}
+
+func enrichmentRequestKeys(endpoint string, body any, setting storage.MetadataSourceSetting) (string, string) {
+	raw, _ := json.Marshal(body)
+	ik := fmt.Sprintf("%x", sha256.Sum256(append([]byte(endpoint), raw...)))
+	ck := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("phase4-v1|%s|%t|%t|%s|%t", setting.Source, setting.Enabled, setting.AutoMatch, setting.Language, setting.APIKey != ""))))
+	return ik, ck
 }

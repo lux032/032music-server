@@ -23,7 +23,13 @@ var phase4DBPath = map[*storage.Store]string{}
 
 func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.Store, int64, int64) {
 	t.Helper()
-	ctx := context.Background()
+	return phase4TestManagerWithCtx(t, context.Background(), handler)
+}
+
+// phase4TestManagerWithCtx 与 phase4TestManager 相同，但允许调用方控制
+// manager 的 baseCtx（例如测试关机中的行为）。
+func phase4TestManagerWithCtx(t *testing.T, ctx context.Context, handler http.Handler) (*Manager, *storage.Store, int64, int64) {
+	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "phase4.db")
 	store, err := storage.Open(dbPath)
 	if err != nil {

@@ -539,6 +539,9 @@ func (s *Store) ConfirmTrackSubjectCandidate(ctx context.Context, trackID, candi
 	if _, err = tx.ExecContext(ctx, `UPDATE track_subject_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE track_id=? AND status='candidate'`, candidateID, trackID); err != nil {
 		return "", nil, err
 	}
+	if err = RecordEnrichmentEffectTx(ctx, tx, "final", "matched"); err != nil {
+		return "", nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return "", nil, err
 	}

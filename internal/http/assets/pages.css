@@ -2922,3 +2922,38 @@ body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap;
 .credit-collaborators img, .credit-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
 .credit-avatar { display: grid; place-items: center; overflow: hidden; background: var(--surface); font-size: 12px; }
 .credit-collaborators small { display: block; color: var(--muted); }
+
+/* ---- durable run task cards (matches & enrichment pages) ---- */
+.run-tasks .run-card {
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 4px;
+}
+.run-tasks .run-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.run-tasks .run-card small { display: block; margin: 6px 0 0; color: var(--text-secondary); font-size: var(--fs-xs); }
+.run-tasks .run-counts { margin: 10px 0 0; color: var(--text-secondary); font-size: var(--fs-xs); }
+.run-tasks .run-progress { margin: 14px 0 0; }
+.run-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.run-actions form { margin: 0; }
+.run-tasks .run-last { margin: 12px 0 0; font-size: var(--fs-xs); }
+.run-tasks .run-empty { margin: 0; font-size: var(--fs-sm); }
+.status-paused { border-color: rgba(216, 160, 32, 0.45); color: var(--warning, #b07d10); background: rgba(216, 160, 32, 0.1); }
+.run-history { margin-top: 16px; }
+.run-history > summary { cursor: pointer; color: var(--text-secondary); font-size: var(--fs-sm); user-select: none; }
+.run-history > summary:hover { color: var(--accent); }
+.run-history .enrichment-runs { margin-top: 14px; }
+.page-nav { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: var(--fs-sm); }
+.page-nav a { color: var(--accent); }
+.page-nav span { color: var(--muted); }
+.review-filter { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.review-filter input[type="search"] { min-width: 180px; flex: 1 1 180px; max-width: 320px; }
+.run-update-hint { color: var(--muted); font-size: var(--fs-xs); }
+@media (max-width: 640px) {
+  .run-tasks .run-card { padding: 14px; }
+  .run-actions { gap: 8px; }
+  .review-filter input[type="search"] { max-width: none; }
+}

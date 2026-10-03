@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/storage"
@@ -36,6 +37,13 @@ var errAlbumCandidateConflict = errors.New("没有可写入的作品关联：该
 var errTrackCandidateConflict = errors.New("track subject candidate conflict")
 
 type enrichmentPageData struct {
+	ActiveRun *enrichmentRunView
+	LastRun   *enrichmentRunView
+	History   []enrichmentRunView
+	// 历史分页（GET server 控制，1 起页码；HistoryTotal 为真实总数）。
+	HistoryPage  int
+	HistoryTotal int
+	HistoryLimit int
 	Chrome
 	Notice             string
 	Runs               []storage.EnrichmentRun
@@ -402,7 +410,49 @@ func (a *App) enrichmentReviews(ctx context.Context) ([]enrichmentWorkReview, []
 func (a *App) handleAdminEnrichment(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	data := enrichmentPageData{Chrome: a.chromeFor(r.Context(), session, "enrichment"), Notice: r.URL.Query().Get("notice"), PosterTotal: -1}
-	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), 30, 0)
+	// 活动任务置顶：直接查未完成的 durable run，不受历史分页影响。
+	if active, err := a.store.UnfinishedDurableEnrichmentRun(r.Context()); err == nil {
+		view := enrichmentRunDTO(active)
+		data.ActiveRun = &view
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		a.logger.Error("enrichment active run", "error", err)
+	}
+	data.HistoryPage, data.HistoryLimit = runsPageNumber(r), 10
+	offset := (data.HistoryPage - 1) * data.HistoryLimit
+	data.Runs, _ = a.store.ListEnrichmentRuns(r.Context(), data.HistoryLimit, offset)
+	data.HistoryTotal, _ = a.store.CountEnrichmentRuns(r.Context())
+	for _, row := range data.Runs {
+		run, err := a.store.DurableEnrichmentRun(r.Context(), row.ID)
+		if err != nil {
+			continue
+		}
+		view := enrichmentRunDTO(run)
+		if data.ActiveRun != nil && run.ID == data.ActiveRun.ID {
+			continue
+		}
+		// “最近任务”只在第一页从页内取；其余页走独立最新查询（见下）。
+		if data.HistoryPage == 1 && data.LastRun == nil && row.Status != "running" && row.Status != "paused" && row.Status != "queued" {
+			copy := view
+			data.LastRun = &copy
+		}
+		data.History = append(data.History, view)
+	}
+	// 第一页没有终态任务，或在其他历史页：单独取最近一次终态任务。
+	if data.LastRun == nil {
+		if latest, err := a.store.ListEnrichmentRuns(r.Context(), 5, 0); err == nil {
+			for _, row := range latest {
+				if row.Status == "running" || row.Status == "paused" || row.Status == "queued" {
+					continue
+				}
+				if run, err := a.store.DurableEnrichmentRun(r.Context(), row.ID); err == nil {
+					view := enrichmentRunDTO(run)
+					data.LastRun = &view
+				}
+				break
+			}
+		}
+	}
+
 	albumCount, trackCount, workCount, seriesCount, _ := a.store.PendingWorkReviewCounts(r.Context())
 	data.AlbumCount = albumCount
 	data.TrackCount = trackCount
@@ -543,11 +593,21 @@ func (a *App) handleAdminStartEnrichment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	request, err := normalizeEnrichmentRequest(enrichmentRunRequest{Scope: r.FormValue("scope"), TargetID: parseInt64(r.FormValue("targetId")), Force: r.FormValue("force") != ""})
-	if err == nil {
-		_, err = a.startEnrichmentRunRequest(r.Context(), request)
-	}
 	if err != nil {
-		redirectWithNotice(w, r, "/admin/enrichment", err.Error())
+		a.logger.Warn("start enrichment run rejected", "error", err)
+		redirectWithNotice(w, r, "/admin/enrichment", "启动参数无效，请检查任务范围与目标")
+		return
+	}
+	if _, err = a.startEnrichmentRunRequest(r.Context(), request); err != nil {
+		message := "操作失败，请检查任务状态后重试"
+		if errors.Is(err, storage.ErrEnrichmentRunState) {
+			// 双击或已有暂停任务是可预期的用户状态，不是系统错误。
+			a.logger.Warn("start enrichment run conflict", "error", err)
+			message = "已存在进行或暂停中的任务，请先恢复或取消该任务"
+		} else {
+			a.logger.Error("start enrichment run", "error", err)
+		}
+		redirectWithNotice(w, r, "/admin/enrichment", message)
 		return
 	}
 	redirectWithNotice(w, r, "/admin/enrichment", "元数据增强任务已启动")
@@ -564,7 +624,8 @@ func (a *App) handleAdminCancelEnrichment(w http.ResponseWriter, r *http.Request
 	} else if err := a.enrichment.CancelRun(parseInt64(r.PathValue("id"))); errors.Is(err, enrichment.ErrRunNotActive) {
 		message = "任务已结束或不存在"
 	} else if err != nil {
-		message = "停止任务失败：" + err.Error()
+		a.logger.Error("cancel enrichment run", "error", err)
+		message = "停止任务失败，请稍后重试"
 	}
 	redirectWithNotice(w, r, "/admin/enrichment", message)
 }
@@ -625,6 +686,119 @@ func (a *App) handleAdminArtistRelationDecision(w http.ResponseWriter, r *http.R
 		message = err.Error()
 	}
 	redirectWithNotice(w, r, "/admin/enrichment", message)
+}
+
+// runsPageNumber parses the 1-based ?runsPage= history pagination parameter.
+func runsPageNumber(r *http.Request) int {
+	page, _ := strconv.Atoi(r.URL.Query().Get("runsPage"))
+	if page < 1 {
+		return 1
+	}
+	if page > 1000000 {
+		return 1000000
+	}
+	return page
+}
+
+// runStatusLabel 是匹配与增强两个页面统一的任务状态中文映射。
+func runStatusLabel(status string) string {
+	switch status {
+	case "running":
+		return "进行中"
+	case "paused":
+		return "已暂停"
+	case "completed":
+		return "已完成"
+	case "failed":
+		return "已失败"
+	case "cancelled":
+		return "已停止"
+	case "queued":
+		return "排队中"
+	default:
+		return status
+	}
+}
+
+// pauseReasonLabel 将持久化的暂停原因映射为可读中文。
+func pauseReasonLabel(reason string) string {
+	switch reason {
+	case "manual":
+		return "手动暂停"
+	case "server_restart":
+		return "服务重启中断"
+	case "shutdown":
+		return "服务关闭"
+	case "rate_limit_count":
+		return "同一对象连续限流"
+	case "rate_limit_wait_budget":
+		return "限流等待超出 30 分钟预算"
+	case "storage_or_runtime_error":
+		return "存储或运行错误"
+	default:
+		return reason
+	}
+}
+
+// enrichmentScopeLabel 是增强任务范围的中文标签，force 由模板单独加徽标。
+func enrichmentScopeLabel(run enrichmentRunView) string {
+	base := ""
+	switch run.Scope {
+	case "all":
+		base = "全部（专辑、曲目及作品）"
+	case "albums":
+		base = "动画专辑"
+	case "tracks":
+		base = "曲目"
+	case "works":
+		base = "作品对齐与系列"
+	case "album":
+		base = "单个专辑"
+	case "work":
+		base = "单个作品"
+	default:
+		base = run.Scope
+	}
+	if run.TargetID != 0 {
+		base += " #" + strconv.FormatInt(run.TargetID, 10)
+	}
+	return base
+}
+
+// percentDone 计算进度百分比（total<=0 时为 0）。
+func percentDone(processed, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	value := processed * 100 / total
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+// clockOf 将 RFC3339Nano 时间渲染为本地 HH:MM:SS；解析失败原样返回。
+func clockOf(value string) string {
+	if value == "" {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return parsed.Local().Format("15:04:05")
+}
+
+// waitTotalLabel 将累计限流等待毫秒数渲染为可读时长。
+func waitTotalLabel(ms int64) string {
+	if ms <= 0 {
+		return "0 秒"
+	}
+	seconds := ms / 1000
+	if seconds >= 90 {
+		return fmt.Sprintf("%d 分钟", (seconds+30)/60)
+	}
+	return fmt.Sprintf("%d 秒", seconds)
 }
 
 func enrichmentRunProgress(run storage.EnrichmentRun) int {

@@ -24,20 +24,32 @@ type artistReleaseGroup struct {
 	Releases    []storage.Album
 }
 type identityPageData struct {
+	ActiveArtistRun  *artistRunView
+	LastArtistRun    *artistRunView
+	ArtistRunHistory []artistRunView
+
 	Chrome
-	Section, Notice   string
-	Settings          []storage.MetadataSourceSetting
-	BiographySettings storage.BiographySettings
-	LastFMScrobble    lastFMScrobbleView
-	IdentityConflict  *storage.ArtistIdentityConflict
-	Artist            *storage.ArtistDetail
-	Artists           []storage.Artist
-	Albums            []storage.Album
-	ReleaseGroups     []artistReleaseGroup
-	Tracks            []storage.Track
-	Review            []matchReviewItem
-	Merges            []storage.MergeOperation
-	MatchRuns         []storage.ArtistMatchRun
+	Section, Notice                        string
+	Settings                               []storage.MetadataSourceSetting
+	BiographySettings                      storage.BiographySettings
+	LastFMScrobble                         lastFMScrobbleView
+	IdentityConflict                       *storage.ArtistIdentityConflict
+	Artist                                 *storage.ArtistDetail
+	Artists                                []storage.Artist
+	Albums                                 []storage.Album
+	ReleaseGroups                          []artistReleaseGroup
+	Tracks                                 []storage.Track
+	Review                                 []matchReviewItem
+	CreditCorrectionReview                 []matchReviewItem
+	ReviewTotal, ReviewLimit, ReviewOffset int
+	ReviewPage                             int
+	ReviewQuery, ReviewSource              string
+	// 历史任务分页（GET server 控制，1 起页码）。
+	ArtistRunsPage  int
+	ArtistRunsTotal int
+	ArtistRunsLimit int
+	Merges          []storage.MergeOperation
+	MatchRuns       []storage.ArtistMatchRun
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -163,10 +175,11 @@ func (a *App) handleCancelArtistMatching(w http.ResponseWriter, r *http.Request)
 	message := "任务已停止"
 	if a.enrichment == nil {
 		message = "任务已结束或不存在"
-	} else if err := a.enrichment.CancelArtistMatching(parseInt64(r.PathValue("id"))); errors.Is(err, enrichment.ErrRunNotActive) {
+	} else if err := a.enrichment.CancelArtistMatching(parseInt64(r.PathValue("id"))); errors.Is(err, enrichment.ErrRunNotActive) || errors.Is(err, sql.ErrNoRows) {
 		message = "任务已结束或不存在"
 	} else if err != nil {
-		message = "停止任务失败：" + err.Error()
+		a.logger.Error("cancel artist run", "error", err)
+		message = "停止任务失败，请稍后重试"
 	}
 	redirectWithNotice(w, r, "/admin/matches", message)
 }
@@ -176,10 +189,23 @@ func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", 403)
 		return
 	}
-	if _, err := a.enrichment.StartAll(r.Context()); err != nil {
-		redirectWithNotice(w, r, "/admin/matches", err.Error())
+	if a.enrichment == nil {
+		redirectWithNotice(w, r, "/admin/matches", "任务服务不可用")
 		return
 	}
+	if _, err := a.enrichment.StartAll(r.Context()); err != nil {
+		message := "启动任务失败，请稍后重试"
+		if errors.Is(err, enrichment.ErrNoEligibleArtists) {
+			message = "没有需要检查的艺术家"
+		} else if errors.Is(err, storage.ErrArtistRunState) || errors.Is(err, enrichment.ErrRunNotActive) {
+			message = "已有活动或暂停任务，请查看任务并手动继续"
+		} else {
+			a.logger.Error("start artist matching", "error", err)
+		}
+		redirectWithNotice(w, r, "/admin/matches", message)
+		return
+	}
+
 	redirectWithNotice(w, r, "/admin/matches", "自动匹配任务已启动")
 }
 
@@ -191,6 +217,12 @@ func (a *App) handleMatchArtist(w http.ResponseWriter, r *http.Request) {
 	id := parseInt64(r.PathValue("id"))
 	result, err := a.enrichment.MatchArtist(r.Context(), id)
 	if err != nil {
+		var partial *enrichment.ArtistMatchPartialError
+		if result.AutoMatched && errors.As(err, &partial) {
+			a.logger.Warn("artist matched with attachment failure", "artistId", id, "error", err)
+			redirectWithNotice(w, r, artistProfilePath(id), partial.Notice())
+			return
+		}
 		if notice, ok := enrichment.RateLimitNotice(err); ok {
 			if result.AutoMatched {
 				// The match was confirmed before the rate limit hit; do not let
@@ -509,19 +541,69 @@ func (a *App) handleRollbackMerge(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	data := a.identityBase(r, "matches")
 	data.MatchRuns, _ = a.store.ListArtistMatchRuns(r.Context(), 30)
-	artists, err := a.store.ListArtists(r.Context(), storage.Filters{Limit: 500})
-	if err != nil {
-		http.Error(w, err.Error(), 500)
+	// 活动任务置顶：直接查未完成的 durable run，不受历史分页影响。
+	if active, err := a.store.UnfinishedDurableArtistRun(r.Context()); err == nil {
+		view := artistRunDTO(active)
+		data.ActiveArtistRun = &view
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		a.logger.Error("matches active run", "error", err)
+	}
+	data.ArtistRunsPage, data.ArtistRunsLimit = runsPageNumber(r), 10
+	runsOffset := (data.ArtistRunsPage - 1) * data.ArtistRunsLimit
+	if runs, count, err := a.store.ListDurableArtistRuns(r.Context(), data.ArtistRunsLimit, runsOffset); err == nil {
+		data.ArtistRunsTotal = count
+		for _, run := range runs {
+			if data.ActiveArtistRun != nil && run.ID == data.ActiveArtistRun.ID {
+				continue
+			}
+			view := artistRunDTO(run)
+			// “最近任务”只在第一页从页内取；其余页走独立最新查询（见下）。
+			if data.ArtistRunsPage == 1 && data.LastArtistRun == nil && run.Status != "running" && run.Status != "paused" && run.Status != "queued" {
+				copy := view
+				data.LastArtistRun = &copy
+			}
+			data.ArtistRunHistory = append(data.ArtistRunHistory, view)
+		}
+	}
+	if data.LastArtistRun == nil {
+		if latest, _, err := a.store.ListDurableArtistRuns(r.Context(), 5, 0); err == nil {
+			for _, run := range latest {
+				if run.Status == "running" || run.Status == "paused" || run.Status == "queued" {
+					continue
+				}
+				view := artistRunDTO(run)
+				data.LastArtistRun = &view
+				break
+			}
+		}
+	}
+
+	pageNumber, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if pageNumber < 1 {
+		pageNumber = 1
+	}
+	if pageNumber > 1000000 {
+		pageNumber = 1000000
+	}
+	source := r.URL.Query().Get("source")
+	if source != "" && source != "musicbrainz" && source != "lastfm" {
+		http.Error(w, "invalid source", 400)
 		return
 	}
-	pendingByArtist, err := a.store.PendingArtistCandidates(r.Context())
+	page, err := a.store.PendingArtistReviewPage(r.Context(), storage.ArtistReviewFilter{Query: r.URL.Query().Get("q"), Source: source, Limit: 50, Offset: (pageNumber - 1) * 50})
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, "加载艺术家审核失败", 500)
 		return
 	}
-	for _, artist := range artists {
-		if pending := pendingByArtist[artist.ID]; len(pending) > 0 {
-			data.Review = append(data.Review, matchReviewItem{Artist: artist, Candidates: pending})
+	data.ReviewTotal, data.ReviewLimit, data.ReviewOffset = page.Total, page.Limit, page.Offset
+	data.ReviewPage = pageNumber
+	data.ReviewQuery, data.ReviewSource = r.URL.Query().Get("q"), source
+	for _, item := range page.Items {
+		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates}
+		if item.NeedsCreditCorrection {
+			data.CreditCorrectionReview = append(data.CreditCorrectionReview, review)
+		} else {
+			data.Review = append(data.Review, review)
 		}
 	}
 	a.render(w, 200, "match-review.html", data)

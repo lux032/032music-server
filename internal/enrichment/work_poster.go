@@ -34,6 +34,9 @@ func (m *Manager) downloadPublicImage(ctx context.Context, remoteURL, label stri
 		}
 		return validatePublicImageURL(req.URL.String())
 	}
+	if err := m.checkSourceCooldown(label); err != nil {
+		return nil, "", "", err
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, "", "", err

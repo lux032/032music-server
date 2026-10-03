@@ -130,11 +130,32 @@ func (s *Store) CreateEnrichmentRun(ctx context.Context, scope string, targetID 
 	if scope == "" || targetID < 0 || total < 0 {
 		return EnrichmentRun{}, fmt.Errorf("invalid enrichment run")
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO enrichment_runs(status,scope,target_id,force,total,started_at) VALUES('running',?,NULLIF(?,0),?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, scope, targetID, boolInt(force), total)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return EnrichmentRun{}, err
 	}
-	id, _ := result.LastInsertId()
+	defer tx.Rollback()
+	if err = enrichmentWriteLock(ctx, tx); err != nil {
+		return EnrichmentRun{}, err
+	}
+	var active int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM enrichment_runs WHERE durable_version=1 AND status IN ('queued','running','paused')`).Scan(&active); err != nil {
+		return EnrichmentRun{}, err
+	}
+	if active > 0 {
+		return EnrichmentRun{}, ErrEnrichmentRunState
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO enrichment_runs(status,scope,target_id,force,total,started_at) VALUES('running',?,NULLIF(?,0),?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, scope, targetID, boolInt(force), total)
+	if err != nil {
+		return EnrichmentRun{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return EnrichmentRun{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return EnrichmentRun{}, err
+	}
 	return s.EnrichmentRun(ctx, id)
 }
 
@@ -145,7 +166,7 @@ func (s *Store) UpdateEnrichmentRun(ctx context.Context, id int64, value Enrichm
 	if value.StageAlbums < -1 || value.StageTracks < -1 || value.StageWorks < -1 {
 		return fmt.Errorf("invalid enrichment run stage counters")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET total=?,processed=?,succeeded=?,skipped=?,review=?,failed=?,current=NULLIF(?,''),error_message=NULLIF(?,''),stage=?,stage_albums=?,stage_tracks=?,stage_works=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, value.Total, value.Processed, value.Succeeded, value.Skipped, value.Review, value.Failed, value.Current, value.ErrorMessage, value.Stage, value.StageAlbums, value.StageTracks, value.StageWorks, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET total=?,processed=?,succeeded=?,skipped=?,review=?,failed=?,current=NULLIF(?,''),error_message=NULLIF(?,''),stage=?,stage_albums=?,stage_tracks=?,stage_works=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND durable_version=0`, value.Total, value.Processed, value.Succeeded, value.Skipped, value.Review, value.Failed, value.Current, value.ErrorMessage, value.Stage, value.StageAlbums, value.StageTracks, value.StageWorks, id)
 	if err != nil {
 		return err
 	}
@@ -159,7 +180,7 @@ func (s *Store) FinishEnrichmentRun(ctx context.Context, id int64, status, messa
 	if status != "completed" && status != "failed" && status != "cancelled" {
 		return fmt.Errorf("invalid terminal enrichment status %q", status)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status=?,current=NULL,error_message=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, status, message, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status=?,current=NULL,error_message=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND durable_version=0`, status, message, id)
 	if err != nil {
 		return err
 	}
@@ -176,7 +197,7 @@ func (s *Store) FailRunningEnrichmentRuns(ctx context.Context, message string) (
 	if message == "" {
 		message = "enrichment interrupted by process restart"
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status='failed',current=NULL,error_message=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='running'`, message)
+	result, err := s.db.ExecContext(ctx, `UPDATE enrichment_runs SET status='failed',current=NULL,error_message=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE durable_version=0 AND status='running'`, message)
 	if err != nil {
 		return 0, err
 	}
@@ -770,6 +791,14 @@ func (s *Store) AutoConfirmWorkMatchCandidate(ctx context.Context, workID, candi
 		return ErrAutoConfirmConflict
 	}
 	if err = confirmWorkMatchCandidateTx(ctx, tx, workID, candidateID, runID); err != nil {
+		return err
+	}
+	// Retry cleanup commits with the confirm (and its effect fact), so a crash
+	// after commit cannot strand a retry row behind the resume effect skip.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM work_enrichment_retries WHERE work_id=? AND source='bangumi'`, workID); err != nil {
+		return err
+	}
+	if err = RecordEnrichmentEffectTx(ctx, tx, "final", "matched"); err != nil {
 		return err
 	}
 	return tx.Commit()

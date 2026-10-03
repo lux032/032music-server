@@ -416,3 +416,43 @@ test('album card play icon is centred and artist name opens the artist page', as
   await card.locator('.album-card-artists a').first().click();
   await expect(page).toHaveURL(/\/admin\/artists\/\d+$/);
 });
+
+test('matches/enrichment run-task pages: naming, collapsed history, no polling storm across PJAX', async ({ page }) => {
+  const activeRequests = [];
+  page.on('request', (req) => { if (req.url().includes('/runs/active.json')) activeRequests.push(req.url()); });
+  await page.goto('/admin/matches');
+  await expect(page.locator('main h1')).toHaveText('艺术家匹配与审核');
+  await expect(page.getByRole('button', { name: '扫描未匹配与需检查的艺术家' })).toBeVisible();
+  await expect(page.locator('[data-run-tasks][data-run-kind="artist"]')).toBeVisible();
+  await expect(page.locator('[data-run-tasks][data-run-kind="artist"] [data-run-empty]')).toBeVisible();
+  const history = page.locator('[data-run-kind="artist"] .run-history');
+  await expect(history).toBeVisible();
+  await expect(history).not.toHaveAttribute('open');
+  await expect(history.locator('summary')).toContainText('任务记录');
+  await expect(page.locator('.review-filter input[name="q"]')).toBeVisible();
+  await expect(page.locator('.review-filter select[name="source"]')).toBeVisible();
+  await page.waitForTimeout(2600);
+  const afterIdle = activeRequests.length;
+  // 无活动任务：初次评估后不得出现 2s 请求风暴。
+  expect(afterIdle).toBeLessThanOrEqual(2);
+  // PJAX 切换到增强页再切回：计时器去重，不叠加风暴。
+  await page.locator('.sidebar a[data-nav="enrichment"]').first().dispatchEvent('click');
+  await expect(page.locator('main h1')).toHaveText('元数据自动增强');
+  await expect(page.locator('[data-run-tasks][data-run-kind="enrichment"]')).toBeVisible();
+  await page.locator('.sidebar a[data-nav="matches"]').first().dispatchEvent('click');
+  await expect(page.locator('main h1')).toHaveText('艺术家匹配与审核');
+  await page.waitForTimeout(2600);
+  expect(activeRequests.length - afterIdle).toBeLessThanOrEqual(6);
+});
+
+test('matches page review filter keeps query params through PJAX submit', async ({ page }) => {
+  await page.goto('/admin/matches');
+  await page.locator('.review-filter input[name="q"]').fill('E2E');
+  await page.locator('.review-filter select[name="source"]').selectOption('musicbrainz');
+  await page.locator('.review-filter button').click();
+  await expect(page).toHaveURL(/\/admin\/matches\?/);
+  await expect(page).toHaveURL(/q=E2E/);
+  await expect(page).toHaveURL(/source=musicbrainz/);
+  await expect(page.locator('main h1')).toHaveText('艺术家匹配与审核');
+  await expect(page.locator('.review-filter input[name="q"]')).toHaveValue('E2E');
+});

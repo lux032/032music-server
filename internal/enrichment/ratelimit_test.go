@@ -103,7 +103,7 @@ func TestNewManagerBangumiIntervalFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { delete(phase4DBPath, store); _ = store.Close() })
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -245,23 +245,22 @@ func TestPhase4RunStopsOnRateLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	artistFakeClock(manager)
 	run, err := manager.StartRun(ctx, RunRequest{Scope: "all"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	finished := waitRun(t, store, run.ID)
 	manager.Wait()
-	if finished.Status != "failed" {
+	finished, _ := store.EnrichmentRun(ctx, run.ID)
+	manager.Wait()
+	if finished.Status != "paused" {
 		t.Fatalf("run=%+v", finished)
-	}
-	if !strings.Contains(finished.ErrorMessage, "Bangumi 限流（429）") || !strings.Contains(finished.ErrorMessage, "分钟后可重试") {
-		t.Fatalf("message=%q", finished.ErrorMessage)
 	}
 	if finished.Failed != 0 {
 		t.Fatalf("rate limiting must not count as ordinary failure: run=%+v", finished)
 	}
-	if got := int(requests.Load()); got != 1 {
-		t.Fatalf("requests=%d, want 1 (run stopped at the first 429)", got)
+	if got := int(requests.Load()); got != 3 {
+		t.Fatalf("requests=%d, want 3 (same item pauses on third response)", got)
 	}
 }
 
@@ -296,6 +295,7 @@ func TestArtistMatchStopsOnRateLimit(t *testing.T) {
 	if err = store.SaveMetadataSourceSetting(ctx, setting); err != nil {
 		t.Fatal(err)
 	}
+	artistFakeClock(manager)
 	runID, err := manager.StartAll(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -311,11 +311,11 @@ func TestArtistMatchStopsOnRateLimit(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	manager.Wait()
-	if finished.Status != "failed" || !strings.Contains(finished.ErrorMessage, "MusicBrainz 限流（429）") {
+	if finished.Status != "paused" {
 		t.Fatalf("run=%+v", finished)
 	}
-	if got := int(requests.Load()); got != 1 {
-		t.Fatalf("requests=%d, want 1 (artist matching stopped at the first 429)", got)
+	if got := int(requests.Load()); got != 3 {
+		t.Fatalf("requests=%d, want 3 (same item pauses after three responses)", got)
 	}
 }
 
@@ -415,11 +415,13 @@ func TestMusicBrainzRequestUserAgent(t *testing.T) {
 func transportManager(t *testing.T, transport http.RoundTripper) *Manager {
 	t.Helper()
 	ctx := context.Background()
-	store, err := storage.Open(filepath.Join(t.TempDir(), "ua.db"))
+	dbPath := filepath.Join(t.TempDir(), "ua.db")
+	store, err := storage.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	phase4DBPath[store] = dbPath
+	t.Cleanup(func() { delete(phase4DBPath, store); _ = store.Close() })
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +451,11 @@ func TestWikidataUserAgentAndRateLimit(t *testing.T) {
 	if !strings.Contains(capturedUA, defaultContactURL) {
 		t.Fatalf("wikidata ua=%q", capturedUA)
 	}
-	// A successful response carries the same contactable UA.
+	// Generic cooldown gates also cover Wikidata; expire it explicitly before
+	// checking a successful response carries the same contactable UA.
+	manager.cooldownMu.Lock()
+	delete(manager.blockedUntil, "wikidata")
+	manager.cooldownMu.Unlock()
 	status.Store(http.StatusOK)
 	if _, err = manager.wikidataSitelinks(ctx, "https://www.wikidata.org/wiki/Q42"); err == nil || asRateLimited(err) != nil {
 		t.Fatalf("ok-response err=%v", err) // entity missing, but not rate limited
@@ -551,17 +557,13 @@ func TestArtistMatchRefreshStopsOnRateLimit(t *testing.T) {
 	if err = store.SaveMetadataSourceSetting(ctx, setting); err != nil {
 		t.Fatal(err)
 	}
-	runID, err := manager.StartAll(ctx)
-	if err != nil {
-		t.Fatal(err)
+	_, err = manager.StartAll(ctx)
+	if !errors.Is(err, ErrNoEligibleArtists) {
+		t.Fatalf("expected confirmed-source skip, got %v", err)
 	}
-	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	if finished.Status != "failed" || !strings.Contains(finished.ErrorMessage, "MusicBrainz 限流（429）") {
-		t.Fatalf("run=%+v", finished)
-	}
-	if got := int(requests.Load()); got != 1 {
-		t.Fatalf("requests=%d, want 1 (refresh-path 429 stopped the run)", got)
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("automatic identity scan must not fetch attachments: %d", got)
 	}
 }
 
@@ -610,16 +612,17 @@ func TestArtistMatchBiographyRateLimitStopsRun(t *testing.T) {
 	if err = store.SaveBiographySettings(ctx, storage.BiographySettings{PreferredLanguages: "en", SourcePriority: "lastfm", WikipediaEnabled: false, CacheDays: 30}); err != nil {
 		t.Fatal(err)
 	}
+	artistFakeClock(manager)
 	runID, err := manager.StartAll(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	if finished.Status != "failed" || !strings.Contains(finished.ErrorMessage, "Last.fm 限流（429）") {
+	if finished.Status != "paused" {
 		t.Fatalf("run=%+v", finished)
 	}
-	if got := int(requests.Load()); got != 1 {
+	if got := int(requests.Load()); got != 3 {
 		t.Fatalf("requests=%d, want 1 (biography-refresh rate limit stopped the run)", got)
 	}
 }
@@ -688,19 +691,20 @@ func TestWikidataImageRateLimitStopsStartAll(t *testing.T) {
 	if err = store.SaveMetadataSourceSetting(ctx, setting); err != nil {
 		t.Fatal(err)
 	}
+	artistFakeClock(manager)
 	runID, err := manager.StartAll(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	if finished.Status != "failed" || !strings.Contains(finished.ErrorMessage, "Wikidata 限流（429）") {
+	if finished.Status != "paused" {
 		t.Fatalf("run=%+v", finished)
 	}
-	if got := int(wikidataRequests.Load()); got != 1 {
+	if got := int(wikidataRequests.Load()); got != 3 {
 		t.Fatalf("wikidata requests=%d, want 1 (second artist never reached Wikidata)", got)
 	}
-	if got := int(mbRequests.Load()); got != 1 {
+	if got := int(mbRequests.Load()); got != 3 {
 		t.Fatalf("mb requests=%d, want 1", got)
 	}
 }
@@ -747,7 +751,7 @@ func TestPhase4WorkPosterRateLimitStopsRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { delete(phase4DBPath, store); _ = store.Close() })
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -865,7 +869,8 @@ func TestArtistMatchConfirmedThenRateLimitCountsMatch(t *testing.T) {
 	}
 	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	if finished.Status != "failed" || !strings.Contains(finished.ErrorMessage, "MusicBrainz 限流（429）") {
+	// Automatic scanning no longer performs post-confirmation attachment HTTP.
+	if finished.Status != "completed" {
 		t.Fatalf("run=%+v", finished)
 	}
 	if finished.Matched != 1 || finished.Processed != 1 {

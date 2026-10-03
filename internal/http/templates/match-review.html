@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   {{template "head" .}}
-  <title>匹配审核 · 032</title>
+  <title>艺术家匹配与审核 · 032</title>
 </head>
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
@@ -10,28 +10,97 @@
   <main id="app-main" class="browser-main identity-main">
     <header class="browser-header">
       <div>
-        <h1>匹配审核</h1>
-        <p class="result-count">低于自动确认阈值的候选必须人工确认。</p>
+        <h1>艺术家匹配与审核</h1>
+        <p class="result-count">以 MusicBrainz / Last.fm 为来源扫描艺术家身份；低于自动确认阈值的候选在这里人工审核。</p>
       </div>
       <form method="post" action="/admin/matches/run">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <button>自动匹配全部歌手</button>
+        <button>扫描未匹配与需检查的艺术家</button>
       </form>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="feature-section">
-      <div class="section-title"><div><h2>匹配任务</h2></div></div>
-      <div class="enrichment-runs">
-        {{range .MatchRuns}}
-        <article><header><strong>#{{.ID}}</strong><span>{{if eq .Status "running"}}进行中{{else if eq .Status "cancelled"}}已停止{{else}}{{.Status}}{{end}}</span></header>
-          <p>处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
-          {{if eq .Status "running"}}<form method="post" action="/admin/matches/runs/{{.ID}}/cancel"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button">停止</button></form>{{end}}
-          {{if .ErrorMessage}}<small>{{.ErrorMessage}}</small>{{end}}
-        </article>
-        {{end}}
-      </div>
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">扫描只检查尚未匹配或来源配置变化需要复查的艺术家，不会覆盖已确认的身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
     </section>
+
+    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist">
+      <div class="section-title"><div><h2>当前任务</h2></div></div>
+      {{with .ActiveArtistRun}}
+      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+        <header>
+          <strong>匹配任务 #{{.ID}}</strong>
+          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+        </header>
+        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+        <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
+        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}</small>
+        <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
+        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
+        <div class="run-actions">
+          <form method="post" action="/admin/matches/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button class="secondary-button">暂停</button>
+          </form>
+          <form method="post" action="/admin/matches/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button>继续</button>
+          </form>
+          <form method="post" action="/admin/matches/runs/{{.ID}}/cancel" data-run-action="cancel">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button class="secondary-button">停止</button>
+          </form>
+        </div>
+      </article>
+      {{else}}
+      <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的任务。</p>
+      {{end}}
+      {{with .LastArtistRun}}
+      <p class="muted run-last">最近任务：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      {{end}}
+      <details class="run-history">
+        <summary>任务记录（共 {{$.ArtistRunsTotal}} 条）</summary>
+        <div class="enrichment-runs">
+          {{range .ArtistRunHistory}}
+          <article>
+            <header>
+              <strong>匹配任务 #{{.ID}}</strong>
+              <span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span>
+            </header>
+            <div class="progress"><span style="width:{{percentDone .Processed .Total}}%"></span></div>
+            <p>处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+            {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
+          </article>
+          {{else}}
+          <div class="zero-state"><strong>还没有匹配任务</strong><span>启动一次艺术家匹配扫描。</span></div>
+          {{end}}
+        </div>
+        {{if gt $.ArtistRunsTotal $.ArtistRunsLimit}}
+        <nav class="page-nav run-history-pages" aria-label="任务记录分页">
+          {{if gt $.ArtistRunsPage 1}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{subtract $.ArtistRunsPage 1}}">上一页</a>{{end}}
+          <span>第 {{$.ArtistRunsPage}} 页 · 共 {{$.ArtistRunsTotal}} 条</span>
+          {{if lt (mul $.ArtistRunsPage $.ArtistRunsLimit) $.ArtistRunsTotal}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{add $.ArtistRunsPage 1}}">下一页</a>{{end}}
+        </nav>
+        {{end}}
+      </details>
+    </section>
+
+    <section class="feature-section">
+      <div class="section-title"><div><h2>待审核候选</h2></div></div>
+      <form method="get" action="/admin/matches" class="review-filter">
+        <input type="search" name="q" value="{{.ReviewQuery}}" placeholder="搜索艺术家" aria-label="搜索艺术家">
+        <select name="source" aria-label="候选来源">
+          <option value=""{{if eq .ReviewSource ""}} selected{{end}}>全部来源</option>
+          <option value="musicbrainz"{{if eq .ReviewSource "musicbrainz"}} selected{{end}}>MusicBrainz</option>
+          <option value="lastfm"{{if eq .ReviewSource "lastfm"}} selected{{end}}>Last.fm</option>
+        </select>
+        <input type="hidden" name="runsPage" value="{{.ArtistRunsPage}}">
+        <button class="secondary-button">筛选</button>
+      </form>
+      <p class="muted">共 {{.ReviewTotal}} 位待审核艺术家</p>
+    </section>
+
     <section class="review-list">
       {{range $item := .Review}}
       <article>
@@ -60,9 +129,36 @@
         </div>
       </article>
       {{else}}
-      <div class="zero-state"><strong>没有等待审核的候选</strong><span>可以启动一次自动匹配。</span></div>
+      {{if not .CreditCorrectionReview}}
+      <div class="zero-state"><strong>没有等待审核的候选</strong><span>可以启动一次艺术家匹配扫描。</span></div>
+      {{end}}
       {{end}}
     </section>
+    {{if or (gt $.ReviewOffset 0) (gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit))}}
+    <nav class="page-nav review-pages" aria-label="待审核分页">
+      {{if gt $.ReviewOffset 0}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{subtract $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">上一页</a>{{end}}
+      <span>第 {{$.ReviewPage}} 页 · 共 {{$.ReviewTotal}} 位</span>
+      {{if gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit)}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{add $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">下一页</a>{{end}}
+    </nav>
+    {{end}}
+
+    {{if .CreditCorrectionReview}}
+    <section class="feature-section">
+      <div class="section-title"><div><h2>需先修正署名</h2></div></div>
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">以下艺术家疑似合作署名，系统不会自动绑定个人身份；请先在艺术家详情页拆分或修正署名关系，再重新扫描。</p>
+    </section>
+    <section class="review-list">
+      {{range $item := .CreditCorrectionReview}}
+      <article>
+        <header>
+          <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
+          <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+        </header>
+        <p class="muted">疑似合作署名，需先修正艺术家关系。</p>
+      </article>
+      {{end}}
+    </section>
+    {{end}}
   </main>
 </body>
 </html>

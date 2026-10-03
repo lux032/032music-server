@@ -23,6 +23,12 @@ import (
 )
 
 type Manager struct {
+	phaseDone    chan struct{}
+	artistDone   chan struct{}
+	cooldownMu   sync.Mutex
+	blockedUntil map[string]time.Time
+	now          func() time.Time
+
 	baseCtx             context.Context
 	store               *storage.Store
 	logger              *slog.Logger
@@ -75,17 +81,41 @@ type Manager struct {
 	// goroutine 开始处理列表前调用，让测试确定性地观察“正在补全”状态。
 	testPosterBackfillHook func()
 }
+
+// ArtistMatchPartialError preserves the cause for logs while exposing a safe
+// notice. The primary identity is committed; attachment work is deferred.
+type ArtistMatchPartialError struct {
+	Source string
+	Cause  error
+}
+
+func (e *ArtistMatchPartialError) Error() string {
+	return fmt.Sprintf("identity matched; %s attachment failed: %v", e.Source, e.Cause)
+}
+func (e *ArtistMatchPartialError) Unwrap() error { return e.Cause }
+func (e *ArtistMatchPartialError) Notice() string {
+	return "身份已绑定，但 Last.fm 资料写入失败，候选保留待人工确认；图片/简介可稍后手动刷新"
+}
+
 type MatchResult struct {
+	Outcome        string
+	SkipReason     string
 	AutoMatched    bool
 	CandidateCount int
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {
+		logger.Error("pause interrupted enrichment runs", "error", err)
+	}
 	if recovered, err := store.FailRunningEnrichmentRuns(context.Background(), "server restarted before the enrichment run completed"); err != nil {
 		logger.Warn("recover interrupted enrichment runs", "error", err)
 	} else if recovered > 0 {
 		logger.Info("recovered interrupted enrichment runs", "count", recovered)
+	}
+	if _, err := store.RecoverDurableArtistRuns(context.Background()); err != nil {
+		logger.Error("pause interrupted artist runs", "error", err)
 	}
 	if recovered, err := store.FailRunningArtistMatchRuns(context.Background(), "server restarted before the artist matching run completed"); err != nil {
 		logger.Warn("recover interrupted artist matching runs", "error", err)
@@ -136,12 +166,22 @@ func (m *Manager) StartAuto(ctx context.Context) {
 	}
 	if phaseEnabled {
 		if _, err = m.StartRun(ctx, RunRequest{Scope: "all"}); err != nil {
-			m.logger.Warn("automatic metadata enrichment was not started", "error", err)
+			if errors.Is(err, storage.ErrEnrichmentRunState) {
+				// 例如重启后留下的 server_restart 暂停任务：自动启动跳过，
+				// 日志里给出下一步处理方式，便于排查“为什么没跑”。
+				m.logger.Info("automatic metadata enrichment skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
+			} else {
+				m.logger.Warn("automatic metadata enrichment was not started", "error", err)
+			}
 		}
 	}
 	if identityEnabled {
 		if _, err = m.StartAll(ctx); err != nil {
-			m.logger.Warn("automatic artist matching was not started", "error", err)
+			if errors.Is(err, storage.ErrArtistRunState) {
+				m.logger.Info("automatic artist matching skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
+			} else {
+				m.logger.Warn("automatic artist matching was not started", "error", err)
+			}
 		}
 	}
 	if m.posterBackfillAutoEnabled() {
@@ -153,7 +193,12 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.running {
-		return 0, errors.New("artist matching is already running")
+		return 0, ErrRunNotActive
+	}
+	if _, err := m.store.UnfinishedDurableArtistRun(ctx); err == nil {
+		return 0, storage.ErrArtistRunState
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
 	}
 	settings, err := m.store.MetadataSourceSettings(ctx)
 	if err != nil {
@@ -173,88 +218,92 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	runID, err := m.store.CreateArtistMatchRun(ctx, len(artists))
+	var eligible, composites []storage.ArtistMatchInput
+	for _, artist := range artists {
+		if metadata.CompositeArtistCredit(artist.Name) {
+			composites = append(composites, artist)
+			continue
+		}
+		for _, setting := range settings {
+			if setting.Source != "musicbrainz" && setting.Source != "lastfm" {
+				continue
+			}
+			check, e := m.store.ArtistSourceCheckNeeded(ctx, artist, setting)
+			if e != nil {
+				return 0, e
+			}
+			if check.Eligible {
+				eligible = append(eligible, artist)
+				break
+			}
+		}
+	}
+	artists = eligible
+	if len(artists) == 0 {
+		return 0, ErrNoEligibleArtists
+	}
+	artists = append(artists, composites...)
+	var snapshots []storage.ArtistRunItemInput
+	for _, artist := range artists {
+		snapshot := storage.ArtistRunItemInput{Artist: artist}
+		for _, setting := range settings {
+			if setting.Source == "musicbrainz" || setting.Source == "lastfm" {
+				ik, ck := storage.ArtistMatchKeys(artist, setting)
+				snapshot.Sources = append(snapshot.Sources, storage.ArtistRunSource{Source: setting.Source, Language: setting.Language, InputKey: ik, ConfigKey: ck, CacheDays: setting.CacheDays, Enabled: setting.Enabled, AutoMatch: setting.AutoMatch, HasAPIKey: setting.APIKey != ""})
+			}
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	runID, err := m.store.CreateDurableArtistRun(ctx, snapshots)
 	if err != nil {
 		return 0, err
 	}
-	runCtx, cancel := context.WithCancel(m.baseCtx)
-	m.running, m.artistRunID, m.artistCancel = true, runID, cancel
-	m.goBackground("artist-matching", func() {
-		defer func() {
-			if value := recover(); value != nil {
-				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", fmt.Sprintf("panic: %v", value))
-				m.logger.Error("artist matching panic", "panic", value)
-			}
-			cancel()
-			m.mu.Lock()
-			m.running = false
-			m.artistRunID = 0
-			m.artistCancel = nil
-			m.mu.Unlock()
-		}()
-		finishCancelled := func() {
-			if m.baseCtx.Err() != nil {
-				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", "cancelled by shutdown")
-			} else {
-				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "cancelled", "已手动停止")
-			}
-		}
-		var matched, review, failed int
-		for index, artist := range artists {
-			if runCtx.Err() != nil {
-				finishCancelled()
-				return
-			}
-			result, matchErr := m.matchArtist(runCtx, artist.ID, true)
-			if runCtx.Err() != nil || errors.Is(matchErr, context.Canceled) || errors.Is(matchErr, context.DeadlineExceeded) {
-				finishCancelled()
-				return
-			}
-			if rateLimited := asRateLimited(matchErr); rateLimited != nil {
-				if result.AutoMatched {
-					// The artist was confirmed before the rate limit hit (e.g. the
-					// biography refresh afterwards): count the match and the
-					// processed artist before stopping the run.
-					matched++
-					_ = m.store.UpdateArtistMatchRun(context.Background(), runID, index+1, matched, review, failed, artist.Name)
-				}
-				message := rateLimitRunMessage(rateLimited)
-				m.logger.Warn("artist matching stopped by rate limiting", "source", rateLimited.Source, "retryAfter", rateLimited.RetryAfter.String())
-				_ = m.store.FinishArtistMatchRun(context.Background(), runID, "failed", message)
-				return
-			}
-			if matchErr != nil {
-				failed++
-				m.logger.Warn("artist match failed", "artist", artist.Name, "error", matchErr)
-			} else if result.AutoMatched {
-				matched++
-			} else if result.CandidateCount > 0 {
-				review++
-			}
-			_ = m.store.UpdateArtistMatchRun(context.Background(), runID, index+1, matched, review, failed, artist.Name)
-		}
-		if runCtx.Err() != nil {
-			finishCancelled()
-			return
-		}
-		_ = m.store.FinishArtistMatchRun(context.Background(), runID, "completed", "")
-	})
+	m.launchArtistRunLocked(runID)
 	return runID, nil
 }
 
+var ErrNoEligibleArtists = errors.New("没有需要检查的艺术家")
+
 var ErrRunNotActive = errors.New("run is not active")
 
-func (m *Manager) CancelArtistMatching(runID int64) error {
+func (m *Manager) CancelArtistMatching(runID int64) error { return m.stopArtistRun(runID, "cancel") }
+func (m *Manager) PauseArtistMatching(runID int64) error  { return m.stopArtistRun(runID, "pause") }
+func (m *Manager) stopArtistRun(runID int64, action string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.running || m.artistRunID != runID || m.artistCancel == nil {
+	if err := m.store.TransitionArtistRun(context.Background(), runID, action, "manual"); err != nil {
+		if errors.Is(err, storage.ErrArtistRunState) {
+			return ErrRunNotActive
+		}
+		return err
+	}
+	if m.artistRunID == runID && m.artistCancel != nil {
+		m.artistCancel()
+	}
+	return nil
+}
+func (m *Manager) ResumeArtistMatching(ctx context.Context, runID int64) error {
+	// Join before transitioning: no old loop can claim a new generation/token.
+	m.mu.Lock()
+	done := m.artistDone
+	oldID := m.artistRunID
+	m.mu.Unlock()
+	if oldID == runID && done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running {
 		return ErrRunNotActive
 	}
-	rows, err := m.store.ListArtistMatchRuns(context.Background(), 1)
-	if err != nil || len(rows) == 0 || rows[0].ID != runID || rows[0].Status != "running" {
-		return ErrRunNotActive
+	if err := m.store.TransitionArtistRun(ctx, runID, "resume", ""); err != nil {
+		return err
 	}
-	m.artistCancel()
+	m.launchArtistRunLocked(runID)
 	return nil
 }
 
@@ -262,26 +311,58 @@ func (m *Manager) MatchArtist(ctx context.Context, artistID int64) (MatchResult,
 	return m.matchArtist(ctx, artistID, false)
 }
 
-func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic bool) (MatchResult, error) {
-	if automatic {
-		if needed, checkErr := m.store.ArtistImageCheckNeeded(ctx, artistID); checkErr == nil && needed {
-			if imageErr := m.RefreshConfirmedArtistImage(ctx, artistID); imageErr != nil && !errors.Is(imageErr, sql.ErrNoRows) {
-				if asRateLimited(imageErr) != nil {
-					return MatchResult{}, imageErr
-				}
-				m.logger.Warn("backfill confirmed artist image", "artistId", artistID, "error", imageErr)
+type artistCheckpointKey struct{}
+
+func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic bool) (result MatchResult, matchErr error) {
+	checkpoint, _ := ctx.Value(artistCheckpointKey{}).(*storage.ArtistRunCheckpoint)
+
+	defer func() {
+		if result.Outcome == "" {
+			switch {
+			case result.AutoMatched:
+				result.Outcome = "matched"
+			case matchErr != nil:
+				result.Outcome = "failed"
+			case result.SkipReason != "":
+				result.Outcome = "skipped"
+			case result.CandidateCount > 0:
+				result.Outcome = "review"
+			default:
+				result.Outcome = "no_result"
 			}
+		}
+	}()
+
+	if automatic {
+		input, err := m.store.ArtistForMatching(ctx, artistID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return MatchResult{Outcome: "skipped", SkipReason: "object_missing"}, nil
+		}
+		if err != nil {
+			return MatchResult{}, err
+		}
+		if metadata.CompositeArtistCredit(input.Name) {
+			return MatchResult{SkipReason: "skipped_composite"}, nil
 		}
 	}
 	artist, err := m.store.ArtistForMatching(ctx, artistID)
 	if err != nil {
 		return MatchResult{}, err
 	}
-	if biographyErr := m.RefreshArtistBiographies(ctx, artistID, !automatic); biographyErr != nil && !errors.Is(biographyErr, sql.ErrNoRows) {
-		if asRateLimited(biographyErr) != nil {
-			return MatchResult{}, biographyErr
+	if checkpoint != nil {
+		checkpoint.ExpectedName = artist.Name
+	}
+	artist, err = m.store.ArtistMatchQueryContext(ctx, artist)
+	if err != nil {
+		return MatchResult{}, err
+	}
+	if !automatic {
+		if biographyErr := m.RefreshArtistBiographies(ctx, artistID, true); biographyErr != nil && !errors.Is(biographyErr, sql.ErrNoRows) {
+			if asRateLimited(biographyErr) != nil {
+				return MatchResult{}, biographyErr
+			}
+			m.logger.Warn("refresh confirmed artist biographies", "artistId", artistID, "error", biographyErr)
 		}
-		m.logger.Warn("refresh confirmed artist biographies", "artistId", artistID, "error", biographyErr)
 	}
 	settings, err := m.store.MetadataSourceSettings(ctx)
 	if err != nil {
@@ -294,6 +375,9 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 		}
 	}
 	if len(bySource) == 0 {
+		if automatic {
+			return MatchResult{Outcome: "skipped", SkipReason: "source_disabled"}, nil
+		}
 		return MatchResult{}, errors.New("no metadata source is enabled")
 	}
 	var candidates []storage.ArtistCandidate
@@ -301,12 +385,86 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	compositeCredit := metadata.CompositeArtistCredit(artist.Name)
 	queriedSources := 0
 	successfulSources := 0
+	var refreshedSources []string
 	var mbProfiles = map[string]storage.ExternalArtistProfile{}
 	var lastProfile *storage.ExternalArtistProfile
+	lastFMIndependent := artist.LastFMQueryMBID == ""
+	checks := map[string]storage.ArtistSourceCheck{}
+	recoveredSources := 0
+	if automatic {
+		for _, source := range []string{"musicbrainz", "lastfm"} {
+			if setting, ok := bySource[source]; ok {
+				check, e := m.store.ArtistSourceCheckNeeded(ctx, artist, setting)
+				if e != nil {
+					return MatchResult{}, e
+				}
+				if checkpoint != nil {
+					ik, ck := storage.ArtistMatchKeys(artist, setting)
+					saved, savedErr := m.store.ArtistRunItemSource(ctx, checkpoint.ItemID, source, ik, ck, setting.CacheDays)
+					if savedErr == nil {
+						if _, identityErr := m.store.ArtistExternalID(ctx, artistID, source); errors.Is(identityErr, sql.ErrNoRows) {
+							check.Snapshot = &saved
+							check.Eligible = false
+							recoveredSources++
+						} else if identityErr != nil {
+							return MatchResult{}, identityErr
+						}
+					} else if !errors.Is(savedErr, sql.ErrNoRows) {
+						return MatchResult{}, savedErr
+					}
+					// A durable unfinished item must not freeze expired review evidence:
+					// re-query when it has no fresh snapshot, unless identity is already bound.
+					hasCheckpoint, existsErr := m.store.ArtistRunItemHasSource(ctx, checkpoint.ItemID, source)
+					if existsErr != nil {
+						return MatchResult{}, existsErr
+					}
+					if hasCheckpoint && check.Snapshot == nil && !check.Eligible {
+						if _, identityErr := m.store.ArtistExternalID(ctx, artistID, source); errors.Is(identityErr, sql.ErrNoRows) {
+							check.Eligible = true
+						} else if identityErr != nil {
+							return MatchResult{}, identityErr
+						}
+					}
+				}
+				checks[source] = check
+				if !check.Eligible && check.Snapshot != nil {
+					candidates = append(candidates, check.Snapshot.Candidates...)
+					if source == "musicbrainz" {
+						mbProfiles = check.Snapshot.Profiles
+						unsafeTaggedIdentity = check.Snapshot.UnsafeTaggedIdentity
+						if artist.TaggedMBID != "" {
+							for _, p := range mbProfiles {
+								if !artistProfileNameMatches(artist.Name, p) {
+									unsafeTaggedIdentity = true
+								}
+							}
+						}
+					} else {
+						lastFMIndependent = check.Snapshot.Independent != nil && *check.Snapshot.Independent && check.Snapshot.QueriedByMBID == ""
+						for _, p := range check.Snapshot.Profiles {
+							copy := p
+							lastProfile = &copy
+						}
+					}
+				}
+			}
+		}
+	}
+	persistSource := func(source string, found []storage.ArtistCandidate, profiles map[string]storage.ExternalArtistProfile) error {
+		normalizeArtistCandidates(found, unsafeTaggedIdentity, compositeCredit)
+		snapshot := storage.ArtistSourceSnapshot{Candidates: found, Profiles: profiles, UnsafeTaggedIdentity: unsafeTaggedIdentity}
+		if source == "lastfm" {
+			snapshot.Independent = &lastFMIndependent
+			snapshot.QueriedByMBID = artist.LastFMQueryMBID
+		}
+		if checkpoint != nil {
+			return m.store.SaveArtistRunSourceCheck(ctx, artist, bySource[source], snapshot, *checkpoint)
+		}
+		return m.store.SaveArtistSourceCheck(ctx, artist, bySource[source], snapshot)
+	}
+
 	if setting, ok := bySource["musicbrainz"]; ok {
-		fresh, _ := m.store.ArtistProfileFresh(ctx, artistID, "musicbrainz", setting.CacheDays)
-		if automatic && fresh {
-			delete(bySource, "musicbrainz")
+		if automatic && !checks["musicbrainz"].Eligible {
 		} else {
 			queriedSources++
 			var found []storage.ArtistCandidate
@@ -314,6 +472,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 				candidate, profile, e := m.musicBrainzLookup(ctx, artist.TaggedMBID, setting)
 				if e == nil {
 					successfulSources++
+					refreshedSources = append(refreshedSources, "musicbrainz")
 					candidate.ArtistID = artistID
 					candidate.Score = 100
 					candidate.Evidence = []string{"文件标签包含 MusicBrainz ID"}
@@ -336,39 +495,53 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 					m.logger.Warn("musicbrainz search failed", "artist", artist.Name, "error", err)
 				} else {
 					successfulSources++
+					refreshedSources = append(refreshedSources, "musicbrainz")
+				}
+			}
+			if len(refreshedSources) > 0 && refreshedSources[len(refreshedSources)-1] == "musicbrainz" {
+				if e := persistSource("musicbrainz", found, mbProfiles); e != nil {
+					return MatchResult{}, e
 				}
 			}
 			candidates = append(candidates, found...)
 		}
 	}
 	if setting, ok := bySource["lastfm"]; ok {
-		fresh, _ := m.store.ArtistProfileFresh(ctx, artistID, "lastfm", setting.CacheDays)
-		if automatic && fresh {
-			delete(bySource, "lastfm")
+		if automatic && !checks["lastfm"].Eligible {
 		} else {
 			queriedSources++
 			candidate, profile, e := m.lastFMInfo(ctx, artist, setting)
-			if e != nil {
+			if errors.Is(e, errArtistNotFound) {
+				if e = persistSource("lastfm", nil, nil); e != nil {
+					return MatchResult{}, e
+				}
+				successfulSources++
+				refreshedSources = append(refreshedSources, "lastfm")
+			} else if e != nil {
 				if asRateLimited(e) != nil {
 					return MatchResult{}, e
 				}
 				m.logger.Warn("lastfm lookup failed", "artist", artist.Name, "error", e)
 			} else {
 				successfulSources++
+				refreshedSources = append(refreshedSources, "lastfm")
 				candidate.ArtistID = artistID
 				candidates = append(candidates, candidate)
 				lastProfile = &profile
+				if e := persistSource("lastfm", []storage.ArtistCandidate{candidate}, map[string]storage.ExternalArtistProfile{profile.ExternalID: profile}); e != nil {
+					return MatchResult{}, e
+				}
 			}
 		}
 	}
-	if automatic && queriedSources == 0 {
-		return MatchResult{AutoMatched: true}, nil
+	if automatic && queriedSources == 0 && recoveredSources == 0 {
+		return MatchResult{Outcome: "skipped", SkipReason: "source_checked"}, nil
 	}
-	if queriedSources > 0 && successfulSources == 0 {
+	if queriedSources > 0 && successfulSources+recoveredSources == 0 {
 		return MatchResult{}, errors.New("all enabled metadata sources failed")
 	}
 	confirmedMBID, _ := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
-	independentLastFM := confirmedMBID == ""
+	independentLastFM := confirmedMBID == "" && lastFMIndependent
 	for i := range candidates {
 		if independentLastFM && candidates[i].Source == "musicbrainz" && candidates[i].MBID != "" && lastProfile != nil && lastProfile.ExternalID == candidates[i].MBID && artistProfileNameMatches(artist.Name, *lastProfile) {
 			candidates[i].Score = 98
@@ -388,51 +561,75 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 		}
 	}
 	// Agreement between sources does not validate a misattributed file tag.
-	if unsafeTaggedIdentity || compositeCredit {
-		for i := range candidates {
-			if compositeCredit {
-				candidates[i].Evidence = append(candidates[i].Evidence, "疑似合作署名，禁止自动绑定个人身份；请先修正艺术家关系")
-			}
-			if candidates[i].Score >= 92 {
-				candidates[i].Score = 85
-			}
-		}
-	}
+	normalizeArtistCandidates(candidates, unsafeTaggedIdentity, compositeCredit)
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Score > candidates[j].Score })
-	if err = m.store.ReplaceArtistCandidates(ctx, artistID, candidates); err != nil {
-		return MatchResult{}, err
+	if checkpoint == nil {
+		if err = m.store.ReplaceArtistCandidatesForSources(ctx, artistID, candidates, refreshedSources); err != nil {
+			return MatchResult{}, err
+		}
 	}
 	auto := false
+	if lastProfile != nil && checkpoint == nil {
+		refreshed, refreshErr := m.store.RefreshArtistCandidate(ctx, artistID, *lastProfile)
+		if refreshErr != nil {
+			return MatchResult{}, refreshErr
+		}
+		auto = refreshed
+	}
 	if len(candidates) > 0 && candidates[0].Score >= 92 {
 		best := candidates[0]
-		if existingID, existingErr := m.store.ArtistExternalID(ctx, artistID, best.Source); existingErr == nil && existingID != best.ExternalID {
-			return MatchResult{CandidateCount: len(candidates)}, nil
-		}
-		owner, ownerErr := m.store.ExternalProfileOwner(ctx, best.Source, best.ExternalID)
-		if ownerErr == nil && owner != artistID {
-			return MatchResult{CandidateCount: len(candidates)}, nil
-		}
-		if profile, ok := mbProfiles[best.MBID]; ok {
-			if profile.RemoteImageURL == "" {
+		var profile storage.ExternalArtistProfile
+		if best.Source == "musicbrainz" {
+			profile = mbProfiles[best.MBID]
+			if profile.RemoteImageURL == "" && !(automatic && !checks["musicbrainz"].Eligible) {
 				if setting, enabled := bySource["musicbrainz"]; enabled {
 					if _, detailed, lookupErr := m.musicBrainzLookup(ctx, best.MBID, setting); lookupErr == nil {
 						profile = detailed
 					} else if asRateLimited(lookupErr) != nil {
-						return MatchResult{}, lookupErr
+						return MatchResult{AutoMatched: auto}, lookupErr
 					}
 				}
 			}
-			if err = m.store.UpsertExternalArtistProfile(ctx, artistID, profile); err != nil {
-				return MatchResult{CandidateCount: len(candidates)}, nil
+		} else if best.Source == "lastfm" && lastProfile != nil {
+			profile = *lastProfile
+		}
+		if profile.Source == "" || profile.ExternalID != best.ExternalID {
+			return MatchResult{CandidateCount: len(candidates)}, nil
+		}
+		var bound bool
+		var bindErr error
+		if checkpoint != nil {
+			bound, bindErr = m.store.AutoBindArtistRunCandidate(ctx, artistID, profile, *checkpoint)
+		} else {
+			bound, bindErr = m.store.AutoBindArtistCandidate(ctx, artistID, profile)
+		}
+		if bindErr != nil {
+			return MatchResult{AutoMatched: auto}, bindErr
+		}
+		if !bound {
+			return MatchResult{AutoMatched: auto, CandidateCount: len(candidates)}, nil
+		}
+		// Independently corroborated sources bind through their own transaction.
+		// A secondary manual decision/conflict cannot roll back the primary;
+		// real storage errors still propagate with the persisted primary result.
+		if !auto && lastProfile != nil && best.Source == "musicbrainz" && lastProfile.ExternalID == best.MBID {
+			for _, candidate := range candidates {
+				if candidate.Source == "lastfm" && candidate.ExternalID == lastProfile.ExternalID && candidate.Score >= 92 {
+					bindSecondary := func() (bool, error) {
+						if checkpoint != nil {
+							return m.store.AutoBindArtistRunCandidate(ctx, artistID, *lastProfile, *checkpoint)
+						}
+						return m.store.AutoBindArtistCandidate(ctx, artistID, *lastProfile)
+					}
+					if _, secondaryErr := bindSecondary(); secondaryErr != nil {
+						return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, &ArtistMatchPartialError{Source: "lastfm", Cause: secondaryErr}
+					}
+					break
+				}
 			}
 		}
-		if lastProfile != nil && lastProfile.ExternalID == best.MBID {
-			if err = m.store.UpsertExternalArtistProfile(ctx, artistID, *lastProfile); err != nil {
-				return MatchResult{CandidateCount: len(candidates)}, nil
-			}
-		}
-		if err = m.store.MarkArtistCandidatesConfirmed(ctx, artistID, best.ExternalID, best.MBID); err != nil {
-			return MatchResult{}, err
+		if automatic {
+			return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, nil
 		}
 		if err = m.CacheArtistImage(ctx, artistID); err != nil {
 			if asRateLimited(err) != nil {
@@ -569,10 +766,10 @@ func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 	// Never sleep through a rate-limit backoff while holding the lock: report
 	// it immediately so callers (run loops and interactive handlers alike)
 	// can react instead of being blocked uncancellably.
-	if remaining := time.Until(m.bangumiBlockedUntil); remaining > 0 {
-		return &RateLimitError{Source: "bangumi", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
+	if remaining := m.bangumiBlockedUntil.Sub(m.clockNow()); remaining > 0 {
+		return &RateLimitError{CooldownOnly: true, Source: "bangumi", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
 	}
-	if wait := time.Until(m.bangumiLast.Add(m.bangumiInterval)); wait > 0 {
+	if wait := m.bangumiLast.Add(m.bangumiInterval).Sub(m.clockNow()); wait > 0 {
 		if err := m.sleep(ctx, wait); err != nil {
 			return err
 		}
@@ -580,7 +777,7 @@ func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.bangumiLast = time.Now()
+	m.bangumiLast = m.clockNow()
 	return nil
 }
 
@@ -589,10 +786,10 @@ func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 func (m *Manager) waitMBRateLimit(ctx context.Context) error {
 	m.mbMu.Lock()
 	defer m.mbMu.Unlock()
-	if remaining := time.Until(m.mbBlockedUntil); remaining > 0 {
-		return &RateLimitError{Source: "musicbrainz", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
+	if remaining := m.mbBlockedUntil.Sub(m.clockNow()); remaining > 0 {
+		return &RateLimitError{CooldownOnly: true, Source: "musicbrainz", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
 	}
-	if wait := time.Until(m.mbLast.Add(time.Second)); wait > 0 {
+	if wait := m.mbLast.Add(time.Second).Sub(m.clockNow()); wait > 0 {
 		if err := m.sleep(ctx, wait); err != nil {
 			return err
 		}
@@ -600,7 +797,7 @@ func (m *Manager) waitMBRateLimit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.mbLast = time.Now()
+	m.mbLast = m.clockNow()
 	return nil
 }
 
@@ -639,8 +836,12 @@ func (m *Manager) lastFMInfoLanguage(ctx context.Context, artist storage.ArtistM
 	if setting.APIKey == "" {
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, errors.New("Last.fm API key is not configured")
 	}
+	artist, err := m.store.ArtistMatchQueryContext(ctx, artist)
+	if err != nil {
+		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, err
+	}
 	query := url.Values{"method": {"artist.getinfo"}, "artist": {artist.Name}, "api_key": {setting.APIKey}, "format": {"json"}, "autocorrect": {"1"}, "lang": {normalizeLanguage(language)}}
-	if mbid, mbidErr := m.store.ArtistExternalID(ctx, artist.ID, "musicbrainz"); mbidErr == nil && mbid != "" {
+	if mbid := artist.LastFMQueryMBID; mbid != "" {
 		query.Del("artist")
 		query.Set("mbid", mbid)
 	}
@@ -659,8 +860,11 @@ func (m *Manager) lastFMInfoLanguage(ctx context.Context, artist storage.ArtistM
 		// 200 (or 429) status and a JSON error payload.
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, m.rateLimitedError("lastfm", http.StatusTooManyRequests, defaultRateLimitBackoff)
 	}
+	if response.Error != 0 && response.Error != 6 {
+		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, fmt.Errorf("Last.fm error %d", response.Error)
+	}
 	if response.Artist.Name == "" {
-		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, errors.New("Last.fm returned no artist")
+		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, errArtistNotFound
 	}
 	var tags []string
 	for _, v := range response.Artist.Tags.Tag {
@@ -1121,4 +1325,29 @@ func stripLastFMLink(value string) string {
 		value = value[:index]
 	}
 	return strings.TrimSpace(value)
+}
+
+var errArtistNotFound = errors.New("artist not found")
+
+func normalizeArtistCandidates(candidates []storage.ArtistCandidate, unsafe, composite bool) {
+	if !unsafe && !composite {
+		return
+	}
+	for i := range candidates {
+		if composite {
+			evidence := "疑似合作署名，禁止自动绑定个人身份；请先修正艺术家关系"
+			found := false
+			for _, old := range candidates[i].Evidence {
+				if old == evidence {
+					found = true
+				}
+			}
+			if !found {
+				candidates[i].Evidence = append(candidates[i].Evidence, evidence)
+			}
+		}
+		if candidates[i].Score >= 92 {
+			candidates[i].Score = 85
+		}
+	}
 }
