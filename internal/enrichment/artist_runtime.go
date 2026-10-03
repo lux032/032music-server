@@ -66,6 +66,7 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 		runCtx := context.WithValue(ctx, artistCheckpointKey{}, &checkpoint)
 		// Current effective inputs/configs are reloaded by matchArtist; snapshot is
 		// an audit target, never permission to apply old identity evidence.
+		rateAttempts := 0
 		for {
 			if item.MatchedFact {
 				if err = m.store.CompleteArtistRunItem(ctx, checkpoint, "matched"); err != nil {
@@ -97,7 +98,10 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 				return
 			}
 			if rate := asRateLimited(matchErr); rate != nil {
-				deadline := m.clockNow().Add(rate.RetryAfter)
+				if !rate.CooldownOnly {
+					rateAttempts++
+				}
+				deadline := m.clockNow().Add(rateLimitBackoff(rateAttempts))
 				shared := m.sourceBlockedUntil(rate.Source)
 				if shared.After(deadline) {
 					deadline = shared

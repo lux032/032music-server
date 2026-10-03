@@ -217,6 +217,7 @@ docker compose logs --tail=100 music-server
 | `MUSIC_SERVER_TRANSCODE_CACHE_MB` | `4096` | FLAC 缓存容量，MiB。 |
 | `MUSIC_SERVER_THUMB_CACHE_MB` | `512` | 缩略图缓存容量，MiB。 |
 | `MUSIC_SERVER_BANGUMI_INTERVAL_MS` | `500` | Bangumi 请求间隔，200～10000 毫秒；非法值告警并回退默认值。 |
+| `MUSIC_SERVER_MB_INTERVAL_MS` | `2000` | MusicBrainz 请求间隔，200～10000 毫秒；默认 2 秒一次（低于官方每秒一次上限），非法值告警并回退默认值。 |
 | `MUSIC_SERVER_WORK_POSTER_BACKFILL` | `true` | 启动约 30 秒后、扫描后、增强后补全缺失作品海报。`0/false/off/no` 关闭；未知值告警并保持开启。手动补全仍可用。 |
 
 缓存容量/并发数要求正整数，非法或非正数回退默认值。在线元数据设置和服务密钥通过 Web 管理页配置，保存在 SQLite，不是 `.env` 配置项。
@@ -233,7 +234,7 @@ docker compose logs --tail=100 music-server
 
 在 `/admin/settings/metadata` 启用可选来源。本地标签与人工修改始终优先，不会改写音乐文件。
 
-- **MusicBrainz**：无需 API Key；填写有意义的应用标识与联系邮箱/项目地址，每秒最多一次请求。
+- **MusicBrainz**：无需 API Key；填写有意义的应用标识与联系邮箱/项目地址。默认每 2 秒一次请求（低于官方每秒一次上限，避免连续满速触发过载保护，可用 `MUSIC_SERVER_MB_INTERVAL_MS` 调整）。
 - **Last.fm 资料**：需要 API Key。在 `/admin/matches` 审核歌手身份；歌手页可维护身份、选择简介、上传图片和合并，`/admin/merges` 查看/回退合并。
 - **Bangumi**：当前 ACG 作品关联在线来源。在 `/admin/work-review` 审核专辑/曲目音乐条目、作品身份和系列建议，`/admin/enrichment` 启动/取消任务。VGMdb 增强已下线，历史数据保留。
 - **作品与系列管理**：`/admin/works`、`/admin/series`。本地推断以专辑为主，明确的曲目标签可补充单曲关联；在线增强还可单独检索曲目。不同季和剧场版保持独立作品，不确定/跨媒体的系列关系进入审核，不盲目合并。人工决定和解除关联记录会跨重扫保留。

@@ -42,6 +42,7 @@ type Manager struct {
 	artistCancel        context.CancelFunc
 	mbMu                sync.Mutex
 	mbLast              time.Time
+	mbInterval          time.Duration
 	mbBlockedUntil      time.Time
 	phaseMu             sync.Mutex
 	phaseRunning        bool
@@ -108,7 +109,7 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), mbInterval: mbIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
 	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {
 		logger.Error("pause interrupted enrichment runs", "error", err)
 	}
@@ -786,7 +787,8 @@ func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 	return nil
 }
 
-// waitMBRateLimit enforces the MusicBrainz 1 request/second policy. Every
+// waitMBRateLimit enforces the MusicBrainz request-spacing policy (default
+// 2s, below MB's official 1 request/second cap; see defaultMBInterval). Every
 // request to musicbrainz.org — direct or cache-backed — must go through this.
 func (m *Manager) waitMBRateLimit(ctx context.Context) error {
 	m.mbMu.Lock()
@@ -794,7 +796,7 @@ func (m *Manager) waitMBRateLimit(ctx context.Context) error {
 	if remaining := m.mbBlockedUntil.Sub(m.clockNow()); remaining > 0 {
 		return &RateLimitError{CooldownOnly: true, Source: "musicbrainz", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
 	}
-	if wait := m.mbLast.Add(time.Second).Sub(m.clockNow()); wait > 0 {
+	if wait := m.mbLast.Add(m.mbInterval).Sub(m.clockNow()); wait > 0 {
 		if err := m.sleep(ctx, wait); err != nil {
 			return err
 		}

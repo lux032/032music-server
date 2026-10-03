@@ -18,6 +18,25 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
+func TestRateLimitBackoff(t *testing.T) {
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{0, 30 * time.Second},
+		{1, 30 * time.Second},
+		{2, time.Minute},
+		{3, 3 * time.Minute},
+		{4, 3 * time.Minute},
+		{100, 3 * time.Minute},
+	}
+	for _, tc := range cases {
+		if got := rateLimitBackoff(tc.attempt); got != tc.want {
+			t.Errorf("rateLimitBackoff(%d)=%s, want %s", tc.attempt, got, tc.want)
+		}
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -92,6 +111,34 @@ func TestBangumiIntervalFromEnv(t *testing.T) {
 	t.Run("invalid falls back", func(t *testing.T) {
 		t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "fast")
 		if got := bangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
+			t.Fatalf("interval=%s", got)
+		}
+	})
+}
+
+func TestMBIntervalFromEnv(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	t.Run("default 2s", func(t *testing.T) {
+		t.Setenv("MUSIC_SERVER_MB_INTERVAL_MS", "")
+		if got := mbIntervalFromEnv(logger); got != 2*time.Second {
+			t.Fatalf("default interval=%s", got)
+		}
+	})
+	t.Run("legal value", func(t *testing.T) {
+		t.Setenv("MUSIC_SERVER_MB_INTERVAL_MS", "3000")
+		if got := mbIntervalFromEnv(logger); got != 3*time.Second {
+			t.Fatalf("interval=%s", got)
+		}
+	})
+	t.Run("out of range falls back", func(t *testing.T) {
+		t.Setenv("MUSIC_SERVER_MB_INTERVAL_MS", "100")
+		if got := mbIntervalFromEnv(logger); got != 2*time.Second {
+			t.Fatalf("interval=%s", got)
+		}
+	})
+	t.Run("invalid falls back", func(t *testing.T) {
+		t.Setenv("MUSIC_SERVER_MB_INTERVAL_MS", "fast")
+		if got := mbIntervalFromEnv(logger); got != 2*time.Second {
 			t.Fatalf("interval=%s", got)
 		}
 	})

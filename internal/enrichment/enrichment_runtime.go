@@ -228,6 +228,7 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 					return
 				}
 			}
+			rateAttempts := 0
 			for {
 				if ctx.Err() != nil {
 					m.phaseShutdown(run)
@@ -267,7 +268,10 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 					return
 				}
 				if rate := asRateLimited(e); rate != nil {
-					deadline := m.clockNow().Add(rate.RetryAfter)
+					if !rate.CooldownOnly {
+						rateAttempts++
+					}
+					deadline := m.clockNow().Add(rateLimitBackoff(rateAttempts))
 					if shared := m.sourceBlockedUntil(rate.Source); shared.After(deadline) {
 						deadline = shared
 					}

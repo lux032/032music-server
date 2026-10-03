@@ -144,6 +144,21 @@ func (m *Manager) SetBangumiBaseURL(base string) { m.phaseEndpoints.BangumiAPI =
 // 列表前调用）。只供测试使用，让“正在补全”状态的观察成为确定性事件。
 func (m *Manager) SetPosterBackfillTestHook(hook func()) { m.testPosterBackfillHook = hook }
 
+// rateLimitBackoff returns the fixed wait for the nth consecutive rate-limit
+// response on one item (1-based): 30s, 60s, then 180s. Fixed steps are used
+// instead of the source's Retry-After because sources may omit it or send very
+// short values, which burned through the retry budget almost instantly.
+func rateLimitBackoff(attempt int) time.Duration {
+	switch {
+	case attempt <= 1:
+		return 30 * time.Second
+	case attempt == 2:
+		return time.Minute
+	default:
+		return 3 * time.Minute
+	}
+}
+
 // rateLimitedError records the backoff for source and returns the error.
 func (m *Manager) rateLimitedError(source string, statusCode int, retryAfter time.Duration) *RateLimitError {
 	m.noteRateLimited(source, retryAfter)
@@ -262,6 +277,11 @@ const (
 	defaultBangumiInterval = 500 * time.Millisecond
 	minBangumiInterval     = 200 * time.Millisecond
 	maxBangumiInterval     = 10 * time.Second
+	// defaultMBInterval is the MusicBrainz request spacing. MB's official cap is
+	// 1 request/second, but running continuously at the cap for hours still
+	// triggers intermittent 503s from its overload protection, so the default
+	// stays below the cap.
+	defaultMBInterval = 2 * time.Second
 )
 
 // parseBangumiIntervalMS parses MUSIC_SERVER_BANGUMI_INTERVAL_MS (milliseconds,
@@ -276,6 +296,21 @@ func parseBangumiIntervalMS(value string) (interval time.Duration, ok bool) {
 		return 0, false
 	}
 	return interval, true
+}
+
+// mbIntervalFromEnv reads the MusicBrainz request interval from
+// MUSIC_SERVER_MB_INTERVAL_MS, falling back to defaultMBInterval (with a
+// warning) for missing or invalid values. Bounds match the Bangumi interval.
+func mbIntervalFromEnv(logger *slog.Logger) time.Duration {
+	raw := strings.TrimSpace(os.Getenv("MUSIC_SERVER_MB_INTERVAL_MS"))
+	if raw == "" {
+		return defaultMBInterval
+	}
+	if interval, ok := parseBangumiIntervalMS(raw); ok {
+		return interval
+	}
+	logger.Warn("invalid MUSIC_SERVER_MB_INTERVAL_MS, using default", "value", raw, "default", defaultMBInterval.String())
+	return defaultMBInterval
 }
 
 // bangumiIntervalFromEnv reads the Bangumi request interval from
