@@ -838,7 +838,7 @@ func (a *App) logRequests(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"durationMs", time.Since(started).Milliseconds(),
 		}
-		if quietAccessLogPath(r.URL.Path) {
+		if quietAccessLogPath(r.URL.Path) || r.Method == http.MethodGet && r.URL.Path == "/admin/login" {
 			a.logger.Debug("http request", fields...)
 			return
 		}
@@ -849,7 +849,7 @@ func (a *App) logRequests(next http.Handler) http.Handler {
 // quietAccessLogPath keeps high-frequency asset, artwork and polling
 // requests out of the Info log so real events stay visible.
 func quietAccessLogPath(path string) bool {
-	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" {
+	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/timeline" || path == "/admin/matches/runs/active.json" || path == "/admin/enrichment/runs/active.json" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/artists/") && strings.HasSuffix(path, "/image") {

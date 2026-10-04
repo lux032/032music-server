@@ -18,6 +18,33 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
+func TestSourceResponseLogIncludesLimitHeadersButNotURL(t *testing.T) {
+	var out strings.Builder
+	m := &Manager{logger: slog.New(slog.NewTextHandler(&out, nil))}
+	resp := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{
+		"Retry-After":           {"1"},
+		"X-Ratelimit-Limit":     {"400"},
+		"X-Ratelimit-Remaining": {"0"},
+	}, Request: httptest.NewRequest(http.MethodGet, "https://musicbrainz.org/ws/2/artist/?query=private-artist&api_key=secret", nil)}
+	m.logSourceResponse("musicbrainz", "json", resp)
+	got := out.String()
+	for _, part := range []string{"metadata source response", "musicbrainz", "status=503", "rateLimited=true", "retryAfter=1", "rateLimitRemaining=0"} {
+		if !strings.Contains(got, part) {
+			t.Errorf("missing %q in log: %s", part, got)
+		}
+	}
+	for _, secret := range []string{"private-artist", "secret", "api_key"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("leaked %q in log: %s", secret, got)
+		}
+	}
+	out.Reset()
+	m.logSourceResponse("musicbrainz", "json", &http.Response{StatusCode: 200, Header: http.Header{}})
+	if out.Len() != 0 {
+		t.Errorf("success logged: %s", out.String())
+	}
+}
+
 func TestRateLimitBackoff(t *testing.T) {
 	cases := []struct {
 		attempt int

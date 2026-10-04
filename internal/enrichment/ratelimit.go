@@ -159,6 +159,26 @@ func rateLimitBackoff(attempt int) time.Duration {
 	}
 }
 
+// logSourceResponse records diagnostic headers without exposing the requested
+// artist, URL query, credentials or response body. Log only throttling and
+// server errors; expected cache misses (404) remain quiet.
+func (m *Manager) logSourceResponse(source, operation string, response *http.Response) {
+	if response.StatusCode != http.StatusTooManyRequests && response.StatusCode < 500 {
+		return
+	}
+	m.logger.Warn("metadata source response",
+		"source", source,
+		"operation", operation,
+		"status", response.StatusCode,
+		"rateLimited", isRateLimitResponse(response.StatusCode, response.Header),
+		"retryAfter", response.Header.Get("Retry-After"),
+		"rateLimitLimit", response.Header.Get("X-RateLimit-Limit"),
+		"rateLimitRemaining", response.Header.Get("X-RateLimit-Remaining"),
+		"rateLimitReset", response.Header.Get("X-RateLimit-Reset"),
+		"date", response.Header.Get("Date"),
+	)
+}
+
 // rateLimitedError records the backoff for source and returns the error.
 func (m *Manager) rateLimitedError(source string, statusCode int, retryAfter time.Duration) *RateLimitError {
 	m.noteRateLimited(source, retryAfter)
@@ -177,6 +197,7 @@ func (m *Manager) doSourceJSON(client *http.Client, req *http.Request, source st
 		return err
 	}
 	defer response.Body.Close()
+	m.logSourceResponse(source, "json", response)
 	if isRateLimitResponse(response.StatusCode, response.Header) {
 		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
 		return m.rateLimitedError(source, response.StatusCode, retryAfter)

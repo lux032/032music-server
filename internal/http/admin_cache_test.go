@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func TestQuietAccessLogPath(t *testing.T) {
+	for _, path := range []string{"/api/v1/health", "/api/v1/playback/timeline", "/admin/matches/runs/active.json", "/admin/enrichment/runs/active.json", "/admin/assets/admin.js"} {
+		if !quietAccessLogPath(path) {
+			t.Errorf("polling path %s should be quiet", path)
+		}
+	}
+	for _, path := range []string{"/admin", "/admin/matches/runs/123/resume", "/api/v1/artists/123"} {
+		if quietAccessLogPath(path) {
+			t.Errorf("action path %s should remain visible", path)
+		}
+	}
+}
+
 // TestAdminHTMLIsNoStoreAssetsStayImmutable: every rendered admin page
 // (and the login page) is Cache-Control: no-store, while content-addressed
 // assets keep their long-lived immutable caching and JSON API responses

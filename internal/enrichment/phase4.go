@@ -583,6 +583,7 @@ func (m *Manager) cachedJSONAttempt(ctx context.Context, source, key, endpoint s
 		return 0, err
 	}
 	defer resp.Body.Close()
+	m.logSourceResponse(source, "cached-json", resp)
 	// 429 (or 503 with Retry-After) pushes back the source's next allowed
 	// request time and is reported as a recognizable error; the response is
 	// never cached.
