@@ -53,6 +53,13 @@ type Manager struct {
 	posterMu            sync.Mutex
 	posterBackfilling   bool
 	posterLastResult    *PosterBackfillResult
+	// 头像补全 durable run（B+2）与身份匹配 run 使用同一把 m.mu 但独立字段：
+	// 两类任务可以并行，带宽共享由现有各来源限流原语（mbMu/mbLast 请求间隔、
+	// blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。
+	imageBackfillRunning bool
+	imageBackfillRunID   int64
+	imageBackfillCancel  context.CancelFunc
+	imageBackfillDone    chan struct{}
 	// posterFailed 记录最近补全失败的海报 URL 及失败时间（L3）：自动补全在
 	// posterFailureTTL 内跳过它们；手动“补全缺失海报”强制重试（清空本表）。
 	posterFailed map[string]time.Time
@@ -84,6 +91,10 @@ type Manager struct {
 	// testPosterBackfillHook 是测试专用注入点（生产为 nil）：在海报补全
 	// goroutine 开始处理列表前调用，让测试确定性地观察“正在补全”状态。
 	testPosterBackfillHook func()
+	// testImageBackfillHook 是测试专用注入点（生产为 nil）：在头像补全项
+	// 下载前（资格复查之后、guarded 写入之前）调用，让测试能在该窗口并发
+	// 设置自定义头像或修改身份，验证提交前再验证会拒绝写入。
+	testImageBackfillHook func(artistID int64)
 }
 
 // ArtistMatchPartialError preserves the cause for logs while exposing a safe
@@ -125,6 +136,11 @@ func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dat
 		logger.Warn("recover interrupted artist matching runs", "error", err)
 	} else if recovered > 0 {
 		logger.Info("recovered interrupted artist matching runs", "count", recovered)
+	}
+	if recovered, err := store.RecoverArtistImageBackfillRuns(context.Background()); err != nil {
+		logger.Error("pause interrupted artist image backfill runs", "error", err)
+	} else if recovered > 0 {
+		logger.Info("recovered interrupted artist image backfill runs", "count", recovered)
 	}
 	return manager
 }
@@ -527,7 +543,8 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 				if asRateLimited(e) != nil {
 					return MatchResult{}, e
 				}
-				m.logger.Warn("lastfm lookup failed", "artist", artist.Name, "error", e)
+				// P2-4：网络层错误可能携带含 api_key 的请求 URL，先脱敏再记日志。
+				m.logger.Warn("lastfm lookup failed", "artist", artist.Name, "error", RedactSourceError(e))
 			} else {
 				successfulSources++
 				refreshedSources = append(refreshedSources, "lastfm")
@@ -1103,7 +1120,7 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 				if asRateLimited(fetchErr) != nil {
 					return fetchErr
 				}
-				m.logger.Warn("fetch Last.fm biography", "artistId", artistID, "language", language, "error", fetchErr)
+				m.logger.Warn("fetch Last.fm biography", "artistId", artistID, "language", language, "error", RedactSourceError(fetchErr))
 				continue
 			}
 			if storeErr := m.store.UpsertArtistBiography(ctx, artistID, storage.ArtistBiography{Source: "lastfm", Language: language, Biography: profile.Biography, PageURL: profile.PageURL}); storeErr != nil {

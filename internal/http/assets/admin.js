@@ -340,6 +340,9 @@
     if (kind === 'artist') {
       return `处理 ${run.processed} / ${run.total} · 匹配 ${run.matched} · 审核 ${run.review} · 无结果 ${run.noResult} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
     }
+    if (kind === 'artistImage') {
+      return `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached} · 无地址 ${run.noUrl} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+    }
     return `处理 ${run.processed} / ${run.total} · 成功 ${run.succeeded} · 跳过 ${run.skipped} · 审核 ${run.review} · 失败 ${run.failed}`;
   }
 
@@ -435,10 +438,11 @@
     const result = await pollRunTasks();
     if (result === 'reload' || document.hidden || !document.querySelector('[data-run-tasks]')) return;
     if (result === 'failed') { scheduleRunPoll(8000); return; }
-    // running/waiting 卡片 2s 高频；paused 卡片与空闲页面 30s 低频；没有容器不轮询。
+    // 任一卡片 running/waiting 即 2s 高频（页面可能同时有匹配与头像补全两张
+    // 卡，不能只看第一张）；全部 paused 或没有卡片时 30s 低频；没有容器不轮询。
     // paused→running 的变化最迟 30s 被发现，随后回到 2s（reload 仅发生在 run id 变化时）。
-    const card = document.querySelector('[data-run-card]');
-    scheduleRunPoll(card && card.dataset.runStatus !== 'paused' ? 2000 : 30000);
+    const anyActive = document.querySelector('[data-run-card]:not([data-run-status="paused"])');
+    scheduleRunPoll(anyActive ? 2000 : 30000);
   }
 
   document.addEventListener('visibilitychange', () => {

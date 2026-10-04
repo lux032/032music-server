@@ -16,8 +16,9 @@ import (
 type autoResumeEntry struct{ cancel context.CancelFunc }
 
 const (
-	artistAutoResumeKind     = "artist"
-	enrichmentAutoResumeKind = "enrichment"
+	artistAutoResumeKind              = "artist"
+	enrichmentAutoResumeKind          = "enrichment"
+	artistImageBackfillAutoResumeKind = "artistimage"
 )
 
 func autoResumeKey(kind string, runID int64) string {
@@ -99,6 +100,21 @@ func (m *Manager) scheduleEnrichmentAutoResume(runID int64) {
 	m.armAutoResume(enrichmentAutoResumeKind, runID, deadline)
 }
 
+// scheduleArtistImageBackfillAutoResume 与身份匹配 run 同理：只在持久化
+// 状态仍是带截止时间的限流暂停时注册定时器，其余状态交人工处理。
+func (m *Manager) scheduleArtistImageBackfillAutoResume(runID int64) {
+	run, err := m.store.DurableArtistImageBackfillRun(context.Background(), runID)
+	if err != nil || !storage.ArtistImageBackfillAutoResumeEligible(run) {
+		return
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, run.WaitingUntil)
+	if err != nil {
+		m.logger.Error("artist image backfill auto resume skipped: unreadable persisted deadline", "runId", runID, "error", err)
+		return
+	}
+	m.armAutoResume(artistImageBackfillAutoResumeKind, runID, deadline)
+}
+
 // ScanAutoResumeRuns arms timers for rate-limit runs paused before a restart.
 // It runs after New's recovery step (production calls it from main); manual
 // pauses and storage errors are never picked up.
@@ -120,6 +136,14 @@ func (m *Manager) ScanAutoResumeRuns() {
 			m.scheduleEnrichmentAutoResume(run.ID)
 		}
 	}
+	backfillRuns, err := m.store.ArtistImageBackfillRunsAwaitingAutoResume(ctx)
+	if err != nil {
+		m.logger.Error("scan artist image backfill runs awaiting auto resume", "error", err)
+	} else {
+		for _, run := range backfillRuns {
+			m.scheduleArtistImageBackfillAutoResume(run.ID)
+		}
+	}
 }
 
 // fireAutoResume re-reads the run at fire time: a user cancel/pause or a
@@ -127,6 +151,10 @@ func (m *Manager) ScanAutoResumeRuns() {
 // races and must never be reported as storage_or_runtime_error. Transient
 // storage errors retry exactly once; a timer is never dropped silently.
 func (m *Manager) fireAutoResume(ctx context.Context, kind string, runID int64, retried bool) {
+	if kind == artistImageBackfillAutoResumeKind {
+		m.fireArtistImageBackfillAutoResume(ctx, runID, retried)
+		return
+	}
 	if kind == artistAutoResumeKind {
 		run, err := m.store.DurableArtistRun(ctx, runID)
 		if err != nil {
@@ -217,6 +245,51 @@ func (m *Manager) fireAutoResume(ctx context.Context, kind string, runID int64, 
 	}
 	m.logger.Info("enrichment run auto resumed after rate-limit backoff", "runId", runID)
 	m.launchDurablePhaseLocked(run)
+}
+
+// fireArtistImageBackfillAutoResume 与身份匹配分支同构：触发时重读任务，
+// 人工暂停/取消或已完成则定时器空转；状态冲突是预期的人工竞态，绝不报
+// 存储错误；瞬时存储错误只重试一次。
+func (m *Manager) fireArtistImageBackfillAutoResume(ctx context.Context, runID int64, retried bool) {
+	run, err := m.store.DurableArtistImageBackfillRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			m.logger.Info("artist image backfill auto resume skipped: run gone", "runId", runID)
+		} else {
+			m.retryAutoResumeOnce(artistImageBackfillAutoResumeKind, runID, retried, err)
+		}
+		return
+	}
+	if !storage.ArtistImageBackfillAutoResumeEligible(run) {
+		m.logger.Info("artist image backfill auto resume skipped: run state changed", "runId", runID)
+		return
+	}
+	m.mu.Lock()
+	done, oldID := m.imageBackfillDone, m.imageBackfillRunID
+	m.mu.Unlock()
+	if oldID == runID && done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.imageBackfillRunning {
+		m.logger.Info("artist image backfill auto resume skipped: run already active", "runId", runID)
+		return
+	}
+	if err = m.store.TransitionArtistImageBackfillRun(context.Background(), runID, "auto_resume", ""); err != nil {
+		if errors.Is(err, storage.ErrArtistImageBackfillState) {
+			m.logger.Info("artist image backfill auto resume skipped: run state changed", "runId", runID)
+		} else {
+			m.retryAutoResumeOnce(artistImageBackfillAutoResumeKind, runID, retried, err)
+		}
+		return
+	}
+	m.logger.Info("artist image backfill run auto resumed after rate-limit backoff", "runId", runID)
+	m.launchArtistImageBackfillLocked(runID)
 }
 
 // retryAutoResumeOnce re-arms the timer exactly once after a transient

@@ -627,8 +627,11 @@ func TestArtistMatchRefreshStopsOnRateLimit(t *testing.T) {
 		t.Fatalf("expected confirmed-source skip, got %v", err)
 	}
 	manager.Wait()
+	// B+2 后自动匹配会在绑定成功后尽力缓存头像，但已确认身份的艺术家
+	// 永远不会重新进入自动匹配（ArtistSourceCheckNeeded 不 eligible），
+	// 因此这里依然必须是零请求。
 	if got := requests.Load(); got != 0 {
-		t.Fatalf("automatic identity scan must not fetch attachments: %d", got)
+		t.Fatalf("confirmed identity must never re-enter automatic matching: %d requests", got)
 	}
 }
 
@@ -934,7 +937,9 @@ func TestArtistMatchConfirmedThenRateLimitCountsMatch(t *testing.T) {
 	}
 	finished := waitArtistMatchRun(t, store, runID)
 	manager.Wait()
-	// Automatic scanning no longer performs post-confirmation attachment HTTP.
+	// B+2：自动扫描在绑定成功后会尽力缓存头像（错误就地吞掉，不进 run
+	// 的限流通道）；本夹具绑定的资料没有图片地址，头像抓取按无 URL 静默
+	// 跳过，确认后没有任何附件请求，run 照常完成。
 	if finished.Status != "completed" {
 		t.Fatalf("run=%+v", finished)
 	}

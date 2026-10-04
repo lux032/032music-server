@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -143,6 +144,13 @@ func (m *Manager) SetBangumiBaseURL(base string) { m.phaseEndpoints.BangumiAPI =
 // SetPosterBackfillTestHook 安装海报补全的测试钩子（在 goroutine 开始处理
 // 列表前调用）。只供测试使用，让“正在补全”状态的观察成为确定性事件。
 func (m *Manager) SetPosterBackfillTestHook(hook func()) { m.testPosterBackfillHook = hook }
+
+// SetArtistImageBackfillTestHook 安装头像补全的测试钩子（在补全项下载前、
+// guarded 写入前调用）。只供测试使用，让并发自定义头像/身份漂移的写入
+// 拒绝成为确定性事件。
+func (m *Manager) SetArtistImageBackfillTestHook(hook func(artistID int64)) {
+	m.testImageBackfillHook = hook
+}
 
 // rateLimitBackoff returns the fixed wait for the nth consecutive rate-limit
 // response on one item (1-based): 30s, 60s, then 180s. Fixed steps are used
@@ -377,4 +385,16 @@ func (m *Manager) clockNow() time.Time {
 		return m.now()
 	}
 	return time.Now()
+}
+
+// RedactSourceError 剥离 *url.Error 包裹的请求 URL 后再返回底层错误：
+// Last.fm 等来源的请求 URL 含有 api_key 等敏感查询参数，网络层错误直接
+// 记日志或回显页面会泄漏。身份匹配/简介/头像路径的错误日志与提示必须
+// 经过本函数。
+func RedactSourceError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
 }

@@ -50,6 +50,7 @@ type identityPageData struct {
 	ArtistRunsLimit int
 	Merges          []storage.MergeOperation
 	MatchRuns       []storage.ArtistMatchRun
+	ImageBackfill   artistImageBackfillView
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -272,17 +273,17 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 		if source, ok := enrichment.RateLimitedSourceName(err); ok {
 			rateLimitedSource = source
 		}
-		a.logger.Warn("cache confirmed artist image", "artistId", id, "error", err)
+		a.logger.Warn("cache confirmed artist image", "artistId", id, "error", enrichment.RedactSourceError(err))
 	}
 	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		if source, ok := enrichment.RateLimitedSourceName(err); ok && rateLimitedSource == "" {
 			rateLimitedSource = source
 		}
-		a.logger.Warn("cache confirmed artist biographies", "artistId", id, "error", err)
+		a.logger.Warn("cache confirmed artist biographies", "artistId", id, "error", enrichment.RedactSourceError(err))
 	}
 	message := "外部身份已经人工确认"
 	if rateLimitedSource != "" {
-		message = fmt.Sprintf("已确认匹配；%s 限流中，图片/简介可稍后手动刷新，或在下次自动匹配时补全", rateLimitedSource)
+		message = fmt.Sprintf("已确认匹配；%s 限流中，头像可稍后在“艺术家匹配与审核”页用“已匹配艺术家头像补全”补齐，简介可稍后手动刷新", rateLimitedSource)
 	}
 	redirectWithNotice(w, r, artistProfilePath(id), message)
 }
@@ -298,7 +299,7 @@ func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Requ
 			redirectWithNotice(w, r, artistProfilePath(id), notice)
 			return
 		}
-		redirectWithNotice(w, r, artistProfilePath(id), "简介刷新失败："+err.Error())
+		redirectWithNotice(w, r, artistProfilePath(id), "简介刷新失败："+enrichment.RedactSourceError(err).Error())
 		return
 	}
 	redirectWithNotice(w, r, artistProfilePath(id), "简介缓存已刷新")
@@ -607,6 +608,29 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 			data.CreditCorrectionReview = append(data.CreditCorrectionReview, review)
 		} else {
 			data.Review = append(data.Review, review)
+		}
+	}
+	// 头像补全区块：统计只读 DB+磁盘；失败只记日志，页面其余部分照常渲染。
+	if a.enrichment != nil {
+		if cached, total, statsErr := a.enrichment.ArtistImageBackfillStats(r.Context()); statsErr == nil {
+			data.ImageBackfill.Cached, data.ImageBackfill.Total = cached, total
+			data.ImageBackfill.Missing = total - cached
+		} else {
+			a.logger.Error("artist image backfill stats", "error", statsErr)
+		}
+	}
+	if active, activeErr := a.store.UnfinishedArtistImageBackfillRun(r.Context()); activeErr == nil {
+		view := artistImageRunDTO(active)
+		data.ImageBackfill.Active = &view
+	} else if !errors.Is(activeErr, sql.ErrNoRows) {
+		a.logger.Error("matches active image backfill run", "error", activeErr)
+	}
+	if data.ImageBackfill.Active == nil {
+		if latest, latestErr := a.store.LatestArtistImageBackfillRun(r.Context()); latestErr == nil {
+			view := artistImageRunDTO(latest)
+			data.ImageBackfill.Last = &view
+		} else if !errors.Is(latestErr, sql.ErrNoRows) {
+			a.logger.Error("matches latest image backfill run", "error", latestErr)
 		}
 	}
 	a.render(w, 200, "match-review.html", data)
