@@ -29,7 +29,7 @@ type identityPageData struct {
 	ArtistRunHistory []artistRunView
 
 	Chrome
-	Section, Notice                        string
+	Section, Notice, ReturnTo              string
 	Settings                               []storage.MetadataSourceSetting
 	BiographySettings                      storage.BiographySettings
 	LastFMScrobble                         lastFMScrobbleView
@@ -55,7 +55,7 @@ type identityPageData struct {
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
 	session, _ := a.sessions.get(r)
-	return identityPageData{Chrome: a.chromeFor(r.Context(), session, identityNavKey(section)), Section: section, Notice: r.URL.Query().Get("notice")}
+	return identityPageData{Chrome: a.chromeFor(r.Context(), session, identityNavKey(section)), Section: section, Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI()}
 }
 
 // identityNavKey maps the identity section to the sidebar navigation key.

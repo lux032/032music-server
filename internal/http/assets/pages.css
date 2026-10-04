@@ -1187,6 +1187,12 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .pagination a, .pagination span { border-radius: 999px; }
 @media (max-width: 900px) { .browser-filters { overflow-x: auto; overflow-y: hidden; } .browser-filters:has(.filter-popover:not([hidden])) { overflow: visible; } }
 @media (max-width: 599px) { .album-browser { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Detail pages (artist / credit): no column-density slider or cookie here, so
+   size the grid to the container width instead of the album list's fixed
+   column rules. The extra class keeps specificity above the .album-browser
+   rules; hover/selection/reduced-motion styles are reused unchanged. */
+.album-browser.detail-album-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+@media (max-width: 599px) { .album-browser.detail-album-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* P4 management page alignment */
 .console-stats, .scan-console, .console-note, .feature-card, .playlist-card, .source-card,

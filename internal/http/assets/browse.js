@@ -247,7 +247,6 @@
   function albumCards() { return [...document.querySelectorAll('.album-browser .library-album-card[data-album-id]')]; }
   function renderAlbumSelection() {
     const bar = document.querySelector('.album-selection-bar');
-    const grid = document.querySelector('.album-browser');
     const present = new Set(albumCards().map(card => card.dataset.albumId));
     albumSelection = albumSelection.filter(item => present.has(item.id));
     const order = new Map(albumSelection.map((item, index) => [item.id, index]));
@@ -263,7 +262,9 @@
       const badge = card.querySelector('.album-main-badge');
       if (badge) badge.hidden = !(index === 0 && albumSelection.length > 1);
     });
-    grid?.classList.toggle('is-selecting', albumSelection.length > 0);
+    // Detail pages have several grids (release groups / collapsed "more");
+    // every grid must show the selecting state, not just the first one.
+    document.querySelectorAll('.album-browser').forEach(g => g.classList.toggle('is-selecting', albumSelection.length > 0));
     if (!bar) return;
     bar.hidden = albumSelection.length === 0;
     bar.querySelector('[data-selection-count]').textContent = `已选择 ${albumSelection.length} 张专辑`;

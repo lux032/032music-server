@@ -41,6 +41,7 @@ type creditDetailData struct {
 	Chrome
 	Artist                                    storage.ArtistDetail
 	Notice, Role, FocusRole, PrevURL, NextURL string
+	ReturnTo                                  string
 	Roles                                     []storage.CreditRoleCount
 	Tabs                                      []indexLink
 	Pages                                     []pageLink
@@ -79,7 +80,7 @@ func (a *App) handleCreditArtistPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, _ := a.sessions.get(r)
-	data := creditDetailData{Chrome: a.chromeFor(r.Context(), session, "credits"), Artist: detail, Notice: r.URL.Query().Get("notice"), FocusRole: "any"}
+	data := creditDetailData{Chrome: a.chromeFor(r.Context(), session, "credits"), Artist: detail, Notice: r.URL.Query().Get("notice"), FocusRole: "any", ReturnTo: r.URL.RequestURI()}
 	data.Roles, err = a.store.ArtistCreditRoles(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -104,12 +105,19 @@ func (a *App) handleCreditArtistPage(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := max(0, int(parseInt64(r.URL.Query().Get("offset"))))
 	f := storage.Filters{Limit: 20, Offset: offset, Focus: storage.TrackFocus{Credits: []storage.CreditFilter{{Role: data.FocusRole, ArtistID: id}}}}
-	data.Tracks, err = a.store.ListTracks(r.Context(), f)
+	total, err := a.store.CountTracks(r.Context(), f)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	total, err := a.store.CountTracks(r.Context(), f)
+	// A bulk delete can shrink total below the offset carried in the return
+	// address; fall back to the last valid page and re-query so the success
+	// notice never lands on an empty page with stale pagination (Medium-1).
+	if total > 0 && int64(offset) >= total {
+		offset = int((total - 1) / 20 * 20)
+		f.Offset = offset
+	}
+	data.Tracks, err = a.store.ListTracks(r.Context(), f)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return

@@ -92,23 +92,10 @@
     {{end}}
 
     {{if eq .Section "albums"}}
-    <div class="album-selection-bar" role="region" aria-label="已选专辑操作" hidden>
-      <div class="album-selection-info"><strong data-selection-count>已选择 0 张</strong><small data-selection-main></small></div>
-      <form method="post" action="/admin/albums/merge" data-album-bulk-form>
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <input type="hidden" name="returnTo" value="{{.ReturnTo}}">
-        <button type="button" class="album-merge-button" data-album-bulk="merge" title="后选的专辑全部合并到第一张选中的主专辑">合并</button>
-        <button type="button" class="danger-button" data-album-bulk="delete">删除</button>
-        <button type="button" class="album-selection-cancel" data-album-bulk="cancel" aria-label="取消选择" title="取消选择（Esc）"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
-      </form>
-    </div>
+    {{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}
     <section class="album-browser"{{if .AlbumCols}} style="--album-cols: {{.AlbumCols}}"{{end}}>
       {{range .Albums}}
-      <article class="library-album-card" data-album-id="{{.ID}}" data-album-title="{{.Title}}">
-        <div class="cover-wrap"><button type="button" class="album-select" aria-pressed="false" aria-label="选择 {{.Title}}" title="选择"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-check"></use></svg></button><span class="album-main-badge" hidden>主专辑</span><a class="album-tile-cover" href="/admin/albums/{{.ID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 512}}" alt="{{.Title}}" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}</a><button type="button" class="play-disc album-queue-action" data-mode="play" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button></div>
-        <div class="album-card-title"><a href="/admin/albums/{{.ID}}" title="{{.Title}}">{{.Title}}</a><details class="album-card-menu"><summary title="更多操作" aria-label="更多操作"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg></summary><div class="album-menu-items"><button type="button" class="album-queue-action" data-mode="play">播放</button><button type="button" class="album-queue-action" data-mode="next">下一首播放</button><button type="button" class="album-queue-action" data-mode="append">添加到队列末尾</button><form method="post" action="/admin/favorites/albums/{{.ID}}"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}"><input type="hidden" name="returnTo" value="{{$.ReturnTo}}"><button>{{if .IsFavorite}}取消收藏{{else}}加入收藏{{end}}</button></form><a href="/admin/albums/{{.ID}}">查看专辑</a></div></details></div>
-        <p class="album-card-artists">{{range $index, $artist := .AlbumArtists}}{{if $index}}, {{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{if .PerformedBy}}{{.PerformedBy}}{{else}}{{.Artist}}{{end}}{{end}}</p><small>{{if .Year}}{{.Year}}{{if .Genres}} · {{end}}{{end}}{{firstGenre .Genres}}</small>
-      </article>
+      {{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
       {{else}}
       <div class="zero-state"><strong>没有找到专辑</strong><span>调整 Focus 条件或清除筛选。</span></div>
       {{end}}

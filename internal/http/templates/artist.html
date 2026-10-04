@@ -16,6 +16,7 @@
       <span class="detail-context">歌手资料</span>
     </nav>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    {{if .ReleaseGroups}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
 
     <section class="artist-hero">
       {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait">{{.Artist.Name}}</div>{{end}}
@@ -85,15 +86,10 @@
               <div><p class="kicker">发行目录 · 最新优先</p><h2>{{.Title}}</h2>{{if .Description}}<p class="muted">{{.Description}}</p>{{end}}</div>
               <span>{{len .Releases}} 个发行</span>
             </div>
-            <div class="mini-albums">
-              {{range .Releases}}
-              <a href="/admin/albums/{{.ID}}">
-                {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}
-                <strong>{{.Title}}</strong>
-                <small>{{if .Year}}{{.Year}} · {{end}}{{albumTypeLabel .ReleaseKind}}</small>
-              </a>
+            <section class="album-browser detail-album-grid">
+              {{range .Releases}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
               {{end}}
-            </div>
+            </section>
           </section>
           {{else}}
           <div class="zero-state"><strong>暂时没有关联发行</strong></div>

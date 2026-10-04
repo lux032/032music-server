@@ -221,3 +221,62 @@ func TestCreditDetailHidesEmptyStatistics(t *testing.T) {
 		t.Fatal("back button inaccessible")
 	}
 }
+
+// Medium-1: after a bulk delete shrinks the credit track total below the
+// offset carried in the return address, the page must correct to the last
+// valid page instead of rendering an empty page with stale pagination.
+func TestCreditDetailStaleOffsetFallsBackToLastPage(t *testing.T) {
+	ctx := context.Background()
+	app, s, _ := setupTestApp(t)
+	if err := s.EnsureLibrary(ctx, "Pager", "/pager"); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := s.LibraryByRoot(ctx, "/pager")
+	for i := 0; i < 20; i++ {
+		if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: fmt.Sprintf("a/%d.flac", i), FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: fmt.Sprintf("PageSong%d", i), Album: "PagerA", Artists: []string{"PagerSinger"}, AlbumArtists: []string{"PagerSinger"}, Composer: "Pager", DiscNumber: 1, TrackNumber: i + 1}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: "b/1.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "LastPageSong", Album: "PagerB", Artists: []string{"PagerSinger"}, AlbumArtists: []string{"PagerSinger"}, Composer: "Pager", DiscNumber: 1, TrackNumber: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	options, _ := s.ListArtistOptions(ctx, "all", "Pager", 20)
+	var pager int64
+	for _, p := range options {
+		if p.Name == "Pager" {
+			pager = p.ID
+		}
+	}
+	login := httptest.NewRecorder()
+	app.sessions.create(login, "admin")
+	cookie := login.Result().Cookies()[0]
+	get := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		app.Handler().ServeHTTP(w, r)
+		return w
+	}
+	if w := get(fmt.Sprintf("/admin/credits/%d?offset=20", pager)); strings.Count(w.Body.String(), "<article data-track-id=") != 1 {
+		t.Fatal("second page should show the single remaining track before deletion")
+	}
+	albums, _ := s.ListAlbums(ctx, storage.Filters{Limit: 50})
+	for _, album := range albums {
+		if album.Title == "PagerB" {
+			if _, err := s.DeleteAlbums(ctx, []int64{album.ID}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	w := get(fmt.Sprintf("/admin/credits/%d?offset=20&notice=已从曲库删除", pager))
+	body := w.Body.String()
+	if w.Code != 200 || strings.Count(body, "<article data-track-id=") != 20 {
+		t.Fatalf("stale offset should fall back to the valid last page (status %d, tracks %d)", w.Code, strings.Count(body, "<article data-track-id="))
+	}
+	if strings.Contains(body, "暂无该角色作品") {
+		t.Fatal("corrected page must not render the empty state")
+	}
+	if !strings.Contains(body, "已从曲库删除") {
+		t.Fatal("notice must survive the offset correction")
+	}
+}

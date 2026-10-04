@@ -132,6 +132,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	}
 
 	templates, err := template.New("admin").Funcs(template.FuncMap{
+		"albumCard":              albumCardContext,
+		"albumSelectionBar":      albumSelectionBarContext,
 		"formatDurationMillis":   formatDurationMillis,
 		"firstGenre":             firstGenre,
 		"creditLabel":            creditLabel,

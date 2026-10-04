@@ -11,6 +11,7 @@
   <span class="detail-context">幕后人员</span>
 </nav>
 {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+{{if .Albums}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
 <section class="artist-hero">
 {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait">{{.Artist.Name}}</div>{{end}}
 <div><p class="kicker">幕后人员</p><h1>{{.Artist.Name}}</h1><div class="album-facts">{{range .Roles}}<span>{{creditLabel .Role}} {{.Count}}</span>{{end}}{{if gt (len .Roles) 1}}<span>全部 {{.Artist.CreditTrackCount}} 首</span>{{end}}{{if .SelfCount}}<span>自唱 {{.SelfCount}} 首</span>{{end}}</div>
@@ -30,8 +31,7 @@
 </section>
 {{if .Collaborators}}<section id="credit-collaborators" class="artist-release-group"><div class="section-title"><h2>合作歌手</h2></div><div class="credit-collaborators">{{range .Collaborators}}{{template "credit-collaborator" .}}{{end}}</div>{{if .MoreCollaborators}}<details><summary>更多</summary><div class="credit-collaborators">{{range .MoreCollaborators}}{{template "credit-collaborator" .}}{{end}}</div></details>{{end}}</section>
 {{end}}
-{{if .Albums}}<section id="credit-albums" class="artist-release-group"><div class="section-title"><h2>参与的专辑</h2><span>共 {{.AlbumTotal}} 张</span></div><div class="mini-albums">{{range .Albums}}{{template "credit-album" .}}{{end}}</div>{{if .MoreAlbums}}<details><summary>更多（共 {{.AlbumTotal}} 张）</summary><div class="mini-albums">{{range .MoreAlbums}}{{template "credit-album" .}}{{end}}</div></details>{{end}}</section>
+{{if .Albums}}<section id="credit-albums" class="artist-release-group"><div class="section-title"><h2>参与的专辑</h2><span>共 {{.AlbumTotal}} 张</span></div><div class="album-browser detail-album-grid">{{range .Albums}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}{{end}}</div>{{if .MoreAlbums}}<details><summary>更多（共 {{.AlbumTotal}} 张）</summary><div class="album-browser detail-album-grid">{{range .MoreAlbums}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}{{end}}</div></details>{{end}}</section>
 {{end}}
 </main></body></html>
 {{define "credit-collaborator"}}<a href="/admin/artists/{{.ID}}">{{if .ImageURL}}<img class="fade-img" src="{{thumb .ImageURL 128}}" alt="" loading="lazy">{{else}}<span class="credit-avatar">{{.Name}}</span>{{end}}<div><strong>{{.Name}}</strong><small>{{.TrackCount}} 首</small></div></a>{{end}}
-{{define "credit-album"}}<a href="/admin/albums/{{.ID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}<strong>{{.Title}}</strong><small>{{if .Year}}{{.Year}} · {{end}}{{albumTypeLabel .ReleaseKind}}</small></a>{{end}}
