@@ -367,6 +367,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/matches/images/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeArtistImageBackfill)))
 	mux.Handle("POST /admin/matches/images/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistImageBackfill)))
 	mux.Handle("GET /admin/matches/images/runs/active.json", a.requireAdmin(http.HandlerFunc(a.handleActiveArtistImageBackfill)))
+	mux.Handle("POST /admin/matches/biographies/backfill", a.requireAdmin(http.HandlerFunc(a.handleStartArtistBiographyBackfill)))
+	mux.Handle("POST /admin/matches/biographies/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseArtistBiographyBackfill)))
+	mux.Handle("POST /admin/matches/biographies/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeArtistBiographyBackfill)))
+	mux.Handle("POST /admin/matches/biographies/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistBiographyBackfill)))
+	mux.Handle("GET /admin/matches/biographies/runs/active.json", a.requireAdmin(http.HandlerFunc(a.handleActiveArtistBiographyBackfill)))
 
 	mux.Handle("GET /admin/matches", a.requireAdmin(http.HandlerFunc(a.handleMatchReview)))
 	mux.Handle("GET /admin/work-review", a.requireAdmin(http.HandlerFunc(a.handleAdminWorkReview)))
@@ -857,7 +862,7 @@ func (a *App) logRequests(next http.Handler) http.Handler {
 // quietAccessLogPath keeps high-frequency asset, artwork and polling
 // requests out of the Info log so real events stay visible.
 func quietAccessLogPath(path string) bool {
-	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/timeline" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/enrichment/runs/active.json" {
+	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/timeline" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/matches/biographies/runs/active.json" || path == "/admin/enrichment/runs/active.json" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/artists/") && strings.HasSuffix(path, "/image") {

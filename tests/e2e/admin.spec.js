@@ -433,8 +433,9 @@ test('matches/enrichment run-task pages: naming, collapsed history, no polling s
   await expect(page.locator('.review-filter select[name="source"]')).toBeVisible();
   await page.waitForTimeout(2600);
   const afterIdle = activeRequests.length;
-  // 无活动任务：初次评估后不得出现 2s 请求风暴。
-  expect(afterIdle).toBeLessThanOrEqual(2);
+  // 无活动任务：3 个 run-task 容器（匹配/头像补全/简介补全）各做初次评估，
+  // 之后不得出现 2s 请求风暴。
+  expect(afterIdle).toBeLessThanOrEqual(3);
   // PJAX 切换到增强页再切回：计时器去重，不叠加风暴。
   await page.locator('.sidebar a[data-nav="enrichment"]').first().dispatchEvent('click');
   await expect(page.locator('main h1')).toHaveText('元数据自动增强');

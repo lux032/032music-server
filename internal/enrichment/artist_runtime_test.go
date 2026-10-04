@@ -45,7 +45,8 @@ func TestArtistRuntimeRateLimitWaitAutoResume(t *testing.T) {
 	}
 	m.Wait()
 	state, err := m.store.DurableArtistRun(context.Background(), run)
-	if err != nil || state.Status != "completed" || state.Matched != 1 || state.AutoResumeCount != 1 || calls != 5 || state.WaitTotalMS != 120000 || state.BudgetBaselineMS != 120000 {
+	// 第 6 次请求是绑定成功后 best-effort 简介补全的 MB 关系查询（分叉 1A）。
+	if err != nil || state.Status != "completed" || state.Matched != 1 || state.AutoResumeCount != 1 || calls != 6 || state.WaitTotalMS != 120000 || state.BudgetBaselineMS != 120000 {
 		t.Fatal(state, calls, err)
 	}
 	if _, err = m.store.ArtistExternalID(context.Background(), artist, "musicbrainz"); err != nil {
@@ -296,6 +297,8 @@ func TestArtistRuntimeSavedSourcesResumeOutcomes(t *testing.T) {
 				requests++
 				return nil, errors.New("unexpected recovery network")
 			})}
+			// 分叉 1A：来源冷却期内绑定后的简介补全短路，保持恢复零网络请求。
+			restarted.NoteRateLimited("musicbrainz", time.Minute)
 			if err = restarted.ResumeArtistMatching(ctx, run); err != nil {
 				t.Fatal(err)
 			}
@@ -335,7 +338,9 @@ func TestArtistRuntimeDetailsRateLimitAfterSourcesStillMatches(t *testing.T) {
 	}
 	m.Wait()
 	r, _ := m.store.DurableArtistRun(ctx, run)
-	if r.Status != "completed" || r.Matched != 1 || searches != 1 || lastfm != 1 || details != 1 {
+	// 第 2 次 details 请求是绑定成功后 best-effort 简介补全的 MB 关系查询
+	// （分叉 1A）：等待 60s 后共享冷却已过期，补全重试仍遇 429 并被安全吞掉。
+	if r.Status != "completed" || r.Matched != 1 || searches != 1 || lastfm != 1 || details != 2 {
 		t.Fatal(r, searches, lastfm, details)
 	}
 	if id, err := m.store.ArtistExternalID(ctx, artist, "musicbrainz"); err != nil || id != safetyMBID {
@@ -376,6 +381,9 @@ func TestArtistRuntimePausedDetailsRestoresWithoutHTTP(t *testing.T) {
 		requests++
 		return nil, errors.New("resume request forbidden")
 	})
+	// 分叉 1A：绑定成功后的 best-effort 简介补全在来源冷却期内短路，
+	// 本用例籍此保持“恢复零网络请求”的断言（匹配本身全部来自快照）。
+	m.NoteRateLimited("musicbrainz", time.Minute)
 	if err = m.ResumeArtistMatching(ctx, run); err != nil {
 		t.Fatal(err)
 	}
@@ -447,6 +455,8 @@ func TestArtistRuntimeRecoveredSourceSurvivesOtherFailure(t *testing.T) {
 				}
 				return cannedResponse(500, http.Header{}, `{}`), nil
 			})}
+			// 分叉 1A：来源冷却期内绑定后的简介补全短路，保持恢复零 MB 请求。
+			resumed.NoteRateLimited("musicbrainz", time.Minute)
 			if err = resumed.ResumeArtistMatching(ctx, run); err != nil {
 				t.Fatal(err)
 			}
@@ -564,7 +574,8 @@ func TestArtistRuntimeAutoResumeTimerReplaced(t *testing.T) {
 	close(release)
 	m.Wait()
 	state, _ := m.store.DurableArtistRun(context.Background(), run)
-	if state.Status != "completed" || state.AutoResumeCount != 1 || calls != 5 {
+	// 第 6 次请求是绑定成功后 best-effort 简介补全的 MB 关系查询（分叉 1A）。
+	if state.Status != "completed" || state.AutoResumeCount != 1 || calls != 6 {
 		t.Fatal(state, calls)
 	}
 }

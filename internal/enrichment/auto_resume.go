@@ -16,9 +16,10 @@ import (
 type autoResumeEntry struct{ cancel context.CancelFunc }
 
 const (
-	artistAutoResumeKind              = "artist"
-	enrichmentAutoResumeKind          = "enrichment"
-	artistImageBackfillAutoResumeKind = "artistimage"
+	artistAutoResumeKind                  = "artist"
+	enrichmentAutoResumeKind              = "enrichment"
+	artistImageBackfillAutoResumeKind     = "artistimage"
+	artistBiographyBackfillAutoResumeKind = "artistbio"
 )
 
 func autoResumeKey(kind string, runID int64) string {
@@ -115,6 +116,21 @@ func (m *Manager) scheduleArtistImageBackfillAutoResume(runID int64) {
 	m.armAutoResume(artistImageBackfillAutoResumeKind, runID, deadline)
 }
 
+// scheduleArtistBiographyBackfillAutoResume 与头像补全同理：只在持久化
+// 状态仍是带截止时间的限流暂停时注册定时器，其余状态交人工处理。
+func (m *Manager) scheduleArtistBiographyBackfillAutoResume(runID int64) {
+	run, err := m.store.DurableArtistBiographyBackfillRun(context.Background(), runID)
+	if err != nil || !storage.ArtistBiographyBackfillAutoResumeEligible(run) {
+		return
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, run.WaitingUntil)
+	if err != nil {
+		m.logger.Error("artist biography backfill auto resume skipped: unreadable persisted deadline", "runId", runID, "error", err)
+		return
+	}
+	m.armAutoResume(artistBiographyBackfillAutoResumeKind, runID, deadline)
+}
+
 // ScanAutoResumeRuns arms timers for rate-limit runs paused before a restart.
 // It runs after New's recovery step (production calls it from main); manual
 // pauses and storage errors are never picked up.
@@ -144,6 +160,14 @@ func (m *Manager) ScanAutoResumeRuns() {
 			m.scheduleArtistImageBackfillAutoResume(run.ID)
 		}
 	}
+	bioRuns, err := m.store.ArtistBiographyBackfillRunsAwaitingAutoResume(ctx)
+	if err != nil {
+		m.logger.Error("scan artist biography backfill runs awaiting auto resume", "error", err)
+	} else {
+		for _, run := range bioRuns {
+			m.scheduleArtistBiographyBackfillAutoResume(run.ID)
+		}
+	}
 }
 
 // fireAutoResume re-reads the run at fire time: a user cancel/pause or a
@@ -153,6 +177,10 @@ func (m *Manager) ScanAutoResumeRuns() {
 func (m *Manager) fireAutoResume(ctx context.Context, kind string, runID int64, retried bool) {
 	if kind == artistImageBackfillAutoResumeKind {
 		m.fireArtistImageBackfillAutoResume(ctx, runID, retried)
+		return
+	}
+	if kind == artistBiographyBackfillAutoResumeKind {
+		m.fireArtistBiographyBackfillAutoResume(ctx, runID, retried)
 		return
 	}
 	if kind == artistAutoResumeKind {
@@ -290,6 +318,51 @@ func (m *Manager) fireArtistImageBackfillAutoResume(ctx context.Context, runID i
 	}
 	m.logger.Info("artist image backfill run auto resumed after rate-limit backoff", "runId", runID)
 	m.launchArtistImageBackfillLocked(runID)
+}
+
+// fireArtistBiographyBackfillAutoResume 与头像补全分支同构：触发时重读
+// 任务，人工暂停/取消或已完成则定时器空转；状态冲突是预期的人工竞态，
+// 绝不报存储错误；瞬时存储错误只重试一次。
+func (m *Manager) fireArtistBiographyBackfillAutoResume(ctx context.Context, runID int64, retried bool) {
+	run, err := m.store.DurableArtistBiographyBackfillRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			m.logger.Info("artist biography backfill auto resume skipped: run gone", "runId", runID)
+		} else {
+			m.retryAutoResumeOnce(artistBiographyBackfillAutoResumeKind, runID, retried, err)
+		}
+		return
+	}
+	if !storage.ArtistBiographyBackfillAutoResumeEligible(run) {
+		m.logger.Info("artist biography backfill auto resume skipped: run state changed", "runId", runID)
+		return
+	}
+	m.mu.Lock()
+	done, oldID := m.bioBackfillDone, m.bioBackfillRunID
+	m.mu.Unlock()
+	if oldID == runID && done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.bioBackfillRunning {
+		m.logger.Info("artist biography backfill auto resume skipped: run already active", "runId", runID)
+		return
+	}
+	if err = m.store.TransitionArtistBiographyBackfillRun(context.Background(), runID, "auto_resume", ""); err != nil {
+		if errors.Is(err, storage.ErrArtistBiographyBackfillState) {
+			m.logger.Info("artist biography backfill auto resume skipped: run state changed", "runId", runID)
+		} else {
+			m.retryAutoResumeOnce(artistBiographyBackfillAutoResumeKind, runID, retried, err)
+		}
+		return
+	}
+	m.logger.Info("artist biography backfill run auto resumed after rate-limit backoff", "runId", runID)
+	m.launchArtistBiographyBackfillLocked(runID)
 }
 
 // retryAutoResumeOnce re-arms the timer exactly once after a transient

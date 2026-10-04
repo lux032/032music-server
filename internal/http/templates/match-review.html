@@ -130,6 +130,50 @@
       {{end}}
     </section>
 
+    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio">
+      <div class="section-title"><div><h2>歌手简介补全</h2></div></div>
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">歌手 {{.BioBackfill.Total}} 位 · 缺简介待补 {{.BioBackfill.Missing}}。补全只使用歌手已确认的 MusicBrainz 身份抓取 Wikipedia / Last.fm 简介，不做身份匹配；未确认身份的歌手会计入跳过。人工填写的简介不会被覆盖；补全后按简介优先级展示，可在歌手页固定版本。</p>
+      {{with .BioBackfill.Active}}
+      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+        <header>
+          <strong>简介补全任务 #{{.ID}}</strong>
+          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+        </header>
+        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+        <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
+        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+        <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
+        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
+        <div class="run-actions">
+          <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button class="secondary-button">暂停</button>
+          </form>
+          <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button>继续</button>
+          </form>
+          <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/cancel" data-run-action="cancel">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button class="secondary-button">停止</button>
+          </form>
+        </div>
+      </article>
+      {{else}}
+      <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
+      {{end}}
+      {{with .BioBackfill.Last}}
+      <p class="muted run-last">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      {{end}}
+      {{if not .BioBackfill.Active}}
+      <form method="post" action="/admin/matches/biographies/backfill">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button>歌手简介补全</button>
+      </form>
+      {{end}}
+    </section>
+
     <section class="feature-section">
       <div class="section-title"><div><h2>待审核候选</h2></div></div>
       <form method="get" action="/admin/matches" class="review-filter">

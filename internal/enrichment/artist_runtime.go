@@ -131,12 +131,14 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 				m.artistRuntimeFailure(runID, e)
 				return
 			}
-			// B+2/H1：自动匹配绑定成功后顺带缓存头像。身份已在
-			// AutoBindArtistRunCandidate 事务内提交，此处的任何失败都不可
-			// 能撤销身份；所有错误就地吞掉（Warn），绝不进入 run 的限流
-			// 等待/失败通道（H3），绝不中止匹配。
+			// B+2/H1：自动匹配绑定成功后顺带缓存头像、补全简介（分叉 1A）。
+			// 身份已在 AutoBindArtistRunCandidate 事务内提交，此处的任何失败
+			// 都不可能撤销身份；所有错误就地吞掉（Warn），绝不进入 run 的限
+			// 流等待/失败通道（H3），绝不中止匹配。瞬时缺口由 /admin/matches
+			// 的持久化补全任务兜底。
 			if result.AutoMatched {
 				m.cacheAutoMatchedArtistImage(ctx, item.ObjectID)
+				m.refreshAutoMatchedArtistBiographies(ctx, item.ObjectID)
 			}
 			break
 		}

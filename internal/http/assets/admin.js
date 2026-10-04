@@ -343,6 +343,9 @@
     if (kind === 'artistImage') {
       return `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached} · 无地址 ${run.noUrl} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
     }
+    if (kind === 'artistBio') {
+      return `处理 ${run.processed} / ${run.total} · 已补全 ${run.filled} · 无简介 ${run.missing} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+    }
     return `处理 ${run.processed} / ${run.total} · 成功 ${run.succeeded} · 跳过 ${run.skipped} · 审核 ${run.review} · 失败 ${run.failed}`;
   }
 

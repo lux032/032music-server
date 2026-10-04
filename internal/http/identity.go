@@ -51,6 +51,7 @@ type identityPageData struct {
 	Merges          []storage.MergeOperation
 	MatchRuns       []storage.ArtistMatchRun
 	ImageBackfill   artistImageBackfillView
+	BioBackfill     artistBiographyBackfillView
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -295,6 +296,21 @@ func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Requ
 	}
 	id := parseInt64(r.PathValue("id"))
 	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil {
+		if errors.Is(err, enrichment.ErrNoBiographyLanguages) {
+			// P2-6：语言配置为空与“未确认身份”明确区分。
+			redirectWithNotice(w, r, artistProfilePath(id), "未配置简介语言，请在数据来源设置中配置简介语言")
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			// M3：无已确认 MusicBrainz 身份（含合并继承）时给出安全文案，
+			// 不回显原始 sql.ErrNoRows。
+			redirectWithNotice(w, r, artistProfilePath(id), "未确认 MusicBrainz 身份，无法刷新简介")
+			return
+		}
+		if errors.Is(err, storage.ErrArtistBiographyBackfillState) {
+			redirectWithNotice(w, r, artistProfilePath(id), "身份或任务状态已变化，简介未写入，请重试")
+			return
+		}
 		if notice, ok := enrichment.RateLimitNotice(err); ok {
 			redirectWithNotice(w, r, artistProfilePath(id), notice)
 			return
@@ -631,6 +647,28 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 			data.ImageBackfill.Last = &view
 		} else if !errors.Is(latestErr, sql.ErrNoRows) {
 			a.logger.Error("matches latest image backfill run", "error", latestErr)
+		}
+	}
+	// 歌手简介补全区块：统计只读 DB；失败只记日志，页面其余部分照常渲染。
+	if a.enrichment != nil {
+		if missing, total, statsErr := a.enrichment.ArtistBiographyBackfillStats(r.Context()); statsErr == nil {
+			data.BioBackfill.Missing, data.BioBackfill.Total = missing, total
+		} else {
+			a.logger.Error("artist biography backfill stats", "error", statsErr)
+		}
+	}
+	if active, activeErr := a.store.UnfinishedArtistBiographyBackfillRun(r.Context()); activeErr == nil {
+		view := artistBiographyRunDTO(active)
+		data.BioBackfill.Active = &view
+	} else if !errors.Is(activeErr, sql.ErrNoRows) {
+		a.logger.Error("matches active biography backfill run", "error", activeErr)
+	}
+	if data.BioBackfill.Active == nil {
+		if latest, latestErr := a.store.LatestArtistBiographyBackfillRun(r.Context()); latestErr == nil {
+			view := artistBiographyRunDTO(latest)
+			data.BioBackfill.Last = &view
+		} else if !errors.Is(latestErr, sql.ErrNoRows) {
+			a.logger.Error("matches latest biography backfill run", "error", latestErr)
 		}
 	}
 	a.render(w, 200, "match-review.html", data)

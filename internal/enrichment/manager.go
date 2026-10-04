@@ -60,6 +60,13 @@ type Manager struct {
 	imageBackfillRunID   int64
 	imageBackfillCancel  context.CancelFunc
 	imageBackfillDone    chan struct{}
+	// 歌手简介补全 durable run 与身份匹配/头像补全 run 使用同一把 m.mu 但
+	// 独立字段：三类任务可以并行，带宽共享由现有各来源限流原语（mbMu/mbLast
+	// 请求间隔、blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。
+	bioBackfillRunning bool
+	bioBackfillRunID   int64
+	bioBackfillCancel  context.CancelFunc
+	bioBackfillDone    chan struct{}
 	// posterFailed 记录最近补全失败的海报 URL 及失败时间（L3）：自动补全在
 	// posterFailureTTL 内跳过它们；手动“补全缺失海报”强制重试（清空本表）。
 	posterFailed map[string]time.Time
@@ -95,6 +102,10 @@ type Manager struct {
 	// 下载前（资格复查之后、guarded 写入之前）调用，让测试能在该窗口并发
 	// 设置自定义头像或修改身份，验证提交前再验证会拒绝写入。
 	testImageBackfillHook func(artistID int64)
+	// testBioBackfillHook 是测试专用注入点（生产为 nil）：在简介补全项的
+	// 资格/新鲜度复查与身份快照之后、网络抓取之前调用，让测试能在该窗口
+	// 并发解除/改认身份或暂停任务，验证 guarded 写入会拒绝迟到简介。
+	testBioBackfillHook func(artistID int64)
 }
 
 // ArtistMatchPartialError preserves the cause for logs while exposing a safe
@@ -141,6 +152,11 @@ func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dat
 		logger.Error("pause interrupted artist image backfill runs", "error", err)
 	} else if recovered > 0 {
 		logger.Info("recovered interrupted artist image backfill runs", "count", recovered)
+	}
+	if recovered, err := store.RecoverArtistBiographyBackfillRuns(context.Background()); err != nil {
+		logger.Error("pause interrupted artist biography backfill runs", "error", err)
+	} else if recovered > 0 {
+		logger.Info("recovered interrupted artist biography backfill runs", "count", recovered)
 	}
 	return manager
 }
@@ -1016,36 +1032,59 @@ func (m *Manager) RefreshConfirmedArtistImage(ctx context.Context, artistID int6
 }
 
 func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, force bool) error {
+	return m.refreshArtistBiographies(ctx, artistID, force, nil)
+}
+
+// refreshArtistBiographies 抓取并写入一位歌手的简介版本行。简介一律写规范
+// （未合并）歌手行；身份快照为沿合并链解析出的 (ownerID, mbid)（分叉 C1，
+// 与展示层继承口径一致）。每次落库走 UpsertArtistBiographyGuarded（H1）：
+// 网络窗口内身份被解除/改认、歌手被合并或补全任务被暂停/停止/恢复抢先后，
+// 迟到的写入一律被拒绝并中止本次刷新。checkpoint 仅补全 run 传入；交互
+// 路径传 nil（仍保留身份与合并状态校验）。语言优先级/来源启用/密钥/缓存
+// 天数在每次调用时重读，绝不使用快照配置。
+func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, force bool, checkpoint *storage.ArtistBiographyBackfillCheckpoint) error {
+	canonicalID, err := m.store.CanonicalArtistID(ctx, artistID)
+	if err != nil {
+		return err
+	}
 	settings, err := m.store.BiographySettings(ctx)
 	if err != nil {
 		return err
 	}
 	languages := languageList(settings.PreferredLanguages, settings.EnglishFallback)
 	if len(languages) == 0 {
-		return sql.ErrNoRows
+		return ErrNoBiographyLanguages
 	}
 
 	wikipediaNeeded := settings.WikipediaEnabled
 	lastFMSetting, lastFMErr := m.store.MetadataSourceSetting(ctx, "lastfm")
 	lastFMNeeded := lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != ""
 	if !force {
-		wikipediaNeeded = wikipediaNeeded && m.biographySourceNeedsRefresh(ctx, artistID, "wikipedia", languages, settings.CacheDays)
-		lastFMNeeded = lastFMNeeded && m.biographySourceNeedsRefresh(ctx, artistID, "lastfm", languages, settings.CacheDays)
+		wikipediaNeeded = wikipediaNeeded && m.biographySourceNeedsRefresh(ctx, canonicalID, "wikipedia", languages, settings.CacheDays)
+		lastFMNeeded = lastFMNeeded && m.biographySourceNeedsRefresh(ctx, canonicalID, "lastfm", languages, settings.CacheDays)
 	}
 	if !wikipediaNeeded && !lastFMNeeded {
 		return nil
 	}
 
-	artist, err := m.store.ArtistForMatching(ctx, artistID)
+	artist, err := m.store.ArtistForMatching(ctx, canonicalID)
 	if err != nil {
 		return err
 	}
-	mbid, mbidErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
-	if mbidErr != nil && !errors.Is(mbidErr, sql.ErrNoRows) {
-		return mbidErr
+	identity, identityErr := m.store.ArtistBiographyIdentity(ctx, canonicalID)
+	if identityErr != nil && !errors.Is(identityErr, sql.ErrNoRows) {
+		return identityErr
 	}
-	if mbid == "" {
+	if identityErr != nil || identity.MBID == "" {
 		return sql.ErrNoRows
+	}
+	// P1-2：Last.fm 简介请求锚定本次身份快照的 MBID（含合并继承来源），
+	// 绝不按名字 autocorrect；与事务守卫使用同一快照，也消除了本行身份
+	// 场景的“二次读取”不一致（LastFMQueryCaptured 使 ArtistMatchQueryContext
+	// 不再回读）。
+	artist.LastFMQueryMBID, artist.LastFMQueryCaptured = identity.MBID, true
+	upsert := func(value storage.ArtistBiography) error {
+		return m.store.UpsertArtistBiographyGuarded(ctx, canonicalID, identity.OwnerID, identity.MBID, value, checkpoint)
 	}
 
 	var wikidataResource string
@@ -1055,12 +1094,12 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 		mbSetting, settingErr := m.store.MetadataSourceSetting(ctx, "musicbrainz")
 		if settingErr == nil {
 			var value mbArtistResponse
-			endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(mbid) + "?inc=url-rels&fmt=json"
+			endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(identity.MBID) + "?inc=url-rels&fmt=json"
 			if lookupErr := m.mbRequest(ctx, endpoint, mbSetting, &value); lookupErr != nil {
 				if asRateLimited(lookupErr) != nil {
 					return lookupErr
 				}
-				m.logger.Warn("load MusicBrainz relations for biography", "artistId", artistID, "error", lookupErr)
+				m.logger.Warn("load MusicBrainz relations for biography", "artistId", canonicalID, "error", lookupErr)
 			} else {
 				wikidataChecked = true
 				for _, relation := range value.Relations {
@@ -1079,12 +1118,12 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 			if asRateLimited(linkErr) != nil {
 				return linkErr
 			}
-			m.logger.Warn("load Wikidata sitelinks", "artistId", artistID, "error", linkErr)
+			m.logger.Warn("load Wikidata sitelinks", "artistId", canonicalID, "error", linkErr)
 		} else {
 			for _, language := range languages {
 				title := sitelinks[language]
 				if title == "" {
-					if storeErr := m.store.UpsertArtistBiography(ctx, artistID, storage.ArtistBiography{Source: "wikipedia", Language: language, Status: "missing"}); storeErr != nil {
+					if storeErr := upsert(storage.ArtistBiography{Source: "wikipedia", Language: language, Status: "missing"}); storeErr != nil {
 						return storeErr
 					}
 					resolved = true
@@ -1095,10 +1134,10 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 					if asRateLimited(fetchErr) != nil {
 						return fetchErr
 					}
-					m.logger.Warn("fetch Wikipedia biography", "artistId", artistID, "language", language, "error", fetchErr)
+					m.logger.Warn("fetch Wikipedia biography", "artistId", canonicalID, "language", language, "error", fetchErr)
 					continue
 				}
-				if storeErr := m.store.UpsertArtistBiography(ctx, artistID, storage.ArtistBiography{Source: "wikipedia", Language: language, Biography: biography, PageURL: pageURL}); storeErr != nil {
+				if storeErr := upsert(storage.ArtistBiography{Source: "wikipedia", Language: language, Biography: biography, PageURL: pageURL}); storeErr != nil {
 					return storeErr
 				}
 				resolved = true
@@ -1106,7 +1145,7 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 		}
 	} else if wikipediaNeeded && wikidataChecked {
 		for _, language := range languages {
-			if storeErr := m.store.UpsertArtistBiography(ctx, artistID, storage.ArtistBiography{Source: "wikipedia", Language: language, Status: "missing"}); storeErr != nil {
+			if storeErr := upsert(storage.ArtistBiography{Source: "wikipedia", Language: language, Status: "missing"}); storeErr != nil {
 				return storeErr
 			}
 			resolved = true
@@ -1120,10 +1159,21 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 				if asRateLimited(fetchErr) != nil {
 					return fetchErr
 				}
-				m.logger.Warn("fetch Last.fm biography", "artistId", artistID, "language", language, "error", RedactSourceError(fetchErr))
+				if errors.Is(fetchErr, errArtistNotFound) {
+					// P1-A：明确的“未收录”（Last.fm error 6 / 空结果）写 missing
+					// 行并计入 resolved——cache_days 窗口内不再反复打源、不计
+					// failed。传输层错误、5xx、鉴权失败与 HTTP 404（Last.fm 对
+					// 未收录查询不以此表达）绝不误记 missing。
+					if storeErr := upsert(storage.ArtistBiography{Source: "lastfm", Language: language, Status: "missing"}); storeErr != nil {
+						return storeErr
+					}
+					resolved = true
+					continue
+				}
+				m.logger.Warn("fetch Last.fm biography", "artistId", canonicalID, "language", language, "error", RedactSourceError(fetchErr))
 				continue
 			}
-			if storeErr := m.store.UpsertArtistBiography(ctx, artistID, storage.ArtistBiography{Source: "lastfm", Language: language, Biography: profile.Biography, PageURL: profile.PageURL}); storeErr != nil {
+			if storeErr := upsert(storage.ArtistBiography{Source: "lastfm", Language: language, Biography: profile.Biography, PageURL: profile.PageURL}); storeErr != nil {
 				return storeErr
 			}
 			resolved = true

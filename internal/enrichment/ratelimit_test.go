@@ -578,9 +578,11 @@ func TestDownloadPublicImageUserAgentAndRateLimit(t *testing.T) {
 }
 
 // waitArtistMatchRun polls until the artist match run leaves "running".
+// 自动匹配绑定成功后的 best-effort 简介补全会以共享 MB 限速多发一次请求，
+// 轮询预算需覆盖该间隔。
 func waitArtistMatchRun(t *testing.T, store *storage.Store, runID int64) storage.ArtistMatchRun {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		runs, err := store.ListArtistMatchRuns(context.Background(), 1)
 		if err == nil && len(runs) == 1 && runs[0].ID == runID && runs[0].Status != "running" {

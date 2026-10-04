@@ -43,7 +43,10 @@ func credentialTestConfig(t *testing.T) config.Config {
 
 func credentialTestStore(t *testing.T) *storage.Store {
 	t.Helper()
-	store, _ := credentialTestStoreAt(t)
+	store, path := credentialTestStoreAt(t)
+	// 注册原始库路径，需要直写 DB 的用例（如 httpExec）可用。
+	httpTestDBPath[store] = path
+	t.Cleanup(func() { delete(httpTestDBPath, store) })
 	return store
 }
 
