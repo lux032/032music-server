@@ -143,10 +143,10 @@ svg.icon {
   position: fixed;
   z-index: 2100;
   bottom: calc(var(--player-h) + 34px);
-  left: calc(50% - (var(--nowplaying-w) - var(--sidebar-w)) / 2);
+  left: calc(50% - (var(--content-right) - var(--sidebar-w)) / 2);
   transform: translateX(-50%);
   min-width: min(220px, calc(100vw - 36px));
-  max-width: min(440px, calc(100vw - var(--sidebar-w) - var(--nowplaying-w) - 36px));
+  max-width: min(440px, calc(100vw - var(--sidebar-w) - var(--content-right) - 36px));
   padding: 12px 18px;
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--accent);

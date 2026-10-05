@@ -3,14 +3,8 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Artist profile layout, option A: the shared 1600px cap is lifted only for
-// the artist profile page via .identity-main.artist-profile-main. Backstage
-// credits (/admin/credits/{id}) and other identity-main admin pages keep the
-// cap even though they share body.artist-page. Uses the 45441 fixture, like
-// credits-focus.spec.js; login flow is identical.
-//
-// Removing either half of the patch (the template class or the CSS override)
-// fails these tests: the artist page falls back to maxWidth 1600px.
+// All desktop shell pages fill available width; artist columns and bio retain
+// their independent readability constraints. Uses isolated :45441.
 test.use({ baseURL: 'http://127.0.0.1:45441' });
 test.beforeEach(async ({ page }) => {
   await page.goto('/admin/login');
@@ -110,26 +104,18 @@ test('wide viewports: cap lifted, main fills up to the player bar', async ({ pag
   }
 });
 
-// H1: the override is scoped to the artist profile main only. Backstage
-// credits and an identity-main admin page keep the shared 1600px cap even at
-// a viewport where the artist page is uncapped.
-test('backstage credits and admin identity pages keep the 1600px cap', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-chromium', 'cap scope check runs once on desktop-chromium');
+test('credits and matches share the desktop shell boundary contract', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
   await page.setViewportSize({ width: 2560, height: 900 });
-  await setPanelCollapsed(page, true);
   const composers = await (await page.request.get('/admin/options/artists?role=composer&q=E2E')).json();
-  await page.goto(`/admin/credits/${composers[0].id}?role=composer`);
-  await expect(page.locator('#credits')).toBeVisible();
-  const credits = await geometry(page);
-  expect(credits.maxWidth).toBe('1600px');
-  expect(credits.mainClass).not.toContain('artist-profile-main');
-  expect(Math.abs(credits.mainWidth - 1600)).toBeLessThanOrEqual(2);
-
-  await page.goto('/admin/matches');
-  const matches = await geometry(page);
-  expect(matches.maxWidth).toBe('1600px');
-  expect(matches.mainClass).toContain('identity-main');
-  expect(matches.mainClass).not.toContain('artist-profile-main');
+  for (const collapsed of [false, true]) {
+    await setPanelCollapsed(page, collapsed);
+    for (const route of [`/admin/credits/${composers[0].id}?role=composer`, '/admin/matches']) {
+      await page.goto(route);
+      await expect.poll(async () => { const g = await geometry(page); return Math.abs(g.mainRight - g.panelLeft); }).toBeLessThanOrEqual(1);
+      expect((await geometry(page)).maxWidth).toBe('none');
+    }
+  }
 });
 
 // The PJAX router swaps main#app-main wholesale, so the profile class must not

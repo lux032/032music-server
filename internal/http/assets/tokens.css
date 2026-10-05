@@ -65,6 +65,9 @@
   /* Shell metrics */
   --sidebar-w: 232px;
   --nowplaying-w: 340px;
+  --content-right: var(--nowplaying-w);
   --player-h: 80px;
   --content-gutter: clamp(22px, 3.4vw, 48px);
 }
+
+body.np-collapsed { --content-right: 0px; }

@@ -540,12 +540,7 @@ a.console-stats > *:hover, .console-stats > a:hover { background: var(--bg-soft)
 }
 
 /* ------------------------------------------------------------- feature pages */
-.feature-main, .identity-main, .enrichment-main, .works-main { max-width: 1600px; }
-/* Artist profile only (option A): lift the shared cap so wide viewports fill
-   the space up to the player bar. The extra class keeps backstage credits and
-   other identity-main pages at 1600px (they share body.artist-page, so it
-   must never be used as the scope). Columns, bio width and gaps are unchanged. */
-.identity-main.artist-profile-main { max-width: none; }
+.feature-main, .identity-main, .enrichment-main, .works-main { max-width: none; }
 .feature-main > .toast, .identity-main > .toast { margin-bottom: 22px; }
 .feature-section { margin-top: 42px; }
 .feature-section:first-of-type { margin-top: 8px; }
@@ -1166,7 +1161,7 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   position: fixed;
   z-index: 2000;
   bottom: calc(var(--player-h) + 24px);
-  left: calc(50% - (var(--nowplaying-w) - var(--sidebar-w)) / 2);
+  left: calc(50% - (var(--content-right) - var(--sidebar-w)) / 2);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -2969,3 +2964,69 @@ body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap;
   .run-actions { gap: 8px; }
   .review-filter input[type="search"] { max-width: none; }
 }
+
+/* Wide shell content: cards use bounded tracks; ordered rows keep their full
+   separators but bound the information track, not the page or background. */
+.pending-review-banner { justify-content: flex-start; flex-wrap: wrap; gap: 12px; }
+.series-list-info .title-line { flex-wrap: wrap; }
+.series-list-info h2 { overflow-wrap: anywhere; }
+@media (min-width: 641px) {
+  .review-list > article > div { grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 360px)); }
+}
+.work-align-candidates { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 380px)); }
+.review-group-card, .review-list > article { min-width: 0; }
+.review-group-card a, .review-list section { overflow-wrap: anywhere; }
+.source-card-form, .security-card, .security-flash { max-width: 1060px; }
+.form-grid { max-width: 976px; }
+.form-grid input:not([type="checkbox"]):not([type="radio"]), .form-grid select { max-width: 480px; }
+.create-work form, .create-playlist form, .series-create-form { max-width: 1060px; }
+.create-work, .create-playlist { grid-template-columns: minmax(0, 260px) minmax(0, 1060px); }
+.create-playlist input, .series-create-form input { max-width: 480px; }
+.series-admin-main > .feature-card { max-width: 1060px; }
+.run-tasks .run-card { max-width: 640px; }
+.run-tasks .run-card > header, .enrichment-runs article header { justify-content: flex-start; }
+.enrichment-runs { grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 480px)); }
+@media (min-width: 901px) {
+  .series-list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+  .series-list-row { max-width: 720px; }
+  .review-list, .review-group-list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 640px), 720px)); align-items: start; }
+  .feature-track-list > article { grid-template-columns: 52px minmax(180px, 640px) 68px 36px 42px; }
+  .artist-track-list article { grid-template-columns: 48px minmax(180px, 640px) 66px 36px; }
+  .playlist-track-list > article { grid-template-columns: 44px minmax(140px,640px) 58px 52px minmax(112px, auto); justify-content: start; }
+  .playback-list > article { grid-template-columns: 56px minmax(220px, 640px) 140px minmax(290px, 420px); }
+  .merge-list article { justify-content: flex-start; }
+  .merge-list article > div { grid-template-columns: 90px minmax(240px,640px); }
+  .playback-clear { justify-content: flex-start; }
+}
+@media (max-width: 900px) {
+  .series-list, .review-list, .review-group-list { grid-template-columns: minmax(0, 1fr); }
+  .create-work, .create-playlist { grid-template-columns: minmax(0, 1fr); }
+}
+/* Detail tools keep the same gutter as the mobile shell, and rename controls
+   can wrap without forcing the page beyond its available width. */
+.series-detail-header { flex-wrap: wrap; }
+.series-detail-header .inline-rename { flex-wrap: wrap; max-width: 100%; }
+.series-detail-header .inline-rename label { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.series-detail-header .inline-rename input { min-width: 0; width: min(100%, 360px); }
+.create-playlist form > label { min-width: 0; }
+.create-playlist form { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto; }
+.review-tabs, .review-controls { flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .create-playlist form { grid-template-columns: minmax(0, 1fr); }
+  .candidate-tieup-row { grid-template-columns: 22px minmax(0, 1fr); }
+  .candidate-tieup-row .role-select, .candidate-tieup-row .format-pill { grid-column: 2; }
+  .review-group-head { flex-wrap: wrap; }
+}
+@media (max-width: 900px) {
+  .work-review-main .browser-header .result-count { white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 900px) {
+  .detail-toolbar, .playlist-detail-main .detail-toolbar { margin-inline: -18px; padding-inline: 18px; }
+}
+/* Small desktop shells still show ordered playback rows: details move below
+   the title/state rather than retaining the wide-screen minimum tracks. */
+@media (min-width: 901px) and (max-width: 1500px) {
+  .playback-list > article { grid-template-columns: 56px minmax(0, 1fr) 140px; }
+  .playback-list dl { grid-column: 2 / -1; }
+}
+.playback-copy { min-width: 0; overflow-wrap: anywhere; }
