@@ -181,7 +181,7 @@ body.np-animated .now-playing { transition: transform var(--dur-slow) var(--ease
   justify-content: space-between;
   padding: 16px 18px 10px;
 }
-.np-tagline { color: var(--muted); font-size: var(--fs-xs); }
+
 .np-icon-btn {
   display: grid;
   place-items: center;
@@ -922,7 +922,7 @@ body.player-buffering .np-queue-list li.current .eq-bars i { animation-play-stat
 
 /* Now playing: the cover leads at panel width, title and actions below it,
    then the queue. With nothing loaded the compact row stays. */
-.np-head { padding: 14px 18px 6px; }
+.np-head { justify-content: flex-end; padding: 14px 18px 6px; }
 .np-current { padding: 2px 18px 0; }
 .np-current > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .np-cover-row { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px 8px; margin-top: 0; }
