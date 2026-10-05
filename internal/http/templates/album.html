@@ -17,6 +17,7 @@
     </nav>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
+    {{if .AlbumDetail.ArtworkURL}}<div class="album-backdrop" aria-hidden="true"><img src="{{thumb .AlbumDetail.ArtworkURL 256}}" alt="" decoding="async"></div>{{end}}
     <section class="album-hero">
       {{if .AlbumDetail.ArtworkURL}}<img class="hero-cover fade-img" src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async">{{else}}<div class="hero-cover cover-placeholder">032</div>{{end}}
       <div class="album-heading">

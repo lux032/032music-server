@@ -67,8 +67,8 @@ button.secondary:hover, .secondary-button:hover {
 }
 .secondary-button { min-height: 38px; padding: 0.45rem 0.85rem; }
 
-.danger-button { color: #fff; background: var(--danger); }
-.danger-button:hover { background: #b83850; }
+.danger-button { color: var(--text-on-danger); background: var(--danger); }
+.danger-button:hover { background: color-mix(in oklab, var(--danger) 86%, var(--text)); }
 
 /* Forms */
 label { display: grid; gap: 0.35rem; color: var(--text-secondary); font-size: var(--fs-sm); }
@@ -123,7 +123,6 @@ svg.icon {
 .toast {
   margin: 0 0 18px;
   border: 1px solid var(--accent-line);
-  border-left: 3px solid var(--accent);
   border-radius: var(--radius-md);
   padding: 10px 14px;
   color: var(--text);
@@ -132,7 +131,7 @@ svg.icon {
 }
 .form-error {
   margin: 0 0 12px;
-  border-left: 3px solid var(--danger);
+  border: 1px solid color-mix(in oklab, var(--danger) 35%, transparent);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
   color: var(--danger);
@@ -151,7 +150,6 @@ svg.icon {
   max-width: min(440px, calc(100vw - var(--sidebar-w) - var(--content-right) - 36px));
   padding: 12px 18px;
   border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--accent);
   color: var(--text);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
@@ -222,7 +220,7 @@ svg.icon {
   font-size: var(--fs-sm);
 }
 .pagination a:hover { color: var(--text); background: var(--surface-hover); }
-.pagination a.current { color: #fff; background: var(--accent); font-weight: 700; }
+.pagination a.current { color: var(--text-on-accent); background: var(--accent); font-weight: 700; }
 
 /* Danger confirmation disclosure */
 .danger-confirm > summary { display: inline-flex; cursor: pointer; }
@@ -230,7 +228,7 @@ svg.icon {
   display: grid;
   gap: 10px;
   margin-top: 12px;
-  border: 1px solid rgba(214, 69, 93, 0.35);
+  border: 1px solid color-mix(in oklab, var(--danger) 40%, transparent);
   border-radius: var(--radius-md);
   padding: 14px;
   background: var(--danger-soft);
@@ -252,9 +250,9 @@ svg.icon {
 
 /* Shared admin page presentation. */
 .status-badge { display: inline-flex; align-items: center; width: max-content; border: 1px solid var(--accent-line); border-radius: 999px; padding: 4px 10px; color: var(--accent); background: var(--accent-soft); font-size: var(--fs-xs); font-weight: 600; }
-.status-badge.success { border-color: rgba(29,157,108,.35); color: var(--success); background: rgba(29,157,108,.08); }
-.status-badge.warning { border-color: rgba(185,121,6,.35); color: var(--warning); background: rgba(185,121,6,.08); }
-.status-badge.failed { border-color: rgba(214,69,93,.35); color: var(--danger); background: var(--danger-soft); }
+.status-badge.success { border-color: color-mix(in oklab, var(--success) 40%, transparent); color: var(--success); background: color-mix(in oklab, var(--success) 9%, transparent); }
+.status-badge.warning { border-color: color-mix(in oklab, var(--warning) 40%, transparent); color: var(--warning); background: color-mix(in oklab, var(--warning) 9%, transparent); }
+.status-badge.failed { border-color: color-mix(in oklab, var(--danger) 40%, transparent); color: var(--danger); background: var(--danger-soft); }
 
 /* ------------------------------------------------------- audit 2026-10-05 */
 ::placeholder { color: var(--muted); opacity: 1; }

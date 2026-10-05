@@ -5,6 +5,7 @@
 <meta name="csrf-token" content="{{.CSRFToken}}">
 <meta name="app-build" content="{{appBuild}}">
 <meta name="icon-sprite" content="{{assetIconsSVG}}">
+<script src="{{assetThemeJS}}"></script>
 <link rel="stylesheet" href="{{assetTokensCSS}}">
 <link rel="stylesheet" href="{{assetBaseCSS}}">
 <link rel="stylesheet" href="{{assetShellCSS}}">
@@ -60,6 +61,7 @@
   </div>
   <div class="sidebar-user">
     <span>{{.Username}}</span>
+    <button type="button" class="icon-button theme-toggle" data-theme-toggle title="切换主题" aria-label="切换主题"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-theme-system"></use></svg></button>
     <form method="post" action="/admin/logout">
       <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
       <button class="icon-button" title="退出" aria-label="退出"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-logout"></use></svg></button>
@@ -86,6 +88,7 @@
     </nav>
     <div class="sheet-user">
       <span>{{.Username}}</span>
+      <button type="button" class="secondary-button theme-toggle" data-theme-toggle title="切换主题" aria-label="切换主题"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-theme-system"></use></svg> <span data-theme-label>跟随系统</span></button>
       <form method="post" action="/admin/logout">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <button class="secondary-button" title="退出登录">退出登录</button>

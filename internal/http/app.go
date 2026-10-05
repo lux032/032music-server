@@ -189,6 +189,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"assetPlayerMainJS": func() string { return assets.assetURL("player-main.js") },
 		"assetAdminJS":      func() string { return assets.assetURL("admin.js") },
 		"assetBrowseJS":     func() string { return assets.assetURL("browse.js") },
+		"assetThemeJS":      func() string { return assets.assetURL("theme.js") },
 		"appBuild":          func() string { return assets.hash },
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
