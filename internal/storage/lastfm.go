@@ -5,151 +5,24 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"sync"
 	"time"
 )
 
 // Scrobble rules shared by every client (web player, API-token apps and
-// media-token apps): a play counts once it has passed half of the track, and
-// repeated reports of the same playback are counted only once.
+// media-token apps): a play counts once its session reports a position past
+// half of the track, and each session (or resume chain) counts only once.
+// Counting is derived from playback-session events inside
+// RecordPlaybackEvent; there is no standalone scrobble write path.
 const (
 	// scrobbleThresholdSlackMillis tolerates the reporting jitter of clients
 	// that fire the scrobble on a progress tick right around the 50% mark.
 	scrobbleThresholdSlackMillis = 1000
-	// scrobbleUnknownDurationWindow deduplicates plays of tracks whose
-	// duration is unknown to both the library and the client.
-	scrobbleUnknownDurationWindow = 30 * time.Second
 	// lastFMMinimumDurationMillis follows the Last.fm rule that tracks of
 	// 30 seconds or less are not scrobbled.
 	lastFMMinimumDurationMillis = 30000
 	// lastFMMaxScrobbleAge: Last.fm ignores scrobbles older than 14 days.
 	LastFMMaxScrobbleAge = 14 * 24 * time.Hour
 )
-
-// Reasons returned when a scrobble report is accepted but not counted.
-const (
-	ScrobbleReasonThreshold = "threshold_not_reached"
-	ScrobbleReasonDuplicate = "duplicate"
-)
-
-type ScrobbleInput struct {
-	TrackID        int64
-	PositionMillis int64
-	DurationMillis int64
-	// ReportedAt is when the client observed PositionMillis; zero means now.
-	ReportedAt time.Time
-}
-
-type ScrobbleResult struct {
-	Recorded bool
-	Reason   string
-	// QueuedForLastFM reports that a Last.fm submission was enqueued.
-	QueuedForLastFM bool
-}
-
-// scrobbleMu serialises the read-check-write of RecordScrobble inside this
-// process so two concurrent reports of the same play cannot both pass the
-// duplicate check. The server is the only writer of its database.
-var scrobbleMu sync.Mutex
-
-// RecordScrobble counts one completed play when the reported position has
-// passed half of the track, deduplicates reports of the same playback and,
-// when Last.fm scrobbling is connected, snapshots the play into the Last.fm
-// outbox in the same transaction.
-//
-// A PositionMillis of 0 means the client did not report a position (legacy
-// clients); such reports are trusted to have applied the threshold already.
-func (s *Store) RecordScrobble(ctx context.Context, input ScrobbleInput) (ScrobbleResult, error) {
-	if input.TrackID <= 0 || input.PositionMillis < 0 || input.DurationMillis < 0 {
-		return ScrobbleResult{}, errors.New("invalid scrobble payload")
-	}
-	now := time.Now()
-	reportedAt := input.ReportedAt
-	if reportedAt.IsZero() || reportedAt.After(now.Add(time.Minute)) {
-		reportedAt = now
-	}
-	startedAt := reportedAt.Add(-time.Duration(input.PositionMillis) * time.Millisecond)
-
-	scrobbleMu.Lock()
-	defer scrobbleMu.Unlock()
-
-	var result ScrobbleResult
-	err := withBusyRetry(ctx, func() error {
-		var txErr error
-		result, txErr = s.recordScrobbleTx(ctx, input, startedAt)
-		return txErr
-	})
-	return result, err
-}
-
-func (s *Store) recordScrobbleTx(ctx context.Context, input ScrobbleInput, startedAt time.Time) (ScrobbleResult, error) {
-	tx, err := s.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return ScrobbleResult{}, err
-	}
-	defer tx.Rollback()
-
-	var libraryDuration int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(duration_ms,0) FROM tracks WHERE id=?`, input.TrackID).Scan(&libraryDuration); err != nil {
-		return ScrobbleResult{}, err
-	}
-	duration := libraryDuration
-	if duration <= 0 && plausibleClientDuration(input.DurationMillis) {
-		duration = input.DurationMillis
-	}
-
-	if duration > 0 && input.PositionMillis > 0 {
-		slack := min(int64(scrobbleThresholdSlackMillis), duration/10)
-		if input.PositionMillis < duration/2-slack {
-			return ScrobbleResult{Reason: ScrobbleReasonThreshold}, nil
-		}
-	}
-
-	var lastStarted sql.NullInt64
-	err = tx.QueryRowContext(ctx, `SELECT last_scrobble_started_ms FROM playback_progress WHERE track_id=?`, input.TrackID).Scan(&lastStarted)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return ScrobbleResult{}, err
-	}
-	startedMillis := startedAt.UnixMilli()
-	if lastStarted.Valid {
-		// Two genuine plays of one track start at least half a track apart
-		// (the first must run to 50% before the second can begin), so any
-		// report whose estimated start lies closer belongs to a play that was
-		// already counted: the 50% report and the "ended" report, a client
-		// retry, or a second client reporting the same session.
-		window := scrobbleUnknownDurationWindow
-		if duration > 0 {
-			window = time.Duration(duration/2-scrobbleThresholdSlackMillis) * time.Millisecond
-		}
-		delta := startedMillis - lastStarted.Int64
-		if delta < 0 {
-			delta = -delta
-		}
-		if time.Duration(delta)*time.Millisecond < window {
-			return ScrobbleResult{Reason: ScrobbleReasonDuplicate}, nil
-		}
-	}
-
-	if _, err = tx.ExecContext(ctx, `INSERT INTO playback_progress(track_id,state,position_ms,duration_ms,play_count,last_played_at,last_completed_at,last_scrobble_started_ms) VALUES(?,'stopped',?,?,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?) ON CONFLICT(track_id) DO UPDATE SET state='stopped',position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),play_count=playback_progress.play_count+1,last_played_at=excluded.last_played_at,last_completed_at=excluded.last_completed_at,last_scrobble_started_ms=excluded.last_scrobble_started_ms,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, input.TrackID, input.PositionMillis, input.DurationMillis, startedMillis); err != nil {
-		return ScrobbleResult{}, err
-	}
-	if libraryDuration <= 0 && plausibleClientDuration(input.DurationMillis) {
-		if _, err = tx.ExecContext(ctx, `UPDATE tracks SET duration_ms=? WHERE id=? AND COALESCE(duration_ms,0)=0`, input.DurationMillis, input.TrackID); err != nil {
-			return ScrobbleResult{}, err
-		}
-	}
-
-	result := ScrobbleResult{Recorded: true}
-	queued, err := enqueueLastFMScrobble(ctx, tx, input.TrackID, duration, startedAt)
-	if err != nil {
-		return ScrobbleResult{}, err
-	}
-	result.QueuedForLastFM = queued
-	if err = tx.Commit(); err != nil {
-		return ScrobbleResult{}, err
-	}
-	return result, nil
-}
 
 func enqueueLastFMScrobble(ctx context.Context, tx *sql.Tx, trackID, duration int64, startedAt time.Time) (bool, error) {
 	var enabled int

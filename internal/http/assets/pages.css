@@ -702,7 +702,8 @@ a.console-stats > *:hover, .console-stats > a:hover { background: var(--bg-soft)
   text-transform: uppercase;
 }
 .playback-state.playing { border-color: rgba(29, 157, 108, 0.4); color: var(--success); background: rgba(29, 157, 108, 0.08); }
-.playback-state.paused { border-color: rgba(185, 121, 6, 0.4); color: var(--warning); background: rgba(185, 121, 6, 0.08); }
+.playback-state.paused, .playback-state.buffering { border-color: rgba(185, 121, 6, 0.4); color: var(--warning); background: rgba(185, 121, 6, 0.08); }
+.playback-state.interrupted, .playback-state.error { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
 .playback-state .row-play-btn { position: static; display: inline-grid; opacity: 1; pointer-events: auto; margin-right: 6px; }
 .playback-list dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .playback-list dl div { min-width: 0; }

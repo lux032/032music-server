@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/metadata"
@@ -72,65 +71,81 @@ func trackPlayCount(t *testing.T, store *storage.Store, id int64) int64 {
 	return track.PlayCount
 }
 
-func TestPlaybackReportAcceptsMediaToken(t *testing.T) {
+func TestPlaybackEventsAcceptMediaToken(t *testing.T) {
 	app, store, id := setupScrobbleApp(t)
 	idText := itoa64(id)
-	now := time.Now()
 
 	// App clients that stream with ?mediaToken= can report with the same
 	// query parameter...
-	response := postPlayback(app, "/api/v1/playback/timeline?mediaToken="+scrobbleTestMediaToken, "", `{"trackId":`+idText+`,"state":"playing","positionMillis":1000,"durationMillis":200000}`)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("timeline with media query token: %d %s", response.Code, response.Body.String())
+	response := postPlayback(app, "/api/v1/playback/events?mediaToken="+scrobbleTestMediaToken, "", `{"clientId":"device-1","clientKind":"android","sessionId":"session-media-01","seq":1,"type":"start","trackId":`+idText+`,"state":"playing","positionMillis":1000,"durationMillis":200000}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("start with media query token: %d %s", response.Code, response.Body.String())
 	}
-	response = postPlayback(app, "/api/v1/playback/scrobble?mediaToken="+scrobbleTestMediaToken, "", `{"trackId":`+idText+`,"positionMillis":100000,"durationMillis":200000,"timestamp":"`+now.Add(-2*time.Hour).UTC().Format(time.RFC3339)+`"}`)
-	if response.Code != http.StatusNoContent || trackPlayCount(t, store, id) != 1 {
-		t.Fatalf("scrobble with media query token: %d %s", response.Code, response.Body.String())
+	// ...or as a Bearer header.
+	response = postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestMediaToken, `{"clientId":"device-1","clientKind":"android","sessionId":"session-media-01","seq":2,"type":"heartbeat","trackId":`+idText+`,"state":"playing","positionMillis":150000,"durationMillis":200000}`)
+	if response.Code != http.StatusOK || trackPlayCount(t, store, id) != 1 {
+		t.Fatalf("heartbeat with media bearer token: %d %s", response.Code, response.Body.String())
 	}
-	// ...or as a Bearer header; UNIX-seconds timestamps are accepted too.
-	response = postPlayback(app, "/api/v1/playback/scrobble", "Bearer "+scrobbleTestMediaToken, `{"trackId":`+idText+`,"positionMillis":150000,"timestamp":`+itoa64(now.Add(-time.Hour).Unix())+`}`)
-	if response.Code != http.StatusNoContent || trackPlayCount(t, store, id) != 2 {
-		t.Fatalf("scrobble with media bearer token: %d %s", response.Code, response.Body.String())
-	}
-	// API token keeps working.
-	response = postPlayback(app, "/api/v1/playback/scrobble", "Bearer "+scrobbleTestAPIToken, `{"trackId":`+idText+`,"positionMillis":150000}`)
-	if response.Code != http.StatusNoContent || trackPlayCount(t, store, id) != 3 {
-		t.Fatalf("scrobble with API token: %d %s", response.Code, response.Body.String())
+	// API token keeps working on a separate session.
+	response = postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestAPIToken, `{"clientId":"device-2","clientKind":"web","sessionId":"session-media-02","seq":1,"type":"start","trackId":`+idText+`,"state":"playing","positionMillis":150000,"durationMillis":200000}`)
+	if response.Code != http.StatusOK || trackPlayCount(t, store, id) != 2 {
+		t.Fatalf("start with API token: %d %s", response.Code, response.Body.String())
 	}
 }
 
-func TestPlaybackReportThresholdAndDuplicateResponses(t *testing.T) {
-	app, store, id := setupScrobbleApp(t)
+func TestPlaybackEventsCountedAndIdempotentResponses(t *testing.T) {
+	app, _, id := setupScrobbleApp(t)
 	idText := itoa64(id)
-	response := postPlayback(app, "/api/v1/playback/scrobble", "Bearer "+scrobbleTestMediaToken, `{"trackId":`+idText+`,"positionMillis":30000}`)
-	var body struct {
-		Recorded bool   `json:"recorded"`
-		Reason   string `json:"reason"`
+
+	decodeBody := func(response *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %s: %v", response.Body.String(), err)
+		}
+		return body
 	}
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Recorded || body.Reason != storage.ScrobbleReasonThreshold {
+
+	// Below the 50% threshold the session is accepted but not yet counted.
+	response := postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestMediaToken, `{"clientId":"device-1","clientKind":"web","sessionId":"session-count-01","seq":1,"type":"start","trackId":`+idText+`,"state":"playing","positionMillis":30000,"durationMillis":200000}`)
+	body := decodeBody(response)
+	if response.Code != http.StatusOK || body["applied"] != true || body["counted"] != false {
 		t.Fatalf("below half: %d %s", response.Code, response.Body.String())
 	}
-	if response = postPlayback(app, "/api/v1/playback/scrobble", "Bearer "+scrobbleTestMediaToken, `{"trackId":`+idText+`,"positionMillis":100000}`); response.Code != http.StatusNoContent {
+	// Crossing half counts once.
+	response = postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestMediaToken, `{"clientId":"device-1","clientKind":"web","sessionId":"session-count-01","seq":2,"type":"heartbeat","trackId":`+idText+`,"state":"playing","positionMillis":100000,"durationMillis":200000}`)
+	if body = decodeBody(response); response.Code != http.StatusOK || body["counted"] != true {
 		t.Fatalf("half: %d %s", response.Code, response.Body.String())
 	}
-	response = postPlayback(app, "/api/v1/playback/scrobble", "Bearer "+scrobbleTestMediaToken, `{"trackId":`+idText+`,"positionMillis":100500}`)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), storage.ScrobbleReasonDuplicate) || trackPlayCount(t, store, id) != 1 {
-		t.Fatalf("duplicate: %d %s", response.Code, response.Body.String())
+	// A retried (stale-seq) event is an idempotent applied=false no-op.
+	response = postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestMediaToken, `{"clientId":"device-1","clientKind":"web","sessionId":"session-count-01","seq":2,"type":"heartbeat","trackId":`+idText+`,"state":"playing","positionMillis":100500,"durationMillis":200000}`)
+	if body = decodeBody(response); response.Code != http.StatusOK || body["applied"] != false {
+		t.Fatalf("retry: %d %s", response.Code, response.Body.String())
 	}
-	if response = postPlayback(app, "/api/v1/playback/scrobble", "Bearer "+scrobbleTestMediaToken, `{"trackId":`+idText+`,"positionMillis":100000,"timestamp":"yesterday"}`); response.Code != http.StatusBadRequest {
-		t.Fatalf("invalid timestamp: %d %s", response.Code, response.Body.String())
+	// Unknown fields are rejected.
+	response = postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestMediaToken, `{"clientId":"device-1","clientKind":"web","sessionId":"session-count-02","seq":1,"type":"start","trackId":`+idText+`,"state":"playing","positionMillis":1,"durationMillis":2,"mystery":true}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field: %d %s", response.Code, response.Body.String())
 	}
+	// Invalid values are rejected with invalid_request.
+	response = postPlayback(app, "/api/v1/playback/events", "Bearer "+scrobbleTestMediaToken, `{"clientId":"device-1","clientKind":"web","sessionId":"session-count-03","seq":0,"type":"start","trackId":`+idText+`,"state":"playing","positionMillis":1,"durationMillis":2}`)
+	body = decodeBody(response)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
+		t.Fatalf("seq 0: %d %s", response.Code, response.Body.String())
+	}
+	_ = body
 }
 
 func TestMediaTokenGrantsOnlyPlaybackReporting(t *testing.T) {
 	app, _, id := setupScrobbleApp(t)
 	idText := itoa64(id)
+	valid := `{"clientId":"device-1","clientKind":"web","sessionId":"session-authz-01","seq":1,"type":"start","trackId":` + idText + `,"state":"playing","positionMillis":1000,"durationMillis":200000}`
 	for _, auth := range []string{"Bearer wrong-token-at-least-24-characters", ""} {
-		if response := postPlayback(app, "/api/v1/playback/scrobble", auth, `{"trackId":`+idText+`,"positionMillis":100000}`); response.Code != http.StatusUnauthorized {
+		if response := postPlayback(app, "/api/v1/playback/events", auth, valid); response.Code != http.StatusUnauthorized {
 			t.Fatalf("auth %q: status %d", auth, response.Code)
 		}
 	}
-	if response := postPlayback(app, "/api/v1/playback/scrobble?mediaToken=wrong", "", `{"trackId":`+idText+`,"positionMillis":100000}`); response.Code != http.StatusUnauthorized {
+	if response := postPlayback(app, "/api/v1/playback/events?mediaToken=wrong", "", valid); response.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong query token: status %d", response.Code)
 	}
 	// The media token stays read-only everywhere else.

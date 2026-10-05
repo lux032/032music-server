@@ -141,8 +141,8 @@ func TestConnectScrobbleAndNowPlaying(t *testing.T) {
 		verifySignature(t, calls[0])
 	}
 
-	reportedAt := time.Now().Add(-time.Minute)
-	result, err := store.RecordScrobble(ctx, storage.ScrobbleInput{TrackID: trackID, PositionMillis: 140000, ReportedAt: reportedAt})
+	before := time.Now()
+	result, err := queueSessionPlay(t, store, "session-lastfm-connect", trackID, 140000, 261000)
 	if err != nil || !result.QueuedForLastFM {
 		t.Fatalf("record: %+v %v", result, err)
 	}
@@ -153,9 +153,12 @@ func TestConnectScrobbleAndNowPlaying(t *testing.T) {
 	}
 	verifySignature(t, calls[0])
 	call := calls[0]
-	wantTimestamp := reportedAt.Add(-140 * time.Second).Unix()
-	if call.Get("sk") != "SK" || call.Get("artist[0]") != "YOASOBI" || call.Get("track[0]") != "夜に駆ける" || call.Get("album[0]") != "THE BOOK" || call.Get("duration[0]") != "261" || call.Get("trackNumber[0]") != "2" || call.Get("timestamp[0]") != itoa(wantTimestamp) {
-		t.Fatalf("scrobble params: %v (want timestamp %d)", call, wantTimestamp)
+	// startedAt = session start − initial position (140 s), with a small
+	// tolerance for the wall clock between start and the queued snapshot.
+	timestamp, _ := strconv.ParseInt(call.Get("timestamp[0]"), 10, 64)
+	wantTimestamp := before.Add(-140 * time.Second).Unix()
+	if call.Get("sk") != "SK" || call.Get("artist[0]") != "YOASOBI" || call.Get("track[0]") != "夜に駆ける" || call.Get("album[0]") != "THE BOOK" || call.Get("duration[0]") != "261" || call.Get("trackNumber[0]") != "2" || timestamp < wantTimestamp-10 || timestamp > wantTimestamp+10 {
+		t.Fatalf("scrobble params: %v (want timestamp ≈ %d)", call, wantTimestamp)
 	}
 	settings, _ := store.LastFMScrobbleSettings(ctx)
 	if settings.PendingCount != 0 || settings.LastSuccessAt == "" {
@@ -269,7 +272,7 @@ func TestTemporaryFailureIsRetriedAndInvalidSessionDisconnects(t *testing.T) {
 	if err := store.SetLastFMSession(ctx, "listener", "SK"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RecordScrobble(ctx, storage.ScrobbleInput{TrackID: trackID, PositionMillis: 140000}); err != nil {
+	if _, err := queueSessionPlay(t, store, "session-lastfm-retry", trackID, 140000, 261000); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,3 +314,16 @@ func TestTemporaryFailureIsRetriedAndInvalidSessionDisconnects(t *testing.T) {
 }
 
 func itoa(value int64) string { return strconv.FormatInt(value, 10) }
+
+// queueSessionPlay counts one play through the session protocol: the start
+// event already sits at positionMs (a play resumed mid-track), which crosses
+// the 50% threshold immediately and enqueues the Last.fm outbox entry.
+func queueSessionPlay(t *testing.T, store *storage.Store, sessionID string, trackID, positionMs, durationMs int64) (storage.PlaybackEventResult, error) {
+	t.Helper()
+	input := storage.PlaybackEventInput{
+		ClientID: "device-1", ClientKind: "android", SessionID: sessionID,
+		Seq: 1, Type: "start", TrackID: trackID, State: "playing",
+		PositionMillis: positionMs, DurationMillis: durationMs,
+	}
+	return store.RecordPlaybackEvent(context.Background(), input)
+}

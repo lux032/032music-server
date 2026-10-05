@@ -58,12 +58,7 @@ func TestClientFeaturesLifecycle(t *testing.T) {
 		t.Fatalf("playlist tracks = %d, err=%v", len(detail.Tracks), err)
 	}
 
-	if err := store.UpdatePlayback(ctx, PlaybackUpdate{TrackID: trackID, State: "playing", PositionMillis: 30000, DurationMillis: 240000}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Scrobble(ctx, trackID, 220000, 240000); err != nil {
-		t.Fatal(err)
-	}
+	playSessionOnce(t, ctx, store, "session-features-lifecycle", trackID, 130000, 240000)
 	history, total, err := store.PlaybackHistory(ctx, 100, 0)
 	if err != nil || total != 1 || len(history) != 1 || history[0].PlayCount != 1 {
 		t.Fatalf("history = %#v, total=%d, err=%v", history, total, err)

@@ -62,7 +62,7 @@ func TestSessionWriteWithoutCSRFHeaderRejected(t *testing.T) {
 	app, cookie, _ := csrfSessionApp(t)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/timeline", strings.NewReader(`{"trackId":1}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/events", strings.NewReader(`{"trackId":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -79,7 +79,7 @@ func TestSessionWriteWithWrongCSRFHeaderRejected(t *testing.T) {
 	app, cookie, _ := csrfSessionApp(t)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/timeline", strings.NewReader(`{"trackId":1}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/events", strings.NewReader(`{"trackId":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", "definitely-not-the-session-token")
 	req.AddCookie(cookie)
@@ -95,7 +95,7 @@ func TestSessionWriteWithValidCSRFHeaderAccepted(t *testing.T) {
 	trackID := importTestTrack(t, app)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/timeline", strings.NewReader(fmt.Sprintf(`{"trackId":%d,"positionMillis":1000,"durationMillis":60000,"state":"playing"}`, trackID)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/events", strings.NewReader(fmt.Sprintf(`{"clientId":"device-1","clientKind":"web","sessionId":"session-csrf-001","seq":1,"type":"start","trackId":%d,"state":"playing","positionMillis":1000,"durationMillis":60000}`, trackID)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	req.AddCookie(cookie)
@@ -114,7 +114,7 @@ func TestBearerWriteWithoutCSRFHeaderAccepted(t *testing.T) {
 	trackID := importTestTrack(t, app)
 	handler := app.Handler()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/timeline", strings.NewReader(fmt.Sprintf(`{"trackId":%d,"positionMillis":1000,"durationMillis":60000,"state":"playing"}`, trackID)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/events", strings.NewReader(fmt.Sprintf(`{"clientId":"device-1","clientKind":"web","sessionId":"session-csrf-002","seq":1,"type":"start","trackId":%d,"state":"playing","positionMillis":1000,"durationMillis":60000}`, trackID)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()

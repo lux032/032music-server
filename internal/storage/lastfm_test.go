@@ -47,15 +47,41 @@ func queueLength(t *testing.T, s *Store, ctx context.Context) int64 {
 	return count
 }
 
-func TestRecordScrobbleHalfThresholdAndDedupe(t *testing.T) {
+// sessionPlay drives a session that counts one play: start, then one
+// heartbeat at positionMs. Returns the heartbeat result.
+func sessionPlay(t *testing.T, s *Store, ctx context.Context, sessionID string, trackID, positionMs, durationMs int64) PlaybackEventResult {
+	t.Helper()
+	start := PlaybackEventInput{ClientID: "device-1", ClientKind: "android", SessionID: sessionID, Seq: 1, Type: "start", TrackID: trackID, State: "playing", PositionMillis: 0, DurationMillis: durationMs}
+	if _, err := s.RecordPlaybackEvent(ctx, start); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	heartbeat := start
+	heartbeat.Seq = 2
+	heartbeat.Type = "heartbeat"
+	heartbeat.PositionMillis = positionMs
+	result, err := s.RecordPlaybackEvent(ctx, heartbeat)
+	if err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	return result
+}
+
+func TestSessionCountHalfThresholdAndDedupe(t *testing.T) {
 	s, ctx := openEnrichmentTestStore(t)
 	id := seedScrobbleTrack(t, s, ctx, "a.flac", 240000)
-	base := time.Now().Add(-time.Hour)
 
 	// Below half of the library duration: accepted, not counted. The client
 	// duration is ignored when the library knows the length.
-	result, err := s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 100000, DurationMillis: 150000, ReportedAt: base})
-	if err != nil || result.Recorded || result.Reason != ScrobbleReasonThreshold {
+	start := PlaybackEventInput{ClientID: "device-1", ClientKind: "android", SessionID: "session-threshold", Seq: 1, Type: "start", TrackID: id, State: "playing", DurationMillis: 150000}
+	if _, err := s.RecordPlaybackEvent(ctx, start); err != nil {
+		t.Fatal(err)
+	}
+	below := start
+	below.Seq = 2
+	below.Type = "heartbeat"
+	below.PositionMillis = 100000
+	result, err := s.RecordPlaybackEvent(ctx, below)
+	if err != nil || result.Counted {
 		t.Fatalf("below threshold: %+v %v", result, err)
 	}
 	if playCount(t, s, ctx, id) != 0 {
@@ -63,59 +89,68 @@ func TestRecordScrobbleHalfThresholdAndDedupe(t *testing.T) {
 	}
 
 	// Reaching half (1 s slack) counts once.
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 119500, ReportedAt: base.Add(119500 * time.Millisecond)})
-	if err != nil || !result.Recorded {
+	half := below
+	half.Seq = 3
+	half.PositionMillis = 119500
+	if result, err = s.RecordPlaybackEvent(ctx, half); err != nil || !result.Counted {
 		t.Fatalf("half play: %+v %v", result, err)
 	}
-	// The same playback reported again at the end (web player "ended"
-	// event, client retry, second device) is a duplicate.
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 240000, ReportedAt: base.Add(240 * time.Second)})
-	if err != nil || result.Recorded || result.Reason != ScrobbleReasonDuplicate {
+	// Reporting the same playback again (progress ticks, client retry, the
+	// end event) is a duplicate within the session.
+	done := half
+	done.Seq = 4
+	done.PositionMillis = 240000
+	if result, err = s.RecordPlaybackEvent(ctx, done); err != nil || !result.Counted {
 		t.Fatalf("same playback: %+v %v", result, err)
 	}
 	if playCount(t, s, ctx, id) != 1 {
 		t.Fatalf("play count = %d, want 1", playCount(t, s, ctx, id))
 	}
-	// Playing the track again right after it finished is a new play.
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 130000, ReportedAt: base.Add(370 * time.Second)})
-	if err != nil || !result.Recorded {
-		t.Fatalf("second play: %+v %v", result, err)
+	// Playing the track again in a new session is a new play.
+	if result = sessionPlay(t, s, ctx, "session-second", id, 130000, 240000); !result.Counted {
+		t.Fatalf("second play: %+v", result)
 	}
-	// Legacy clients that omit the position are trusted.
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, ReportedAt: base.Add(50 * time.Minute)})
-	if err != nil || !result.Recorded {
-		t.Fatalf("legacy report: %+v %v", result, err)
+	if playCount(t, s, ctx, id) != 2 {
+		t.Fatalf("play count = %d, want 2", playCount(t, s, ctx, id))
 	}
-	if playCount(t, s, ctx, id) != 3 {
-		t.Fatalf("play count = %d, want 3", playCount(t, s, ctx, id))
-	}
-	if _, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: 9999, PositionMillis: 1}); err == nil {
+	// An unknown track is rejected.
+	start.SessionID = "session-unknown"
+	start.TrackID = 9999
+	if _, err = s.RecordPlaybackEvent(ctx, start); err == nil {
 		t.Fatal("unknown track accepted")
 	}
 }
 
-func TestRecordScrobbleUsesClientDurationWhenLibraryHasNone(t *testing.T) {
+func TestSessionCountUsesClientDurationWhenLibraryHasNone(t *testing.T) {
 	s, ctx := openEnrichmentTestStore(t)
 	id := seedScrobbleTrack(t, s, ctx, "b.flac", 0)
-	result, err := s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 60000, DurationMillis: 200000})
-	if err != nil || result.Recorded {
+	start := PlaybackEventInput{ClientID: "device-1", ClientKind: "android", SessionID: "session-client-duration", Seq: 1, Type: "start", TrackID: id, State: "playing", DurationMillis: 200000}
+	if _, err := s.RecordPlaybackEvent(ctx, start); err != nil {
+		t.Fatal(err)
+	}
+	below := start
+	below.Seq = 2
+	below.Type = "heartbeat"
+	below.PositionMillis = 60000
+	if result, err := s.RecordPlaybackEvent(ctx, below); err != nil || result.Counted {
 		t.Fatalf("below client-duration threshold: %+v %v", result, err)
 	}
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 100000, DurationMillis: 200000})
-	if err != nil || !result.Recorded {
+	half := below
+	half.Seq = 3
+	half.PositionMillis = 100000
+	if result, err := s.RecordPlaybackEvent(ctx, half); err != nil || !result.Counted {
 		t.Fatalf("client-duration half: %+v %v", result, err)
 	}
 }
 
-func TestRecordScrobbleQueuesLastFMOnlyWhenConnected(t *testing.T) {
+func TestSessionCountQueuesLastFMOnlyWhenConnected(t *testing.T) {
 	s, ctx := openEnrichmentTestStore(t)
 	id := seedScrobbleTrack(t, s, ctx, "c.flac", 200000)
 	short := seedScrobbleTrack(t, s, ctx, "short.flac", 25000)
-	started := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
 
-	result, err := s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 100000, ReportedAt: started.Add(100 * time.Second)})
-	if err != nil || !result.Recorded || result.QueuedForLastFM || queueLength(t, s, ctx) != 0 {
-		t.Fatalf("not connected: %+v %v", result, err)
+	result := sessionPlay(t, s, ctx, "session-queue-1", id, 100000, 200000)
+	if !result.Counted || result.QueuedForLastFM || queueLength(t, s, ctx) != 0 {
+		t.Fatalf("not connected: %+v", result)
 	}
 
 	if err := s.SaveLastFMScrobblePreferences(ctx, true, true, "secret"); err != nil {
@@ -124,24 +159,27 @@ func TestRecordScrobbleQueuesLastFMOnlyWhenConnected(t *testing.T) {
 	if err := s.SetLastFMSession(ctx, "listener", "session-key"); err != nil {
 		t.Fatal(err)
 	}
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: id, PositionMillis: 100000, ReportedAt: started.Add(20 * time.Minute)})
-	if err != nil || !result.Recorded || !result.QueuedForLastFM {
-		t.Fatalf("connected: %+v %v", result, err)
+	connected := sessionPlay(t, s, ctx, "session-queue-2", id, 100000, 200000)
+	if !connected.Counted || !connected.QueuedForLastFM {
+		t.Fatalf("connected: %+v", connected)
 	}
 	items, err := s.DueLastFMScrobbles(ctx, time.Now(), 50)
 	if err != nil || len(items) != 1 {
 		t.Fatalf("queue = %+v %v", items, err)
 	}
 	item := items[0]
-	wantStart := started.Add(20*time.Minute - 100*time.Second).Unix()
-	if item.Artist != "Singer" || item.Track != "Song c.flac" || item.Album != "Album" || item.AlbumArtist != "Band" || item.TrackNumber != 3 || item.DurationSeconds != 200 || item.StartedAt != wantStart {
-		t.Fatalf("queued metadata = %+v (want start %d)", item, wantStart)
+	// startedAt = session start − initial position: this session started at
+	// position 0, so the queued timestamp must be within seconds of now.
+	if item.Artist != "Singer" || item.Track != "Song c.flac" || item.Album != "Album" || item.AlbumArtist != "Band" || item.TrackNumber != 3 || item.DurationSeconds != 200 {
+		t.Fatalf("queued metadata = %+v", item)
+	}
+	if now := time.Now().Unix(); item.StartedAt < now-30 || item.StartedAt > now {
+		t.Fatalf("queued startedAt = %d, want ≈ %d", item.StartedAt, now)
 	}
 
 	// Tracks of 30 s or less count locally but are not sent to Last.fm.
-	result, err = s.RecordScrobble(ctx, ScrobbleInput{TrackID: short, PositionMillis: 20000})
-	if err != nil || !result.Recorded || result.QueuedForLastFM {
-		t.Fatalf("short track: %+v %v", result, err)
+	if result := sessionPlay(t, s, ctx, "session-queue-short", short, 20000, 25000); !result.Counted || result.QueuedForLastFM {
+		t.Fatalf("short track: %+v", result)
 	}
 
 	// Deferral hides the item until its retry time; retry-now restores it.

@@ -281,7 +281,7 @@ The legacy `token` query alias is also accepted for media/report requests; new c
 | `GET` | `/api/v1/favorites/{artists\|albums\|tracks}` | Favorite lists. |
 | `GET/POST` | `/api/v1/playlists` | List/create playlists; `/{id}` supports GET/PATCH/DELETE. |
 | `PUT` | `/api/v1/playlists/{id}/items` | Replace ordered contents with `{"trackIds":[12,34]}`. |
-| `POST` | `/api/v1/playback/timeline`, `/api/v1/playback/scrobble` | Position/state and counted plays. |
+| `POST` | `/api/v1/playback/events` | Playback session event reporting (counting/skips/resume positions are server-derived). |
 | `GET/DELETE` | `/api/v1/playback/history` | Read/clear playback history and resume positions. |
 | `GET` | `/api/v1/tracks/{id}/lyrics` | Structured lyrics (JSON credentials). |
 | `GET` | `/api/v1/tracks/{id}/lyrics.lrc`, `/api/v1/tracks/{id}/stream` | Raw lyrics/original audio (media credentials). |
@@ -296,21 +296,26 @@ Ordinary lists return `{"items":[],"total":0,"limit":100,"offset":0}` with a max
 
 Playlist creation accepts `{"name":"Evening","description":"Living room","trackIds":[12,34]}`; at most 5000 unique tracks, preserving first-occurrence order.
 
-### Playback reports
+### Playback reports (session protocol, apiRevision 3)
+
+Every play is a durable session: the client generates a fresh `sessionId` (UUID recommended) per play and a strictly increasing `seq` starting at 1. Send events to `/api/v1/playback/events`:
 
 ```json
-{"trackId":12,"state":"playing","positionMillis":30000,"durationMillis":240000,"continuing":false}
+{"clientId":"device-abc","clientKind":"android","sessionId":"7c9e…","seq":1,"type":"start","trackId":12,"state":"playing","positionMillis":0,"durationMillis":240000}
 ```
 
-Send the above to `/api/v1/playback/timeline`; states are `playing`, `paused`, `buffering`, and `stopped`. Send counted-play reports to `/api/v1/playback/scrobble`:
-
-```json
-{"trackId":12,"positionMillis":120000,"durationMillis":240000,"timestamp":"2026-09-27T12:02:00Z"}
-```
-
-A play is counted after half the duration (one-second tolerance), with repeated reports deduplicated by estimated play start. Successful counts return 204; below-threshold/duplicate reports return 200 with `recorded:false` and a reason. A zero/omitted position is treated as legacy client-side threshold checking. Optional `timestamp` accepts RFC 3339 or Unix seconds/milliseconds for offline reports.
-
-Timeline reports optionally accept `skipped`: `true` requires `state=stopped` and explicitly increments the skip count; `false` suppresses inference. Otherwise, a recent early stop with `continuing=true` can be inferred as a skip. Playback progress is shared per track, so simultaneous clients can affect each other; explicit skip retries are not deduplicated.
+- `type`: `start` (must carry the real initial `state`: `playing`/`buffering`/`paused`), `heartbeat` (also carries the real state), `pause`/`buffering`/`resume` (state derived from the type — do not send one), `seek` (keeps the current state, position only), `end` (must carry `endReason`).
+- `endReason`: `completed` (resume position resets to 0), `skipped`, `stopped`, `replaced`, `error`, `client_closed`.
+- Heartbeat cadence: playing/buffering every 15 s (90 s lease), paused every 60 s (10 min lease). Past the lease the session shows as interrupted — never counted as skip or completion.
+- Resume definition: refresh, restoreState, BFCache restore and process-restart recovery of the SAME track are resumes — persist the last sessionId+trackId and start with `resumedFromSessionId`. Only an explicit track change or a loop restart is a new play (fresh session without resume). A start retry after a network timeout must reuse the SAME sessionId (the server treats it as an idempotent replay).
+- Responses: 200 `{"applied":bool,"state":"…","positionMillis":…,"counted":bool}`; stale-seq or post-terminal events return `applied:false` (no lease renewal, no position change); terminal sessions cannot be revived.
+- Errors: `404 session_not_found` (unknown/cleared session: if the track actually played and already passed the count threshold, recover it with a start using state playing at the final position + end with the original endReason — never fake playing for a track that was not played; otherwise drop it); `409 session_expired` (finalized: serialize — open exactly ONE resume session, start at the current position with `resumedFromSessionId`; a late end first starts the resume at the FINAL position, then ends it with the original endReason. The recovery start uses state playing because the recovery target actually played); `409 session_owner_mismatch` / `session_conflict` / `resume_invalid` (predecessor unknown/other-client/other-track or ended completed/skipped/replaced; an active predecessor on the same client+track is superseded as replaced in the same transaction and the resume is accepted. On resume_invalid, do NOT silently fall back to a fresh high-position start without resume — that is a new play and counts again).
+- `end(completed)` must carry the true final position (≈duration), never 0; the server resets the stored breakpoint itself.
+- Counting: the server counts once when the position passes 50% (1 s slack) with evidence of actual playback — the state before or after the event is `playing`. A session that only ever reported paused/buffering never counts, whatever endReason it ends with (a high-position seek while paused followed by end does not count either); a session that played past the threshold counts on the pause/buffering/end event that carries the reached position; each resume chain (chain_id) counts at most once — enforced by a live in-transaction query plus a unique partial index, so even sequential or concurrent forks of an uncounted predecessor count exactly once; only explicit new plays (track change / loop restart) count again; independent multi-device sessions count separately.
+- Skips: only `endReason=skipped` below MIN(30s, duration/2) counts, exactly once.
+- Resume position: the last accepted event wins; `completed` resets to 0; expiry keeps the last position.
+- The legacy `/api/v1/playback/timeline` and `/api/v1/playback/scrobble` endpoints were removed and answer 410; clearing history also clears sessions.
+- Authentication is unchanged (apiToken / admin session / mediaToken); on this single-user server `clientId` only binds session ownership and is not a strong security identity.
 
 ### Media behavior
 

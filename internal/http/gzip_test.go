@@ -184,11 +184,10 @@ func TestGzipSkipsNoContent(t *testing.T) {
 	trackID := importTestTrack(t, app)
 	handler := app.Handler()
 
-	// A successful timeline write answers 204 without a body; the gzip
+	// A successful favorite toggle answers 204 without a body; the gzip
 	// middleware must forward it untouched.
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/playback/timeline", strings.NewReader(fmt.Sprintf(`{"trackId":%d,"positionMillis":1000,"durationMillis":60000,"state":"playing"}`, trackID)))
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/tracks/%d/favorite", trackID), nil)
 	req.Header.Set("Accept-Encoding", "gzip")
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

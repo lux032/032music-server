@@ -282,7 +282,7 @@ docker compose logs --tail=100 music-server
 | `GET` | `/api/v1/favorites/{artists\|albums\|tracks}` | 收藏列表。 |
 | `GET/POST` | `/api/v1/playlists` | 列出/新建歌单；`/{id}` 支持 GET/PATCH/DELETE。 |
 | `PUT` | `/api/v1/playlists/{id}/items` | 使用 `{"trackIds":[12,34]}` 替换有序内容。 |
-| `POST` | `/api/v1/playback/timeline`、`/api/v1/playback/scrobble` | 播放进度/状态与播放计数。 |
+| `POST` | `/api/v1/playback/events` | 播放会话事件上报（计数/跳过/断点均由服务端派生）。 |
 | `GET/DELETE` | `/api/v1/playback/history` | 读取/清空历史和断点位置。 |
 | `GET` | `/api/v1/tracks/{id}/lyrics` | 结构化歌词（JSON 凭据）。 |
 | `GET` | `/api/v1/tracks/{id}/lyrics.lrc`、`/api/v1/tracks/{id}/stream` | 原始歌词/音频（媒体凭据）。 |
@@ -297,23 +297,26 @@ docker compose logs --tail=100 music-server
 
 创建歌单可传 `{"name":"晚间播放","description":"客厅","trackIds":[12,34]}`，最多 5000 首去重歌曲，保留第一次出现的顺序。
 
-### 播放上报
+### 播放上报（会话协议，apiRevision 3）
 
-向 `/api/v1/playback/timeline` 发送：
-
-```json
-{"trackId":12,"state":"playing","positionMillis":30000,"durationMillis":240000,"continuing":false}
-```
-
-状态支持 `playing`、`paused`、`buffering`、`stopped`。向 `/api/v1/playback/scrobble` 发送计数报告：
+每次播放是一个持久化会话：客户端为每次播放生成新的 `sessionId`（建议 UUID），`seq` 从 1 起单调递增。向 `/api/v1/playback/events` 发送：
 
 ```json
-{"trackId":12,"positionMillis":120000,"durationMillis":240000,"timestamp":"2026-09-27T12:02:00Z"}
+{"clientId":"device-abc","clientKind":"android","sessionId":"7c9e…","seq":1,"type":"start","trackId":12,"state":"playing","positionMillis":0,"durationMillis":240000}
 ```
 
-播放过半计一次（允许 1 秒误差），按估算的开始播放时间去重。计数成功返回 204；未过半/重复上报返回 200，含 `recorded:false` 和原因。位置为 0 或省略时视为旧客户端已自行判断过半。可选 `timestamp` 支持 RFC 3339 或 Unix 秒/毫秒，用于离线补报。
-
-Timeline 可选 `skipped`：`true` 必须与 `state=stopped` 同发，显式增加跳过次数；`false` 抑制推断；省略时，近期播放、较早停止且 `continuing=true` 可被推断为跳过。播放进度每首歌共享，多客户端可能相互影响；显式跳过上报重试不会去重。
+- `type`：`start`（必须携带真实初始 `state`：`playing`/`buffering`/`paused`）、`heartbeat`（同样携带真实 state）、`pause`/`buffering`/`resume`（state 由类型推导，不要发送）、`seek`（保留当前 state，仅更新位置）、`end`（必须携带 `endReason`）。
+- `endReason`：`completed`（断点归零）、`skipped`、`stopped`、`replaced`、`error`、`client_closed`。
+- 心跳节奏：playing/buffering 每 15 秒（租约 90 秒），paused 每 60 秒（租约 10 分钟）。超过租约会话失效，历史显示“已中断”，不算跳过/完成。
+- 续播定义：refresh、restoreState、BFCache 恢复、进程重启后恢复同一首歌都属于续播——客户端持久化最近一个 sessionId+trackId，start 必须携带 `resumedFromSessionId`。只有明确切歌或循环重播才是不带 resume 的新播放（新会话）。start 网络超时后必须用同一个 sessionId 重发（服务端视为幂等重放）。
+- 响应 200 `{"applied":bool,"state":"…","positionMillis":…,"counted":bool}`；`seq` 过旧或终态后的迟到事件返回 `applied:false`（不续租、不改断点），终态不可复活。
+- 错误：`404 session_not_found`（未知/已清空会话：若歌曲确实播放过且已过计数门槛，以 state playing、最终位置补 start 并以原 endReason end，恢复这次播放；没播放过绝不能伪装 playing；否则丢弃，下次播放重新开始）；`409 session_expired`（已过期并被固化：串行处理，仅开一个 resume 会话——以当前位置 start 并携带 `resumedFromSessionId`；迟到的 end 先以最终位置 start resume，再以原 endReason end。补发的恢复 start 用 state playing 是因为恢复对象确实播放过）；`409 session_owner_mismatch` / `session_conflict` / `resume_invalid`（前序不存在/异 client/异 track，或以 completed/skipped/replaced 结束；同 client 同 track 的活跃前序不算错误：服务端在同事务内将其以 replaced 取代并接受续播。收到 resume_invalid 禁止静默退化为不带 resume 的高位置新 start——那是新播放，会重新计数）。
+- `end(completed)` 必须携带真实最终位置（≈时长），绝不能发 0；断点归 0 由服务端处理。
+- 计数：位置过 50%（1 秒 slack）且有真实播放证据（事件前或事件后的状态为 playing）时服务端计一次；从头到尾只有 paused/buffering 的会话无论以何种 endReason 结束都不计数（暂停中高位置 seek 后 end 同样不计）；播放越过门槛后在 pause/buffering/end 时按当时位置计数；每条续播链（chain_id）最多计一次，由事件事务内实时查询加数据库唯一部分索引双重保证——未计数前序的顺序/并发分叉也只计一次；只有明确的新播放（切歌/循环重播）重新计数；多端独立会话分别计数。
+- 跳过：仅 `endReason=skipped` 且结束位置低于 MIN(30s, 时长/2) 时计一次跳过。
+- 断点：最后被接受的事件生效；`completed` 归零；过期保留最后位置。
+- 旧的 `/api/v1/playback/timeline` 与 `/api/v1/playback/scrobble` 已移除，返回 410；无兼容路径。清空历史同时清空会话。
+- 鉴权沿用 apiToken / 管理会话 / mediaToken；单用户服务端，`clientId` 仅绑定会话归属，不是强安全身份。
 
 ### 媒体行为
 

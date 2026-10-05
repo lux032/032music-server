@@ -2,29 +2,24 @@ package httpapi
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
-
-	"github.com/lux032/032music-server/internal/storage"
 )
 
 func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"apiVersion": "v1", "apiRevision": 2,
+		"apiVersion": "v1", "apiRevision": 3,
 		"features": map[string]bool{
 			"albums": true, "artists": true, "tracks": true, "search": true,
 			"favorites": true, "playlists": true, "playbackProgress": true,
-			"playbackHistory": true, "scrobble": true, "rangeStreaming": true,
+			"playbackHistory": true, "playbackEvents": true, "rangeStreaming": true,
 			"syncAlbums": true, "syncTracks": true,
 			"lyrics": true, "instrumentalFilter": true,
 			"works": true, "multilingualIndex": true,
 			"artistDetail": true, "artistFavorites": true,
 			"audioProperties": true, "lyricsText": true, "playlistCreateWithItems": true,
-			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true, "skipInference": true,
+			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true,
 		},
 		"transcode": map[string]any{
 			"available":   a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"],
@@ -37,10 +32,28 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 		},
 		"similarity": map[string]any{"method": "metadata", "distanceRange": []int{0, 1}},
 		"playback": map[string]any{
-			"skipInference": map[string]any{"thresholdMillis": 30000, "thresholdFraction": 0.5, "windowMinutes": 30, "explicitField": "skipped"},
-			// scrobble: counted once per playback after half of the track;
-			// timeline and scrobble also accept the media token.
-			"scrobble": map[string]any{"thresholdFraction": 0.5, "deduplicated": true, "authentication": []string{"apiToken", "mediaToken", "session"}, "queryParameter": "mediaToken", "lastfm": a.lastfm != nil},
+			// Playback sessions (plan C, apiRevision 3). The legacy timeline
+			// and scrobble endpoints were removed and answer 410.
+			"endpoint":            "/api/v1/playback/events",
+			"removedEndpoints":    []string{"/api/v1/playback/timeline", "/api/v1/playback/scrobble"},
+			"authentication":      []string{"apiToken", "mediaToken", "session"},
+			"queryParameter":      "mediaToken",
+			"identityNote":        "single-user server: clientId binds a session to its owner but is not a strong security identity",
+			"heartbeatMillis":     map[string]int{"active": 15000, "paused": 60000},
+			"leaseMillis":         map[string]int{"active": 90000, "paused": 600000},
+			"seqMax":              9007199254740992,
+			"states":              []string{"playing", "buffering", "paused"},
+			"endReasons":          []string{"completed", "skipped", "stopped", "replaced", "error", "client_closed"},
+			"resumableEndReasons": []string{"expired", "client_closed", "error", "stopped"},
+			"expiredBehaviour":    "409 session_expired: the session is finalized as interrupted (never counted as skip/completion); start ONE new session with resumedFromSessionId at the current position (serialize: only one resume per expired session), then continue; a late end repeats start(resume at the FINAL position) followed by end(original endReason). Recovery events only: the recovery start uses state playing because the track actually played — never fake playing for a track that was not played",
+			"missingBehaviour":    "404 session_not_found (unknown or cleared session): if the play actually happened and already passed the count threshold, start a fresh session with state playing at the final position and end it with the original endReason to recover the play; otherwise drop it and start fresh on the next play",
+			"resumeDefinition":    "refresh, restoreState, BFCache restore and process-restart recovery of the SAME track are resumes: persist lastSessionId+trackId and start with resumedFromSessionId. Only an explicit track change or a loop restart is a new play (fresh session without resume). A start retry after a network timeout must reuse the SAME sessionId (idempotent replay).",
+			"resumeInvalid":       "409 resume_invalid: unknown/other-client/other-track predecessor, or a predecessor ended completed/skipped/replaced; an active predecessor on the same client+track is instead superseded as replaced and accepted. Do NOT silently retry as a fresh session at a >50% position: that is a new play and counts again",
+			"completedPosition":   "end(completed) must carry the true final position (≈duration), never 0; the server resets the stored breakpoint itself",
+			"effectiveStates":     []string{"playing", "buffering", "paused", "interrupted", "completed", "skipped", "stopped", "error"},
+			"historyPriority":     "playing > buffering > paused, otherwise the most recent end reason; pre-session rows show stopped",
+			"scrobble":            map[string]any{"thresholdFraction": 0.5, "slackMillis": 1000, "countsOn": "events with evidence of actual playback: the state before or after the event is playing; a session that only ever reported paused/buffering never counts, whatever endReason it ends with", "deduplicated": "once per resume chain (chain_id), backstopped by a unique partial index", "serverDerived": true, "lastfm": a.lastfm != nil},
+			"skip":                map[string]any{"endReason": "skipped", "thresholdMillis": 30000, "thresholdFraction": 0.5, "countedOnce": true},
 		},
 		"artwork": map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
 		"media": map[string]any{
@@ -184,78 +197,6 @@ func (a *App) handleReplacePlaylistItems(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, value)
-}
-
-func (a *App) handlePlaybackTimeline(w http.ResponseWriter, r *http.Request) {
-	var input storage.PlaybackUpdate
-	if !decode(w, r, &input) {
-		return
-	}
-	if err := a.store.UpdatePlayback(r.Context(), input); err != nil {
-		a.writeFeatureError(w, r, err, "timeline_failed")
-		return
-	}
-	if input.State == "playing" && a.lastfm != nil {
-		a.lastfm.NowPlaying(input.TrackID)
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (a *App) handlePlaybackScrobble(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		TrackID        int64           `json:"trackId"`
-		PositionMillis int64           `json:"positionMillis"`
-		DurationMillis int64           `json:"durationMillis"`
-		Timestamp      json.RawMessage `json:"timestamp"`
-	}
-	if !decode(w, r, &input) {
-		return
-	}
-	reportedAt, err := parseScrobbleTimestamp(input.Timestamp)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	result, err := a.store.RecordScrobble(r.Context(), storage.ScrobbleInput{TrackID: input.TrackID, PositionMillis: input.PositionMillis, DurationMillis: input.DurationMillis, ReportedAt: reportedAt})
-	if err != nil {
-		a.writeFeatureError(w, r, err, "scrobble_failed")
-		return
-	}
-	if result.QueuedForLastFM && a.lastfm != nil {
-		a.lastfm.Wake()
-	}
-	if !result.Recorded {
-		// Accepted but not counted: below the 50% threshold, or a repeated
-		// report of a play that was already counted.
-		writeJSON(w, http.StatusOK, map[string]any{"recorded": false, "reason": result.Reason})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// parseScrobbleTimestamp accepts the time the client observed the reported
-// position as an RFC 3339 string or UNIX seconds/milliseconds. Absent means
-// "now".
-func parseScrobbleTimestamp(raw json.RawMessage) (time.Time, error) {
-	value := strings.TrimSpace(string(raw))
-	if value == "" || value == "null" || value == `""` {
-		return time.Time{}, nil
-	}
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		if parsed, err := time.Parse(time.RFC3339Nano, text); err == nil {
-			return parsed, nil
-		}
-		value = text
-	}
-	number, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || number <= 0 {
-		return time.Time{}, errors.New("timestamp must be RFC 3339 or UNIX seconds/milliseconds")
-	}
-	if number > 1e12 {
-		return time.UnixMilli(number), nil
-	}
-	return time.Unix(number, 0), nil
 }
 
 func (a *App) handlePlaybackHistory(w http.ResponseWriter, r *http.Request) {

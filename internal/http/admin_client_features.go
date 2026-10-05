@@ -506,13 +506,21 @@ func playbackStateLabel(value string) string {
 	switch value {
 	case "playing":
 		return "播放中"
-	case "paused":
-		return "已暂停"
 	case "buffering":
 		return "缓冲中"
+	case "paused":
+		return "已暂停"
+	case "interrupted":
+		return "已中断"
+	case "completed":
+		return "播放完成"
+	case "skipped":
+		return "已跳过"
+	case "error":
+		return "播放错误"
 	case "stopped":
 		return "已停止"
 	default:
-		return value
+		return "—"
 	}
 }

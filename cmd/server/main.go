@@ -91,6 +91,10 @@ func run() error {
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
 	app.SetLastFM(lastFMService)
+	// Playback sessions: finalizes expired leases and purges ended sessions
+	// past their retention; stops with rootCtx at shutdown. Reads derive the
+	// effective state on their own, so this only persists the outcome.
+	storage.NewPlaybackSweeper(db, logger).Start(rootCtx)
 	if cfg.MediaTokenGenerated && app.CredentialSources().MediaToken == webhttp.CredentialSourceEnv {
 		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value or set a media token on the admin security page")
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Playlist struct {
@@ -23,16 +24,11 @@ type PlaylistDetail struct {
 	Tracks   []Track  `json:"tracks"`
 }
 
-type PlaybackUpdate struct {
-	TrackID        int64  `json:"trackId"`
-	State          string `json:"state"`
-	PositionMillis int64  `json:"positionMillis"`
-	DurationMillis int64  `json:"durationMillis"`
-	Continuing     bool   `json:"continuing"`
-	ClientID       string `json:"clientId,omitempty"`
-	Skipped        *bool  `json:"skipped,omitempty"`
-}
-
+// PlaybackRecord is one row of the play-history aggregate. State is the
+// effective state derived from the track's playback sessions at read time
+// (playing > buffering > paused, otherwise the most recent end reason,
+// otherwise stopped for pre-session history rows); it is never read from
+// playback_progress.state (B4/M5).
 type PlaybackRecord struct {
 	TrackID         int64  `json:"trackId"`
 	State           string `json:"state"`
@@ -343,69 +339,13 @@ func plausibleClientDuration(durationMillis int64) bool {
 	return durationMillis > 0 && durationMillis <= maxClientDurationMillis
 }
 
-func (s *Store) UpdatePlayback(ctx context.Context, update PlaybackUpdate) error {
-	if update.TrackID <= 0 {
-		return errors.New("trackId must be positive")
-	}
-	if update.PositionMillis < 0 || update.DurationMillis < 0 {
-		return errors.New("playback times must not be negative")
-	}
-	if len(update.ClientID) > 128 {
-		return errors.New("clientId must not exceed 128 bytes")
-	}
-	if update.Skipped != nil && *update.Skipped && update.State != "stopped" {
-		return errors.New("skipped=true must have stopped state")
-	}
-	switch update.State {
-	case "playing", "paused", "buffering", "stopped":
-	default:
-		return errors.New("invalid playback state")
-	}
-	lastPlayed := "NULL"
-	if update.State == "playing" {
-		lastPlayed = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
-	}
-	mode := 0 // omitted: infer; explicit false: suppress; explicit true: count
-	if update.Skipped != nil {
-		if *update.Skipped {
-			mode = 1
-		} else {
-			mode = -1
-		}
-	}
-	// The threshold subquery reads the probed track duration in the same atomic
-	// statement; fallback uses the old progress duration and incoming duration.
-	threshold := `MIN(30000, CASE WHEN COALESCE((SELECT duration_ms FROM tracks WHERE id=excluded.track_id),0)>0 THEN (SELECT duration_ms FROM tracks WHERE id=excluded.track_id)/2 WHEN MAX(playback_progress.duration_ms,excluded.duration_ms)>0 THEN MAX(playback_progress.duration_ms,excluded.duration_ms)/2 ELSE 30000 END)`
-	inferred := `excluded.state='stopped' AND ?=1 AND playback_progress.state IN ('playing','paused','buffering') AND MAX(playback_progress.position_ms,excluded.position_ms)<` + threshold + ` AND playback_progress.last_played_at IS NOT NULL AND playback_progress.last_played_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 minutes') AND (playback_progress.last_completed_at IS NULL OR playback_progress.last_completed_at<playback_progress.last_played_at)`
-	skip := `(?=1 OR (?=0 AND ` + inferred + `))`
-	// The INSERT branch counts only explicit skipped=true; inference requires a
-	// pre-existing row (previous state), so a first-ever stopped report is not
-	// counted as a skip.
-	query := `INSERT INTO playback_progress(track_id,state,position_ms,duration_ms,last_played_at,skip_count,last_skipped_at) VALUES(?,?,?,?,` + lastPlayed + `,CASE WHEN ?=1 THEN 1 ELSE 0 END,CASE WHEN ?=1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END)
-		ON CONFLICT(track_id) DO UPDATE SET state=excluded.state,position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),last_played_at=COALESCE(excluded.last_played_at,playback_progress.last_played_at),skip_count=playback_progress.skip_count+CASE WHEN ` + skip + ` THEN 1 ELSE 0 END,last_skipped_at=CASE WHEN ` + skip + ` THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE playback_progress.last_skipped_at END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
-	if _, err := s.db.ExecContext(ctx, query, update.TrackID, update.State, update.PositionMillis, update.DurationMillis, mode, mode, mode, mode, boolInt(update.Continuing), mode, mode, boolInt(update.Continuing)); err != nil {
-		return err
-	}
-	if plausibleClientDuration(update.DurationMillis) {
-		_, _ = s.db.ExecContext(ctx, `UPDATE tracks SET duration_ms=? WHERE id=? AND COALESCE(duration_ms,0)=0`, update.DurationMillis, update.TrackID)
-	}
-	return nil
-}
-
-// Scrobble records a play reported now. See RecordScrobble for the 50%
-// threshold and duplicate rules.
-func (s *Store) Scrobble(ctx context.Context, trackID int64, positionMillis, durationMillis int64) error {
-	_, err := s.RecordScrobble(ctx, ScrobbleInput{TrackID: trackID, PositionMillis: positionMillis, DurationMillis: durationMillis})
-	return err
-}
-
 func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]PlaybackRecord, int64, error) {
 	limit, offset = page(Filters{Limit: limit, Offset: offset})
 	var total int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM playback_progress WHERE last_played_at IS NOT NULL`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT track_id,state,position_ms,duration_ms,play_count,skip_count,COALESCE(last_skipped_at,''),COALESCE(last_played_at,''),COALESCE(last_completed_at,''),updated_at FROM playback_progress WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC,track_id LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT track_id,position_ms,duration_ms,play_count,skip_count,COALESCE(last_skipped_at,''),COALESCE(last_played_at,''),COALESCE(last_completed_at,''),updated_at FROM playback_progress WHERE last_played_at IS NOT NULL ORDER BY last_played_at DESC,track_id LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -414,7 +354,7 @@ func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]Playb
 	ids := make([]int64, 0)
 	for rows.Next() {
 		var value PlaybackRecord
-		if err := rows.Scan(&value.TrackID, &value.State, &value.PositionMillis, &value.DurationMillis, &value.PlayCount, &value.SkipCount, &value.LastSkippedAt, &value.LastPlayedAt, &value.LastCompletedAt, &value.UpdatedAt); err != nil {
+		if err := rows.Scan(&value.TrackID, &value.PositionMillis, &value.DurationMillis, &value.PlayCount, &value.SkipCount, &value.LastSkippedAt, &value.LastPlayedAt, &value.LastCompletedAt, &value.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		ids = append(ids, value.TrackID)
@@ -427,15 +367,155 @@ func (s *Store) PlaybackHistory(ctx context.Context, limit, offset int) ([]Playb
 	if err != nil {
 		return nil, 0, err
 	}
+	states, err := s.effectivePlaybackStates(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
 	for i := range result {
 		result[i].Track = tracks[i]
+		result[i].State = states[result[i].TrackID]
 	}
 	return result, total, nil
 }
 
+// effectivePlaybackStates derives the per-track display state for one page
+// of history rows from two bounded, indexed queries (M-2/M5): the open
+// sessions of the page's tracks (bounded by the number of active devices,
+// via idx_playback_sessions_open_track) and each track's single most
+// recently ended session (an index seek per track via
+// idx_playback_sessions_ended_track) — never the whole 30-day session
+// history. Multi-device priority is playing > buffering > paused among
+// sessions whose lease is still valid; otherwise the most recent end
+// (finalized rows use their last heartbeat as ended_at, M-1) contributes
+// its reason; tracks without any session keep the legacy "stopped" label
+// so pre-migration rows never resurrect a stale playing.
+func (s *Store) effectivePlaybackStates(ctx context.Context, trackIDs []int64) (map[int64]string, error) {
+	states := make(map[int64]string, len(trackIDs))
+	if len(trackIDs) == 0 {
+		return states, nil
+	}
+	placeholders, args := inClause(trackIDs)
+	byTrack := map[int64][]sessionSummary{}
+
+	openRows, err := s.db.QueryContext(ctx, `SELECT track_id,state,last_heartbeat_at FROM playback_sessions WHERE track_id IN (`+placeholders+`) AND ended_at IS NULL`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer openRows.Close()
+	for openRows.Next() {
+		var trackID int64
+		var summary sessionSummary
+		if err := openRows.Scan(&trackID, &summary.state, &summary.heartbeat); err != nil {
+			return nil, err
+		}
+		byTrack[trackID] = append(byTrack[trackID], summary)
+	}
+	if err := openRows.Err(); err != nil {
+		return nil, err
+	}
+
+	endedRows, err := s.db.QueryContext(ctx, `SELECT track_id,ended_at,COALESCE(end_reason,'') FROM playback_sessions latest WHERE latest.track_id IN (`+placeholders+`) AND latest.ended_at IS NOT NULL AND latest.rowid=(SELECT rowid FROM playback_sessions WHERE track_id=latest.track_id AND ended_at IS NOT NULL ORDER BY ended_at DESC, rowid DESC LIMIT 1)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer endedRows.Close()
+	for endedRows.Next() {
+		var trackID int64
+		var summary sessionSummary
+		if err := endedRows.Scan(&trackID, &summary.endedAt, &summary.endReason); err != nil {
+			return nil, err
+		}
+		byTrack[trackID] = append(byTrack[trackID], summary)
+	}
+	if err := endedRows.Err(); err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	for _, trackID := range trackIDs {
+		states[trackID] = deriveEffectiveState(byTrack[trackID], now)
+	}
+	return states, nil
+}
+
+type sessionSummary struct {
+	state, heartbeat, endedAt, endReason string
+}
+
+func deriveEffectiveState(sessions []sessionSummary, now time.Time) string {
+	best := ""
+	bestRank := 0
+	bestHeartbeat := ""
+	latestEnded := ""
+	reason := ""
+	for _, session := range sessions {
+		if session.endedAt == "" {
+			if sessionExpiredAt(session.state, session.heartbeat, now) {
+				// An open session past its lease derives as interrupted even
+				// before the sweeper finalizes it (B1/H2): it competes with
+				// ended sessions by its last heartbeat time.
+				if session.heartbeat > latestEnded {
+					latestEnded, reason = session.heartbeat, "expired"
+				}
+				continue
+			}
+			rank := 0
+			switch session.state {
+			case "playing":
+				rank = 3
+			case "buffering":
+				rank = 2
+			case "paused":
+				rank = 1
+			}
+			if rank > bestRank || rank == bestRank && session.heartbeat > bestHeartbeat {
+				best, bestRank, bestHeartbeat = session.state, rank, session.heartbeat
+			}
+			continue
+		}
+		if session.endedAt > latestEnded {
+			latestEnded, reason = session.endedAt, session.endReason
+		}
+	}
+	if best != "" {
+		return best
+	}
+	switch reason {
+	case "expired":
+		return "interrupted"
+	case "completed":
+		return "completed"
+	case "skipped":
+		return "skipped"
+	case "error":
+		return "error"
+	case "stopped", "replaced", "client_closed":
+		return "stopped"
+	}
+	// No sessions at all (pre-migration history row) or no ended session.
+	return "stopped"
+}
+
+// ClearPlaybackHistory wipes the aggregate and every session in one
+// transaction (M6/D6). Clients that are still playing get a 404
+// session_not_found on their next event and open a fresh session; a late
+// start replayed with an old session id simply creates a new, unlinked
+// session (no resume chain, no inherited counted flag).
 func (s *Store) ClearPlaybackHistory(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM playback_progress`)
-	return err
+	return withBusyRetry(ctx, func() error {
+		tx, err := s.db.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `DELETE FROM playback_progress`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM playback_sessions`); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
 }
 
 func insertPlaylistItems(ctx context.Context, tx *sql.Tx, id int64, trackIDs []int64) error {

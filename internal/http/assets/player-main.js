@@ -1,6 +1,6 @@
 // 032 Music Server - player entry point
 import { createPlayerDOM } from './player-bar.js';
-import { setupAudioElement, restoreState, reportTimelineProgress, saveState } from './player-core.js';
+import { setupAudioElement, setupPlaybackReporter, restoreState, saveState } from './player-core.js';
 import { setupNowPlayingPanel } from './now-playing.js';
 import { bindTrackListEvents } from './queue.js';
 import { bindGlobalShortcuts } from './shortcuts.js';
@@ -14,6 +14,7 @@ if (!window.__032_player_initialized) {
     if (!document.body || document.body.classList.contains('login-page')) return;
     createPlayerDOM();
     setupAudioElement();
+    setupPlaybackReporter();
     setupNowPlayingPanel();
     setupFullscreen();
     restoreState();
@@ -24,7 +25,6 @@ if (!window.__032_player_initialized) {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       document.body.classList.add('np-animated');
     }));
-    setInterval(reportTimelineProgress, 5000);
     window.addEventListener('pagehide', saveState);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

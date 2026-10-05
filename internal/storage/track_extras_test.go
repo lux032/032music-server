@@ -87,9 +87,7 @@ func TestTrackExtrasOverrideAndArtistRoles(t *testing.T) {
 	if err != nil || needed {
 		t.Fatalf("probe already imported: %v %v", needed, err)
 	}
-	if err = s.Scrobble(ctx, id, 600, 1000); err != nil {
-		t.Fatal(err)
-	}
+	playSessionOnce(t, ctx, s, "session-extras-play", id, 600, 1000)
 	track, err = s.TrackByID(ctx, id)
 	if err != nil || track.ViewCount == nil || track.LastViewedAt == nil || *track.LastViewedAt < 1600000000 {
 		t.Fatalf("playback extras: %+v %v", track, err)

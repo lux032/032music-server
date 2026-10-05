@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -83,8 +84,9 @@ func TestAdminPlaybackRendersTrackContainer(t *testing.T) {
 	if err != nil || len(tracks) != 2 {
 		t.Fatalf("tracks = %v (%v)", tracks, err)
 	}
-	for _, track := range tracks {
-		if err := store.UpdatePlayback(ctx, storage.PlaybackUpdate{TrackID: track.ID, State: "playing", PositionMillis: 1000, DurationMillis: 200000}); err != nil {
+	for i, track := range tracks {
+		event := storage.PlaybackEventInput{ClientID: "device-1", ClientKind: "web", SessionID: "session-admin-container-" + strconv.Itoa(i), Seq: 1, Type: "start", TrackID: track.ID, State: "playing", PositionMillis: 1000, DurationMillis: 200000}
+		if _, err := store.RecordPlaybackEvent(ctx, event); err != nil {
 			t.Fatal(err)
 		}
 	}

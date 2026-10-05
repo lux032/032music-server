@@ -9,7 +9,7 @@ import (
 )
 
 func TestQuietAccessLogPath(t *testing.T) {
-	for _, path := range []string{"/api/v1/health", "/api/v1/playback/timeline", "/admin/matches/runs/active.json", "/admin/enrichment/runs/active.json", "/admin/assets/admin.js"} {
+	for _, path := range []string{"/api/v1/health", "/api/v1/playback/events", "/admin/matches/runs/active.json", "/admin/enrichment/runs/active.json", "/admin/assets/admin.js"} {
 		if !quietAccessLogPath(path) {
 			t.Errorf("polling path %s should be quiet", path)
 		}

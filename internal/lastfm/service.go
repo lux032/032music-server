@@ -22,9 +22,10 @@ const (
 )
 
 // Service owns the Last.fm outbox worker and now-playing notifications.
-// Plays are written to the SQLite outbox by storage.RecordScrobble; the
-// worker submits them in batches and retries with backoff, so a Last.fm
-// outage or a server restart never loses a play.
+// Plays are written to the SQLite outbox when a playback session crosses
+// the counting threshold (storage.RecordPlaybackEvent); the worker submits
+// them in batches and retries with backoff, so a Last.fm outage or a server
+// restart never loses a play.
 type Service struct {
 	store     *storage.Store
 	logger    *slog.Logger

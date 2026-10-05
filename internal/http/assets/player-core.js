@@ -4,6 +4,88 @@ import { showToast, formatTime, artworkForSize, apiFetch, swapIcon } from './uti
 import { updatePlayButtonUI, updateTrackRowsUI, updatePlayerMetaUI, updateVolumeUI } from './player-bar.js';
 import { syncPanelProgress, emitPlayerState } from './now-playing.js';
 import { loadLyrics, updateActiveLyric } from './lyrics.js';
+import { createPlaybackReporter } from './playback-reporter.js';
+
+  // ---------------------------------------------------- playback reporter
+  // Event-driven session reporter (apiRevision 3). The reporter module is
+  // pure logic; this glue feeds it the live audio element and the CSRF-aware
+  // apiFetch transport.
+  let reporter = null;
+  export function playbackReporter() { return reporter; }
+
+  function reporterTransport(body, { keepalive } = {}) {
+    // Bounded wait: a half-open connection must not stall the serial event
+    // queue forever; an abort surfaces as a network error and hits the
+    // reporter's bounded retry. keepalive (pagehide) requests are left to
+    // the browser.
+    let signal;
+    let timeoutId = null;
+    if (!keepalive && typeof AbortController !== 'undefined') {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 10000);
+      signal = controller.signal;
+    }
+    return apiFetch('/api/v1/playback/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: !!keepalive,
+      signal,
+      body: JSON.stringify(body)
+    }).then(async (res) => {
+      let json = null;
+      try { json = await res.json(); } catch (_) {}
+      return { status: res.status, json };
+    }).finally(() => { if (timeoutId !== null) clearTimeout(timeoutId); });
+  }
+
+  // L4: never fall back to s.queue[s.currentIndex] here — by the time an
+  // old session's end is probed, currentIndex may already point at the NEW
+  // track and would leak its duration into the old track's end.
+  let lastAudioDurationMillis = 0;
+  function currentTrackDurationMillis() {
+    if (s.audio && isFinite(s.audio.duration) && s.audio.duration > 0) {
+      lastAudioDurationMillis = s.audio.duration * 1000;
+      return lastAudioDurationMillis;
+    }
+    return lastAudioDurationMillis;
+  }
+
+  export function setupPlaybackReporter() {
+    if (reporter) return reporter;
+    reporter = createPlaybackReporter({
+      transport: reporterTransport,
+      getPositionMillis: () => (s.audio ? s.audio.currentTime * 1000 : 0),
+      getDurationMillis: currentTrackDurationMillis,
+      onProtocolError: (info) => console.warn('playback reporter:', info.reason, info.sessionId)
+    });
+    // pagehide: best-effort end(client_closed); visibilitychange=hidden must
+    // NOT end the session. pageshow persisted = BFCache return: the old
+    // session was ended on pagehide, so rebuild it as a resume chain.
+    window.addEventListener('pagehide', () => { reporter.suspend(); });
+    window.addEventListener('pageshow', (e) => {
+      if (!e.persisted) return;
+      const track = s.queue[s.currentIndex];
+      if (!track || !s.audio || !s.audio.getAttribute('src')) return;
+      // 'playing' needs real evidence: unpaused AND enough data to actually
+      // be audible. An unpaused-but-still-buffering element restores as
+      // buffering so it cannot fabricate hasPlayed.
+      const state = s.audio.paused ? 'paused' : (s.audio.readyState >= 3 ? 'playing' : 'buffering');
+      reporter.restore(parseInt(track.id, 10), { initialState: state });
+    });
+    return reporter;
+  }
+
+  // 'playing' without an active session means playback started without an
+  // explicit play path (e.g. undo-clear then play): self-heal — but never
+  // while blocked on resume_invalid, which requires an explicit play action.
+  function ensureReporterSession() {
+    if (!reporter || reporter.hasActiveSession() || reporter.isBlocked()) return;
+    const track = s.queue[s.currentIndex];
+    // restore(), not play(): the same track resumes its persisted chain
+    // (undo-clear / stopped sessions stay resumable) instead of opening a
+    // silent no-resume chain at a high position that would count again.
+    if (track) reporter.restore(parseInt(track.id, 10), { initialState: 'buffering' });
+  }
 
   export function setupAudioElement() {
     if (!s.audio) s.audio = document.getElementById('global-audio-element');
@@ -16,11 +98,30 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
       saveState();
     });
 
+    // The reporter only trusts 'playing' (audible), never 'play'.
+    s.audio.addEventListener('playing', () => {
+      if (reporter) { ensureReporterSession(); reporter.notifyPlaying(); }
+    });
+
+    s.audio.addEventListener('waiting', () => { if (reporter) reporter.notifyBuffering(); });
+    // 'stalled' is only a network hint: playback may continue from the
+    // buffer with no following 'playing' event. Report buffering only when
+    // there is not enough data to be audible (M1).
+    s.audio.addEventListener('stalled', () => {
+      if (reporter && s.audio.readyState < 3) reporter.notifyBuffering();
+    });
+    s.audio.addEventListener('seeked', () => { if (reporter) reporter.notifySeek(); });
+
     s.audio.addEventListener('pause', () => {
       s.isPlaying = false;
       updatePlayButtonUI(false);
       updateTrackRowsUI();
       saveState();
+      // Natural completion fires pause then ended in the same task: the
+      // automatic pause must NOT erase the playing evidence, or a completed
+      // session's end freezes priorState=paused and recovery under-counts
+      // (P1). A real user pause (audio.ended === false) is unaffected.
+      if (reporter && !s.audio.ended) reporter.notifyPaused();
     });
 
     s.audio.addEventListener('loadedmetadata', () => {
@@ -37,6 +138,13 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     });
 
     s.audio.addEventListener('timeupdate', () => {
+      // Honest recovery evidence: the clock is advancing while audible, so
+      // a session stuck in buffering (e.g. a stalled report) is really
+      // playing — say so, or a real play would never count.
+      if (reporter && !s.audio.paused && s.audio.readyState >= 3) {
+        const dbg = reporter.getDebug();
+        if (dbg.sessionId && !dbg.ended && dbg.state === 'buffering') reporter.notifyPlaying();
+      }
       onTimeUpdate();
     });
 
@@ -52,6 +160,7 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
       if (track) {
         showToast(`播放失败 (${code}): ${track.title || '未知曲目'}`);
       }
+      if (reporter) reporter.fail();
       s.isPlaying = false;
       updatePlayButtonUI(false);
       updateTrackRowsUI();
@@ -91,6 +200,9 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
   }
 
   export function stopQueuePlayback() {
+    // End the session before touching the audio element so the 'pause'
+    // listener cannot double-report and the final position is still real.
+    if (reporter) reporter.stopSession('stopped');
     if (s.audio) {
       s.audio.pause();
       s.audio.removeAttribute('src');
@@ -123,7 +235,7 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     emitPlayerState();
   }
 
-  export function playTrackAtIndex(index, skipHistoryPush) {
+  export function playTrackAtIndex(index, skipHistoryPush, endReason) {
     if (index < 0 || index >= s.queue.length) return;
     // Shuffle mode keeps a back-stack so 上一首 retraces what was heard
     // instead of walking the queue backwards.
@@ -134,9 +246,14 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     s.currentIndex = index;
     const track = s.queue[s.currentIndex];
     if (!track) return;
-    // Every explicit play is a new listen that may be scrobbled again; the
-    // server discards a repeated report of the same playback.
-    s.lastScrobbledTrackId = null;
+
+    // Explicit new play: the reporter ends the previous session (real
+    // position, given reason) and starts a fresh session for this track.
+    // The new track's start carries an explicit position 0 and the NEW
+    // track's own duration — never the old audio element's leftovers
+    // (P1-2: the server derives initial position, Last.fm startedAt and a
+    // library-unknown duration from this payload).
+    if (reporter) reporter.play(parseInt(track.id, 10), { reason: endReason || 'replaced', positionMillis: 0, durationMillis: track.durationMs || 0 });
 
     updatePlayerMetaUI(track);
     loadLyrics(track.id);
@@ -149,17 +266,32 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     if (!isSameSource) {
       s.audio.src = track.streamUrl;
       s.audio.load();
+    } else {
+      // Explicit re-play of the same source (album hero play, duplicate
+      // queue entry): a real new play starts from position 0 whether the
+      // element is paused or audible (P2-1; togglePlay — a different path —
+      // still resumes in place). When already audible, play() fires no
+      // 'playing' event, so say so honestly here; when paused, the real
+      // 'playing' event follows on its own.
+      s.audio.currentTime = 0;
+      if (!s.audio.paused && reporter) reporter.notifyPlaying();
     }
 
+    // A stale async play() callback from a previous track must never
+    // overwrite the new track's state.
+    const token = ++s.playToken;
     const playPromise = s.audio.play();
     if (playPromise !== undefined) {
       playPromise.then(() => {
+        if (token !== s.playToken) return;
         s.isPlaying = true;
         updatePlayButtonUI(true);
         updateTrackRowsUI();
         saveState();
       }).catch(err => {
+        if (token !== s.playToken) return;
         console.warn('Audio play request failed:', err);
+        if (reporter) reporter.notifyPaused();
         s.isPlaying = false;
         updatePlayButtonUI(false);
         updateTrackRowsUI();
@@ -175,14 +307,25 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     }
 
     if (s.audio.paused) {
+      // An explicit user play is the only way out of a resume_invalid block.
+      // It is a real NEW play: reset to 0 with the track's own duration
+      // (unified with P1-2), never a silent high-position resume read.
+      const track = s.queue[s.currentIndex];
+      if (reporter && reporter.isBlocked() && track) {
+        reporter.play(parseInt(track.id, 10), { positionMillis: 0, durationMillis: track.durationMs || 0 });
+        s.audio.currentTime = 0;
+      }
+      const token = s.playToken;
       const playPromise = s.audio.play();
       if (playPromise !== undefined) {
         playPromise.then(() => {
+          if (token !== s.playToken) return;
           s.isPlaying = true;
           updatePlayButtonUI(true);
           updateTrackRowsUI();
           saveState();
         }).catch(err => {
+          if (token !== s.playToken) return;
           console.warn('Audio play failed on toggle:', err);
         });
       }
@@ -208,7 +351,7 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
         const id = s.playHistory.pop();
         const index = s.queue.findIndex((t) => String(t.id) === id);
         if (index !== -1 && index !== s.currentIndex) {
-          playTrackAtIndex(index, true);
+          playTrackAtIndex(index, true, 'skipped');
           return;
         }
       }
@@ -219,21 +362,21 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
       if (s.loopMode === 'all') prevIndex = s.queue.length - 1;
       else { s.audio.currentTime = 0; return; }
     }
-    playTrackAtIndex(prevIndex);
+    playTrackAtIndex(prevIndex, false, 'skipped');
   }
 
   export function playNext() {
     if (!s.audio || s.queue.length === 0) return;
-    if (s.shuffleOn) { playRandomNext(); return; }
+    if (s.shuffleOn) { playRandomNext('skipped'); return; }
     let nextIndex = s.currentIndex + 1;
     if (nextIndex >= s.queue.length) {
       if (s.loopMode === 'all') nextIndex = 0;
       else return;
     }
-    playTrackAtIndex(nextIndex);
+    playTrackAtIndex(nextIndex, false, 'skipped');
   }
 
-  function playRandomNext() {
+  function playRandomNext(endReason) {
     let nextIndex = s.currentIndex;
     if (s.queue.length > 1) {
       while (nextIndex === s.currentIndex) {
@@ -242,16 +385,18 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
     } else {
       nextIndex = 0;
     }
-    playTrackAtIndex(nextIndex);
+    playTrackAtIndex(nextIndex, false, endReason);
   }
 
   function onTrackEnded() {
     const currentTrack = s.queue[s.currentIndex];
-    if (currentTrack) scrobbleTrack(currentTrack.id);
+    // Natural end: end(completed) with the real final position.
+    if (reporter) reporter.complete();
 
     if (s.loopMode === 'one') {
-      s.lastScrobbledTrackId = null;
+      // Same-track loop replay is a new play: fresh session, position 0.
       s.audio.currentTime = 0;
+      if (reporter && currentTrack) reporter.play(parseInt(currentTrack.id, 10), { positionMillis: 0, durationMillis: currentTrack.durationMs || 0 });
       s.audio.play().catch(console.warn);
     } else if (s.shuffleOn && s.queue.length > 1) {
       playRandomNext();
@@ -261,6 +406,7 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
       // List loop: wrap to the start (a one-track queue simply replays).
       if (s.queue.length === 1) {
         s.audio.currentTime = 0;
+        if (reporter && currentTrack) reporter.play(parseInt(currentTrack.id, 10), { positionMillis: 0, durationMillis: currentTrack.durationMs || 0 });
         s.audio.play().catch(console.warn);
       } else {
         playTrackAtIndex(0);
@@ -336,11 +482,6 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
 
     syncPanelProgress();
     updateActiveLyric(curTime * 1000);
-
-    const currentTrack = s.queue[s.currentIndex];
-    if (currentTrack && durTime > 10 && curTime / durTime >= 0.5 && s.lastScrobbledTrackId !== currentTrack.id) {
-      scrobbleTrack(currentTrack.id);
-    }
   }
 
   export function updateMediaSession(track) {
@@ -368,45 +509,9 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
   }
 
   // -------------------------------------------------------- now-playing panel
-  export function reportTimelineProgress() {
-    if (!s.audio || !s.isPlaying || s.currentIndex === -1 || !s.queue[s.currentIndex]) return;
-    saveState();
-    const track = s.queue[s.currentIndex];
-    const positionMs = Math.floor((s.audio.currentTime || 0) * 1000);
-    const durationMs = Math.floor((s.audio.duration || 0) * 1000) || 0;
-
-    apiFetch('/api/v1/playback/timeline', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
-      body: JSON.stringify({
-        trackId: parseInt(track.id, 10),
-        positionMillis: positionMs,
-        durationMillis: durationMs,
-        state: s.isPlaying ? 'playing' : 'paused'
-      })
-    }).catch(() => {});
-  }
-
-  function scrobbleTrack(trackId) {
-    if (!trackId || s.lastScrobbledTrackId === trackId) return;
-    s.lastScrobbledTrackId = trackId;
-
-    const positionMs = s.audio ? Math.floor((s.audio.currentTime || 0) * 1000) : 0;
-    const durationMs = s.audio ? Math.floor((s.audio.duration || 0) * 1000) : 0;
-
-    apiFetch('/api/v1/playback/scrobble', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
-      body: JSON.stringify({
-        trackId: parseInt(trackId, 10),
-        positionMillis: positionMs,
-        durationMillis: durationMs,
-        timestamp: new Date().toISOString()
-      })
-    }).catch(() => {});
-  }
+  // (The legacy /api/v1/playback/timeline and /api/v1/playback/scrobble
+  // endpoints were removed server-side; all playback reporting goes through
+  // the session reporter above. Counting/scrobbling is server-derived.)
 
   // ------------------------------------------------------------------- state
   export function saveState() {
@@ -456,6 +561,16 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
           if (s.audio) {
             s.audio.src = track.streamUrl;
             s.audio.load();
+            // Refresh/restoreState of the same track resumes the persisted
+            // session chain (resumedFromSessionId) instead of opening a new
+            // play; the restored position is the resume position.
+            if (reporter) {
+              reporter.restore(parseInt(track.id, 10), {
+                initialState: state.isPlaying ? 'buffering' : 'paused',
+                positionMillis: Math.max(0, Math.floor((state.currentTime || 0) * 1000)),
+                durationMillis: track.durationMs || 0
+              });
+            }
             if (state.volume !== undefined) {
               s.audio.volume = state.volume;
               const slider = document.getElementById('player-volume-slider');
@@ -479,14 +594,18 @@ import { loadLyrics, updateActiveLyric } from './lyrics.js';
             }
 
             if (state.isPlaying) {
+              const token = s.playToken;
               const playPromise = s.audio.play();
               if (playPromise !== undefined) {
                 playPromise.then(() => {
+                  if (token !== s.playToken) return;
                   s.isPlaying = true;
                   updatePlayButtonUI(true);
                   updateTrackRowsUI();
                 }).catch(() => {
+                  if (token !== s.playToken) return;
                   // Autoplay policy prevented immediate playback until user clicks
+                  if (reporter) reporter.notifyPaused();
                   s.isPlaying = false;
                   updatePlayButtonUI(false);
                   updateTrackRowsUI();

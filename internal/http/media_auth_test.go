@@ -84,7 +84,7 @@ func TestRequireAPIOrAdminAllowsSessionAndToken(t *testing.T) {
 	handler := app.requireAPIOrAdmin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	// 1. Valid Session Cookie
-	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/playback/timeline", nil)
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/playback/events", nil)
 	req1.AddCookie(sessionCookie)
 	rec1 := httptest.NewRecorder()
 	handler.ServeHTTP(rec1, req1)
@@ -93,7 +93,7 @@ func TestRequireAPIOrAdminAllowsSessionAndToken(t *testing.T) {
 	}
 
 	// 2. Valid Bearer Token
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/playback/timeline", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/playback/events", nil)
 	req2.Header.Set("Authorization", "Bearer api-token-at-least-24-characters")
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
@@ -102,7 +102,7 @@ func TestRequireAPIOrAdminAllowsSessionAndToken(t *testing.T) {
 	}
 
 	// 3. No auth -> 401
-	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/playback/timeline", nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/playback/events", nil)
 	rec3 := httptest.NewRecorder()
 	handler.ServeHTTP(rec3, req3)
 	if rec3.Code != http.StatusUnauthorized {
