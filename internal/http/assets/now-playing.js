@@ -68,7 +68,9 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         if (!button) return;
         button.classList.toggle('selected', favored);
         if (form.classList.contains('inline-favorite')) {
-          button.title = button.getAttribute('aria-label') = `${favored ? '取消收藏' : '收藏'} ${track.title}`;
+          const label = `${favored ? '取消收藏' : '收藏'} ${track.title}`;
+          button.title = label;
+          button.setAttribute('aria-label', label);
           swapIcon(button, favored ? 'icon-heart-fill' : 'icon-heart');
         } else button.textContent = favored ? '取消收藏' : '加入收藏';
       });
