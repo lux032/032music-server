@@ -179,7 +179,7 @@
           <span>{{len .Tracks}} 首曲目</span>
         </div>
         {{if .Tracks}}
-        <div class="collected-in-list detail-tracks work-tracks">
+        <div class="collected-in-list detail-tracks work-tracks" data-track-list>
           {{range $index, $t := .Tracks}}
           <article class="collected-in-row" data-track-id="{{$t.ID}}" data-track-title="{{$t.Title}}" data-track-artist="{{$t.Artist}}" data-track-album="{{$t.Album}}" data-track-artwork="{{thumb $t.ArtworkURL 256}}" data-track-container="{{$t.Container}}" data-track-duration-ms="{{$t.DurationMillis}}">
             <span class="playable-number">

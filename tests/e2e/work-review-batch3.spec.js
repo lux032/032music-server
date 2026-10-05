@@ -180,23 +180,20 @@ test('album drawer work picker: Enter in search does not submit the edit form', 
   await expect(drawer).toHaveClass(/is-open/);
 });
 
-test('works list expands series drawer in place beneath the row', async ({ page }) => {
+test('flat works list opens series management with all members', async ({ page }) => {
   await page.goto('/admin/works');
-  const seriesRow = page.locator('details.works-series-row').first();
-  await expect(seriesRow).toBeVisible();
-  const drawer = seriesRow.locator('.works-series-expanded-drawer');
-  await expect(drawer).toBeHidden();
-
-  // Click summary to expand
-  await seriesRow.locator('summary.works-series-bar').click();
-  await expect(seriesRow).toHaveAttribute('open', '');
-  await expect(drawer).toBeVisible();
-  await expect(drawer.locator('.works-member-card')).toHaveCount(3);
-
-  // Click summary again to collapse
-  await seriesRow.locator('summary.works-series-bar').click();
-  await expect(seriesRow).not.toHaveAttribute('open', '');
-  await expect(drawer).toBeHidden();
+  await expect(page.locator('.works-grid details.works-series-row')).toHaveCount(0);
+  await expect(page.locator('.works-grid .work-card', { hasText: '遊郭編' })).toBeVisible();
+  await page.goto('/admin/series?q=' + encodeURIComponent('鬼滅の刃'));
+  const row = page.locator('.series-list-row', { hasText: '鬼滅の刃' }).first();
+  await expect(row).toContainText('共 3 部作品');
+  await row.getByRole('link', { name: '管理', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/series\/\d+/);
+  await expect(page.locator('h1')).toContainText('鬼滅の刃');
+  await expect(page.locator('.series-member-row')).toHaveCount(3);
+  await expect(page.locator('.series-member-row', { hasText: '遊郭編' })).toBeVisible();
+  await page.getByRole('link', { name: '返回系列管理' }).click();
+  await expect(page).toHaveURL(/\/admin\/series$/);
 });
 
 test('captures real page screenshots to .local/mockups/impl/', async ({ page }, testInfo) => {

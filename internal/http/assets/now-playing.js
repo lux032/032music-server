@@ -1,3 +1,4 @@
+import { openPlaylistPicker } from './playlist-picker.js';
 // 032 Music Server - now-playing.js
 import { s } from './state.js';
 import { formatTime, svgIcon, showUndoToast, showToast, apiFetch, swapIcon } from './util.js';
@@ -141,6 +142,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     for (const [label, enabled, action] of [
       ['查看专辑', !!detail?.albumId, () => navigateFromPlayer(`/admin/albums/${detail.albumId}`)],
       ['从队列移除', !!track, () => removeQueueTrack(s.currentIndex)],
+      ['加入歌单', !!track, () => openPlaylistPicker({ trackIds: [Number(track.id)] })],
+      ['保存队列到歌单', s.queue.length > 0, () => openPlaylistPicker({ trackIds: s.queue.map(t => Number(t.id)) })],
       ['清空队列', s.queue.length > 0, clearQueue],
       ['快捷键说明', true, () => document.getElementById('player-btn-shortcuts')?.click()]
     ]) {
@@ -605,7 +608,10 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       const handle = document.createElement('button'); handle.type = 'button'; handle.className = 'q-drag';
       handle.setAttribute('aria-label', `拖动排序 ${track.title || '未知曲目'}`);
       handle.appendChild(svgIcon('icon-drag'));
-      item.append(rowBtn, remove, handle);
+      const add = document.createElement('button'); add.type = 'button'; add.className = 'q-playlist';
+      add.textContent = '+'; add.setAttribute('aria-label', `加入歌单 ${track.title || '未知曲目'}`);
+      add.addEventListener('click', e => { e.stopPropagation(); openPlaylistPicker({ trackIds: [Number(track.id)] }); });
+      item.append(rowBtn, add, remove, handle);
       list.appendChild(item);
     });
     if (refocusIndex !== null) {

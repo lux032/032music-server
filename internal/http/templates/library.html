@@ -149,7 +149,7 @@
     {{end}}
 
     {{if eq .Section "tracks"}}
-    <section class="track-browser">
+    <section class="track-browser" data-track-list>
       <div class="track-table-head"><span>序号</span><span>标题 / 歌手</span><span>专辑</span><span>格式</span><span>时长</span><span></span></div>
       {{range .Tracks}}
       <article class="track-table-row" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-container="{{.Container}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-duration-ms="{{.DurationMillis}}">

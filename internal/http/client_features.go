@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	"errors"
+	"github.com/lux032/032music-server/internal/storage"
 	"net/http"
 	"strings"
 )
@@ -12,6 +13,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 		"apiVersion": "v1", "apiRevision": 3,
 		"features": map[string]bool{
 			"albums": true, "artists": true, "tracks": true, "search": true,
+			"playlistItemOps": true, "playlistArtwork": true, "playlistRevision": true,
 			"favorites": true, "playlists": true, "playbackProgress": true,
 			"playbackHistory": true, "playbackEvents": true, "rangeStreaming": true,
 			"syncAlbums": true, "syncTracks": true,
@@ -131,11 +133,25 @@ func (a *App) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCreatePlaylist(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		TrackIDs    []int64 `json:"trackIds"`
+		Name          string  `json:"name"`
+		Description   string  `json:"description"`
+		TrackIDs      []int64 `json:"trackIds"`
+		InvalidTracks string  `json:"invalidTracks"`
 	}
 	if !decode(w, r, &input) {
+		return
+	}
+	if input.InvalidTracks != "" && input.InvalidTracks != "skip" {
+		writeAPIError(w, 400, "invalid_request", "invalid invalidTracks policy")
+		return
+	}
+	if input.InvalidTracks == "skip" {
+		value, stats, err := a.store.CreatePlaylistSkippingInvalid(r.Context(), input.Name, input.Description, input.TrackIDs)
+		if err != nil {
+			a.writeFeatureError(w, r, err, "create_failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"playlist": value, "stats": stats})
 		return
 	}
 	value, err := a.store.CreatePlaylistWithItems(r.Context(), input.Name, input.Description, input.TrackIDs)
@@ -172,7 +188,7 @@ func (a *App) handleUpdatePlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDeletePlaylist(w http.ResponseWriter, r *http.Request) {
-	if err := a.store.DeletePlaylist(r.Context(), parseInt64(r.PathValue("id"))); err != nil {
+	if err := a.deletePlaylist(r.Context(), parseInt64(r.PathValue("id"))); err != nil {
 		a.writeFeatureError(w, r, err, "delete_failed")
 		return
 	}
@@ -181,13 +197,14 @@ func (a *App) handleDeletePlaylist(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleReplacePlaylistItems(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		TrackIDs []int64 `json:"trackIds"`
+		TrackIDs         []int64 `json:"trackIds"`
+		ExpectedRevision *int64  `json:"expectedRevision"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	if err := a.store.ReplacePlaylistItems(r.Context(), id, input.TrackIDs); err != nil {
+	if err := a.store.ReplacePlaylistItemsAtRevision(r.Context(), id, input.TrackIDs, input.ExpectedRevision); err != nil {
 		a.writeFeatureError(w, r, err, "replace_items_failed")
 		return
 	}
@@ -241,7 +258,18 @@ func writePage(w http.ResponseWriter, items any, total int64, limit, offset int)
 func (a *App) writeFeatureError(w http.ResponseWriter, r *http.Request, err error, code string) {
 	status := http.StatusInternalServerError
 	message := "The request could not be completed."
-	if errors.Is(err, sql.ErrNoRows) {
+	var capacity *storage.PlaylistCapacityError
+	if errors.Is(err, storage.ErrPlaylistConflict) {
+		writeAPIError(w, 409, "playlist_conflict", err.Error())
+		return
+	} else if storage.IsBusyError(err) {
+		w.Header().Set("Retry-After", "1")
+		writeAPIError(w, 503, "database_busy", "Database is busy; retry later.")
+		return
+	} else if errors.As(err, &capacity) {
+		writeJSON(w, 400, map[string]any{"error": map[string]any{"code": "playlist_capacity", "message": err.Error(), "remainingCapacity": capacity.Remaining}})
+		return
+	} else if errors.Is(err, sql.ErrNoRows) {
 		status = http.StatusNotFound
 		code = "not_found"
 		message = "The requested resource was not found."

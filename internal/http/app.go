@@ -281,6 +281,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PATCH /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUpdatePlaylist)))
 	mux.Handle("DELETE /api/v1/playlists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleDeletePlaylist)))
 	mux.Handle("PUT /api/v1/playlists/{id}/items", a.requireAPIOrAdmin(http.HandlerFunc(a.handleReplacePlaylistItems)))
+	mux.Handle("POST /api/v1/playlists/{id}/items/append", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAppendPlaylistItems)))
+	mux.Handle("POST /api/v1/playlists/{id}/items/remove", a.requireAPIOrAdmin(http.HandlerFunc(a.handleRemovePlaylistItems)))
+	mux.Handle("POST /api/v1/playlists/{id}/items/insert", a.requireAPIOrAdmin(http.HandlerFunc(a.handleInsertPlaylistItem)))
+	mux.Handle("PUT /api/v1/playlists/{id}/order", a.requireAPIOrAdmin(http.HandlerFunc(a.handlePlaylistOrder)))
+	mux.Handle("PUT /api/v1/playlists/{id}/artwork", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUploadPlaylistArtwork)))
+	mux.Handle("DELETE /api/v1/playlists/{id}/artwork", a.requireAPIOrAdmin(http.HandlerFunc(a.handleResetPlaylistArtwork)))
+	mux.Handle("GET /api/v1/playlists/{id}/artwork", a.requireMediaAccess(http.HandlerFunc(a.handlePlaylistArtwork)))
+
 	mux.Handle("POST /api/v1/playback/events", a.requirePlaybackReport(http.HandlerFunc(a.handlePlaybackEvents)))
 	// Legacy playback endpoints were removed without a compatibility path
 	// (apiRevision 3): they answer 410 so old clients fail loudly.
@@ -866,6 +874,9 @@ func (a *App) logRequests(next http.Handler) http.Handler {
 // requests out of the Info log so real events stay visible.
 func quietAccessLogPath(path string) bool {
 	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/events" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/matches/biographies/runs/active.json" || path == "/admin/enrichment/runs/active.json" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/playlists/") && strings.HasSuffix(path, "/artwork") {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/artists/") && strings.HasSuffix(path, "/image") {

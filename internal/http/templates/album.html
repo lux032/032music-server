@@ -46,6 +46,7 @@
           {{if .AlbumDetail.Formats}}<span>{{.AlbumDetail.Formats}}</span>{{end}}
         </div>
         <div class="album-actions">
+          <button type="button" class="secondary-round" data-playlist-album="{{.AlbumDetail.ID}}">整张加入歌单</button>
           <button type="button" class="primary-round"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
           <a href="#edit" class="secondary-round" data-drawer-open="edit" aria-haspopup="dialog">编辑专辑</a>
           <form method="post" action="/admin/favorites/albums/{{.AlbumDetail.ID}}">
@@ -61,7 +62,8 @@
     <div class="album-columns">
       <section class="album-content">
         <div class="section-title"><h2>曲目列表</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div>
-        <div class="detail-tracks has-tieup-col">
+        <div class="playlist-selection"><button type="button" data-select-tracks>全选歌曲</button><button type="button" data-playlist-selected>所选加入歌单</button><span data-selected-count role="status">0 首已选</span></div>
+        <div class="detail-tracks has-tieup-col" data-track-list data-track-select>
           {{range .Tracks}}
           {{$tieups := index $.TrackTieups .ID}}
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">

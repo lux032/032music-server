@@ -10,13 +10,15 @@ import (
 )
 
 type Playlist struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	ItemCount   int64  `json:"itemCount"`
-	ArtworkURL  string `json:"artworkUrl,omitempty"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	Revision         int64  `json:"revision"`
+	HasCustomArtwork bool   `json:"hasCustomArtwork"`
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	ItemCount        int64  `json:"itemCount"`
+	ArtworkURL       string `json:"artworkUrl,omitempty"`
+	CreatedAt        string `json:"createdAt"`
+	UpdatedAt        string `json:"updatedAt"`
 }
 
 type PlaylistDetail struct {
@@ -205,7 +207,7 @@ func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlis
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM playlists`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),COALESCE((SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id GROUP BY p.id ORDER BY p.updated_at DESC,p.id DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id GROUP BY p.id ORDER BY p.updated_at DESC,p.id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -213,7 +215,7 @@ func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlis
 	result := make([]Playlist, 0)
 	for rows.Next() {
 		var value Playlist
-		if err := rows.Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt, &value.Revision, &value.HasCustomArtwork); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, value)
@@ -223,7 +225,7 @@ func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlis
 
 func (s *Store) PlaylistByID(ctx context.Context, id int64) (Playlist, error) {
 	var value Playlist
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),COALESCE((SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id WHERE p.id=? GROUP BY p.id`, id).Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id WHERE p.id=? GROUP BY p.id`, id).Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt, &value.Revision, &value.HasCustomArtwork)
 	return value, err
 }
 
@@ -248,7 +250,7 @@ func (s *Store) UpdatePlaylist(ctx context.Context, id int64, name, description 
 	if name == "" {
 		return Playlist{}, errors.New("playlist name must not be empty")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE playlists SET name=?,description=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, name, strings.TrimSpace(description), id)
+	result, err := s.db.ExecContext(ctx, `UPDATE playlists SET name=?,description=?,revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND (name<>? OR description<>?)`, name, strings.TrimSpace(description), id, name, strings.TrimSpace(description))
 	if err != nil {
 		return Playlist{}, err
 	}
@@ -257,74 +259,76 @@ func (s *Store) UpdatePlaylist(ctx context.Context, id int64, name, description 
 		return Playlist{}, err
 	}
 	if count == 0 {
-		return Playlist{}, sql.ErrNoRows
+		return s.PlaylistByID(ctx, id)
 	}
 	return s.PlaylistByID(ctx, id)
 }
 
 func (s *Store) DeletePlaylist(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM playlists WHERE id=?`, id)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	_, err := s.DeletePlaylistWithImages(ctx, id)
+	return err
 }
 
-func (s *Store) ReplacePlaylistItems(ctx context.Context, playlistID int64, trackIDs []int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM playlists WHERE id=?)`, playlistID).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return sql.ErrNoRows
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM playlist_items WHERE playlist_id=?`, playlistID); err != nil {
-		return err
-	}
-	if err := insertPlaylistItems(ctx, tx, playlistID, trackIDs); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE playlists SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, playlistID); err != nil {
-		return err
-	}
-	return tx.Commit()
+func (s *Store) ReplacePlaylistItems(ctx context.Context, id int64, ids []int64) error {
+	return s.ReplacePlaylistItemsAtRevision(ctx, id, ids, nil)
 }
 
 func (s *Store) PlaylistDetail(ctx context.Context, id int64) (PlaylistDetail, error) {
-	playlist, err := s.PlaylistByID(ctx, id)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return PlaylistDetail{}, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT track_id FROM playlist_items WHERE playlist_id=? ORDER BY position`, id)
+	defer tx.Rollback()
+	playlist, err := playlistByIDTx(ctx, tx, id)
 	if err != nil {
 		return PlaylistDetail{}, err
 	}
-	defer rows.Close()
-	ids := make([]int64, 0)
+	rows, err := tx.QueryContext(ctx, trackByIDSelect+` JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=? ORDER BY pi.position`, id)
+	if err != nil {
+		return PlaylistDetail{}, err
+	}
+	tracks := make([]Track, 0)
 	for rows.Next() {
-		var trackID int64
-		if err := rows.Scan(&trackID); err != nil {
+		track, err := scanTrack(rows)
+		if err != nil {
+			rows.Close()
 			return PlaylistDetail{}, err
 		}
-		ids = append(ids, trackID)
+		tracks = append(tracks, track)
 	}
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return PlaylistDetail{}, err
 	}
-	tracks, err := s.tracksByIDs(ctx, ids)
+	missingRows, err := tx.QueryContext(ctx, `SELECT pi.track_id,NOT EXISTS(SELECT 1 FROM audio_files af WHERE af.track_id=pi.track_id AND af.status='available') FROM playlist_items pi WHERE pi.playlist_id=?`, id)
 	if err != nil {
+		return PlaylistDetail{}, err
+	}
+	missing := map[int64]bool{}
+	for missingRows.Next() {
+		var trackID int64
+		var value bool
+		if err = missingRows.Scan(&trackID, &value); err != nil {
+			missingRows.Close()
+			return PlaylistDetail{}, err
+		}
+		missing[trackID] = value
+	}
+	err = missingRows.Err()
+	missingRows.Close()
+	if err != nil {
+		return PlaylistDetail{}, err
+	}
+	for i := range tracks {
+		tracks[i].Missing = missing[tracks[i].ID]
+	}
+
+	if err = tx.Commit(); err != nil {
+		return PlaylistDetail{}, err
+	}
+	// Core metadata and tracks share a snapshot; extras tolerate deleted IDs.
+	if err = s.hydrateTracks(ctx, tracks); err != nil {
 		return PlaylistDetail{}, err
 	}
 	return PlaylistDetail{Playlist: playlist, Tracks: tracks}, nil
@@ -569,6 +573,11 @@ func (s *Store) CreatePlaylistWithItems(ctx context.Context, name, description s
 	}
 	if err = insertPlaylistItems(ctx, tx, id, trackIDs); err != nil {
 		return Playlist{}, err
+	}
+	if len(trackIDs) > 0 {
+		if err = bumpPlaylist(ctx, tx, id); err != nil {
+			return Playlist{}, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return Playlist{}, err

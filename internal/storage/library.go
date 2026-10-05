@@ -111,6 +111,7 @@ type AlbumEdit struct {
 }
 
 type Track struct {
+	Missing        bool   `json:"missing,omitempty"`
 	ID             int64  `json:"id"`
 	AlbumID        int64  `json:"albumId"`
 	Title          string `json:"title"`

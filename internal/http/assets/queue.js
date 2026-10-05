@@ -38,11 +38,17 @@ import { updateTrackRowsUI } from './player-bar.js';
         if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
         return;
       }
-      const albumPlayBtn = e.target.closest('.album-hero .primary-round');
+      const albumPlayBtn = e.target.closest('.album-hero .primary-round, [data-play-all], [data-play-shuffle], [data-queue-all]');
       if (albumPlayBtn) {
         e.preventDefault();
         const pageTracks = extractAllTracksFromPage();
         if (pageTracks.length > 0) {
+          if (albumPlayBtn.hasAttribute('data-queue-all')) {
+            s.queue.push(...pageTracks); saveState(); emitPlayerState(); showToast('已加入播放队列'); return;
+          }
+          if (albumPlayBtn.hasAttribute('data-play-shuffle')) {
+            for (let i = pageTracks.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pageTracks[i], pageTracks[j]] = [pageTracks[j], pageTracks[i]]; }
+          }
           s.queue = pageTracks;
           s.playHistory = [];
           playTrackAtIndex(0);
@@ -54,7 +60,7 @@ import { updateTrackRowsUI } from './player-bar.js';
       if (!(e.target instanceof Element)) return;
       const row = e.target.closest('[data-track-id]');
       if (!row) return;
-      if (e.target.closest('a, form, details, input, select, textarea, .row-play-btn')) return;
+      if (e.target.closest('a, form, details, input, select, textarea, button, [role=menu], [role=dialog]')) return;
       playRowTrack(row);
     });
 
@@ -115,7 +121,7 @@ import { updateTrackRowsUI } from './player-bar.js';
 
   function extractAllTracksFromPage() {
     const tracks = [];
-    const elements = document.querySelectorAll('[data-track-id]');
+    const elements = document.querySelectorAll('[data-track-list] [data-track-id]');
 
     elements.forEach(el => {
       const id = el.getAttribute('data-track-id');

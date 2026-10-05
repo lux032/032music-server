@@ -6,6 +6,7 @@ import { bindTrackListEvents } from './queue.js';
 import { bindGlobalShortcuts } from './shortcuts.js';
 import { setupPjaxNavigation } from './router.js';
 import { setupImageFadeIn } from './util.js';
+import { setupPlaylists } from './playlist-picker.js';
 import { setupFullscreen } from './fullscreen.js';
 
 if (!window.__032_player_initialized) {
@@ -16,6 +17,7 @@ if (!window.__032_player_initialized) {
     setupAudioElement();
     setupPlaybackReporter();
     setupNowPlayingPanel();
+    setupPlaylists();
     setupFullscreen();
     restoreState();
     bindTrackListEvents();

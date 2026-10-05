@@ -271,9 +271,8 @@ test('series management is reachable from nav and work detail series bar', async
 
   // 作品详情页的系列条带“在系列管理页打开”链接（鬼滅：多类型分组）。
   await page.goto('/admin/works?q=' + encodeURIComponent('遊郭編'));
-  const seriesRow = page.locator('details.works-series-row').first();
-  await seriesRow.locator('summary.works-series-bar').click();
-  await page.locator('.works-member-card', { hasText: '遊郭編' }).first().click();
+  await expect(page.locator('.works-grid details.works-series-row')).toHaveCount(0);
+  await page.locator('.works-grid .work-card', { hasText: '遊郭編' }).first().click();
   await expect(page).toHaveURL(/\/admin\/works\/\d+/);
   const fold = page.locator('details.series-fold-card');
   await fold.locator('summary').click();

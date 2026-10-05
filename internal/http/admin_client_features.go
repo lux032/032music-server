@@ -37,6 +37,7 @@ type playlistPageData struct {
 	Notice, Query string
 	Detail        storage.PlaylistDetail
 	Candidates    []storage.Track
+	Existing      map[int64]bool
 }
 
 type playbackPageData struct {
@@ -138,21 +139,15 @@ func (a *App) handleAdminPlaylist(w http.ResponseWriter, r *http.Request) {
 			a.renderAdminFeatureError(w, "playlist search", err)
 			return
 		}
-		existing := make(map[int64]struct{}, len(detail.Tracks))
-		for _, track := range detail.Tracks {
-			existing[track.ID] = struct{}{}
-		}
-		filtered := candidates[:0]
-		for _, track := range candidates {
-			if _, ok := existing[track.ID]; !ok {
-				filtered = append(filtered, track)
-			}
-		}
-		candidates = filtered
+
+	}
+	existing := map[int64]bool{}
+	for _, track := range detail.Tracks {
+		existing[track.ID] = true
 	}
 	a.render(w, http.StatusOK, "playlist.html", playlistPageData{
 		Chrome: a.chromeFor(r.Context(), session, "playlists"), Notice: r.URL.Query().Get("notice"),
-		Query: query, Detail: detail, Candidates: candidates,
+		Query: query, Detail: detail, Candidates: candidates, Existing: existing,
 	})
 }
 
@@ -178,7 +173,7 @@ func (a *App) handleAdminDeletePlaylist(w http.ResponseWriter, r *http.Request) 
 		redirectWithNotice(w, r, playlistAdminPath(parseInt64(r.PathValue("id"))), "删除确认无效")
 		return
 	}
-	if err := a.store.DeletePlaylist(r.Context(), parseInt64(r.PathValue("id"))); err != nil {
+	if err := a.deletePlaylist(r.Context(), parseInt64(r.PathValue("id"))); err != nil {
 		a.redirectFeatureError(w, r, "/admin/playlists", err)
 		return
 	}
@@ -191,21 +186,23 @@ func (a *App) handleAdminAddPlaylistTrack(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	detail, err := a.store.PlaylistDetail(r.Context(), id)
+	result, err := a.store.AppendPlaylistItems(r.Context(), id, []int64{parseInt64(r.FormValue("trackId"))}, nil)
 	if err != nil {
 		a.redirectFeatureError(w, r, playlistAdminPath(id), err)
 		return
 	}
-	trackID := parseInt64(r.FormValue("trackId"))
-	trackIDs := playlistTrackIDs(detail.Tracks)
-	if !containsTrackID(trackIDs, trackID) {
-		trackIDs = append(trackIDs, trackID)
+	notice := "歌曲已加入歌单"
+	if result.Added == 0 {
+		notice = "歌曲已在歌单中，未重复添加"
 	}
-	if err := a.store.ReplacePlaylistItems(r.Context(), id, trackIDs); err != nil {
-		a.redirectFeatureError(w, r, playlistAdminPath(id), err)
-		return
+	if result.SkippedInvalid > 0 {
+		notice = "歌曲不存在，未添加"
 	}
-	redirectWithNotice(w, r, playlistAdminPath(id), "歌曲已加入歌单")
+	back := playlistAdminPath(id)
+	if query := strings.TrimSpace(r.FormValue("q")); query != "" {
+		back += "?q=" + url.QueryEscape(query)
+	}
+	redirectWithNotice(w, r, back, notice)
 }
 
 func (a *App) handleAdminRemovePlaylistTrack(w http.ResponseWriter, r *http.Request) {
@@ -215,18 +212,8 @@ func (a *App) handleAdminRemovePlaylistTrack(w http.ResponseWriter, r *http.Requ
 	}
 	id := parseInt64(r.PathValue("id"))
 	trackID := parseInt64(r.PathValue("track"))
-	detail, err := a.store.PlaylistDetail(r.Context(), id)
+	_, err := a.store.RemovePlaylistItems(r.Context(), id, []int64{trackID}, nil)
 	if err != nil {
-		a.redirectFeatureError(w, r, playlistAdminPath(id), err)
-		return
-	}
-	trackIDs := make([]int64, 0, len(detail.Tracks))
-	for _, track := range detail.Tracks {
-		if track.ID != trackID {
-			trackIDs = append(trackIDs, track.ID)
-		}
-	}
-	if err := a.store.ReplacePlaylistItems(r.Context(), id, trackIDs); err != nil {
 		a.redirectFeatureError(w, r, playlistAdminPath(id), err)
 		return
 	}
@@ -240,25 +227,15 @@ func (a *App) handleAdminMovePlaylistTrack(w http.ResponseWriter, r *http.Reques
 	}
 	id := parseInt64(r.PathValue("id"))
 	trackID := parseInt64(r.PathValue("track"))
-	detail, err := a.store.PlaylistDetail(r.Context(), id)
-	if err != nil {
+	direction := 0
+	if r.FormValue("direction") == "up" {
+		direction = -1
+	} else if r.FormValue("direction") == "down" {
+		direction = 1
+	}
+	if err := a.store.MovePlaylistItem(r.Context(), id, trackID, direction); err != nil {
 		a.redirectFeatureError(w, r, playlistAdminPath(id), err)
 		return
-	}
-	trackIDs := playlistTrackIDs(detail.Tracks)
-	index := indexOfTrackID(trackIDs, trackID)
-	target := index
-	if r.FormValue("direction") == "up" {
-		target--
-	} else if r.FormValue("direction") == "down" {
-		target++
-	}
-	if index >= 0 && target >= 0 && target < len(trackIDs) {
-		trackIDs[index], trackIDs[target] = trackIDs[target], trackIDs[index]
-		if err := a.store.ReplacePlaylistItems(r.Context(), id, trackIDs); err != nil {
-			a.redirectFeatureError(w, r, playlistAdminPath(id), err)
-			return
-		}
 	}
 	redirectWithNotice(w, r, playlistAdminPath(id), "歌曲顺序已更新")
 }

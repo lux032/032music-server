@@ -229,7 +229,7 @@ func (s *Store) ResetCustomArtistImage(ctx context.Context, artistID int64) ([]s
 // HTTP layer garbage-collects files under custom-images/ whose names are
 // absent from this set.
 func (s *Store) CustomImageFiles(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT source_path FROM artworks WHERE source_type='custom' AND source_path IS NOT NULL UNION SELECT file_path FROM artist_custom_images`)
+	rows, err := s.db.QueryContext(ctx, `SELECT source_path FROM artworks WHERE source_type='custom' AND source_path IS NOT NULL UNION SELECT file_path FROM artist_custom_images UNION SELECT file_path FROM playlist_custom_images`)
 	if err != nil {
 		return nil, err
 	}

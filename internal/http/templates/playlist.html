@@ -7,7 +7,7 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main playlist-detail-main">
+  <main id="app-main" class="browser-main feature-main playlist-detail-main" data-playlist-id="{{.Detail.Playlist.ID}}" data-playlist-revision="{{.Detail.Playlist.Revision}}">
     <nav class="detail-toolbar" aria-label="页面导航">
       <a class="back-button" href="/admin/playlists" data-history-back="/admin/playlists">
         <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
@@ -15,11 +15,12 @@
       </a>
       <span class="detail-context">歌单管理</span>
     </nav>
-    <header class="playlist-heading">
-      <div class="playlist-cover large">{{if .Detail.Playlist.ArtworkURL}}<img class="fade-img" src="{{thumb .Detail.Playlist.ArtworkURL 512}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>{{end}}</div>
+    <header class="playlist-heading playlist-hero">
+      <div class="playlist-cover large" data-playlist-cover>{{if .Detail.Playlist.ArtworkURL}}<img class="fade-img" src="{{thumb .Detail.Playlist.ArtworkURL 512}}" alt="" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>{{end}}</div>
       <div>
         <h1>{{.Detail.Playlist.Name}}</h1>
         <p>{{if .Detail.Playlist.Description}}{{.Detail.Playlist.Description}}{{else}}暂无说明{{end}}</p>
+        <div class="playlist-selection"><button type="button" data-play-all>播放全部</button><button type="button" data-play-shuffle>随机播放</button><button type="button" data-queue-all>加入播放队列</button><button type="button" data-playlist-edit>编辑信息与封面</button></div>
         <span class="result-count">{{.Detail.Playlist.ItemCount}} 首歌曲 · 更新于 {{formatTime .Detail.Playlist.UpdatedAt}}</span>
       </div>
     </header>
@@ -28,28 +29,30 @@
     <div class="playlist-layout">
       <section>
         <div class="section-title"><h2>歌曲</h2><span>{{.Detail.Playlist.ItemCount}} 首</span></div>
-        <div class="playlist-track-list">
-          {{range .Detail.Tracks}}
+        <div class="playlist-selection"><button type="button" data-select-tracks>全选歌曲</button><button type="button" data-playlist-remove-selected>移除所选</button><span data-selected-count role="status">0 首已选</span></div>
+        <div class="playlist-track-list" data-track-list data-track-select>
+          {{range $index, $track := .Detail.Tracks}}
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="drag-position playable-number">
-              <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
+              <span class="num-text">{{add $index 1}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
             <div class="feature-track-copy">
-              <strong>{{.Title}}</strong>
+              <strong>{{.Title}}</strong>{{if .Missing}}<span class="missing-track">文件缺失</span>{{end}}
               <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
             </div>
             <span class="track-format">{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}</span>
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <div class="track-actions">
+              <button type="button" class="playlist-drag" aria-label="拖动排序 {{.Title}}">↕</button>
               <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/move">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button class="icon-action" name="direction" value="up" title="上移" aria-label="上移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-up"></use></svg></button>
-                <button class="icon-action" name="direction" value="down" title="下移" aria-label="下移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button>
+                <button class="icon-action" data-playlist-move name="direction" value="up" title="上移" aria-label="上移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-up"></use></svg></button>
+                <button class="icon-action" data-playlist-move name="direction" value="down" title="下移" aria-label="下移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button>
               </form>
               <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/remove">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button class="icon-action danger-action" title="从歌单移除" aria-label="从歌单移除 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+                <button class="icon-action danger-action" data-playlist-remove title="从歌单移除" aria-label="从歌单移除 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
               </form>
             </div>
           </article>
@@ -69,11 +72,12 @@
           <div class="candidate-track-list">
             {{range .Candidates}}
             <article>
-              <div><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}</small></div>
+              <div><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}{{if index $.Existing .ID}} · 已添加{{end}}</small></div>
               <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="trackId" value="{{.ID}}">
-                <button class="icon-action" title="添加 {{.Title}}" aria-label="添加 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
+                <input type="hidden" name="q" value="{{$.Query}}">
+                <button class="icon-action" {{if index $.Existing .ID}}disabled{{end}} title="添加 {{.Title}}" aria-label="添加 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
               </form>
             </article>
             {{else}}
@@ -82,15 +86,21 @@
           </div>
           {{end}}
         </section>
-        <section class="feature-card">
-          <h2>歌单信息</h2>
+        <details class="feature-card" data-playlist-editor>
+          <summary>歌单信息与封面</summary>
+          <form data-playlist-artwork class="stack-form" data-no-pjax>
+            <label>自定义封面（JPEG / PNG / WebP，最多 10MB）<input type="file" name="image" accept="image/jpeg,image/png,image/webp" required></label>
+            <img data-artwork-preview hidden alt="封面预览" width="160" height="160">
+            <button>上传封面</button><button type="button" data-playlist-artwork-reset>恢复自动封面</button>
+            <p role="status" data-artwork-status></p>
+          </form>
           <form class="stack-form" method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
             <label>名称<input name="name" maxlength="160" required value="{{.Detail.Playlist.Name}}"></label>
             <label>说明<textarea name="description" rows="4" maxlength="1000">{{.Detail.Playlist.Description}}</textarea></label>
             <button>保存信息</button>
           </form>
-        </section>
+        </details>
         <section class="feature-card danger-zone">
           <p class="kicker">危险操作</p>
           <h2>删除歌单</h2>
