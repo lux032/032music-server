@@ -620,6 +620,13 @@
         }
       }
     }
+    const peopleBtn = e.target.closest('[data-people-expand]');
+    if (peopleBtn) {
+      const section = peopleBtn.closest('.album-people');
+      if (section) section.querySelectorAll('.is-extra[hidden]').forEach(el => { el.hidden = false; });
+      peopleBtn.hidden = true;
+      return;
+    }
     const workOpt = e.target.closest('[data-work-option-id]');
     if (workOpt) {
       const picker = workOpt.closest('[data-work-picker]');

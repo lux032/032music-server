@@ -33,6 +33,9 @@
   --surface-hover: #f0f0f2;
   --surface-sunken: #ededf0;
   --surface-glass: rgba(255, 255, 255, 0.9);
+  /* Filled controls (search, chips, secondary buttons). */
+  --fill: #efeff2;
+  --fill-hover: #e4e4e9;
   --scrim: rgba(17, 17, 19, 0.45);
 
   /* Lines */
@@ -114,6 +117,8 @@
   --surface-hover: #242428;
   --surface-sunken: #222226;
   --surface-glass: rgba(25, 25, 28, 0.9);
+  --fill: #232327;
+  --fill-hover: #2e2e33;
   --scrim: rgba(0, 0, 0, 0.62);
 
   --line: #2a2a2f;

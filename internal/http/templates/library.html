@@ -106,7 +106,7 @@
     <section class="artist-browser">
       {{range .Artists}}
       <article class="artist-row">
-        {{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="{{.Name}}" loading="lazy" decoding="async">{{else}}<div class="artist-avatar">{{.Name}}</div>{{end}}
+        {{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="{{.Name}}" loading="lazy" decoding="async">{{else}}<div class="artist-avatar" role="img" aria-label="{{.Name}}">{{initial .Name}}</div>{{end}}
         <div>
           <a href="{{if eq $.ArtistRole "credits"}}/admin/credits/{{.ID}}{{if $.CreditRole}}?role={{$.CreditRole}}{{end}}{{else}}/admin/artists/{{.ID}}{{end}}"><h2>{{.Name}}</h2></a>
           <p>{{if eq $.ArtistRole "credits"}}幕后 {{.TrackCount}} 首{{else}}{{.AlbumCount}} 张专辑 · 演唱 {{.TrackCount}} 首{{end}}</p>

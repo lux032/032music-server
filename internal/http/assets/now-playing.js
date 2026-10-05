@@ -491,6 +491,13 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     const clear = document.getElementById('np-queue-clear'); if (clear) clear.disabled = !s.queue.length;
     for (const id of ['np-more', 'player-btn-more']) { const button = document.getElementById(id); if (button) button.disabled = !track; }
     if (countEl) countEl.textContent = String(s.queue.length);
+    const remainingEl = document.getElementById('np-queue-remaining');
+    if (remainingEl) {
+      // Time left from the current track to the end of the queue.
+      const start = Math.max(0, s.currentIndex);
+      const left = s.queue.slice(start).reduce((sum, t) => sum + (t.durationMs > 0 ? t.durationMs : 0), 0);
+      remainingEl.textContent = left > 0 ? ` · 剩余 ${formatTime(left / 1000)}` : '';
+    }
 
     if (cover) {
       // [M4] Rebuild the cover only when the artwork actually changes so
@@ -501,7 +508,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         cover.textContent = '';
         if (src) {
           const img = document.createElement('img');
-          img.src = src;
+          // The panel shows the cover at ~300px; ask for the 512px thumbnail.
+          img.src = src.replace(/([?&]size=)256\b/, '$1512');
           img.alt = '';
           img.decoding = 'async';
           cover.appendChild(img);

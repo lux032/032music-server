@@ -24,6 +24,7 @@ export async function openPlaylistPicker(input) {
     <label>搜索歌单<input type="search" data-picker-search placeholder="歌单名称"></label>
     <p role="status" data-picker-status>正在加载歌单…</p><div class="playlist-picker-results"></div>
     <form data-picker-create><h3>新建并加入</h3><label>名称<input name="name" required maxlength="160"></label><button>创建并加入</button></form>`;
+  current.querySelector('[data-picker-close]').replaceChildren(svgIcon('icon-close'));
   document.body.append(current); current.showModal(); current.querySelector('input').focus();
   const status = current.querySelector('[data-picker-status]'), list = current.querySelector('.playlist-picker-results');
   const all = [];

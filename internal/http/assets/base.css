@@ -41,7 +41,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 /* Buttons */
 button, .button-link {
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
   padding: 0.62rem 1rem;
   color: var(--text-on-accent);
   background: var(--accent);
@@ -55,15 +55,14 @@ button:active { transform: translateY(1px); }
 /* Class selectors outrank the element-level button styles above, so no
    !important is needed here. */
 button.secondary, .secondary-button {
-  border: 1px solid var(--line-strong);
-  color: var(--text-secondary);
-  background: var(--surface);
+  border: 1px solid transparent;
+  color: var(--text);
+  background: var(--fill);
   box-shadow: none;
 }
 button.secondary:hover, .secondary-button:hover {
   color: var(--text);
-  border-color: var(--muted);
-  background: var(--surface-hover);
+  background: var(--fill-hover);
 }
 .secondary-button { min-height: 38px; padding: 0.45rem 0.85rem; }
 
@@ -74,21 +73,23 @@ button.secondary:hover, .secondary-button:hover {
 label { display: grid; gap: 0.35rem; color: var(--text-secondary); font-size: var(--fs-sm); }
 input, select, textarea {
   min-width: 9rem;
-  border: 1px solid var(--line-strong);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   outline: none;
   padding: 0.58rem 0.72rem;
   color: var(--text);
-  background: var(--surface);
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  background: var(--fill);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
+input:hover:not(:focus), select:hover:not(:focus), textarea:hover:not(:focus) { background: var(--fill-hover); }
 textarea { width: 100%; resize: vertical; }
 input:focus, select:focus, textarea:focus {
+  background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 input[type="checkbox"], input[type="radio"] { min-width: 16px; width: 16px; accent-color: var(--accent); }
-input[type="range"] { accent-color: var(--accent); padding: 0; border: 0; }
+input[type="range"] { accent-color: var(--accent); padding: 0; border: 0; background: transparent; }
 
 details { min-width: 260px; }
 summary { cursor: pointer; color: var(--accent); list-style: none; }
@@ -171,13 +172,14 @@ svg.icon {
 
 .format-pill {
   width: max-content;
-  border: 1px solid var(--line-strong);
+  border: 0;
   border-radius: var(--radius-sm);
-  padding: 2px 6px;
+  padding: 2px 0;
   color: var(--muted);
-  background: var(--bg-soft);
-  font-size: 0.62rem;
-  font-weight: 600;
+  background: transparent;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 

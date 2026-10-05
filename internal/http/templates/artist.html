@@ -19,7 +19,7 @@
     {{if .ReleaseGroups}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
 
     <section class="artist-hero">
-      {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait">{{.Artist.Name}}</div>{{end}}
+      {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait" role="img" aria-label="{{.Artist.Name}}">{{initial .Artist.Name}}</div>{{end}}
       <div>
         <h1>{{.Artist.Name}}</h1>
         <p>{{.Artist.ArtistType}} {{.Artist.Country}}</p>
