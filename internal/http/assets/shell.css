@@ -6,13 +6,12 @@ body.roon-shell { background: var(--bg); }
 #app-main {
   min-height: 100vh;
   margin-left: var(--sidebar-w);
-  margin-right: var(--nowplaying-w);
+  margin-right: var(--content-right);
   padding: 34px var(--content-gutter) calc(var(--player-h) + 40px);
 }
 /* [V3] Shell transitions only engage after the first painted frame, so a
    first load below 1440px does not animate the panel sliding away. */
 body.np-animated #app-main { transition: margin-right var(--dur-slow) var(--ease); }
-body.np-collapsed #app-main { margin-right: 0; }
 #app-main.pjax-enter { animation: page-in var(--dur) var(--ease); }
 @keyframes page-in {
   from { opacity: 0; transform: translateY(6px); }

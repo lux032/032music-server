@@ -93,3 +93,9 @@ test('album and library playlist actions fit existing row geometry',async({page}
   expect(geometry.inside).toBe(true);expect(geometry.width,source+JSON.stringify(geometry)).toBe(true);expect(geometry.height).toBeLessThan(120);expect(geometry.cell).toBeLessThan(100);
  }
 });
+
+test('merged wide shell retains six playlist cells and reachable editor',async({page})=>{
+ await album(page);const ids=await page.locator('[data-track-id]').evaluateAll(rows=>rows.slice(0,3).map(r=>Number(r.dataset.trackId)));const p=(await api(page,'/playlists','POST',{name:'Merged geometry',trackIds:ids})).body;
+ for(const width of [1280,1920,3840]){await page.setViewportSize({width,height:900});await page.goto(`/admin/playlists/${p.id}`);await expect(page.locator('.playlist-select')).toHaveCount(3);await page.locator('[data-playlist-edit]').click();
+ const values=await page.locator('.playlist-track-list article').first().evaluate(row=>{const rect=row.getBoundingClientRect();return {columns:getComputedStyle(row).gridTemplateColumns.split(' ').length,inside:[...row.children].every(el=>{const r=el.getBoundingClientRect();return r.top>=rect.top&&r.bottom<=rect.bottom+1&&r.right<=rect.right+1;})};});expect(values.columns).toBe(6);expect(values.inside).toBe(true);await expect(page.locator('[data-playlist-artwork] button').first()).toBeVisible();}
+});
