@@ -2974,32 +2974,35 @@ body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap;
 .playlist-picker input { width:100%; }
 .playlist-picker-results { display:grid; gap:8px; max-height:32dvh; overflow:auto; }
 .playlist-picker-results button { text-align:left; }
-.playlist-select { width:18px!important; height:18px; accent-color:var(--accent); }
+.playlist-select { width:18px!important; height:18px; margin:0; accent-color:var(--accent); align-self:center; justify-self:center; }
+.playlist-track-list > article { align-items:center; }
+.playlist-track-list > article > .playable-number { align-self:center; justify-self:center; }
 .playlist-drag { touch-action:none; cursor:grab; }
 .playlist-track-list article.dragging { opacity:.65; outline:2px solid var(--accent); }
 .playlist-track-list > article { grid-template-columns:24px 42px minmax(0,1fr) auto auto auto; }
 .playlist-undo { position:fixed; z-index:10001; bottom:100px; left:50%; transform:translateX(-50%); display:flex; gap:16px; align-items:center; padding:14px 20px; border-radius:12px; background:#333; color:#fff; box-shadow:0 4px 30px #0008; }
 .missing-track { font-size:12px; color:#e9ac75; padding-left:8px; }
 [data-artwork-preview] { object-fit:cover; border-radius:8px; }
-.playlist-add-track { font-size:12px; white-space:nowrap; }
+.playlist-add-track { display:inline-grid; place-items:center; min-width:30px; min-height:30px; padding:0; font-size:12px; white-space:nowrap; align-self:center; justify-self:center; }
 [data-track-select] > article { position:relative; }
-.album-content [data-track-select] > article { padding-left:32px; }
-.album-content .playlist-select { position:absolute; left:4px; top:24px; }
-.q-playlist { flex:none; width:28px; }
+.album-content [data-track-select] > article { padding-left:36px; }
+.album-content .playlist-select { position:absolute; left:6px; top:50%; transform:translateY(-50%); }
+.q-playlist { flex:none; width:30px; height:30px; align-self:center; }
 @media(max-width:820px) {
  .playlist-selection button { min-height:40px; }
  .playlist-track-list > article { grid-template-columns:22px 32px minmax(0,1fr) auto; }
  .playlist-track-list .track-format,.playlist-track-list .track-duration { display:none; }
  .playlist-track-list .track-actions { grid-column:3/-1; flex-wrap:wrap; justify-content:flex-end; }
  .playlist-layout { grid-template-columns:1fr; }
- .playlist-add-track { padding:6px; }
+ .playlist-add-track { min-width:30px; }
 }
 
 /* Keep enhanced playlist actions within an existing grid cell, never an
    implicit extra row. The title cell reserves a compact action slot. */
 .playlist-action-cell:not(.track-actions) { position:relative; min-width:0; padding-right:36px; }
-.playlist-action-cell:not(.track-actions) > .playlist-add-track { position:absolute; right:0; top:50%; transform:translateY(-50%); width:30px; height:30px; padding:0; font-size:0; }
-.playlist-action-cell:not(.track-actions) > .playlist-add-track::after { content:'+'; font-size:20px; }
+.playlist-action-cell:not(.track-actions) > .playlist-add-track { position:absolute; right:0; top:50%; transform:translateY(-50%); width:30px; height:30px; font-size:0; }
+
+.playlist-track-list .track-actions > *, .playlist-track-list .track-actions > form { align-self:center; }
 /* Wide shell content: cards use bounded tracks; ordered rows keep their full
    separators but bound the information track, not the page or background. */
 .pending-review-banner { justify-content: flex-start; flex-wrap: wrap; gap: 12px; }
@@ -3074,4 +3077,16 @@ body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap;
   .playlist-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .playlist-tools .danger-zone { grid-column: 1 / -1; }
   .playlist-track-list > article { grid-template-columns: 24px 42px minmax(0, 1fr) 58px 52px minmax(112px, auto); }
+}
+
+/* Only playlist-owned icon controls: SVG has a fixed box, independent of
+   font ascenders/baselines; no global icon-action override. */
+.playlist-add-track, .q-playlist, .playlist-drag, [data-picker-close],
+[data-playlist-move], [data-playlist-remove] {
+ display:inline-grid; place-items:center; box-sizing:border-box;
+ min-width:30px; min-height:30px; padding:0; line-height:1;
+}
+.playlist-add-track > .icon, .q-playlist > .icon, .playlist-drag > .icon,
+[data-picker-close] > .icon, [data-playlist-move] > .icon, [data-playlist-remove] > .icon {
+ display:block; width:18px; height:18px; margin:0;
 }

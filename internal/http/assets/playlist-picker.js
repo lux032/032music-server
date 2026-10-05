@@ -1,5 +1,5 @@
 // Shared playlist selection; candidates never use data-track-id.
-import { showToast } from './util.js';
+import { showToast, svgIcon } from './util.js';
 import { s } from './state.js';
 let dialog, controller, origin, previewURL, undoTimer, undoBar, dragging;
 const pending = new WeakSet();
@@ -40,7 +40,7 @@ export async function openPlaylistPicker(input) {
     }
     if (!list.children.length) { const empty = document.createElement('p'); empty.textContent = '没有匹配歌单，可以在下方新建'; list.append(empty); }
   }
-  current.querySelector('[data-picker-close]').onclick = closePicker;
+  const close = current.querySelector('[data-picker-close]'); close.replaceChildren(svgIcon('icon-close')); close.onclick = closePicker;
   current.addEventListener('cancel', e => { e.preventDefault(); closePicker(); });
   current.querySelector('[data-picker-search]').addEventListener('input', render);
   current.querySelector('form').addEventListener('submit', async e => {
@@ -69,7 +69,7 @@ function enhance() {
       const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'playlist-select'; checkbox.setAttribute('aria-label', `选择 ${row.dataset.trackTitle}`); row.prepend(checkbox);
     }
     if (!row.querySelector('[data-playlist-track]')) {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'playlist-add-track'; button.dataset.playlistTrack = row.dataset.trackId; button.textContent = '加入歌单'; button.setAttribute('aria-label', `加入歌单 ${row.dataset.trackTitle}`);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'playlist-add-track'; button.dataset.playlistTrack = row.dataset.trackId; button.appendChild(svgIcon('icon-plus')); button.setAttribute('aria-label', `加入歌单 ${row.dataset.trackTitle}`);
       const cell = row.querySelector('.track-actions') || [...row.children].find(child => child.querySelector('strong'));
       if (cell) { cell.classList.add('playlist-action-cell'); cell.append(button); }
     }

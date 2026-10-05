@@ -44,7 +44,7 @@
             <span class="track-format">{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}</span>
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <div class="track-actions">
-              <button type="button" class="playlist-drag" aria-label="拖动排序 {{.Title}}">↕</button>
+              <button type="button" class="playlist-drag" aria-label="拖动排序 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-drag"></use></svg></button>
               <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks/{{.ID}}/move">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <button class="icon-action" data-playlist-move name="direction" value="up" title="上移" aria-label="上移 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-up"></use></svg></button>

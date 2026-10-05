@@ -609,7 +609,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       handle.setAttribute('aria-label', `拖动排序 ${track.title || '未知曲目'}`);
       handle.appendChild(svgIcon('icon-drag'));
       const add = document.createElement('button'); add.type = 'button'; add.className = 'q-playlist';
-      add.textContent = '+'; add.setAttribute('aria-label', `加入歌单 ${track.title || '未知曲目'}`);
+      add.appendChild(svgIcon('icon-plus')); add.setAttribute('aria-label', `加入歌单 ${track.title || '未知曲目'}`);
       add.addEventListener('click', e => { e.stopPropagation(); openPlaylistPicker({ trackIds: [Number(track.id)] }); });
       item.append(rowBtn, add, remove, handle);
       list.appendChild(item);
