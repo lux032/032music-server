@@ -31,6 +31,9 @@ type libraryPageData struct {
 	Tracks                                               []storage.Track
 	Genres                                               []string
 	Years                                                []int
+	// YearFacets, when set, replaces Years in the album year filter with the
+	// years present in the current result set (plus their album counts).
+	YearFacets []storage.YearCount
 	AlbumDetail                                          *storage.Album
 	AlbumCapsules                                        []AlbumWorkCapsule
 	HiddenCapsuleCount                                   int
@@ -637,6 +640,13 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 		data.Total, err = a.store.CountAlbums(r.Context(), f)
 	}
 	if err == nil {
+		data.YearFacets, err = a.store.AlbumYearFacets(r.Context(), f)
+		if err == nil && f.Year != 0 && !hasYearFacet(data.YearFacets, f.Year) {
+			// Keep the active year selectable so its tag and trigger stay meaningful.
+			data.YearFacets = append([]storage.YearCount{{Year: f.Year}}, data.YearFacets...)
+		}
+	}
+	if err == nil {
 		data.Artists, _ = a.store.ListArtistOptions(r.Context(), "album", "", adminOptionsPageLimit)
 	}
 	if err == nil {
@@ -648,6 +658,15 @@ func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
 	data.TotalLabel = formatLibraryCount(data.Total)
 	setPagination(r, &data, f)
 	a.renderLibrary(w, data, err)
+}
+
+func hasYearFacet(list []storage.YearCount, year int) bool {
+	for _, v := range list {
+		if v.Year == year {
+			return true
+		}
+	}
+	return false
 }
 
 // A filtered empty result cannot establish that the artist has no performances.

@@ -89,22 +89,34 @@
 
   let toastTimer = null;
 
-  export function showUndoToast(msg, undo) {
+  // showActionToast shows a persistent message with one or more recovery
+  // actions; it hides itself after timeoutMs unless replaced first. The
+  // returned function dismisses it early.
+  export function showActionToast(msg, actions, timeoutMs) {
     showToast(msg, true);
     const toast = document.querySelector('.client-toast');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = '撤销';
-    toast.appendChild(button);
+    const group = document.createElement('span');
+    group.className = 'toast-actions';
     const dismiss = () => {
       clearTimeout(timer);
-      const active = button.isConnected;
-      button.remove();
-      if (active && toast.textContent === msg) toast.style.display = 'none';
+      const active = group.isConnected;
+      group.remove();
+      if (active && toast.textContent === msg) { toast.style.display = 'none'; toast.textContent = ''; }
     };
-    const timer = setTimeout(dismiss, 5000);
-    button.addEventListener('click', () => { if (button.isConnected) { dismiss(); undo(); } });
+    for (const action of actions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = action.label;
+      button.addEventListener('click', () => { if (group.isConnected) { dismiss(); action.run(); } });
+      group.appendChild(button);
+    }
+    toast.appendChild(group);
+    const timer = setTimeout(dismiss, timeoutMs || 5000);
     return dismiss;
+  }
+
+  export function showUndoToast(msg, undo) {
+    return showActionToast(msg, [{ label: '撤销', run: undo }], 5000);
   }
 
   export function showToast(msg, persistent) {
@@ -124,7 +136,9 @@
       // (possibly persistent) notification.
       toastTimer = setTimeout(() => {
         toastTimer = null;
-        if (toast.textContent === msg) toast.style.display = 'none';
+        // Clear the text too: a hidden toast must not keep announcing or
+        // exposing a stale message.
+        if (toast.textContent === msg) { toast.style.display = 'none'; toast.textContent = ''; }
       }, 3500);
 
   }

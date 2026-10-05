@@ -31,7 +31,9 @@ a:hover { color: var(--accent-hover); }
 a:focus-visible, button:focus-visible, summary:focus-visible,
 input:focus-visible, select:focus-visible, textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--accent-line);
+  /* Solid accent: the translucent accent-line ring measured 1.6:1 on white,
+     below the 3:1 non-text minimum. */
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -253,3 +255,47 @@ svg.icon {
 .status-badge.success { border-color: rgba(29,157,108,.35); color: var(--success); background: rgba(29,157,108,.08); }
 .status-badge.warning { border-color: rgba(185,121,6,.35); color: var(--warning); background: rgba(185,121,6,.08); }
 .status-badge.failed { border-color: rgba(214,69,93,.35); color: var(--danger); background: var(--danger-soft); }
+
+/* ------------------------------------------------------- audit 2026-10-05 */
+::placeholder { color: var(--muted); opacity: 1; }
+
+.skip-link {
+  position: fixed;
+  z-index: 3000;
+  top: 10px;
+  left: 10px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  color: var(--text-on-accent);
+  background: var(--accent);
+  font-weight: 600;
+  transform: translateY(calc(-100% - 20px));
+}
+.skip-link:focus, .skip-link:focus-visible { transform: none; outline-color: var(--accent-active); box-shadow: var(--shadow-pop); }
+
+.client-toast { line-height: 1.5; }
+.toast-actions { display: inline-flex; gap: 6px; margin-left: 14px; vertical-align: middle; }
+.toast-actions button {
+  min-height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: var(--accent);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.toast-actions button:first-child { border-color: var(--accent); color: var(--text-on-accent); background: var(--accent); }
+.toast-actions button:hover { border-color: var(--accent-hover); color: var(--text-on-accent); background: var(--accent-hover); }
+
+.zero-state-action {
+  display: inline-block;
+  margin-top: 14px;
+  border-radius: 999px;
+  padding: 7px 16px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.zero-state-action:hover { color: var(--accent-strong-text); background: var(--accent-soft-strong); }

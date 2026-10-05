@@ -48,6 +48,13 @@
         <div class="album-actions">
           <button type="button" class="secondary-round" data-playlist-album="{{.AlbumDetail.ID}}">整张加入歌单</button>
           <button type="button" class="primary-round"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
+          <details class="queue-menu album-queue-menu">
+            <summary class="secondary-round">加入队列 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></summary>
+            <div class="album-menu-items">
+              <button type="button" class="album-page-queue" data-mode="next">下一首播放</button>
+              <button type="button" class="album-page-queue" data-mode="append">添加到队列末尾</button>
+            </div>
+          </details>
           <a href="#edit" class="secondary-round" data-drawer-open="edit" aria-haspopup="dialog">编辑专辑</a>
           <form method="post" action="/admin/favorites/albums/{{.AlbumDetail.ID}}">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
@@ -61,14 +68,14 @@
 
     <div class="album-columns">
       <section class="album-content">
-        <div class="section-title"><h2>曲目列表</h2><span>{{.AlbumDetail.TrackCount}} 首</span></div>
+        <div class="section-title"><h2>曲目列表</h2><span data-track-total>{{.AlbumDetail.TrackCount}} 首</span></div>
         <div class="playlist-selection"><button type="button" data-select-tracks>全选歌曲</button><button type="button" data-playlist-selected>所选加入歌单</button><span data-selected-count role="status">0 首已选</span></div>
         <div class="detail-tracks has-tieup-col" data-track-list data-track-select>
           {{range .Tracks}}
           {{$tieups := index $.TrackTieups .ID}}
           <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="playable-number">
-              <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
+              <span class="num-text" data-disc="{{.DiscNumber}}" data-track-no="{{.TrackNumber}}">{{.DiscNumber}}.{{.TrackNumber}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
             </span>
             <div>
@@ -106,14 +113,23 @@
             </div>
             {{if .Container}}<span class="format-pill">{{.Container}}</span>{{else}}<span></span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
-            <form class="inline-favorite" method="post" action="/admin/favorites/tracks/{{.ID}}">
-              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}">
-              <input type="hidden" name="returnTo" value="/admin/albums/{{$.AlbumDetail.ID}}">
-              <button class="icon-action {{if .IsFavorite}}selected{{end}}" title="{{if .IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Title}}" aria-label="{{if .IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Title}}">
-                <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#{{if .IsFavorite}}icon-heart-fill{{else}}icon-heart{{end}}"></use></svg>
-              </button>
-            </form>
+            <div class="track-row-actions">
+              <details class="queue-menu track-queue-menu">
+                <summary class="icon-action" title="加入队列：{{.Title}}" aria-label="加入队列：{{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg></summary>
+                <div class="album-menu-items">
+                  <button type="button" class="queue-next-btn">下一首播放</button>
+                  <button type="button" class="queue-append-btn">添加到队列末尾</button>
+                </div>
+              </details>
+              <form class="inline-favorite" method="post" action="/admin/favorites/tracks/{{.ID}}">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}">
+                <input type="hidden" name="returnTo" value="/admin/albums/{{$.AlbumDetail.ID}}">
+                <button class="icon-action {{if .IsFavorite}}selected{{end}}" title="{{if .IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Title}}" aria-label="{{if .IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Title}}">
+                  <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#{{if .IsFavorite}}icon-heart-fill{{else}}icon-heart{{end}}"></use></svg>
+                </button>
+              </form>
+            </div>
           </article>
           {{end}}
         </div>

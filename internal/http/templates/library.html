@@ -15,7 +15,7 @@
       </div>
       <form class="instant-search" method="get">
         <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
-        <input name="q" value="{{.Query}}" placeholder="搜索专辑、歌手或歌曲…">
+        <input name="q" value="{{.Query}}" placeholder="搜索专辑、歌手或歌曲…" aria-label="搜索专辑、歌手或歌曲">
         {{range .SearchFields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
       </form>
     </header>
@@ -34,7 +34,7 @@
     <div class="browser-filters" aria-label="筛选">
       {{if ne .Section "artists"}}
       <div class="filter-control" data-filter="artist" data-options-url="/admin/options/artists?role={{if eq .Section "albums"}}album{{else}}performer{{end}}"><button type="button" class="filter-trigger {{if .ArtistID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-artist">{{if .ArtistID}}{{range .FilterTags}}{{if eq .Name "artist"}}{{.Value}}{{end}}{{end}}{{else}}歌手{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-controls="filter-list-artist" aria-label="搜索歌手" placeholder="搜索歌手"><div id="filter-list-artist" role="listbox" aria-label="歌手"></div></div></div>
-      <div class="filter-control" data-filter="year"><button type="button" class="filter-trigger {{if .Year}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-year">{{if .Year}}{{.Year}}{{else}}年份{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-year" role="listbox" aria-label="年份" hidden><button type="button" role="option" aria-selected="false" data-value="">全部年份</button>{{range .Years}}<button type="button" role="option" aria-selected="false" data-value="{{.}}">{{.}}</button>{{end}}</div></div>
+      <div class="filter-control" data-filter="year"><button type="button" class="filter-trigger {{if .Year}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-year">{{if .Year}}{{.Year}}{{else}}年份{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-year" role="listbox" aria-label="年份" hidden><button type="button" role="option" aria-selected="false" data-value="">全部年份</button>{{if .YearFacets}}{{range .YearFacets}}<button type="button" role="option" aria-selected="false" data-value="{{.Year}}"{{if .Count}} data-count="{{.Count}}"{{end}}>{{.Year}}</button>{{end}}{{else}}{{range .Years}}<button type="button" role="option" aria-selected="false" data-value="{{.}}">{{.}}</button>{{end}}{{end}}</div></div>
       <div class="filter-control" data-filter="genre"><button type="button" class="filter-trigger {{if .Genre}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-genre">{{if .Genre}}{{.Genre}}{{else}}流派{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-genre" role="listbox" aria-label="流派" hidden><button type="button" role="option" aria-selected="false" data-value="">全部流派</button>{{range .Genres}}<button type="button" role="option" aria-selected="false" data-value="{{.}}">{{.}}</button>{{end}}</div></div>
       {{end}}
       {{if eq .Section "tracks"}}<div class="filter-control" data-filter="album" data-options-url="/admin/options/albums"><button type="button" class="filter-trigger {{if .AlbumID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-album">{{if .AlbumID}}{{range .FilterTags}}{{if eq .Name "album"}}{{.Value}}{{end}}{{end}}{{else}}专辑{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-label="搜索专辑" aria-controls="filter-list-album" placeholder="搜索专辑"><div id="filter-list-album" role="listbox" aria-label="专辑"></div></div></div>{{end}}
@@ -97,7 +97,7 @@
       {{range .Albums}}
       {{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
       {{else}}
-      <div class="zero-state"><strong>没有找到专辑</strong><span>调整 Focus 条件或清除筛选。</span></div>
+      {{if .FilterTags}}<div class="zero-state"><strong>没有找到专辑</strong><span>换个关键词，或调整上方的筛选条件。</span><a class="zero-state-action" href="{{.ClearPath}}">清除全部筛选</a></div>{{else}}<div class="zero-state"><strong>曲库里还没有专辑</strong><span>扫描完成后，专辑会出现在这里。</span></div>{{end}}
       {{end}}
     </section>
     {{end}}

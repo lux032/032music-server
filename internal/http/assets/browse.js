@@ -199,11 +199,51 @@
   });
   // Album grid density: applied live and remembered in a cookie the server
   // reads to render the chosen column count without a layout flash.
+  // The chosen count is a preference, not a promise: the effective count is
+  // capped by the grid's own width (the now-playing panel and sidebar take
+  // their share), so covers never shrink below a recognisable size. Without
+  // a saved preference the count follows the available width.
+  const MIN_COVER = 150, AUTO_COVER = 190;
+  function effectiveCols(grid) {
+    const width = grid.clientWidth;
+    if (!width) return null;
+    const gap = parseFloat(getComputedStyle(grid).columnGap) || 24;
+    const fit = (cover) => Math.max(2, Math.floor((width + gap) / (cover + gap)));
+    const chosen = parseInt(grid.style.getPropertyValue('--album-cols'), 10);
+    if (!chosen) return { chosen: null, cols: Math.min(8, fit(AUTO_COVER)) };
+    return { chosen, cols: Math.min(chosen, fit(MIN_COVER)) };
+  }
+  function syncGridOutput(state) {
+    const input = document.querySelector('[data-grid-cols]');
+    const output = input?.parentElement.querySelector('output');
+    if (!input || !output || !state) return;
+    // The output mirrors the slider; a separate note explains a width cap.
+    let note = output.parentElement.querySelector('.grid-cap-note');
+    if (!note) { note = document.createElement('small'); note.className = 'grid-cap-note'; output.after(note); }
+    if (!state.chosen) input.value = String(state.cols);
+    output.textContent = String(state.chosen || state.cols);
+    const capped = !!state.chosen && state.cols < state.chosen;
+    note.textContent = capped ? `当前 ${state.cols} 列` : '';
+    note.title = capped ? `当前宽度最多容纳 ${state.cols} 列；加宽窗口或收起播放面板后按 ${state.chosen} 列显示` : '';
+  }
+  function fitGrid(grid) {
+    if (grid.classList.contains('detail-album-grid')) return;
+    const state = effectiveCols(grid);
+    if (!state) return;
+    grid.style.setProperty('--album-cols-eff', String(state.cols));
+    if (!grid.classList.contains('favorite-albums')) syncGridOutput(state);
+  }
+  const gridObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => entries.forEach(entry => fitGrid(entry.target))) : null;
+  function observeGrids() {
+    document.querySelectorAll('.album-browser:not(.detail-album-grid)').forEach(grid => {
+      if (gridObserver) gridObserver.observe(grid); else fitGrid(grid);
+    });
+  }
+  observeGrids();
+  document.addEventListener('032:pjax-applied', observeGrids);
   function applyGridCols(input) {
     const cols = Math.min(10, Math.max(2, parseInt(input.value, 10) || 4));
-    const output = input.parentElement.querySelector('output');
-    if (output) output.textContent = String(cols);
-    document.querySelectorAll('.album-browser').forEach(grid => grid.style.setProperty('--album-cols', String(cols)));
+    document.querySelectorAll('.album-browser:not(.detail-album-grid)').forEach(grid => { grid.style.setProperty('--album-cols', String(cols)); fitGrid(grid); });
     return cols;
   }
   document.addEventListener('input', e => {
@@ -223,13 +263,14 @@
     submitSearch(e.target.querySelector('input[name="q"]'));
   }, true);
   document.addEventListener('toggle', e => {
-    if (e.target.matches?.('.album-card-menu') && e.target.open) document.querySelectorAll('.album-card-menu[open]').forEach(menu => { if (menu !== e.target) menu.open = false; });
+    if (e.target.matches?.('.album-card-menu, .queue-menu') && e.target.open) document.querySelectorAll('.album-card-menu[open], .queue-menu[open]').forEach(menu => { if (menu !== e.target) menu.open = false; });
   }, true);
   document.addEventListener('click', e => {
-    if (!e.target.closest?.('.album-card-menu')) document.querySelectorAll('.album-card-menu[open]').forEach(menu => { menu.open = false; });
+    const inside = e.target.closest?.('.album-card-menu, .queue-menu');
+    document.querySelectorAll('.album-card-menu[open], .queue-menu[open]').forEach(menu => { if (menu !== inside) menu.open = false; });
   });
   document.addEventListener('keydown', e => {
-    const menu = e.target.closest?.('.album-card-menu[open]');
+    const menu = e.target.closest?.('.album-card-menu[open], .queue-menu[open]');
     if (!menu) return;
     if (e.key === 'Escape') { e.preventDefault(); menu.open = false; menu.querySelector('summary').focus(); }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -328,7 +369,7 @@
     }
   }, true);
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !albumSelection.length || activeDrawer || e.target.closest?.('.album-card-menu[open], .filter-control')) return;
+    if (e.key !== 'Escape' || !albumSelection.length || activeDrawer || e.target.closest?.('.album-card-menu[open], .queue-menu[open], .filter-control')) return;
     e.preventDefault();
     clearAlbumSelection();
   });

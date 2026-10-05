@@ -26,3 +26,17 @@ type albumSelectionBarView struct {
 func albumSelectionBarContext(csrfToken, returnTo string) albumSelectionBarView {
 	return albumSelectionBarView{CSRFToken: csrfToken, ReturnTo: returnTo}
 }
+
+// albumKindLabel names the effective release kind on an album card when it
+// is anything other than a regular album, so same-titled singles, EPs and
+// compilations stay distinguishable in the grid. Regular albums return "".
+func albumKindLabel(album storage.Album) string {
+	kind := album.ReleaseKind
+	if kind == "" {
+		kind = album.AlbumType
+	}
+	if kind == "" || kind == "album" {
+		return ""
+	}
+	return albumTypeLabel(kind)
+}

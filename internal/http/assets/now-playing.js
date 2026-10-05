@@ -1,7 +1,7 @@
 import { openPlaylistPicker } from './playlist-picker.js';
 // 032 Music Server - now-playing.js
 import { s } from './state.js';
-import { formatTime, svgIcon, showUndoToast, showToast, apiFetch, swapIcon } from './util.js';
+import { formatTime, svgIcon, showUndoToast, showToast, showActionToast, apiFetch, swapIcon } from './util.js';
 import { navigateFromPlayer } from './router.js';
 import { bindSeekBar, updateTrackRowsUI, updatePlayerMetaUI, updatePlayButtonUI } from './player-bar.js';
 import { loadLyrics } from './lyrics.js';
@@ -88,10 +88,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         trackDetails.set(id, await res.json());
       } catch (_) {
         if (detailId === id) {
-          showToast('无法获取歌曲信息，请重试', true);
-          const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重试';
-          document.querySelector('.client-toast').appendChild(retry);
-          retry.addEventListener('click', () => { retry.remove(); detailId = null; loadTrackDetail(track); });
+          showActionToast('无法获取歌曲信息（歌手、收藏状态），播放不受影响', [{ label: '重试', run: () => { detailId = null; loadTrackDetail(track); } }], 8000);
           syncFavorite();
         }
         return;
@@ -458,7 +455,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     const cover = document.getElementById('np-cover');
     const countEl = document.getElementById('np-queue-count');
 
-    if (titleEl) titleEl.textContent = track ? (track.title || '未知曲目') : '未在播放';
+    if (titleEl) { titleEl.textContent = track ? (track.title || '未知曲目') : '未在播放'; titleEl.title = track ? (track.title || '') : ''; }
     const detail = track && trackDetails.get(String(track.id));
     renderArtistLinks(artistEl, detail, track ? track.artist : '—');
     let creditsEl = document.getElementById('np-credits');
@@ -565,7 +562,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       const rowBtn = document.createElement('button');
       rowBtn.type = 'button';
       rowBtn.className = 'q-row';
-      rowBtn.setAttribute('aria-label', `播放 ${track.title || '未知曲目'}`);
+      rowBtn.setAttribute('aria-label', queueRowLabel(track, index));
+      rowBtn.title = track.artist ? `${track.title || '未知曲目'} — ${track.artist}` : (track.title || '未知曲目');
 
       const indexCell = document.createElement('span');
       indexCell.className = 'q-index';
@@ -606,7 +604,9 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       remove.setAttribute('aria-label', `从队列移除 ${track.title || '未知曲目'}`);
       remove.appendChild(svgIcon('icon-close'));
       const handle = document.createElement('button'); handle.type = 'button'; handle.className = 'q-drag';
-      handle.setAttribute('aria-label', `拖动排序 ${track.title || '未知曲目'}`);
+      handle.setAttribute('aria-label', `调整顺序：${track.title || '未知曲目'}`);
+      handle.setAttribute('aria-describedby', 'np-queue-reorder-hint');
+      handle.title = '拖动调整顺序，或按 Alt+↑/↓';
       handle.appendChild(svgIcon('icon-drag'));
       const add = document.createElement('button'); add.type = 'button'; add.className = 'q-playlist';
       add.appendChild(svgIcon('icon-plus')); add.setAttribute('aria-label', `加入歌单 ${track.title || '未知曲目'}`);
@@ -614,6 +614,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       item.append(rowBtn, add, remove, handle);
       list.appendChild(item);
     });
+    syncPanelQueueCurrent();
     if (refocusIndex !== null) {
       const target = list.querySelector(`li[data-qindex="${refocusIndex}"] .q-row`)
         || list.querySelector('.q-row');
@@ -621,16 +622,34 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     }
   }
 
+  // The current row's button toggles playback, so its name says what a
+  // press will do; every other row starts that track.
+  function queueRowLabel(track, index) {
+    const title = track.title || '未知曲目';
+    if (index !== s.currentIndex) return `播放 ${title}`;
+    return s.isPlaying ? `暂停 ${title}` : `继续播放 ${title}`;
+  }
+
   // syncPanelQueueCurrent refreshes only the current-row markers (cheap
   // enough to run on every play/pause toggle).
   export function syncPanelQueueCurrent() {
     const list = document.getElementById('np-queue-list');
     if (!list) return;
+    if (!document.getElementById('np-queue-reorder-hint')) {
+      const hint = document.createElement('span');
+      hint.id = 'np-queue-reorder-hint'; hint.className = 'sr-only';
+      hint.textContent = '按 Alt 加上或下方向键调整顺序';
+      list.after(hint);
+    }
     list.querySelectorAll('li[data-qindex]').forEach((item) => {
       const index = parseInt(item.getAttribute('data-qindex'), 10);
       const isCurrent = index === s.currentIndex;
+      const track = s.queue[index];
       item.classList.toggle('current', isCurrent);
       item.classList.toggle('paused', isCurrent && !s.isPlaying);
+      item.classList.toggle('failed', !!track && isCurrent && s.failedTrackId === String(track.id));
+      const row = item.querySelector('.q-row');
+      if (row && track) row.setAttribute('aria-label', queueRowLabel(track, index));
     });
   }
 

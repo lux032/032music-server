@@ -14,6 +14,8 @@ import { scrollLyricsToActive } from './lyrics.js';
     const playerBar = document.createElement('div');
     playerBar.id = 'global-player';
     playerBar.className = 'global-player';
+    playerBar.setAttribute('role', 'region');
+    playerBar.setAttribute('aria-label', '播放控制');
     playerBar.innerHTML = `
       <audio id="global-audio-element" preload="metadata"></audio>
       <div class="player-left">
@@ -25,6 +27,7 @@ import { scrollLyricsToActive } from './lyrics.js';
           <div class="player-title-row">
             <strong id="player-title" title="未在播放">未在播放</strong>
             <span id="player-format" class="format-pill" style="display:none;">FLAC</span>
+            <span id="player-status" class="player-status" role="status" aria-live="polite"></span>
           </div>
           <small id="player-artist">选择一首歌曲开始播放</small>
         </div>
@@ -36,7 +39,7 @@ import { scrollLyricsToActive } from './lyrics.js';
         <div class="player-controls">
           <button id="player-btn-shuffle" class="player-ctrl-btn" title="随机播放" aria-label="随机播放" aria-pressed="false"><span class="icon-slot" data-icon="icon-shuffle"></span></button>
           <button id="player-btn-prev" class="player-ctrl-btn" title="上一首 (Alt+Left)" aria-label="上一首"><span class="icon-slot" data-icon="icon-prev"></span></button>
-          <button id="player-btn-play" class="player-ctrl-btn play-main-btn" title="播放 / 暂停 (Space)" aria-label="播放 / 暂停"><span class="icon-slot" data-icon="icon-play"></span></button>
+          <button id="player-btn-play" class="player-ctrl-btn play-main-btn" title="播放 (Space)" aria-label="播放"><span class="icon-slot" data-icon="icon-play"></span></button>
           <button id="player-btn-next" class="player-ctrl-btn" title="下一首 (Alt+Right)" aria-label="下一首"><span class="icon-slot" data-icon="icon-next"></span></button>
           <button id="player-btn-loop" class="player-ctrl-btn loop-btn" title="循环模式 (顺序播放)" aria-label="循环模式" aria-pressed="false"><span class="icon-slot" data-icon="icon-repeat"></span></button>
         </div>
@@ -59,7 +62,7 @@ import { scrollLyricsToActive } from './lyrics.js';
         <button id="player-btn-queue" class="player-tool-btn" title="播放队列" aria-label="播放队列" aria-expanded="false" aria-controls="now-playing"><span class="icon-slot" data-icon="icon-queue"></span></button>
         <button id="player-btn-fullscreen" class="player-tool-btn" title="全屏" aria-label="全屏"><span class="icon-slot" data-icon="icon-fullscreen"></span></button>
         <button id="player-btn-shortcuts" class="player-tool-btn" title="快捷键说明" aria-label="快捷键说明" aria-expanded="false"><span class="icon-slot" data-icon="icon-dots"></span></button>
-        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>Space 播放/暂停 · L 歌词 · Esc 关闭歌词</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
+        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>Space 播放/暂停 · L 歌词 · Esc 关闭歌词 · 队列中 Alt+↑/↓ 调整顺序</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
       </div>
     `;
     hydrateIconSlots(playerBar);
@@ -268,10 +271,36 @@ import { scrollLyricsToActive } from './lyrics.js';
     if (playBtn) {
       swapIcon(playBtn, playing ? 'icon-pause' : 'icon-play');
       playBtn.classList.toggle('is-playing', playing);
+      if (!playBtn.classList.contains('is-buffering')) {
+        playBtn.setAttribute('aria-label', playing ? '暂停' : '播放');
+        playBtn.title = `${playing ? '暂停' : '播放'} (Space)`;
+      }
     }
     const currentRowBtn = document.querySelector('.np-queue-list li.current');
     if (currentRowBtn) currentRowBtn.classList.toggle('paused', !playing);
     emitPlayerState();
+  }
+
+  // setPlayerStatus reflects what the audio element is actually doing, not
+  // what was requested: 'buffering' while a started track has no audible
+  // data yet, 'error' after a failed load, '' otherwise.
+  export function setPlayerStatus(state) {
+    const buffering = state === 'buffering';
+    const playBtn = document.getElementById('player-btn-play');
+    if (playBtn) {
+      playBtn.classList.toggle('is-buffering', buffering);
+      playBtn.setAttribute('aria-busy', String(buffering));
+      if (buffering) { playBtn.setAttribute('aria-label', '正在缓冲，点按暂停'); playBtn.title = '正在缓冲…'; }
+      else { playBtn.setAttribute('aria-label', s.isPlaying ? '暂停' : '播放'); playBtn.title = `${s.isPlaying ? '暂停' : '播放'} (Space)`; }
+    }
+    const status = document.getElementById('player-status');
+    if (status) {
+      const text = buffering ? '缓冲中' : state === 'error' ? '无法播放' : '';
+      if (status.textContent !== text) status.textContent = text;
+      status.dataset.state = state || '';
+    }
+    document.body.classList.toggle('player-buffering', buffering);
+    document.body.classList.toggle('player-failed', state === 'error');
   }
 
   export function updatePlayerMetaUI(track) {

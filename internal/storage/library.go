@@ -698,6 +698,34 @@ func normalizeArtistRole(value string) string {
 	}
 }
 
+// YearCount is one release-year facet of an album listing.
+type YearCount struct {
+	Year  int
+	Count int64
+}
+
+// AlbumYearFacets returns the release years present in the album listing
+// described by f, ignoring f.Year itself so the facet still offers the other
+// years of the current result set. Years are newest first.
+func (s *Store) AlbumYearFacets(ctx context.Context, f Filters) ([]YearCount, error) {
+	f.Year = 0
+	where, args := albumWhere(f)
+	rows, err := s.db.QueryContext(ctx, `SELECT COALESCE(a.user_release_year,a.release_year) AS y, COUNT(*) FROM albums a WHERE `+where+` AND COALESCE(a.user_release_year,a.release_year) IS NOT NULL GROUP BY y ORDER BY y DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []YearCount
+	for rows.Next() {
+		var v YearCount
+		if err = rows.Scan(&v.Year, &v.Count); err != nil {
+			return nil, err
+		}
+		list = append(list, v)
+	}
+	return list, rows.Err()
+}
+
 func (s *Store) CountAlbums(ctx context.Context, f Filters) (int64, error) {
 	var total int64
 	where, args := albumWhere(f)

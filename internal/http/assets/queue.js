@@ -1,6 +1,6 @@
 // 032 Music Server - queue.js
 import { s } from './state.js';
-import { svgIcon, showToast, artworkForSize } from './util.js';
+import { svgIcon, showToast, showUndoToast, artworkForSize } from './util.js';
 import { playTrackAtIndex, togglePlay, saveState } from './player-core.js';
 import { emitPlayerState } from './now-playing.js';
 import { updateTrackRowsUI } from './player-bar.js';
@@ -38,20 +38,26 @@ import { updateTrackRowsUI } from './player-bar.js';
         if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
         return;
       }
+      const pageQueue = e.target.closest('.album-page-queue');
+      if (pageQueue) {
+        e.preventDefault();
+        const pageTracks = extractAllTracksFromPage();
+        if (pageTracks.length) queueTracks(pageTracks, pageQueue.dataset.mode === 'next' ? 'next' : 'append', albumLabel(pageTracks[0].album));
+        const menu = pageQueue.closest('details');
+        if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
+        return;
+      }
       const albumPlayBtn = e.target.closest('.album-hero .primary-round, [data-play-all], [data-play-shuffle], [data-queue-all]');
       if (albumPlayBtn) {
         e.preventDefault();
         const pageTracks = extractAllTracksFromPage();
         if (pageTracks.length > 0) {
-          if (albumPlayBtn.hasAttribute('data-queue-all')) {
-            s.queue.push(...pageTracks); saveState(); emitPlayerState(); showToast('已加入播放队列'); return;
-          }
+          const label = albumPlayBtn.closest('.album-hero') ? albumLabel(pageTracks[0].album) : listLabel();
+          if (albumPlayBtn.hasAttribute('data-queue-all')) { queueTracks(pageTracks, 'append', label); return; }
           if (albumPlayBtn.hasAttribute('data-play-shuffle')) {
             for (let i = pageTracks.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pageTracks[i], pageTracks[j]] = [pageTracks[j], pageTracks[i]]; }
           }
-          s.queue = pageTracks;
-          s.playHistory = [];
-          playTrackAtIndex(0);
+          replaceQueue(pageTracks, 0, label);
         }
       }
     });
@@ -77,14 +83,43 @@ import { updateTrackRowsUI } from './player-bar.js';
       if (s.currentIndex !== -1 && s.queue[s.currentIndex] && String(s.queue[s.currentIndex].id) === String(trackId)) {
         togglePlay();
       } else {
-        s.queue = pageTracks;
-        s.playHistory = []; // queue replaced: position history is meaningless
-        playTrackAtIndex(targetIndex);
+        replaceQueue(pageTracks, targetIndex, `“${pageTracks[targetIndex].title}”`);
       }
     }
   }
 
+  // annotateTrackGaps notes missing track numbers on an album page so a
+  // curator sees an incomplete rip without counting rows.
+  function annotateTrackGaps(root) {
+    const total = root.querySelector ? root.querySelector('[data-track-total]') : null;
+    if (!total || total.dataset.gapsChecked) return;
+    total.dataset.gapsChecked = '1';
+    const discs = new Map();
+    root.querySelectorAll('.num-text[data-disc][data-track-no]').forEach(el => {
+      const disc = parseInt(el.dataset.disc, 10) || 1, no = parseInt(el.dataset.trackNo, 10);
+      if (!no) return;
+      if (!discs.has(disc)) discs.set(disc, []);
+      discs.get(disc).push(no);
+    });
+    const ranges = [];
+    discs.forEach((numbers, disc) => {
+      numbers.sort((a, b) => a - b);
+      let expected = 1;
+      for (const n of numbers) {
+        if (n > expected) ranges.push(n - 1 > expected ? `${disc}.${expected}–${disc}.${n - 1}` : `${disc}.${expected}`);
+        expected = Math.max(expected, n + 1);
+      }
+    });
+    if (!ranges.length) return;
+    const note = document.createElement('span');
+    note.className = 'track-gap-note';
+    note.textContent = `缺 ${ranges.length > 3 ? ranges.slice(0, 3).join('、') + ' 等' : ranges.join('、')}`;
+    note.title = `曲目编号不连续，缺少：${ranges.join('、')}`;
+    total.append(' · ', note);
+  }
+
   export function decorateTrackRows(root) {
+    annotateTrackGaps(root);
     root.querySelectorAll('[data-track-id]').forEach((el) => {
       let playBtn = el.querySelector('.row-play-btn');
       const trackId = el.getAttribute('data-track-id');
@@ -117,6 +152,70 @@ import { updateTrackRowsUI } from './player-bar.js';
         playBtn.setAttribute('aria-label', `播放 ${accessibleTitle}`);
       }
     });
+  }
+
+  function albumLabel(title) { return title ? `《${title}》` : '这张专辑'; }
+  function listLabel() { const h = document.querySelector('#app-main h1')?.textContent.trim(); return h ? `《${h}》` : '当前列表'; }
+
+  function sameQueue(a, b) {
+    return a.length === b.length && a.every((track, i) => String(track.id) === String(b[i].id));
+  }
+
+  // replaceQueue is the single path for "play this list": it swaps the queue
+  // and, when that discards a different queue the user had built, offers the
+  // same five-second undo as clearing the queue does.
+  let dismissReplaceUndo = null;
+  function replaceQueue(tracks, startIndex, label) {
+    const previous = s.queue.slice();
+    const snapshot = previous.length && !sameQueue(previous, tracks) ? {
+      queue: previous, index: s.currentIndex, history: s.playHistory.slice(),
+      position: s.audio?.currentTime || 0, wasPlaying: s.isPlaying
+    } : null;
+    s.queue = tracks;
+    s.playHistory = []; // queue replaced: position history is meaningless
+    playTrackAtIndex(startIndex);
+    if (!snapshot) return;
+    if (dismissReplaceUndo) dismissReplaceUndo();
+    dismissReplaceUndo = showUndoToast(`正在播放${label}，原队列 ${snapshot.queue.length} 首已替换`, () => {
+      dismissReplaceUndo = null;
+      restoreQueue(snapshot);
+    });
+  }
+
+  function restoreQueue(snapshot) {
+    s.queue = snapshot.queue;
+    s.playHistory = snapshot.history;
+    const index = snapshot.index >= 0 && snapshot.index < s.queue.length ? snapshot.index : -1;
+    if (index < 0) { s.currentIndex = -1; saveState(); emitPlayerState(); updateTrackRowsUI(); return; }
+    playTrackAtIndex(index, true);
+    const audio = s.audio;
+    if (!audio) return;
+    const resume = () => {
+      if (snapshot.position > 0 && isFinite(audio.duration) && snapshot.position < audio.duration) audio.currentTime = snapshot.position;
+      if (!snapshot.wasPlaying) audio.pause();
+    };
+    if (audio.readyState >= 1) resume(); else audio.addEventListener('loadedmetadata', resume, { once: true });
+    showToast('已恢复原播放队列');
+  }
+
+  // queueTracks inserts tracks without replacing the queue: 'next' right
+  // after the current track, 'append' at the end. With nothing queued the
+  // tracks start playing at once (current behaviour), and the toast says so.
+  function queueTracks(tracks, mode, label) {
+    if (!tracks.length) return;
+    const count = tracks.length > 1 ? `（${tracks.length} 首）` : '';
+    if (!s.queue.length || s.currentIndex < 0) {
+      s.queue = tracks.slice();
+      s.playHistory = [];
+      playTrackAtIndex(0);
+      showToast(`队列为空，已开始播放${label}${count}`);
+      return;
+    }
+    if (mode === 'next') s.queue.splice(s.currentIndex + 1, 0, ...tracks);
+    else s.queue.push(...tracks);
+    saveState();
+    emitPlayerState();
+    showToast(`${mode === 'next' ? '已加入下一首播放' : '已添加到队列末尾'}：${label}${count}`);
   }
 
   function extractAllTracksFromPage() {
@@ -159,20 +258,22 @@ import { updateTrackRowsUI } from './player-bar.js';
     if (s.queue.length === 0 || s.currentIndex === -1) {
       s.queue.push(track);
       playTrackAtIndex(s.queue.length - 1);
-      showToast(`开始播放：${track.title}`);
+      showToast(`队列为空，已开始播放“${track.title}”`);
       return;
     }
     if (mode === 'next') s.queue.splice(s.currentIndex + 1, 0, track);
     else s.queue.push(track);
     saveState();
     emitPlayerState();
-    showToast(mode === 'next' ? `已加入下一首播放：${track.title}` : `已添加到队列末尾：${track.title}`);
+    showToast(`${mode === 'next' ? '已加入下一首播放' : '已添加到队列末尾'}：“${track.title}”`);
   }
 
   const loadingAlbums = new Set();
   async function queueAlbumFromPage(albumId, mode) {
     if (loadingAlbums.has(albumId)) return;
     loadingAlbums.add(albumId);
+    const card = document.querySelector(`[data-album-id="${CSS.escape(String(albumId))}"]`);
+    if (card) { card.setAttribute('aria-busy', 'true'); card.classList.add('is-loading'); }
     try {
       const response = await fetch(`/api/v1/albums/${encodeURIComponent(albumId)}`, { credentials: 'same-origin' });
       if (response.status === 401) { window.location.assign('/admin/login'); return; }
@@ -186,23 +287,13 @@ import { updateTrackRowsUI } from './player-bar.js';
         streamUrl: `/api/v1/tracks/${track.id}/stream`
       }));
       if (!tracks.length) { showToast('这张专辑没有可播放的歌曲'); return; }
-      if (mode === 'play') {
-        s.queue = tracks;
-        s.playHistory = [];
-        playTrackAtIndex(0);
-      } else if (!s.queue.length || s.currentIndex < 0) {
-        s.queue = tracks;
-        s.playHistory = [];
-        playTrackAtIndex(0);
-        showToast(`开始播放：${payload.album?.title || '专辑'}`);
-      } else {
-        if (mode === 'next') s.queue.splice(s.currentIndex + 1, 0, ...tracks);
-        else s.queue.push(...tracks);
-        saveState();
-        emitPlayerState();
-        showToast(mode === 'next' ? '已加入下一首播放' : '已添加到队列末尾');
-      }
-    } catch (error) { showToast('专辑加载失败，请重试'); }
-    finally { loadingAlbums.delete(albumId); }
+      const label = albumLabel(payload.album?.title);
+      if (mode === 'play') replaceQueue(tracks, 0, label);
+      else queueTracks(tracks, mode === 'next' ? 'next' : 'append', label);
+    } catch (error) { showToast('专辑加载失败，请检查网络后重试'); }
+    finally {
+      loadingAlbums.delete(albumId);
+      if (card) { card.removeAttribute('aria-busy'); card.classList.remove('is-loading'); }
+    }
   }
 

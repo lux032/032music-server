@@ -1069,7 +1069,7 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .works-index-bar a { min-width: 25px; height: 28px; padding: 0 4px; text-align: center; }
 .works-index-bar .kana-links { gap: 2px; }
 .works-index-bar a:first-child { padding: 0 10px; }
-.album-browser { grid-template-columns: repeat(var(--album-cols, 4), minmax(0, 1fr)); gap: 22px 24px; }
+.album-browser { grid-template-columns: repeat(var(--album-cols-eff, var(--album-cols, 4)), minmax(0, 1fr)); gap: 22px 24px; }
 .grid-size-control { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; color: var(--text-secondary); font-size: var(--fs-sm); white-space: nowrap; }
 .filter-clear ~ .grid-size-control { margin-left: 4px; }
 .grid-size-control input[type="range"] { width: 110px; min-height: 0; margin: 0; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
@@ -1103,7 +1103,7 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   .feature-track-list > article { grid-template-columns: 52px minmax(190px, 1fr) 65px 40px 40px; min-width: 620px; }
   .artist-browser, .feature-track-list { overflow-x: auto; }
 }
-@media (max-width: 1200px) { .album-browser { grid-template-columns: repeat(var(--album-cols, 3), minmax(0, 1fr)); } }
+@media (max-width: 1200px) { .album-browser { grid-template-columns: repeat(var(--album-cols-eff, var(--album-cols, 3)), minmax(0, 1fr)); } }
 @media (max-width: 900px) { .album-browser { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 12px; } .browser-header { align-items: flex-start; flex-direction: column; } .instant-search { width: 100%; margin: 0; } .browser-filters { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px; } .filter-control { flex: none; } .filter-popover { position: fixed; top: min(220px, 28vh); left: 16px; right: 16px; width: auto; max-height: min(300px, 50vh); } .filter-clear { flex: none; } .grid-size-control { display: none; } }
 @media (prefers-reduced-motion: reduce) { .library-album-card .cover-wrap, .library-album-card .play-disc { transition: none; } }
 
@@ -1945,7 +1945,7 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 }
 
 .detail-tracks.has-tieup-col article {
-  grid-template-columns: 44px minmax(0, 1fr) auto 58px 52px 40px;
+  grid-template-columns: 44px minmax(0, 1fr) auto 58px 52px 74px;
 }
 .track-title-line {
   display: flex;
@@ -2647,7 +2647,7 @@ details.works-series-row[open] .series-toggle-btn .icon { transform: rotate(180d
 
 /* L5：≤900px 时恢复媒体查询里的移动布局（has-tieup-col / collected-in-row 不破坏原布局） */
 @media (max-width: 900px) {
-  .detail-tracks.has-tieup-col article { grid-template-columns: 42px minmax(0, 1fr) auto 52px 40px; }
+  .detail-tracks.has-tieup-col article { grid-template-columns: 42px minmax(0, 1fr) auto 52px 74px; }
   .collected-in-row { grid-template-columns: 36px 42px minmax(0, 1fr) 46px 36px !important; }
   .collected-album-thumb { width: 42px; height: 42px; }
 }
@@ -3089,4 +3089,56 @@ body[data-nav="tracks"] .focus-bar.library-focus { display:flex; flex-wrap:wrap;
 .playlist-add-track > .icon, .q-playlist > .icon, .playlist-drag > .icon,
 [data-picker-close] > .icon, [data-playlist-move] > .icon, [data-playlist-remove] > .icon {
  display:block; width:18px; height:18px; margin:0;
+}
+
+/* ------------------------------------------------------- audit 2026-10-05 */
+/* Layout responds to the space the content actually has. The now-playing
+   panel and sidebar take their share of a 1280px window, so viewport
+   breakpoints alone left the album detail in its wide two-column form at a
+   ~620px content width. #app-main is the query container. */
+#app-main { container: app-main / inline-size; }
+
+@container app-main (max-width: 900px) {
+  .album-columns { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .album-inspector { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 28px; }
+  .album-heading h1 { font-size: clamp(1.9rem, 5.6cqi, 3rem); }
+}
+@container app-main (max-width: 760px) {
+  .album-hero { grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 22px 0 32px; }
+  .hero-cover { max-width: 200px; }
+}
+
+/* Queue actions on the album page: the hero menu queues the whole album,
+   each row menu queues one track; neither replaces the queue. */
+.queue-menu { position: relative; min-width: 0; }
+.queue-menu > summary { list-style: none; cursor: pointer; }
+.queue-menu > summary::-webkit-details-marker { display: none; }
+.queue-menu > summary .icon { transition: transform var(--dur-fast) var(--ease); }
+.album-queue-menu > summary .icon { width: 14px; height: 14px; }
+.album-queue-menu[open] > summary .icon { transform: rotate(180deg); }
+.album-queue-menu .album-menu-items { top: calc(100% + 6px); left: 0; right: auto; }
+.track-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.track-row-actions .inline-favorite { margin: 0; }
+.track-queue-menu > summary.icon-action { border-color: transparent; background: transparent; box-shadow: none; }
+.track-queue-menu > summary.icon-action:hover,
+.track-queue-menu[open] > summary.icon-action { border-color: var(--accent-line); background: var(--surface); }
+.track-queue-menu .album-menu-items { top: calc(100% + 4px); }
+.track-gap-note { color: var(--warning); }
+
+/* Album cards: year · kind · track count, so same-titled singles and
+   albums stay distinguishable without opening them. */
+.album-card-meta span + span::before { content: "·"; margin: 0 0.35em; }
+.library-album-card.is-loading .play-disc { opacity: 1; cursor: progress; }
+.library-album-card[aria-busy="true"] { cursor: progress; }
+
+/* Year facet counts. */
+.grid-cap-note { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.grid-cap-note:empty { display: none; }
+.filter-popover [role="option"][data-count] { display: flex; justify-content: space-between; gap: 16px; }
+.filter-popover [role="option"][data-count]::after { content: attr(data-count); color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+
+/* Desktop index bar wraps instead of hiding R-Z, # and kana behind a
+   scroll with no affordance; narrow windows keep the scroller. */
+@media (min-width: 901px) {
+  .index-bar { flex-wrap: wrap; overflow: visible; white-space: normal; gap: 2px 2px; }
 }

@@ -17,16 +17,19 @@
   /* Text */
   --text: #1a1d24;
   --text-secondary: #5c6470;
-  --muted: #939aa6;
+  --muted: #6b7380;
   --text-on-accent: #ffffff;
 
   /* Accent (blue) */
-  --accent: #2f6bff;
-  --accent-hover: #2458dd;
-  --accent-active: #1c47b8;
-  --accent-soft: rgba(47, 107, 255, 0.09);
-  --accent-soft-strong: rgba(47, 107, 255, 0.16);
-  --accent-line: rgba(47, 107, 255, 0.35);
+  --accent: #2a63f0;
+  --accent-hover: #2156d8;
+  --accent-active: #1a45b4;
+  --accent-soft: rgba(42, 99, 240, 0.09);
+  --accent-soft-strong: rgba(42, 99, 240, 0.16);
+  --accent-line: rgba(42, 99, 240, 0.35);
+  /* Accent used as text on accent-soft surfaces (active nav, selected
+     filters): 4.95:1 on soft-over-bg-soft. */
+  --accent-strong-text: #2156d8;
 
   /* Semantic */
   --danger: #d6455d;

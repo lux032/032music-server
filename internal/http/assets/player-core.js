@@ -1,7 +1,7 @@
 // 032 Music Server - player-core.js
 import { s } from './state.js';
-import { showToast, formatTime, artworkForSize, apiFetch, swapIcon } from './util.js';
-import { updatePlayButtonUI, updateTrackRowsUI, updatePlayerMetaUI, updateVolumeUI } from './player-bar.js';
+import { showToast, showActionToast, formatTime, artworkForSize, apiFetch, swapIcon } from './util.js';
+import { updatePlayButtonUI, updateTrackRowsUI, updatePlayerMetaUI, updateVolumeUI, setPlayerStatus } from './player-bar.js';
 import { syncPanelProgress, emitPlayerState } from './now-playing.js';
 import { loadLyrics, updateActiveLyric } from './lyrics.js';
 import { createPlaybackReporter } from './playback-reporter.js';
@@ -100,19 +100,27 @@ import { createPlaybackReporter } from './playback-reporter.js';
 
     // The reporter only trusts 'playing' (audible), never 'play'.
     s.audio.addEventListener('playing', () => {
+      setPlayerStatus('');
       if (reporter) { ensureReporterSession(); reporter.notifyPlaying(); }
     });
 
-    s.audio.addEventListener('waiting', () => { if (reporter) reporter.notifyBuffering(); });
+    s.audio.addEventListener('waiting', () => {
+      if (!s.audio.paused) setPlayerStatus('buffering');
+      if (reporter) reporter.notifyBuffering();
+    });
+    s.audio.addEventListener('emptied', () => setPlayerStatus(''));
     // 'stalled' is only a network hint: playback may continue from the
     // buffer with no following 'playing' event. Report buffering only when
     // there is not enough data to be audible (M1).
     s.audio.addEventListener('stalled', () => {
-      if (reporter && s.audio.readyState < 3) reporter.notifyBuffering();
+      if (s.audio.readyState >= 3) return;
+      if (!s.audio.paused) setPlayerStatus('buffering');
+      if (reporter) reporter.notifyBuffering();
     });
     s.audio.addEventListener('seeked', () => { if (reporter) reporter.notifySeek(); });
 
     s.audio.addEventListener('pause', () => {
+      if (!document.body.classList.contains('player-failed')) setPlayerStatus('');
       s.isPlaying = false;
       updatePlayButtonUI(false);
       updateTrackRowsUI();
@@ -154,11 +162,14 @@ import { createPlaybackReporter } from './playback-reporter.js';
 
     s.audio.addEventListener('error', () => {
       const track = s.queue[s.currentIndex];
-      const code = s.audio.error ? s.audio.error.code : 'UNKNOWN';
+      const code = s.audio.error ? s.audio.error.code : 0;
       const msg = s.audio.error ? s.audio.error.message : '';
       console.error('Audio playback error:', code, msg, s.audio.src);
-      if (track) {
-        showToast(`播放失败 (${code}): ${track.title || '未知曲目'}`);
+      // MEDIA_ERR_ABORTED is the user (or a newer track) cancelling the load.
+      if (code !== 1) {
+        setPlayerStatus('error');
+        s.failedTrackId = track ? String(track.id) : null;
+        if (track) showPlaybackFailure(track, code);
       }
       if (reporter) reporter.fail();
       s.isPlaying = false;
@@ -166,6 +177,27 @@ import { createPlaybackReporter } from './playback-reporter.js';
       updateTrackRowsUI();
       saveState();
     });
+  }
+
+  // showPlaybackFailure names the problem in plain words and offers the two
+  // recoveries that keep the queue intact: retry this track or skip it.
+  function showPlaybackFailure(track, code) {
+    const title = `“${track.title || '未知曲目'}”`;
+    const reason = code === 2 ? `网络中断，${title}没有加载完成`
+      : code === 3 ? `${title}解码失败，文件可能已损坏`
+      : `无法播放${title}：文件不可访问或格式不受支持`;
+    const index = s.currentIndex;
+    const actions = [{ label: '重试', run: () => retryTrack(index) }];
+    if (index >= 0 && index < s.queue.length - 1) actions.push({ label: '跳过', run: () => playTrackAtIndex(index + 1) });
+    showActionToast(reason, actions, 12000);
+  }
+
+  function retryTrack(index) {
+    if (index < 0 || index >= s.queue.length || !s.audio) return;
+    // Drop the failed source so playTrackAtIndex really reloads it.
+    s.audio.removeAttribute('src');
+    s.audio.load();
+    playTrackAtIndex(index, true);
   }
 
   // Queue edits preserve the current track by position, except removal of that track.
@@ -246,6 +278,8 @@ import { createPlaybackReporter } from './playback-reporter.js';
     s.currentIndex = index;
     const track = s.queue[s.currentIndex];
     if (!track) return;
+    s.failedTrackId = null;
+    setPlayerStatus('');
 
     // Explicit new play: the reporter ends the previous session (real
     // position, given reason) and starts a fresh session for this track.
@@ -281,6 +315,8 @@ import { createPlaybackReporter } from './playback-reporter.js';
     // overwrite the new track's state.
     const token = ++s.playToken;
     const playPromise = s.audio.play();
+    // Requested is not audible: until 'playing' fires, say we are buffering.
+    if (s.audio.readyState < 3) setPlayerStatus('buffering');
     if (playPromise !== undefined) {
       playPromise.then(() => {
         if (token !== s.playToken) return;
@@ -291,6 +327,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
       }).catch(err => {
         if (token !== s.playToken) return;
         console.warn('Audio play request failed:', err);
+        if (!document.body.classList.contains('player-failed')) setPlayerStatus('');
         if (reporter) reporter.notifyPaused();
         s.isPlaying = false;
         updatePlayButtonUI(false);
