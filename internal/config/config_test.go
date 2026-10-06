@@ -3,7 +3,32 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestWatchIntervalFromEnv(t *testing.T) {
+	cases := []struct {
+		value   string
+		want    time.Duration
+		warning bool
+	}{
+		{"", DefaultWatchInterval, false},
+		{"0", 0, false},
+		{"off", 0, false},
+		{"FALSE", 0, false},
+		{"30", 30 * time.Second, false},
+		{"5m", 5 * time.Minute, false},
+		{"1s", MinWatchInterval, true},
+		{"-5", DefaultWatchInterval, true},
+		{"soon", DefaultWatchInterval, true},
+	}
+	for _, c := range cases {
+		got, warning := watchIntervalFromEnv(c.value)
+		if got != c.want || (warning != "") != c.warning {
+			t.Fatalf("%q: got %s warning=%q, want %s warning=%v", c.value, got, warning, c.want, c.warning)
+		}
+	}
+}
 
 func TestConfigValidateResetCredentials(t *testing.T) {
 	base := Config{ListenAddress: ":1", DataDirectory: "d", DatabasePath: "d/db", MusicDirectory: "m", LibraryName: "M", AdminUsername: "admin", AdminPassword: "initial-password-123", APIToken: "env-api-token-at-least-24-characters", MediaToken: "env-media-token-at-least-24-characters", LogLevel: "info"}

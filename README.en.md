@@ -14,7 +14,7 @@ A self-hosted music library and streaming server built with Go. Local tags and m
 
 ## Features
 
-- **Local library:** incremental scanning on startup, manual incremental/full scans, progress and failure reporting, multi-disc albums, and detection of changed or missing files.
+- **Local library:** incremental scanning on startup, automatic incremental scans when the music directory changes, manual incremental/full scans, progress and failure reporting, multi-disc albums, and detection of changed or missing files.
 - **Audio and tags:** FLAC, MP3, M4A/MP4, AAC, Ogg/OGA, and Opus; duration, audio properties, artist credits, and local lyrics.
 - **Browse and edit:** albums, album artists, track artists, creators, tracks, works, and series; search, filters, kana indexes, favorites, and playlists. Manual metadata overrides survive rescanning without rewriting music files.
 - **Web player:** persistent player across in-app navigation, playback queue, shuffle/repeat, full-screen now-playing view, lyrics, playback progress, and history. The current administration UI is primarily Chinese; the English README does not change the UI language.
@@ -220,6 +220,7 @@ These are **server process variables**, unless marked “Compose only”. Native
 | `MUSIC_SERVER_THUMB_CACHE_MB` | `512` | Thumbnail cache capacity in MiB. |
 | `MUSIC_SERVER_BANGUMI_INTERVAL_MS` | `500` | Request interval, 200–10000 ms; invalid values fall back with a warning. |
 | `MUSIC_SERVER_WORK_POSTER_BACKFILL` | `true` | Cache missing work posters about 30 seconds after startup, after scans, and after enrichment. `0/false/off/no` disable it; unknown values keep it on with a warning. Manual backfill remains available. |
+| `MUSIC_SERVER_WATCH_INTERVAL` | `60s` | Library watcher poll interval (plain seconds or durations like `5m`, minimum `10s`). A change that stays stable across two polls triggers an incremental scan automatically. Polling (stat only, no file reads) works on Docker Desktop bind mounts and SMB/NFS shares where inotify events never arrive. `0/off` disables it; the startup scan still runs. This is only the default: the "自动入库" (auto import) section on Admin → Console can toggle it and change the interval at runtime without a restart. The admin-page value takes precedence over the environment variable and can be reset to it. |
 
 Positive integer cache/concurrency settings fall back to defaults for invalid or nonpositive values. Online metadata settings and service keys are configured in the web interface and stored in SQLite, not in `.env`.
 

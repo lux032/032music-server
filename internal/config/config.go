@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -48,6 +49,10 @@ type Config struct {
 	// and after each enrichment run. Tests/e2e disable it so nothing reaches
 	// the network.
 	WorkPosterBackfill bool
+	// WatchInterval is MUSIC_SERVER_WATCH_INTERVAL (default 60s): how often
+	// the library directory is polled for changes that trigger an automatic
+	// incremental scan. 0 disables the watcher (startup scan still runs).
+	WatchInterval time.Duration
 	// Warnings 是启动时应告警但不致命的配置问题（如无法识别的开关取值）。
 	Warnings []string
 }
@@ -133,6 +138,11 @@ func Load() (Config, error) {
 	}
 
 	cfg.WorkPosterBackfill = posterBackfill
+	watchInterval, watchWarning := watchIntervalFromEnv(os.Getenv("MUSIC_SERVER_WATCH_INTERVAL"))
+	cfg.WatchInterval = watchInterval
+	if watchWarning != "" {
+		cfg.Warnings = append(cfg.Warnings, watchWarning)
+	}
 	if posterBackfillWarning != "" {
 		cfg.Warnings = append(cfg.Warnings, posterBackfillWarning)
 	}
@@ -236,6 +246,40 @@ func posterBackfillFromEnv(value string) (enabled bool, warning string) {
 	default:
 		return true, fmt.Sprintf("unrecognized MUSIC_SERVER_WORK_POSTER_BACKFILL value %q; work poster backfill stays enabled", value)
 	}
+}
+
+// Watch interval bounds for MUSIC_SERVER_WATCH_INTERVAL.
+const (
+	DefaultWatchInterval = 60 * time.Second
+	MinWatchInterval     = 10 * time.Second
+)
+
+// watchIntervalFromEnv 解析 MUSIC_SERVER_WATCH_INTERVAL：空值取默认 60s；
+// 0/false/off/no 关闭监控；纯数字按秒解释，也接受 Go 时长写法（如 5m）。
+// 低于下限的值提升到下限，无法识别的值回退默认值；两者都返回 warning。
+func watchIntervalFromEnv(value string) (time.Duration, string) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "":
+		return DefaultWatchInterval, ""
+	case "0", "false", "off", "no":
+		return 0, ""
+	}
+	var interval time.Duration
+	if seconds, err := strconv.Atoi(normalized); err == nil {
+		interval = time.Duration(seconds) * time.Second
+	} else if parsed, err := time.ParseDuration(normalized); err == nil {
+		interval = parsed
+	} else {
+		return DefaultWatchInterval, fmt.Sprintf("unrecognized MUSIC_SERVER_WATCH_INTERVAL value %q; using %s", value, DefaultWatchInterval)
+	}
+	if interval <= 0 {
+		return DefaultWatchInterval, fmt.Sprintf("MUSIC_SERVER_WATCH_INTERVAL value %q is not positive; using %s (use 0 or off to disable)", value, DefaultWatchInterval)
+	}
+	if interval < MinWatchInterval {
+		return MinWatchInterval, fmt.Sprintf("MUSIC_SERVER_WATCH_INTERVAL value %q is below the minimum; using %s", value, MinWatchInterval)
+	}
+	return interval, ""
 }
 
 func parseBool(value string) bool {

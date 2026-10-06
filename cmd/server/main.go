@@ -98,9 +98,14 @@ func run() error {
 	if cfg.MediaTokenGenerated && app.CredentialSources().MediaToken == webhttp.CredentialSourceEnv {
 		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value or set a media token on the admin security page")
 	}
-	if _, err := scannerManager.Start(rootCtx, "incremental"); err != nil {
-		logger.Warn("automatic startup scan was not started", "error", err)
-	}
+	// The watcher always runs so the admin page can enable/disable it at
+	// runtime (interval 0 = paused). It records a baseline fingerprint first
+	// and then runs the startup scan, so files added while that scan runs are
+	// not missed. SetLibraryWatcher applies admin-page overrides of the
+	// MUSIC_SERVER_WATCH_INTERVAL default before the watcher starts.
+	watcher := scanner.NewWatcher(scannerManager, logger, cfg.WatchInterval)
+	app.SetLibraryWatcher(rootCtx, watcher)
+	watcher.Start(rootCtx, true)
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,

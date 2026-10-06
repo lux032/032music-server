@@ -52,6 +52,9 @@ type App struct {
 	// lastfm is the optional Last.fm scrobbler; nil disables submission
 	// (plays are still counted locally).
 	lastfm *lastfm.Service
+	// watcher is the optional library watcher (automatic incremental scans);
+	// nil hides its controls on the dashboard.
+	watcher *scanner.Watcher
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -122,6 +125,7 @@ type dashboardPageData struct {
 	MusicDirectory string
 	Statistics     storage.Statistics
 	Scan           storage.ScanJob
+	LibraryWatch   libraryWatchView
 	Notice         string
 }
 
@@ -343,6 +347,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/options/works", a.requireAdminJSON(http.HandlerFunc(a.handleAdminWorkOptions)))
 	mux.Handle("GET /admin/options/series", a.requireAdminJSON(http.HandlerFunc(a.handleAdminSeriesOptions)))
 	mux.Handle("POST /admin/scan", a.requireAdmin(http.HandlerFunc(a.handleStartScan)))
+	mux.Handle("POST /admin/settings/library-watch", a.requireAdmin(http.HandlerFunc(a.handleSaveLibraryWatch)))
+	mux.Handle("POST /admin/settings/library-watch/reset", a.requireAdmin(http.HandlerFunc(a.handleResetLibraryWatch)))
 	mux.Handle("GET /admin/credits/{id}", a.requireAdmin(http.HandlerFunc(a.handleCreditArtistPage)))
 	mux.Handle("GET /admin/credits", a.requireAdmin(http.HandlerFunc(a.handleCreditArtistsPage)))
 	mux.Handle("GET /admin/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistsPage)))
@@ -636,6 +642,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		MusicDirectory: a.config.MusicDirectory,
 		Statistics:     stats,
 		Scan:           latestScan(a.store, r),
+		LibraryWatch:   a.libraryWatchView(r.Context()),
 		Notice:         r.URL.Query().Get("notice"),
 	})
 }

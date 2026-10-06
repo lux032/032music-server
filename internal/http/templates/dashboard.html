@@ -67,10 +67,39 @@
             <button class="secondary-round">完整重扫</button>
           </form>
         </div>
+        {{with .LibraryWatch}}{{if .Available}}
+        <div class="library-watch" id="library-watch">
+          <div class="library-watch-head">
+            <strong>自动入库</strong>
+            <small id="library-watch-state">{{if .Enabled}}已开启 · 每 {{.Interval}}检查一次音乐目录，发现变化后自动增量扫描{{else}}已关闭 · 新增文件需手动扫描{{end}}</small>
+          </div>
+          <form class="library-watch-form" method="post" action="/admin/settings/library-watch">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <label class="switch"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 监控音乐目录</label>
+            <label class="library-watch-interval">检查间隔
+              <select name="interval_seconds">
+                {{range .Options}}<option value="{{.Seconds}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+              </select>
+            </label>
+            <button class="secondary-button">保存</button>
+          </form>
+          {{if .Overridden}}
+          <form class="library-watch-reset" method="post" action="/admin/settings/library-watch/reset">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <span>当前为管理页设置，环境变量默认值：{{.EnvSummary}}</span>
+            <button class="link-button">恢复默认</button>
+          </form>
+          {{end}}
+        </div>
+        {{end}}{{end}}
         {{if eq .Statistics.AudioFiles 0}}
         <div id="empty-library-hint" class="zero-state">
           <strong>音乐库尚无文件</strong>
+          {{if and .LibraryWatch.Available .LibraryWatch.Enabled}}
+          <span>已开启自动入库：把音乐放入 <code>{{.MusicDirectory}}</code> 后，通常在 1～2 个检查周期（每 {{.LibraryWatch.Interval}}）内自动导入；也可点击上方“增量扫描”立即导入。</span>
+          {{else}}
           <span>请点击上方“增量扫描”或“完整重扫”导入您的音乐。</span>
+          {{end}}
         </div>
         {{end}}
       </article>

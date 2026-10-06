@@ -3485,3 +3485,15 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
   filter: drop-shadow(0 0 0.75px color-mix(in oklab, var(--text) 45%, transparent))
           drop-shadow(0 8px 18px rgba(0, 0, 0, 0.5));
 }
+
+/* 控制台：自动入库（曲库目录监控）设置 */
+.library-watch { display: grid; gap: 12px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.library-watch-head { display: grid; gap: 4px; }
+.library-watch-head strong { font-size: var(--fs-sm); }
+.library-watch-head small { color: var(--muted); font-size: var(--fs-xs); line-height: 1.6; }
+.library-watch-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0; }
+.library-watch-interval { display: flex; align-items: center; gap: 8px; }
+.library-watch-interval select { min-width: 7.5rem; }
+.library-watch-reset { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; color: var(--muted); font-size: var(--fs-xs); }
+.library-watch-reset .link-button { min-height: 0; padding: 0; border: 0; color: var(--accent); background: none; font-size: inherit; font-weight: 600; cursor: pointer; }
+.library-watch-reset .link-button:hover { text-decoration: underline; background: none; }

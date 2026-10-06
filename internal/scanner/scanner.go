@@ -91,7 +91,7 @@ func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.running {
-		return 0, errors.New("a scan is already running")
+		return 0, ErrScanRunning
 	}
 	jobID, err := m.store.CreateScanJob(ctx, m.library.ID, scanType)
 	if err != nil {

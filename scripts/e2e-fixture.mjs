@@ -103,7 +103,9 @@ export async function setup(options = {}) {
       MUSIC_SERVER_LOG_LEVEL: 'error',
       MUSIC_SERVER_DEV_MODE: 'false',
       // 批次 8：e2e 实例关闭海报自动补全，保证任何测试都不会访问外网。
-      MUSIC_SERVER_WORK_POSTER_BACKFILL: 'false'
+      MUSIC_SERVER_WORK_POSTER_BACKFILL: 'false',
+      // 关闭目录监控，避免测试修改曲库时被自动扫描打乱时序。
+      MUSIC_SERVER_WATCH_INTERVAL: '0'
     }
   });
   fs.closeSync(logFd);
