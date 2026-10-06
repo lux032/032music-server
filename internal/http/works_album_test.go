@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -50,16 +53,27 @@ func TestAdminWorkRefreshDuringScanRedirects(t *testing.T) {
 	}
 	manager := scanner.New(context.Background(), app.store, slog.New(slog.NewTextHandler(io.Discard, nil)), lib, t.TempDir())
 	app.scanner = manager
-	job, e := manager.Start(context.Background(), "incremental")
-	if e != nil {
+	// Hold the scan in the running state until the refresh request has been
+	// handled; otherwise a one-file scan can finish first and the refresh
+	// legitimately succeeds, making the test flaky.
+	reading := make(chan struct{})
+	release := make(chan struct{})
+	var readingOnce sync.Once
+	manager.SetMetadataReader(func(string) (metadata.AudioMetadata, error) {
+		readingOnce.Do(func() { close(reading) })
+		<-release
+		return metadata.AudioMetadata{}, errors.New("not audio")
+	})
+	if _, e = manager.Start(context.Background(), "incremental"); e != nil {
 		t.Fatal(e)
 	}
-	_ = job
+	<-reading
 	req := httptest.NewRequest(http.MethodPost, "/admin/works/refresh", strings.NewReader(url.Values{"csrfToken": {token}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, req)
+	close(release)
 	manager.Wait()
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), url.QueryEscape("扫描进行中，请稍后")) {
 		t.Fatalf("scan-running status %d redirect %s", rec.Code, rec.Header().Get("Location"))

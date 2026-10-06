@@ -49,6 +49,15 @@ type Manager struct {
 
 func (m *Manager) SetOnComplete(callback func()) { m.mu.Lock(); m.onComplete = callback; m.mu.Unlock() }
 
+// SetMetadataReader overrides the per-file metadata reader. Intended for tests
+// in other packages that need to hold a scan in the running state
+// deterministically; must be called before Start.
+func (m *Manager) SetMetadataReader(reader func(string) (metadata.AudioMetadata, error)) {
+	m.mu.Lock()
+	m.readMetadata = reader
+	m.mu.Unlock()
+}
+
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, library storage.Library, dataDirectory string) *Manager {
 	return &Manager{baseCtx: baseCtx, store: store, logger: logger, library: library, artworkDirectory: filepath.Join(dataDirectory, "artwork")}
 }
