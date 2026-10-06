@@ -31,18 +31,19 @@ env:
 
 jobs:
   race:
-    name: Race detector tests (${{ matrix.package }})
+    name: Race detector tests (${{ matrix.package }} ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
-    # -race slows these SQLite-heavy suites 5-10x; together they exceeded go
-    # test's default 10m per-package timeout. Each package gets its own runner
-    # (no CPU contention) and an explicit, larger -timeout.
-    timeout-minutes: 45
+    # -race slows these SQLite-heavy suites 5-10x (unsharded: http ~23m,
+    # storage ~34m). Every test still runs: each package's tests are split
+    # round-robin across 6 shards, each on its own runner.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         package:
-          - ./internal/http/...
-          - ./internal/storage/...
+          - http
+          - storage
+        shard: [0, 1, 2, 3, 4, 5]
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -55,4 +56,14 @@ jobs:
       - name: Race tests (excludes performance-tagged tests)
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 -timeout=40m ${{ matrix.package }}
+          PKG: ./internal/${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: "6"
+        run: |
+          set -euo pipefail
+          # -race on -list so the instrumented build is cached for the run.
+          go test -race -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all-tests.txt
+          awk -v n="$SHARDS" -v i="$SHARD" '(NR - 1) % n == i' all-tests.txt > shard-tests.txt
+          echo "Running $(wc -l < shard-tests.txt) of $(wc -l < all-tests.txt) tests"
+          if [ ! -s shard-tests.txt ]; then exit 0; fi
+          go test -race -count=1 -timeout=25m -run "^($(paste -sd'|' shard-tests.txt))\$" "$PKG"
