@@ -31,9 +31,18 @@ env:
 
 jobs:
   race:
-    name: Race detector tests
+    name: Race detector tests (${{ matrix.package }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # -race slows these SQLite-heavy suites 5-10x; together they exceeded go
+    # test's default 10m per-package timeout. Each package gets its own runner
+    # (no CPU contention) and an explicit, larger -timeout.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - ./internal/http/...
+          - ./internal/storage/...
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -46,4 +55,4 @@ jobs:
       - name: Race tests (excludes performance-tagged tests)
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 ./internal/http/... ./internal/storage/...
+        run: go test -race -count=1 -timeout=40m ${{ matrix.package }}
