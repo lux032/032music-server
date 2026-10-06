@@ -22,6 +22,9 @@ var migrationFiles embed.FS
 
 type Store struct {
 	db retryDB
+	// skipMigrationTemplate is set on the store that builds the migration
+	// template itself, so it replays the real migrations.
+	skipMigrationTemplate bool
 }
 
 type Statistics struct {
@@ -37,23 +40,10 @@ type Statistics struct {
 }
 
 func Open(databasePath string) (*Store, error) {
-	absolutePath, err := filepath.Abs(databasePath)
+	dsn, err := sqliteDSN(databasePath)
 	if err != nil {
-		return nil, fmt.Errorf("resolve database path: %w", err)
+		return nil, err
 	}
-
-	query := url.Values{}
-	query.Add("_pragma", "busy_timeout(5000)")
-	query.Add("_pragma", "foreign_keys(1)")
-	query.Add("_pragma", "journal_mode(WAL)")
-	query.Add("_pragma", "synchronous(NORMAL)")
-	databaseURIPath := filepath.ToSlash(absolutePath)
-	if runtime.GOOS == "windows" {
-		// A Windows drive path must be represented as file:///D:/path.
-		// Without the leading slash, SQLite interprets "D:" as a URI authority.
-		databaseURIPath = "/" + databaseURIPath
-	}
-	dsn := (&url.URL{Scheme: "file", Path: databaseURIPath, RawQuery: query.Encode()}).String()
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -73,6 +63,28 @@ func Open(databasePath string) (*Store, error) {
 	return &Store{db: retryDB{db}}, nil
 }
 
+// sqliteDSN builds the modernc file: URI (with connection pragmas) for a
+// database path.
+func sqliteDSN(databasePath string) (string, error) {
+	absolutePath, err := filepath.Abs(databasePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve database path: %w", err)
+	}
+
+	query := url.Values{}
+	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "foreign_keys(1)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "synchronous(NORMAL)")
+	databaseURIPath := filepath.ToSlash(absolutePath)
+	if runtime.GOOS == "windows" {
+		// A Windows drive path must be represented as file:///D:/path.
+		// Without the leading slash, SQLite interprets "D:" as a URI authority.
+		databaseURIPath = "/" + databaseURIPath
+	}
+	return (&url.URL{Scheme: "file", Path: databaseURIPath, RawQuery: query.Encode()}).String(), nil
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }
@@ -82,6 +94,12 @@ func (s *Store) Ping(ctx context.Context) error {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
+	// Test binaries only (see EnableMigrationTemplate): a brand-new, empty
+	// database is initialised by copying a database migrated once per
+	// process. The loop below then finds every migration applied.
+	if err := s.restoreMigrationTemplate(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version INTEGER PRIMARY KEY,
