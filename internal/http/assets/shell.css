@@ -909,6 +909,9 @@ body.player-buffering .np-queue-list li.current .eq-bars i { animation-play-stat
 .sidebar { padding: 22px 12px 14px; }
 .wordmark { margin: 0 10px 24px; gap: 8px; }
 .wordmark small { font-size: 0.66rem; font-weight: 600; letter-spacing: 0.18em; }
+/* App icon: the artwork already carries its own rounded tile, so no extra
+   radius or frame; it sits centered against the 032 / MUSIC baseline pair. */
+.wordmark-icon { align-self: center; flex: none; width: 28px; height: 28px; margin-right: 2px; }
 .sidebar nav a, .sidebar-group-toggle { min-height: 38px; padding: 8px 12px; border-radius: 8px; font-weight: 500; }
 .sidebar nav a .icon, .sidebar-group-toggle .icon { color: var(--text-secondary); }
 .sidebar nav a:hover, .sidebar-group-toggle:hover { background: var(--fill); }
@@ -961,4 +964,11 @@ body.player-buffering .np-queue-list li.current .eq-bars i { animation-play-stat
   .sidebar { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
   .sidebar > nav { flex: none; overflow: visible; }
   .sidebar-group .group-items a { min-height: 34px; padding-top: 6px; padding-bottom: 6px; }
+}
+
+/* Dark theme: the icon's navy tile nearly matches the ground, so trace its
+   edge with a hairline. drop-shadow follows the squircle alpha exactly,
+   which a border-radius ring cannot. */
+:root[data-theme="dark"] .wordmark-icon {
+  filter: drop-shadow(0 0 0.75px color-mix(in oklab, var(--text) 45%, transparent));
 }

@@ -74,11 +74,13 @@ func newAssetRegistry(fsys fs.FS, dir string) (*assetRegistry, error) {
 		if strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "charset") {
 			contentType += "; charset=utf-8"
 		}
-		registry.files[name] = &assetFile{
-			contentType: contentType,
-			body:        data,
-			gzipBody:    compressed.Bytes(),
+		file := &assetFile{contentType: contentType, body: data}
+		// Already-compressed files (PNG, ICO, WOFF2) gain nothing from gzip;
+		// keep the gzip body only when it actually saves bytes.
+		if compressed.Len() < len(data)*9/10 {
+			file.gzipBody = compressed.Bytes()
 		}
+		registry.files[name] = file
 	}
 	registry.hash = hex.EncodeToString(digest.Sum(nil))[:12]
 	for _, file := range registry.files {
@@ -159,7 +161,7 @@ func (r *assetRegistry) serve(w http.ResponseWriter, req *http.Request, file *as
 		return
 	}
 	body := file.body
-	if acceptsGzip(req.Header.Get("Accept-Encoding")) {
+	if file.gzipBody != nil && acceptsGzip(req.Header.Get("Accept-Encoding")) {
 		header.Set("Content-Encoding", "gzip")
 		body = file.gzipBody
 	}

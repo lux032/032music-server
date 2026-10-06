@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/icon.png" alt="032 Music Server" width="128" height="128"></p>
+
 # 032 Music Server
 
 **简体中文** | [English](README.en.md)

@@ -194,6 +194,10 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"assetAdminJS":      func() string { return assets.assetURL("admin.js") },
 		"assetBrowseJS":     func() string { return assets.assetURL("browse.js") },
 		"assetThemeJS":      func() string { return assets.assetURL("theme.js") },
+		"assetFaviconICO":   func() string { return assets.assetURL("favicon.ico") },
+		"assetIcon192":      func() string { return assets.assetURL("icon-192.png") },
+		"assetAppleIcon":    func() string { return assets.assetURL("apple-touch-icon.png") },
+		"assetBrandIcon":    func() string { return assets.assetURL("icon-96.png") },
 		"appBuild":          func() string { return assets.hash },
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
@@ -462,6 +466,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/playlists/{id}/tracks/{track}/move", a.requireAdmin(http.HandlerFunc(a.handleAdminMovePlaylistTrack)))
 	mux.Handle("GET /admin/playback", a.requireAdmin(http.HandlerFunc(a.handleAdminPlayback)))
 	mux.Handle("POST /admin/playback/clear", a.requireAdmin(http.HandlerFunc(a.handleAdminClearPlayback)))
+	// Browsers probe /favicon.ico on their own (e.g. for media or JSON opened
+	// directly), so the root path serves the same embedded icon.
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		a.assets.serveNamed(w, r, "favicon.ico", "public, max-age=86400")
+	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	})

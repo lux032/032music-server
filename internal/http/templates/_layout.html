@@ -5,6 +5,9 @@
 <meta name="csrf-token" content="{{.CSRFToken}}">
 <meta name="app-build" content="{{appBuild}}">
 <meta name="icon-sprite" content="{{assetIconsSVG}}">
+<link rel="icon" href="{{assetFaviconICO}}" sizes="16x16 32x32 48x48">
+<link rel="icon" type="image/png" href="{{assetIcon192}}" sizes="192x192">
+<link rel="apple-touch-icon" href="{{assetAppleIcon}}">
 <script src="{{assetThemeJS}}"></script>
 <link rel="stylesheet" href="{{assetTokensCSS}}">
 <link rel="stylesheet" href="{{assetBaseCSS}}">
@@ -19,7 +22,7 @@
 {{define "sidebar"}}
 <a class="skip-link" href="#app-main">跳到主内容</a>
 <aside class="sidebar" id="app-sidebar">
-  <a class="wordmark" href="/admin"><span>032</span><small>MUSIC</small></a>
+  <a class="wordmark" href="/admin"><img class="wordmark-icon" src="{{assetBrandIcon}}" alt="" width="28" height="28"><span>032</span><small>MUSIC</small></a>
   <nav aria-label="音乐库">
     <a href="/admin/albums" data-nav="albums" data-mp="1" class="{{if eq .Nav "albums"}}active{{end}}"{{if eq .Nav "albums"}} aria-current="page"{{end}} title="专辑" aria-label="专辑"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg> 专辑</a>
     <a href="/admin/artists/album" data-nav="artists" data-mp="1" class="{{if eq .Nav "artists"}}active{{end}}"{{if eq .Nav "artists"}} aria-current="page"{{end}} title="歌手" aria-label="歌手"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 歌手</a>

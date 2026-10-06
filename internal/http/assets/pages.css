@@ -949,16 +949,11 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   box-shadow: var(--shadow-pop);
 }
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 3.2rem;
-  height: 3.2rem;
+  display: block;
+  width: 3.5rem;
+  height: 3.5rem;
   margin-bottom: 1.4rem;
-  border-radius: var(--radius-lg);
-  color: var(--text-on-accent);
-  background: var(--accent);
-  font-size: 1.1rem;
-  font-weight: 900;
+  filter: drop-shadow(0 6px 14px rgba(18, 25, 38, 0.18));
 }
 .eyebrow { margin-bottom: 0.5rem; color: var(--accent); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.16em; }
 .login-form { display: grid; gap: 1rem; margin-top: 1.4rem; }
@@ -3442,3 +3437,8 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .playlist-picker form[data-picker-create] { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
 .playlist-picker form[data-picker-create] h3 { margin: 0; font-size: 0.95rem; font-weight: 700; }
 .playlist-picker form[data-picker-create] button { justify-self: start; }
+
+:root[data-theme="dark"] .brand-mark {
+  filter: drop-shadow(0 0 0.75px color-mix(in oklab, var(--text) 45%, transparent))
+          drop-shadow(0 8px 18px rgba(0, 0, 0, 0.5));
+}
