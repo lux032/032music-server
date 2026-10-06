@@ -928,14 +928,19 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .tieup-role { color: var(--accent) !important; font-weight: 700; text-transform: uppercase; }
 
 /* ------------------------------------------------------------------ login */
+/* The card is pinned to a single 1fr row so nodes that browser extensions
+   inject into <body> fall into an extra auto row instead of splitting the
+   viewport height and pushing the card upward after load. */
 .login-page {
   display: grid;
+  grid-template: 1fr / 1fr;
   place-items: center;
   min-height: 100vh;
   padding: 1.25rem;
   background: var(--bg-soft);
 }
 .login-card {
+  grid-area: 1 / 1;
   width: min(100%, 420px);
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
