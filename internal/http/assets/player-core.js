@@ -450,6 +450,11 @@ import { createPlaybackReporter } from './playback-reporter.js';
       }
     } else {
       // Default sequential mode: the queue has been played to the end.
+      // Rewind to the start so the bar, time and lyrics show a ready-to-play
+      // state instead of freezing at 100%. The completed session is already
+      // ended above, so the resulting 'seeked' is not reported.
+      s.audio.currentTime = 0;
+      onTimeUpdate();
       s.isPlaying = false;
       updatePlayButtonUI(false);
       updateTrackRowsUI();
