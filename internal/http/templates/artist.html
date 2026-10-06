@@ -28,6 +28,7 @@
           {{if .Artist.PerformedTrackCount}}<span>演唱 {{.Artist.PerformedTrackCount}} 首</span>{{end}}{{if .Artist.CreditTrackCount}}<span><a class="credit-fact-link" href="/admin/credits/{{.Artist.ID}}">幕后 {{.Artist.CreditTrackCount}} 首</a></span>{{end}}
         </div>
         <div class="artist-hero-actions">
+          {{template "artist-favorite" (artistFavorite .Artist.ID .Artist.Name .Artist.IsFavorite .CSRFToken .ReturnTo "hero")}}
           <form method="post" action="/admin/artists/{{.Artist.ID}}/match">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
             <button>重新匹配资料</button>

@@ -432,6 +432,42 @@ test('album cover heart toggles favorite in place and syncs the card menu', asyn
   await expect(page.locator(`.library-album-card[data-album-id="${id}"] .album-fav`)).toHaveAttribute('aria-pressed', start);
 });
 
+test('artist heart toggles in place on list, detail and favorites pages', async ({ page }) => {
+  await page.goto('/admin/artists/album');
+  const row = page.locator('.artist-row').first();
+  const heart = row.locator('.artist-fav-icon');
+  const action = await row.locator('.artist-fav-form').getAttribute('action');
+  const id = action.split('/').pop();
+  const start = await heart.getAttribute('aria-pressed');
+  if (start === 'true') {
+    await heart.click();
+    await expect(heart).toHaveAttribute('aria-pressed', 'false');
+  }
+  const response = page.waitForResponse(res => res.url().endsWith(`/api/v1/artists/${id}/favorite`) && res.request().method() === 'PUT');
+  await heart.click();
+  expect((await response).ok()).toBe(true);
+  await expect(heart).toHaveAttribute('aria-pressed', 'true');
+  await expect(page).toHaveURL(/\/admin\/artists\/album$/);
+
+  await page.goto(`/admin/artists/${id}`);
+  const hero = page.locator('.artist-hero .artist-fav-button');
+  await expect(hero).toHaveAttribute('aria-pressed', 'true');
+  await expect(hero).toContainText('已收藏');
+
+  await page.goto('/admin/favorites');
+  const card = page.locator(`#favorite-singers .favorite-artist[data-artist-id="${id}"]`);
+  await expect(card).toBeVisible();
+  await card.locator('.artist-fav-icon').click();
+  await expect(card.locator('.artist-fav-icon')).toHaveAttribute('aria-pressed', 'false');
+  await page.reload();
+  await expect(page.locator(`.favorite-artist[data-artist-id="${id}"]`)).toHaveCount(0);
+  if (start === 'true') {
+    await page.goto(`/admin/artists/${id}`);
+    await page.locator('.artist-hero .artist-fav-button').click();
+    await expect(page.locator('.artist-hero .artist-fav-button')).toHaveAttribute('aria-pressed', 'true');
+  }
+});
+
 test('album card play icon is centred and artist name opens the artist page', async ({ page }) => {
   await page.goto('/admin/albums');
   const card = page.locator('.library-album-card').first();

@@ -52,6 +52,37 @@ func (s *Store) FavoriteArtists(ctx context.Context, limit, offset int) ([]Artis
 	return items, total, err
 }
 
+// FavoriteArtist is one favorited artist on the web favorites page, with the
+// counts that decide whether it shows as a singer, a credited person, or both.
+type FavoriteArtist struct {
+	Artist
+	PerformedTrackCount, CreditTrackCount int64
+}
+
+// FavoriteArtistCards lists favorited artists, newest favorite first. Counts
+// follow ArtistDetail: performed = primary credits plus album-artist tracks;
+// credits = composer/lyricist/arranger/producer across the merge chain.
+func (s *Store) FavoriteArtistCards(ctx context.Context, limit int) ([]FavoriteArtist, int64, error) {
+	f := Filters{Favorite: true, Limit: limit, favoriteOrder: true, PerformerOnly: true}
+	total, err := s.CountArtists(ctx, Filters{Favorite: true})
+	if err != nil {
+		return nil, 0, err
+	}
+	artists, err := s.ListArtists(ctx, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]FavoriteArtist, 0, len(artists))
+	for _, artist := range artists {
+		item := FavoriteArtist{Artist: artist, PerformedTrackCount: artist.TrackCount}
+		if err := s.db.QueryRowContext(ctx, `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE role IN ('composer','lyricist','arranger','producer') AND artist_id IN (SELECT id FROM m)`, artist.ID).Scan(&item.CreditTrackCount); err != nil {
+			return nil, 0, err
+		}
+		result = append(result, item)
+	}
+	return result, total, nil
+}
+
 // ArtistAlbums returns albums where this artist has the album-artist role.
 func (s *Store) ArtistAlbums(ctx context.Context, id int64) ([]Album, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?) ORDER BY `+albumOrder(Filters{Sort: "date"}), id)

@@ -75,7 +75,7 @@ func TestAdminAlbumsCardHasFavoriteHeart(t *testing.T) {
 	id := importSoloAlbum(t, app, "HeartSinger", "HeartAlbum", "")
 	rec := followLocation(t, app, cookie, "/admin/albums")
 	body := rec.Body.String()
-	form := `<form class="album-fav-form" method="post" action="/admin/favorites/albums/` + strconv.FormatInt(id, 10) + `">`
+	form := `<form class="album-fav-form" method="post" action="/admin/favorites/albums/` + strconv.FormatInt(id, 10) + `" data-favorite-toggle`
 	if rec.Code != http.StatusOK || !strings.Contains(body, form) || !strings.Contains(body, `class="album-fav" aria-pressed="false"`) || !strings.Contains(body, `#icon-heart"`) {
 		t.Fatalf("status = %d, album browser missing outline heart", rec.Code)
 	}

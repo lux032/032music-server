@@ -111,6 +111,7 @@
           <a href="{{if eq $.ArtistRole "credits"}}/admin/credits/{{.ID}}{{if $.CreditRole}}?role={{$.CreditRole}}{{end}}{{else}}/admin/artists/{{.ID}}{{end}}"><h2>{{.Name}}</h2></a>
           <p>{{if eq $.ArtistRole "credits"}}幕后 {{.TrackCount}} 首{{else}}{{.AlbumCount}} 张专辑 · 演唱 {{.TrackCount}} 首{{end}}</p>
         </div>
+        {{template "artist-favorite" (artistFavorite .ID .Name .IsFavorite $.CSRFToken $.ReturnTo "icon")}}
         <a href="/admin/artists/{{.ID}}?view=profile">资料与匹配</a>
         <details class="edit-drawer row-drawer">
           <summary class="drawer-trigger">编辑</summary>

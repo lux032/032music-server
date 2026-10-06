@@ -134,6 +134,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	templates, err := template.New("admin").Funcs(template.FuncMap{
 		"albumCard":              albumCardContext,
 		"albumSelectionBar":      albumSelectionBarContext,
+		"artistFavorite":         artistFavoriteContext,
 		"albumKindLabel":         albumKindLabel,
 		"formatDurationMillis":   formatDurationMillis,
 		"firstGenre":             firstGenre,
@@ -456,6 +457,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/favorites", a.requireAdmin(http.HandlerFunc(a.handleAdminFavorites)))
 	mux.Handle("POST /admin/favorites/albums/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminAlbumFavorite)))
 	mux.Handle("POST /admin/favorites/tracks/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminTrackFavorite)))
+	mux.Handle("POST /admin/favorites/artists/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminArtistFavorite)))
 	mux.Handle("GET /admin/playlists", a.requireAdmin(http.HandlerFunc(a.handleAdminPlaylists)))
 	mux.Handle("POST /admin/playlists", a.requireAdmin(http.HandlerFunc(a.handleAdminCreatePlaylist)))
 	mux.Handle("GET /admin/playlists/{id}", a.requireAdmin(http.HandlerFunc(a.handleAdminPlaylist)))

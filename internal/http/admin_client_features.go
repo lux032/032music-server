@@ -23,6 +23,10 @@ type favoritesPageData struct {
 	Tracks                 []storage.Track
 	AlbumTotal, TrackTotal int64
 	AlbumCols              int
+	// Singers and Credits split the favorited artists by role; an artist with
+	// both roles appears in both lists, each linking to its own page.
+	Singers, Credits []storage.FavoriteArtist
+	ArtistTotal      int64
 }
 
 type playlistsPageData struct {
@@ -62,10 +66,39 @@ func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
 		a.renderAdminFeatureError(w, "favorites", err)
 		return
 	}
-	a.render(w, http.StatusOK, "favorites.html", favoritesPageData{
+	artists, artistTotal, err := a.store.FavoriteArtistCards(r.Context(), 500)
+	if err != nil {
+		a.renderAdminFeatureError(w, "favorites", err)
+		return
+	}
+	data := favoritesPageData{
 		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"), ReturnTo: "/admin/favorites",
 		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal, AlbumCols: albumGridCols(r),
-	})
+		ArtistTotal: artistTotal,
+	}
+	for _, artist := range artists {
+		if artist.AlbumCount > 0 || artist.PerformedTrackCount > 0 {
+			data.Singers = append(data.Singers, artist)
+		}
+		if artist.CreditTrackCount > 0 {
+			data.Credits = append(data.Credits, artist)
+		}
+	}
+	a.render(w, http.StatusOK, "favorites.html", data)
+}
+
+func (a *App) handleAdminArtistFavorite(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	favorite := r.FormValue("favorite") == "1"
+	back := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites")
+	if err := a.store.SetArtistFavorite(r.Context(), parseInt64(r.PathValue("id")), favorite); err != nil {
+		a.redirectFeatureError(w, r, back, err)
+		return
+	}
+	redirectWithNotice(w, r, back, favoriteNotice(favorite, "艺术家"))
 }
 
 func (a *App) handleAdminAlbumFavorite(w http.ResponseWriter, r *http.Request) {

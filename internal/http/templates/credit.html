@@ -15,7 +15,7 @@
 <section class="artist-hero">
 {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait" role="img" aria-label="{{.Artist.Name}}">{{initial .Artist.Name}}</div>{{end}}
 <div><p class="kicker">幕后人员</p><h1>{{.Artist.Name}}</h1><div class="album-facts">{{range .Roles}}<span>{{creditLabel .Role}} {{.Count}}</span>{{end}}{{if gt (len .Roles) 1}}<span>全部 {{.Artist.CreditTrackCount}} 首</span>{{end}}{{if .SelfCount}}<span>自唱 {{.SelfCount}} 首</span>{{end}}</div>
-<div class="artist-hero-actions">{{if or .Artist.AlbumCount .Artist.PerformedTrackCount}}<a class="secondary-button" href="/admin/artists/{{.Artist.ID}}">歌手页 →</a>{{end}}<a class="section-link" href="/admin/artists/{{.Artist.ID}}?view=profile">资料与身份管理</a></div></div>
+<div class="artist-hero-actions">{{template "artist-favorite" (artistFavorite .Artist.ID .Artist.Name .Artist.IsFavorite .CSRFToken .ReturnTo "hero")}}{{if or .Artist.AlbumCount .Artist.PerformedTrackCount}}<a class="secondary-button" href="/admin/artists/{{.Artist.ID}}">歌手页 →</a>{{end}}<a class="section-link" href="/admin/artists/{{.Artist.ID}}?view=profile">资料与身份管理</a></div></div>
 </section>
 <section id="credits" class="artist-tracks-section">
 <div class="section-title"><h2>幕后作品</h2><a class="section-link" href="/admin/tracks?credit={{.FocusRole}}:{{.Artist.ID}}">在歌曲列表中筛选</a></div>

@@ -43,7 +43,7 @@ func (s *Store) ListCreditArtists(ctx context.Context, f CreditArtistFilters) ([
 	}
 	limit, offset := page(Filters{Limit: f.Limit, Offset: f.Offset})
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, creditArtistChain+`SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,credits.track_count FROM credits JOIN artists ar ON ar.id=credits.root WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, creditArtistChain+`SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,credits.track_count,ar.is_favorite FROM credits JOIN artists ar ON ar.id=credits.root WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -51,9 +51,11 @@ func (s *Store) ListCreditArtists(ctx context.Context, f CreditArtistFilters) ([
 	list := []Artist{}
 	for rows.Next() {
 		var a Artist
-		if err = rows.Scan(&a.ID, &a.Name, &a.ImageURL, &a.TrackCount); err != nil {
+		var favorite int
+		if err = rows.Scan(&a.ID, &a.Name, &a.ImageURL, &a.TrackCount, &favorite); err != nil {
 			return nil, err
 		}
+		a.IsFavorite = favorite != 0
 		list = append(list, a)
 	}
 	return list, rows.Err()

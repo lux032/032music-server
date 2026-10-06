@@ -27,6 +27,22 @@ func albumSelectionBarContext(csrfToken, returnTo string) albumSelectionBarView 
 	return albumSelectionBarView{CSRFToken: csrfToken, ReturnTo: returnTo}
 }
 
+// artistFavoriteView is the context for the shared "artist-favorite" heart
+// form. Variant picks the look: "hero" for detail-page headers, "icon" for
+// list rows and favorite cards.
+type artistFavoriteView struct {
+	ID         int64
+	Name       string
+	IsFavorite bool
+	CSRFToken  string
+	ReturnTo   string
+	Variant    string
+}
+
+func artistFavoriteContext(id int64, name string, favorite bool, csrfToken, returnTo, variant string) artistFavoriteView {
+	return artistFavoriteView{ID: id, Name: name, IsFavorite: favorite, CSRFToken: csrfToken, ReturnTo: returnTo, Variant: variant}
+}
+
 // albumKindLabel names the effective release kind on an album card when it
 // is anything other than a regular album, so same-titled singles, EPs and
 // compilations stay distinguishable in the grid. Regular albums return "".
