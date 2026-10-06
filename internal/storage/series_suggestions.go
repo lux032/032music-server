@@ -109,8 +109,14 @@ func (s *Store) ReplaceSeriesSuggestions(ctx context.Context, runID int64, sugge
 			return marshalErr
 		}
 		// Both endpoints were processed: work_a < work_b, so both appear in
-		// the same processed set.
-		rows, err := tx.QueryContext(ctx, `SELECT id,work_a,work_b FROM work_series_suggestions WHERE work_a IN (SELECT value FROM json_each(?)) AND work_b IN (SELECT value FROM json_each(?))`, string(processedJSON), string(processedJSON))
+		// the same processed set. Only work_a is filtered in SQL; work_b is
+		// checked in Go. Filtering both sides through json_each made SQLite
+		// re-scan the JSON array per row (~25s for 20k ids).
+		processedSet := make(map[int64]struct{}, len(processedWorks))
+		for _, id := range processedWorks {
+			processedSet[id] = struct{}{}
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id,work_a,work_b FROM work_series_suggestions WHERE work_a IN (SELECT value FROM json_each(?))`, string(processedJSON))
 		if err != nil {
 			return err
 		}
@@ -120,6 +126,9 @@ func (s *Store) ReplaceSeriesSuggestions(ctx context.Context, runID int64, sugge
 			if err = rows.Scan(&id, &a, &b); err != nil {
 				rows.Close()
 				return err
+			}
+			if _, ok := processedSet[b]; !ok {
+				continue
 			}
 			if !current[[2]int64{a, b}] {
 				stale = append(stale, id)
