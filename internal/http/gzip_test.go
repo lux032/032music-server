@@ -234,10 +234,17 @@ func TestRenderBufferPoolDropsOversized(t *testing.T) {
 	if got := renderBufferPool.Get().(*bytes.Buffer); got == big {
 		t.Fatal("oversized buffer must not be returned to the pool")
 	}
-	small := &bytes.Buffer{}
-	putRenderBuffer(small)
-	if got := renderBufferPool.Get().(*bytes.Buffer); got != small {
-		t.Fatal("small buffer should be reused from the pool")
+	// sync.Pool gives no retention guarantee (under -race it deliberately
+	// drops a share of Puts), so assert the retention policy directly rather
+	// than expecting Get to hand back the exact buffer.
+	if poolableRenderBuffer(big) {
+		t.Fatal("oversized buffer must not be poolable")
+	}
+	if !poolableRenderBuffer(&bytes.Buffer{}) {
+		t.Fatal("small buffer should be poolable")
+	}
+	if !poolableRenderBuffer(bytes.NewBuffer(make([]byte, 0, maxPooledRenderBuffer))) {
+		t.Fatal("buffer at the cap should be poolable")
 	}
 }
 

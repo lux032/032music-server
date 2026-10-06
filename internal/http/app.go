@@ -862,10 +862,17 @@ func (a *App) render(w http.ResponseWriter, status int, name string, data any) {
 // putRenderBuffer returns a buffer to the pool unless it grew beyond 256KB;
 // retaining oversized buffers would pin memory after a one-off large page.
 func putRenderBuffer(buffer *bytes.Buffer) {
-	if buffer.Cap() > 256*1024 {
+	if !poolableRenderBuffer(buffer) {
 		return
 	}
 	renderBufferPool.Put(buffer)
+}
+
+// maxPooledRenderBuffer caps the capacity of buffers kept in renderBufferPool.
+const maxPooledRenderBuffer = 256 * 1024
+
+func poolableRenderBuffer(buffer *bytes.Buffer) bool {
+	return buffer.Cap() <= maxPooledRenderBuffer
 }
 
 func (a *App) logRequests(next http.Handler) http.Handler {
