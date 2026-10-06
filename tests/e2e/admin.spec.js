@@ -404,6 +404,34 @@ test('album multi-select posts albums in pick order and Escape clears', async ({
   await expect(page.locator('.library-album-card.is-selected')).toHaveCount(0);
 });
 
+test('album cover heart toggles favorite in place and syncs the card menu', async ({ page }) => {
+  await page.goto('/admin/albums');
+  const card = page.locator('.library-album-card').first();
+  const id = await card.getAttribute('data-album-id');
+  const heart = card.locator('.album-fav');
+  const menuButton = card.locator('.album-menu-items form button');
+  const start = await heart.getAttribute('aria-pressed');
+  const next = start === 'true' ? 'false' : 'true';
+  await page.evaluate(() => window.scrollTo(0, 120));
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await card.hover();
+  await expect(heart).toBeVisible();
+  const response = page.waitForResponse(res => res.url().endsWith(`/api/v1/albums/${id}/favorite`));
+  await heart.click();
+  expect((await response).ok()).toBe(true);
+  await expect(heart).toHaveAttribute('aria-pressed', next);
+  await expect(menuButton).toHaveText(next === 'true' ? '取消收藏' : '加入收藏');
+  await expect(page).toHaveURL(/\/admin\/albums$/);
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  // Restore via the menu item, which shares the same in-place toggle.
+  // (On short viewports the open menu sits under the bottom nav, so dispatch.)
+  await card.locator('.album-card-menu summary').click();
+  await menuButton.dispatchEvent('click');
+  await expect(heart).toHaveAttribute('aria-pressed', start);
+  await page.reload();
+  await expect(page.locator(`.library-album-card[data-album-id="${id}"] .album-fav`)).toHaveAttribute('aria-pressed', start);
+});
+
 test('album card play icon is centred and artist name opens the artist page', async ({ page }) => {
   await page.goto('/admin/albums');
   const card = page.locator('.library-album-card').first();

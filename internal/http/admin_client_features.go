@@ -18,7 +18,7 @@ const adminFeaturePageSize = 50
 
 type favoritesPageData struct {
 	Chrome
-	Notice                 string
+	Notice, ReturnTo       string
 	Albums                 []storage.Album
 	Tracks                 []storage.Track
 	AlbumTotal, TrackTotal int64
@@ -63,7 +63,7 @@ func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, http.StatusOK, "favorites.html", favoritesPageData{
-		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"),
+		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"), ReturnTo: "/admin/favorites",
 		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal, AlbumCols: albumGridCols(r),
 	})
 }

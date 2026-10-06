@@ -1,6 +1,6 @@
 // 032 Music Server - queue.js
 import { s } from './state.js';
-import { svgIcon, showToast, showUndoToast, artworkForSize } from './util.js';
+import { svgIcon, showToast, showUndoToast, artworkForSize, apiFetch, swapIcon } from './util.js';
 import { playTrackAtIndex, togglePlay, saveState } from './player-core.js';
 import { emitPlayerState } from './now-playing.js';
 import { updateTrackRowsUI } from './player-bar.js';
@@ -70,8 +70,59 @@ import { updateTrackRowsUI } from './player-bar.js';
       playRowTrack(row);
     });
 
+    // Album card favorite (cover heart + menu item) toggles in place through
+    // the API instead of a PJAX POST that would reload the grid and jump to
+    // the top. Capture phase so it runs before the router's submit handler;
+    // without JS the forms still post normally.
+    document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement) || !form.closest('.library-album-card')) return;
+      const match = /^\/admin\/favorites\/albums\/(\d+)$/.exec(form.getAttribute('action') || '');
+      if (!match) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const menu = form.closest('details');
+      if (menu) menu.removeAttribute('open');
+      toggleAlbumFavorite(match[1], form.querySelector('input[name="favorite"]')?.value === '1');
+    }, true);
+
     decorateTrackRows(document);
     updateTrackRowsUI();
+  }
+
+  const albumFavoriteBusy = new Set();
+  function syncAlbumFavorite(albumId, favorite) {
+    document.querySelectorAll(`.library-album-card form[action="/admin/favorites/albums/${albumId}"]`).forEach((form) => {
+      const value = form.querySelector('input[name="favorite"]');
+      if (value) value.value = favorite ? '0' : '1';
+      const title = form.closest('.library-album-card')?.dataset.albumTitle || '';
+      const heart = form.querySelector('.album-fav');
+      if (heart) {
+        heart.classList.toggle('is-favorite', favorite);
+        heart.setAttribute('aria-pressed', String(favorite));
+        heart.title = favorite ? '取消收藏' : '加入收藏';
+        heart.setAttribute('aria-label', `${favorite ? '取消收藏' : '收藏'} ${title}`.trim());
+        swapIcon(heart, favorite ? 'icon-heart-fill' : 'icon-heart');
+      } else {
+        const button = form.querySelector('button');
+        if (button) button.textContent = favorite ? '取消收藏' : '加入收藏';
+      }
+    });
+  }
+  async function toggleAlbumFavorite(albumId, favorite) {
+    if (albumFavoriteBusy.has(albumId)) return;
+    albumFavoriteBusy.add(albumId);
+    syncAlbumFavorite(albumId, favorite);
+    try {
+      const res = await apiFetch(`/api/v1/albums/${encodeURIComponent(albumId)}/favorite`, { method: favorite ? 'PUT' : 'DELETE' });
+      if (!res.ok) throw new Error('album favorite failed');
+      showToast(favorite ? '已收藏专辑' : '已取消收藏专辑');
+    } catch (_) {
+      syncAlbumFavorite(albumId, !favorite);
+      showToast('收藏操作失败，请重试');
+    } finally {
+      albumFavoriteBusy.delete(albumId);
+    }
   }
 
   function playRowTrack(row) {

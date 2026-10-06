@@ -193,7 +193,7 @@
 .album-tile p { overflow: hidden; margin: 0 0 3px; color: var(--text-secondary); font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
 .album-tile small { color: var(--muted); font-size: var(--fs-xs); }
 
-.library-album-card, .favorite-album { position: relative; min-width: 0; }
+.library-album-card { position: relative; min-width: 0; }
 .icon-action {
   display: inline-grid;
   place-items: center;
@@ -545,9 +545,6 @@ a.console-stats > *:hover, .console-stats > a:hover { background: var(--bg-soft)
 .feature-section { margin-top: 42px; }
 .feature-section:first-of-type { margin-top: 8px; }
 .favorite-albums { margin-top: 20px; }
-.favorite-album .album-tile { display: block; }
-.favorite-album .album-card-title form { margin: 0; }
-.favorite-album .album-card-title .icon-action { width: 28px; min-width: 28px; height: 28px; min-height: 28px; border: 0; background: transparent; box-shadow: none; }
 
 .feature-track-list, .playlist-track-list, .playback-list { display: grid; }
 .feature-track-list > article {
@@ -1154,6 +1151,32 @@ img.artist-portrait { object-fit: cover; color: inherit; }
   font-weight: 600;
   pointer-events: none;
 }
+/* Album favorite heart: cover bottom-left, mirroring the play disc at the
+   bottom-right. Favorited albums always show a filled red heart; others show
+   an outline heart only on hover / focus. */
+.album-fav-form { position: absolute; z-index: 2; left: 10px; bottom: 10px; margin: 0; }
+.album-fav {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.album-fav .icon { width: 17px; height: 17px; }
+.album-fav:hover { background: rgba(0, 0, 0, 0.5); transform: scale(1.06); }
+.album-fav:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 2px; }
+.album-fav.is-favorite { color: var(--danger); opacity: 1; }
+.library-album-card:hover .album-fav, .library-album-card:focus-within .album-fav { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .album-fav { transition: none; } }
 .library-album-card.is-selected .cover-wrap { box-shadow: 0 0 0 3px var(--accent), var(--shadow-card-hover); }
 .library-album-card.is-selected .album-tile-cover img { filter: brightness(0.88); }
 .album-browser.is-selecting .album-tile-cover { cursor: pointer; }

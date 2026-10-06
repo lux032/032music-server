@@ -16,6 +16,7 @@
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
+    {{if .Albums}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
     <section class="feature-section">
       <div class="section-title">
         <div><h2>收藏专辑</h2></div>
@@ -23,26 +24,7 @@
       </div>
       <div class="album-browser favorite-albums"{{if .AlbumCols}} style="--album-cols:{{.AlbumCols}}"{{end}}>
         {{range .Albums}}
-        <article class="favorite-album library-album-card">
-          <a class="album-tile" href="/admin/albums/{{.ID}}">
-            <div class="cover-wrap">
-              {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 512}}" alt="{{.Title}}" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}
-            </div>
-          </a>
-          <div class="album-card-title">
-            <a href="/admin/albums/{{.ID}}">{{.Title}}</a>
-            <form method="post" action="/admin/favorites/albums/{{.ID}}">
-              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="favorite" value="0">
-              <input type="hidden" name="returnTo" value="/admin/favorites">
-              <button class="icon-action selected" title="取消收藏 {{.Title}}" aria-label="取消收藏 {{.Title}}">
-                <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart-fill"></use></svg>
-              </button>
-            </form>
-          </div>
-          <p>{{if .PerformedBy}}{{.PerformedBy}}{{else}}{{.Artist}}{{end}}</p>
-          <small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small>
-        </article>
+        {{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
         {{else}}
         <div class="zero-state"><strong>还没有收藏专辑</strong><span>在专辑浏览器或专辑详情中点击收藏。</span></div>
         {{end}}
