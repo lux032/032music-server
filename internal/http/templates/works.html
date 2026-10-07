@@ -23,6 +23,7 @@
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <button type="submit" class="secondary-button" style="white-space:nowrap;">重算自动关联</button>
         </form>
+        <a href="#create-work" class="button-link works-create-trigger" data-drawer-open="create-work" aria-haspopup="dialog">新建作品</a>
       </div>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
@@ -74,7 +75,7 @@
         <small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首关联曲目</small>
       </a>
       {{else}}
-      <div class="zero-state"><strong>没有找到作品</strong><span>扫描含 OP/ED/OST 标签的音乐，或手动新建作品。</span></div>
+      <div class="zero-state"><strong>没有找到作品</strong><span>扫描含 OP/ED/OST 标签的音乐，或点击右上角“新建作品”。</span></div>
       {{end}}
     </section>
 
@@ -86,26 +87,50 @@
     </nav>
     {{end}}
 
-    <section class="feature-card create-work">
-      <div>
-        <h2>新建作品</h2>
-        <p class="result-count">适用于自动推导无法识别的作品。</p>
+    <section id="create-work" class="edit-drawer page-drawer album-editor create-work-drawer" data-drawer>
+      <div class="drawer-backdrop" data-drawer-close></div>
+      <div class="drawer-panel" aria-labelledby="create-work-title">
+        <header class="drawer-head editor-head">
+          <div>
+            <p class="kicker">作品库</p>
+            <h2 id="create-work-title">新建作品</h2>
+            <p>用于自动推导没能识别的作品。优先从 Bangumi 创建，资料更完整。</p>
+          </div>
+          <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+        </header>
+        <div class="drawer-fields">
+          <fieldset>
+            <legend>从 Bangumi 创建</legend>
+            <form class="create-work-form" method="post" action="/admin/works/bangumi">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <label>Bangumi 条目链接或 ID<input name="bangumiSubject" required data-drawer-autofocus placeholder="https://bgm.tv/subject/… 或纯数字 ID" autocomplete="off"></label>
+              <p class="field-hint">自动填入原文标题、中文名、类型、年份和海报，并完成 Bangumi 对齐。该条目已有对应作品时直接打开已有作品。仅支持动画和游戏条目。</p>
+              <button type="submit">从 Bangumi 创建</button>
+            </form>
+          </fieldset>
+          <fieldset>
+            <legend>手动创建</legend>
+            <form class="create-work-form" method="post" action="/admin/works">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <label>原文标题<input name="title" required></label>
+              <div class="form-grid">
+                <label>类型<select name="type">
+                  <option value="" selected>未指定（由 Bangumi 纠正）</option>
+                  <option value="anime">动画</option>
+                  <option value="drama">电视剧</option>
+                  <option value="movie">电影</option>
+                  <option value="game">游戏</option>
+                  <option value="commercial">广告</option>
+                  <option value="other">其他</option>
+                </select></label>
+                <label>年份<input type="number" name="year" min="1800" max="9999"></label>
+              </div>
+              <p class="field-hint">Bangumi 上没有的作品（广告、电视剧等）用这里创建。</p>
+              <button type="submit" class="secondary-button">创建作品</button>
+            </form>
+          </fieldset>
+        </div>
       </div>
-      <form method="post" action="/admin/works">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>原文标题<input name="title" required></label>
-        <label>类型<select name="type">
-          <option value="" selected>未指定（由 Bangumi 纠正）</option>
-          <option value="anime">动画</option>
-          <option value="drama">电视剧</option>
-          <option value="movie">电影</option>
-          <option value="game">游戏</option>
-          <option value="commercial">广告</option>
-          <option value="other">其他</option>
-        </select></label>
-        <label>年份<input type="number" name="year" min="1800" max="9999"></label>
-        <button>创建作品</button>
-      </form>
     </section>
   </main>
 </body>

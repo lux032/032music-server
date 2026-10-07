@@ -311,22 +311,26 @@
                 <p class="field-hint">暂无关联作品</p>
                 {{end}}
               </div>
+              <div id="album-work-errors" class="drawer-inline-errors"></div>
               <div class="drawer-add-tieup" data-work-picker="/admin/options/works">
-                <label>搜索作品
+                <label>搜索本地作品
                   <input type="text" data-work-search placeholder="输入作品名搜索…" autocomplete="off">
                 </label>
                 <div class="work-picker-results" data-work-results hidden></div>
-                <div class="form-grid">
-                  <label>作品 ID
-                    <input type="number" name="workId" form="album-add-work-form" data-work-id-input min="1" placeholder="作品 ID" required>
-                  </label>
-                  <label>关联类型
-                    <select name="role" form="album-add-work-form">
-                      <option value="other" selected>相关</option>
-                      <option value="ost">原声集</option>
-                    </select>
-                  </label>
-                </div>
+                <label>本地作品 ID
+                  <input type="number" name="workId" form="album-add-work-form" data-work-id-input min="1" placeholder="选中搜索结果后自动填写">
+                </label>
+                <p class="field-hint">本项目内的作品编号（即 /admin/works/<b>编号</b>），不是 Bangumi ID。</p>
+                <label>或按 Bangumi 条目
+                  <input name="bangumiSubject" form="album-add-work-form" placeholder="https://bgm.tv/subject/… 或纯数字 ID" autocomplete="off">
+                </label>
+                <p class="field-hint">本地还没有该作品时，会自动从 Bangumi 拉取资料并创建；已有则直接关联。与本地作品 ID 二选一。</p>
+                <label>关联类型
+                  <select name="role" form="album-add-work-form">
+                    <option value="other" selected>相关</option>
+                    <option value="ost">原声集</option>
+                  </select>
+                </label>
                 <button type="submit" form="album-add-work-form" class="secondary-button" style="justify-self:start;">添加专辑关联</button>
               </div>
             </fieldset>
@@ -337,12 +341,12 @@
           </div>
         </form>
         {{range .AlbumLevelWorks}}
-        <form id="album-unlink-work-{{.Work.ID}}" method="post" action="/admin/albums/{{$.AlbumDetail.ID}}/works/{{.Work.ID}}/remove">
+        <form id="album-unlink-work-{{.Work.ID}}" data-error-target="#album-work-errors" method="post" action="/admin/albums/{{$.AlbumDetail.ID}}/works/{{.Work.ID}}/remove">
           <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
           <input type="hidden" name="returnTo" value="/admin/albums/{{$.AlbumDetail.ID}}">
         </form>
         {{end}}
-        <form id="album-add-work-form" method="post" action="/admin/albums/{{.AlbumDetail.ID}}/works">
+        <form id="album-add-work-form" data-error-target="#album-work-errors" method="post" action="/admin/albums/{{.AlbumDetail.ID}}/works">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
         </form>

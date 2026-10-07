@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -108,6 +107,10 @@ func bangumiWorkType(subjectType int, platform string) string {
 
 // BangumiWorkCandidateByID loads one subject through the shared Bangumi
 // cache/throttle path and converts it to a user-selected work candidate.
+// ErrUnsupportedBangumiSubject reports a Bangumi subject that is neither an
+// anime nor a game and so cannot back a local work.
+var ErrUnsupportedBangumiSubject = errors.New("只支持动画或游戏条目")
+
 func (m *Manager) BangumiWorkCandidateByID(ctx context.Context, subjectID int64) (storage.WorkMatchCandidate, error) {
 	setting, err := m.store.MetadataSourceSetting(ctx, "bangumi")
 	if err != nil {
@@ -136,7 +139,7 @@ func (m *Manager) BangumiWorkCandidateByID(ctx context.Context, subjectID int64)
 	}
 	typ := bangumiWorkType(subject.Type, subject.Platform)
 	if typ == "" {
-		return storage.WorkMatchCandidate{}, fmt.Errorf("只支持动画或游戏条目")
+		return storage.WorkMatchCandidate{}, ErrUnsupportedBangumiSubject
 	}
 	year := 0
 	if len(subject.Date) >= 4 {

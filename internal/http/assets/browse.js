@@ -403,7 +403,7 @@
     panel.tabIndex = -1;
     if (trigger && !(trigger instanceof HTMLElement && trigger.matches('summary'))) trigger.setAttribute('aria-expanded', 'true');
     document.documentElement.classList.add('drawer-open');
-    (panel.querySelector(drawerFirstField) || panel).focus({ preventScroll: true });
+    (panel.querySelector('[data-drawer-autofocus]') || panel.querySelector(drawerFirstField) || panel).focus({ preventScroll: true });
   }
   function deactivateDrawer(drawer, restoreFocus) {
     const panel = drawerPanel(drawer);

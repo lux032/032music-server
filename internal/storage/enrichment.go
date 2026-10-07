@@ -684,18 +684,99 @@ func (s *Store) ManualBindWorkBangumi(ctx context.Context, workID int64, v WorkM
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	evidence, _ := json.Marshal(v.Evidence)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO work_match_candidates(work_id,source,external_id,title,original_title,translated_title,type,year,page_url,poster_url,score,evidence_json,payload_json,status) VALUES(?,'bangumi',?, ?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),NULLIF(?,''),?,?,?,'candidate') ON CONFLICT(work_id,source,external_id) DO UPDATE SET title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,page_url=excluded.page_url,poster_url=excluded.poster_url,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status='candidate',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, workID, v.ExternalID, v.Title, v.OriginalTitle, v.TranslatedTitle, v.Type, v.Year, v.PageURL, v.PosterURL, v.Score, string(evidence), rawOrEmpty(v.Payload)); err != nil {
-		return err
-	}
-	var candidateID int64
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND external_id=?`, workID, v.ExternalID).Scan(&candidateID); err != nil {
-		return err
-	}
-	if err = confirmWorkMatchCandidateTx(ctx, tx, workID, candidateID, 0); err != nil {
+	if err = bindBangumiCandidateTx(ctx, tx, workID, v); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// bindBangumiCandidateTx records v as a confirmed Bangumi candidate of workID
+// and applies its profile. Callers have already checked eligibility.
+func bindBangumiCandidateTx(ctx context.Context, tx *sql.Tx, workID int64, v WorkMatchCandidate) error {
+	evidence, _ := json.Marshal(v.Evidence)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO work_match_candidates(work_id,source,external_id,title,original_title,translated_title,type,year,page_url,poster_url,score,evidence_json,payload_json,status) VALUES(?,'bangumi',?, ?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),NULLIF(?,''),?,?,?,'candidate') ON CONFLICT(work_id,source,external_id) DO UPDATE SET title=excluded.title,original_title=excluded.original_title,translated_title=excluded.translated_title,type=excluded.type,year=excluded.year,page_url=excluded.page_url,poster_url=excluded.poster_url,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status='candidate',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, workID, v.ExternalID, v.Title, v.OriginalTitle, v.TranslatedTitle, v.Type, v.Year, v.PageURL, v.PosterURL, v.Score, string(evidence), rawOrEmpty(v.Payload)); err != nil {
+		return err
+	}
+	var candidateID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM work_match_candidates WHERE work_id=? AND source='bangumi' AND external_id=?`, workID, v.ExternalID).Scan(&candidateID); err != nil {
+		return err
+	}
+	return confirmWorkMatchCandidateTx(ctx, tx, workID, candidateID, 0)
+}
+
+// WorkIdentityTakenError reports that the local work sharing the Bangumi
+// subject's title/type/year identity is already aligned to another subject,
+// so a new work cannot be created without violating idx_works_identity.
+type WorkIdentityTakenError struct {
+	WorkID     int64
+	WorkTitle  string
+	ExternalID string
+}
+
+func (e *WorkIdentityTakenError) Error() string {
+	return fmt.Sprintf("同名作品 #%d「%s」已对齐 Bangumi 条目 %s，无法再按该条目新建作品", e.WorkID, e.WorkTitle, e.ExternalID)
+}
+
+// EnsureBangumiWork returns the local work bound to the Bangumi subject v,
+// creating and binding one when none exists. An unbound work with the same
+// identity (title, type, year) is reused and bound instead of duplicated.
+// created reports whether a new works row was inserted.
+func (s *Store) EnsureBangumiWork(ctx context.Context, v WorkMatchCandidate) (workID int64, created bool, err error) {
+	v.ExternalID = strings.TrimSpace(v.ExternalID)
+	v.Title = strings.TrimSpace(v.Title)
+	if v.ExternalID == "" || v.Title == "" {
+		return 0, false, fmt.Errorf("%w: bangumi subject requires id and title", ErrInvalidWork)
+	}
+	typ := strings.TrimSpace(v.Type)
+	if _, ok := validWorkTypes[typ]; !ok {
+		typ = "other"
+	}
+	year := v.Year
+	if year < 1800 || year > 9999 {
+		year = 0
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
+	// Take the write lock first so concurrent requests for the same subject
+	// cannot both decide to create a work.
+	if _, err = tx.ExecContext(ctx, `UPDATE works SET id=id WHERE 0`); err != nil {
+		return 0, false, err
+	}
+	err = tx.QueryRowContext(ctx, `SELECT work_id FROM work_external_profiles WHERE source='bangumi' AND external_id=?`, v.ExternalID).Scan(&workID)
+	if err == nil {
+		return workID, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, err
+	}
+	key := metadata.Normalize(v.Title)
+	var existingTitle, boundID string
+	err = tx.QueryRowContext(ctx, `SELECT w.id,w.title,COALESCE(p.external_id,'') FROM works w LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source='bangumi' WHERE w.normalized_title=? AND w.type=? AND IFNULL(w.year,0)=?`, key, typ, year).Scan(&workID, &existingTitle, &boundID)
+	switch {
+	case err == nil && boundID != "":
+		return 0, false, &WorkIdentityTakenError{WorkID: workID, WorkTitle: existingTitle, ExternalID: boundID}
+	case err == nil:
+		// Reuse the unbound work with the same identity.
+	case errors.Is(err, sql.ErrNoRows):
+		result, insertErr := tx.ExecContext(ctx, `INSERT INTO works(title,normalized_title,type,year,origin,type_locked) VALUES(?,?,?,NULLIF(?,0),'manual',0)`, v.Title, key, typ, year)
+		if insertErr != nil {
+			return 0, false, fmt.Errorf("create work: %w", insertErr)
+		}
+		workID, _ = result.LastInsertId()
+		created = true
+	default:
+		return 0, false, err
+	}
+	if err = bindBangumiCandidateTx(ctx, tx, workID, v); err != nil {
+		return 0, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return workID, created, nil
 }
 
 func (s *Store) WorkBangumiExternalID(ctx context.Context, workID int64) (string, error) {

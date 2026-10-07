@@ -83,7 +83,7 @@ test('captures batch 6 screenshots to .local/mockups/impl46/', async ({ page }, 
   await page.screenshot({ path: path.join(IMPL46_DIR, '15-works-type-filter.png'), fullPage: false });
 });
 
-// ---- 批次 7：.create-work「创建作品」按钮布局修复后的宽度验证（1280 / 1920）----
+// ---- 批次 7：新建作品抽屉截图（1280 / 1920）----
 test('captures batch 7 works create-card screenshots to .local/mockups/impl47/', async ({ page }, testInfo) => {
   test.skip(!SCREENSHOTS, '只在 E2E_SCREENSHOTS=1 时生成截图');
   test.skip(testInfo.project.name !== 'desktop-chromium');
@@ -92,9 +92,9 @@ test('captures batch 7 works create-card screenshots to .local/mockups/impl47/',
   for (const width of [1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/admin/works?type=movie');
-    const card = page.locator('.create-work');
-    await expect(card).toBeVisible();
-    await card.scrollIntoViewIfNeeded();
+    await page.locator('.browser-header [data-drawer-open="create-work"]').click();
+    await expect(page.locator('#create-work')).toHaveClass(/is-open/);
+    await expect(page.locator('#create-work input[name=bangumiSubject]')).toBeFocused();
     await settleMain(page);
     await page.screenshot({ path: path.join(IMPL47_DIR, `works-create-${width}.png`), fullPage: false });
   }
@@ -187,7 +187,8 @@ test('series management: create, rename, add, remove, merge, dissolve', async ({
   // 通过作品页新建两部作品。
   for (const title of ['E2E 管理作品甲', 'E2E 管理作品乙']) {
     await page.goto('/admin/works');
-    const form = page.locator('.create-work form');
+    await page.locator('.browser-header [data-drawer-open="create-work"]').click();
+    const form = page.locator('#create-work form[action="/admin/works"]');
     await form.locator('input[name=title]').fill(title);
     await form.locator('select[name=type]').selectOption('anime');
     await form.getByRole('button', { name: '创建作品' }).click();

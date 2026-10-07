@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -393,6 +394,70 @@ func (a *App) handleManualWorkBangumi(w http.ResponseWriter, r *http.Request) {
 	}
 	a.queueWorkPoster(workID)
 	redirectWithNotice(w, r, returnTo, "作品已按指定条目完成对齐")
+}
+
+// bangumiWorkError is a user-facing failure of ensureBangumiWork.
+type bangumiWorkError struct {
+	status  int
+	message string
+}
+
+// ensureBangumiWork resolves a Bangumi subject link or ID to a local work,
+// fetching the subject and creating the work when none is bound yet.
+func (a *App) ensureBangumiWork(ctx context.Context, raw string) (int64, bool, *bangumiWorkError) {
+	if a.enrichment == nil {
+		return 0, false, &bangumiWorkError{http.StatusServiceUnavailable, "增强管理器不可用，无法访问 Bangumi"}
+	}
+	subjectID, err := parseBangumiSubjectID(raw)
+	if err != nil {
+		return 0, false, &bangumiWorkError{http.StatusBadRequest, err.Error()}
+	}
+	candidate, err := a.enrichment.BangumiWorkCandidateByID(ctx, subjectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, &bangumiWorkError{http.StatusNotFound, "Bangumi 上找不到该条目（可能已删除或需要登录才能查看）"}
+		}
+		if notice, ok := enrichment.RateLimitNotice(err); ok {
+			return 0, false, &bangumiWorkError{http.StatusTooManyRequests, notice}
+		}
+		if errors.Is(err, enrichment.ErrUnsupportedBangumiSubject) {
+			return 0, false, &bangumiWorkError{http.StatusUnprocessableEntity, "只支持 Bangumi 上的动画或游戏条目"}
+		}
+		a.logger.Error("Bangumi work lookup", "subjectId", subjectID, "error", err)
+		return 0, false, &bangumiWorkError{http.StatusBadGateway, "无法从 Bangumi 获取条目，请稍后重试"}
+	}
+	workID, created, err := a.store.EnsureBangumiWork(ctx, candidate)
+	if err != nil {
+		var taken *storage.WorkIdentityTakenError
+		if errors.As(err, &taken) {
+			return 0, false, &bangumiWorkError{http.StatusConflict, taken.Error()}
+		}
+		a.logger.Error("create work from Bangumi", "subjectId", subjectID, "error", err)
+		return 0, false, &bangumiWorkError{http.StatusInternalServerError, "无法按 Bangumi 条目创建作品"}
+	}
+	if created {
+		a.queueWorkPoster(workID)
+	}
+	return workID, created, nil
+}
+
+// handleCreateWorkFromBangumi opens the local work bound to the submitted
+// Bangumi subject, creating it from Bangumi data when it does not exist yet.
+func (a *App) handleCreateWorkFromBangumi(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	workID, created, failure := a.ensureBangumiWork(r.Context(), r.FormValue("bangumiSubject"))
+	if failure != nil {
+		http.Error(w, failure.message, failure.status)
+		return
+	}
+	notice := "该 Bangumi 条目已有对应作品"
+	if created {
+		notice = "已从 Bangumi 创建作品"
+	}
+	redirectWithNotice(w, r, "/admin/works/"+strconv.FormatInt(workID, 10), notice)
 }
 
 func (a *App) handleDeleteWork(w http.ResponseWriter, r *http.Request) {

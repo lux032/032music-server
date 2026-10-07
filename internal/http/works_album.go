@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
@@ -111,7 +112,8 @@ func (a *App) handleAddAlbumWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	albumID := parseInt64(r.PathValue("id"))
-	workID := parseInt64(r.FormValue("workId"))
+	rawWorkID := strings.TrimSpace(r.FormValue("workId"))
+	bangumiSubject := strings.TrimSpace(r.FormValue("bangumiSubject"))
 	role := r.FormValue("role")
 	if role == "" {
 		role = "other"
@@ -120,6 +122,45 @@ func (a *App) handleAddAlbumWork(w http.ResponseWriter, r *http.Request) {
 	if role != "ost" && role != "other" {
 		http.Error(w, "专辑级关系类型只支持 ost / other", http.StatusBadRequest)
 		return
+	}
+	if rawWorkID != "" && bangumiSubject != "" {
+		http.Error(w, "请只填写本地作品 ID 或 Bangumi 条目其中一项", http.StatusBadRequest)
+		return
+	}
+	if rawWorkID == "" && bangumiSubject == "" {
+		http.Error(w, "请从搜索结果选择本地作品，或填写 Bangumi 条目链接 / ID", http.StatusBadRequest)
+		return
+	}
+	if _, err := a.store.AlbumByID(r.Context(), albumID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "专辑不存在", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "无法添加作品关联", http.StatusInternalServerError)
+		return
+	}
+	var workID int64
+	notice := "作品关联已添加"
+	if bangumiSubject != "" {
+		id, created, failure := a.ensureBangumiWork(r.Context(), bangumiSubject)
+		if failure != nil {
+			http.Error(w, failure.message, failure.status)
+			return
+		}
+		workID = id
+		if created {
+			notice = "已从 Bangumi 创建作品并关联"
+		}
+	} else {
+		workID = parseInt64(rawWorkID)
+		if _, err := a.store.WorkByID(r.Context(), workID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, fmt.Sprintf("本地作品 #%s 不存在。作品 ID 是本项目内的编号，不是 Bangumi ID；若要按 Bangumi 条目关联，请填写在 Bangumi 条目一栏。", rawWorkID), http.StatusNotFound)
+				return
+			}
+			http.Error(w, "无法添加作品关联", http.StatusInternalServerError)
+			return
+		}
 	}
 	err := a.store.AddWorkAlbum(r.Context(), workID, albumID, role)
 	if err != nil {
@@ -131,7 +172,7 @@ func (a *App) handleAddAlbumWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/albums/"+strconv.FormatInt(albumID, 10)+"#edit")
-	redirectWithNotice(w, r, target, "作品关联已添加")
+	redirectWithNotice(w, r, target, notice)
 }
 
 func (a *App) handleRemoveAlbumWork(w http.ResponseWriter, r *http.Request) {

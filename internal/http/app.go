@@ -427,6 +427,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/merges/{id}/rollback", a.requireAdmin(http.HandlerFunc(a.handleRollbackMerge)))
 	mux.Handle("GET /admin/works", a.requireAdmin(http.HandlerFunc(a.handleWorksPage)))
 	mux.Handle("POST /admin/works", a.requireAdmin(http.HandlerFunc(a.handleCreateWork)))
+	mux.Handle("POST /admin/works/bangumi", a.requireAdmin(http.HandlerFunc(a.handleCreateWorkFromBangumi)))
 	mux.Handle("GET /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleWorkPage)))
 	mux.Handle("GET /admin/works/{id}/poster", a.requireAdmin(http.HandlerFunc(a.handleWorkPoster)))
 	mux.Handle("POST /admin/works/{id}", a.requireAdmin(http.HandlerFunc(a.handleUpdateWork)))

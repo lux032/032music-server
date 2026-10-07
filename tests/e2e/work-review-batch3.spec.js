@@ -180,6 +180,21 @@ test('album drawer work picker: Enter in search does not submit the edit form', 
   await expect(drawer).toHaveClass(/is-open/);
 });
 
+test('album drawer: unknown local work id explains itself inside the tie-up section', async ({ page }) => {
+  await gotoAlbum(page, SINGLE_ALBUM);
+  await page.locator('a[data-drawer-open="edit"]').first().click();
+  const drawer = page.locator('.edit-drawer');
+  await expect(drawer).toHaveClass(/is-open/);
+  await drawer.locator('input[name=workId]').fill('99999999');
+  await drawer.getByRole('button', { name: '添加专辑关联' }).click();
+  const error = drawer.locator('#album-work-errors .form-error');
+  await expect(error).toContainText('不是 Bangumi ID');
+  await expect(error).toContainText('保存失败（404）');
+  // 错误不再落到抽屉底部的空表单里。
+  await expect(page.locator('#album-add-work-form .form-error')).toHaveCount(0);
+  await expect(drawer.locator('input[name=workId]')).toHaveValue('99999999');
+});
+
 test('flat works list opens series management with all members', async ({ page }) => {
   await page.goto('/admin/works');
   await expect(page.locator('.works-grid details.works-series-row')).toHaveCount(0);

@@ -72,11 +72,11 @@ async function density(page) {
     const columns = await page.locator('.review-group-list').evaluateAll(nodes => nodes.map(n => getComputedStyle(n).gridTemplateColumns.split(' ').length));
     columns.forEach(n => expect(n).toBeGreaterThan(1));
   }
-  const fields = await page.locator('.form-grid input:not([type=checkbox]):not([type=radio]):visible, .form-grid select:visible, .create-work input:visible, .create-playlist input:visible').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
+  const fields = await page.locator('.form-grid input:not([type=checkbox]):not([type=radio]):visible, .form-grid select:visible, .create-work-form input:visible, .create-playlist input:visible').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
   for (const width of fields) expect(width).toBeLessThanOrEqual(480);
-  const localWidths = await page.locator('.source-card-form, .security-card, .series-admin-main > .feature-card, .create-work form, .create-playlist form').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
+  const localWidths = await page.locator('.source-card-form, .security-card, .series-admin-main > .feature-card, .create-work-form, .create-playlist form').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
   for (const width of localWidths) expect(width).toBeLessThanOrEqual(1100);
-  const fieldWidths = await page.locator('.security-inline-form input:visible, .series-create-form input:visible, .inline-rename input:visible, .create-work select:visible').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
+  const fieldWidths = await page.locator('.security-inline-form input:visible, .series-create-form input:visible, .inline-rename input:visible, .create-work-form select:visible').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
   fieldWidths.forEach(width => expect(width).toBeLessThanOrEqual(480));
   const controls = await page.locator('.review-group-card button:visible, .review-group-card select:visible').evaluateAll(nodes => nodes.map(n => { const r = n.getBoundingClientRect(), group = n.closest('.review-group-card').getBoundingClientRect(); return { width: r.width, height: r.height, inside: r.left >= group.left && r.right <= group.right + 1 }; }));
   if (route === '/admin/work-review') expect(controls.length).toBeGreaterThan(0);

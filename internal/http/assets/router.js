@@ -181,7 +181,12 @@ import { updateTrackRowsUI } from './player-bar.js';
         return;
       }
       if (!res.ok) {
-        showFormError(form, res.status === 403 ? '操作被拒绝，请刷新页面后重试。输入内容已保留。' : `保存失败（${res.status}），输入内容已保留。`);
+        // Plain-text bodies come from http.Error and carry the actual reason
+        // (e.g. "本地作品 #… 不存在"); HTML error pages are never shown raw.
+        const plain = /^text\/plain/i.test(res.headers.get('Content-Type') || '');
+        const detail = plain ? html.trim().replace(/[。.]$/, '') : '';
+        const reason = detail && detail.length <= 200 && !detail.includes('\n') ? `：${detail}` : '';
+        showFormError(form, res.status === 403 ? '操作被拒绝，请刷新页面后重试。输入内容已保留。' : `保存失败（${res.status}）${reason}。输入内容已保留。`);
         return;
       }
       sessionStorage.removeItem(draftStorageKey);
@@ -210,8 +215,12 @@ import { updateTrackRowsUI } from './player-bar.js';
   }
 
   function showFormError(form, message) {
-    let error = form.querySelector('.form-error');
-    if (!error) { error = document.createElement('div'); error.className = 'form-error'; error.setAttribute('role', 'alert'); form.prepend(error); }
+    // Controls bound with form="…" live inside another form's markup, so the
+    // owning (often empty) form names where its error belongs.
+    let host = form;
+    try { host = (form.dataset.errorTarget && document.querySelector(form.dataset.errorTarget)) || form; } catch (_) { host = form; }
+    let error = host.querySelector('.form-error');
+    if (!error) { error = document.createElement('div'); error.className = 'form-error'; error.setAttribute('role', 'alert'); host.prepend(error); }
     error.textContent = message; error.tabIndex = -1; error.focus(); showToast(message, true);
   }
   function safeDraftFields(form) {
