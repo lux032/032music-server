@@ -946,7 +946,12 @@ func (a *App) handleAPIAlbum(w http.ResponseWriter, r *http.Request) {
 		apiResult(w, value, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"album": value, "tracks": tracks})
+	albums := []storage.Album{value}
+	if err := a.store.AttachAlbumArtistRefs(r.Context(), albums); err != nil {
+		apiResult(w, value, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"album": albums[0], "tracks": tracks})
 }
 func (a *App) handleAPITracks(w http.ResponseWriter, r *http.Request) {
 	f := filters(r)

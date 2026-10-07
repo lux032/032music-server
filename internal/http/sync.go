@@ -20,6 +20,20 @@ func (a *App) handleAPISyncAlbums(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (a *App) handleAPISyncArtists(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	result, err := a.store.SyncArtists(r.Context(), storage.SyncArtistsParams{
+		Cursor: parseInt64(q.Get("cursor")),
+		Limit:  int(parseInt64(q.Get("limit"))),
+	})
+	if err != nil {
+		a.logger.Error("sync artists failed", "error", err)
+		writeAPIError(w, http.StatusInternalServerError, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (a *App) handleAPISyncTracks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	cursor := parseInt64(q.Get("cursor"))

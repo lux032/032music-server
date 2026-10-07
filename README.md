@@ -277,7 +277,7 @@ docker compose logs --tail=100 music-server
 | `GET` | `/api/v1/status`、`/api/v1/capabilities` | 状态、统计、功能、媒体规则与可用编码器。 |
 | `GET` | `/api/v1/artists`、`/api/v1/albums`、`/api/v1/tracks` | 浏览/搜索，对应 `/{id}` 获取详情。 |
 | `PATCH` | `/api/v1/artists/{id}`、`/api/v1/albums/{id}`、`/api/v1/tracks/{id}` | 保存人工元数据覆盖。 |
-| `GET` | `/api/v1/sync/albums`、`/api/v1/sync/tracks` | 游标曲库同步。 |
+| `GET` | `/api/v1/sync/albums`、`/api/v1/sync/tracks`、`/api/v1/sync/artists` | 游标曲库同步；专辑与曲目附带 `artists: [{id,name}]` 歌手引用，歌手同步只含演唱者（专辑歌手或曲目主唱）。 |
 | `GET` | `/api/v1/albums/{id}/works`、`/api/v1/artists/{id}/credits` | 作品关联与艺人 credit。 |
 | `GET/POST` | `/api/v1/works` | 列出/新建作品；`/{id}` 支持 GET/PATCH/DELETE。 |
 | `GET/POST` | `/api/v1/works/{id}/albums`、`/api/v1/works/{id}/tracks` | 读取/添加关联；DELETE 对应 `/{albumId}` 或 `/{trackId}` 解除。 |

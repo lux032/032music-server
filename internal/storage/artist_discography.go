@@ -7,7 +7,7 @@ import "context"
 // These are read-time classifications; no existing credits are rewritten.
 type ArtistRelease struct {
 	Album
-	Relation string
+	Relation string `json:"relation"`
 }
 
 // ArtistDiscography is deliberately narrower than the general album search:

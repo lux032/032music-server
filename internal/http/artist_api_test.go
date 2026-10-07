@@ -109,7 +109,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 		sort.Strings(result)
 		return result
 	}
-	if got, want := keys(raw), []string{"albums", "artist", "tracks", "tracksTotal"}; !reflect.DeepEqual(got, want) {
+	if got, want := keys(raw), []string{"albums", "artist", "releases", "tracks", "tracksTotal"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("top-level keys=%v", got)
 	}
 	var artistJSON map[string]json.RawMessage

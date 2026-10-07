@@ -280,6 +280,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/tracks/path", a.requireAPIOrAdmin(a.withSimilaritySlot(http.HandlerFunc(a.handleTrackPath))))
 	mux.Handle("GET /api/v1/sync/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncAlbums)))
 	mux.Handle("GET /api/v1/sync/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncTracks)))
+	mux.Handle("GET /api/v1/sync/artists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncArtists)))
 	mux.Handle("GET /api/v1/tracks/sync", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISyncTracks)))
 	mux.Handle("PATCH /api/v1/artists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateArtist)))
 	mux.Handle("PATCH /api/v1/albums/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIUpdateAlbum)))

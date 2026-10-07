@@ -26,6 +26,9 @@ type SyncAlbum struct {
 	Compilation bool   `json:"compilation"`
 	Live        bool   `json:"live"`
 	Formats     string `json:"formats"`
+	// Artists are the credited album artists (id + display name, credit
+	// order). Artist is only their joined display text.
+	Artists []ArtistRef `json:"artists"`
 }
 
 type SyncAlbumsParams struct {
@@ -52,6 +55,9 @@ type SyncTrack struct {
 	IsFavorite     bool   `json:"isFavorite"`
 	DiscNumber     int    `json:"discNumber,omitempty"`
 	TrackNumber    int    `json:"trackNumber,omitempty"`
+	// Artists are the primary (performing) track artists. Empty means the
+	// track has no own credit and the album artists apply.
+	Artists []ArtistRef `json:"artists"`
 	TrackExtras
 }
 
@@ -130,6 +136,18 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 	if hasMore && len(items) > 0 {
 		nextCursor = strconv.FormatInt(items[len(items)-1].ID, 10)
 	}
+	rows.Close()
+	albumIDs := make([]int64, len(items))
+	for i := range items {
+		albumIDs[i] = items[i].ID
+	}
+	refs, err := s.albumArtistRefs(ctx, albumIDs)
+	if err != nil {
+		return SyncAlbumsResult{}, err
+	}
+	for i := range items {
+		items[i].Artists = nonNilRefs(refs[items[i].ID])
+	}
 	return SyncAlbumsResult{Items: items, NextCursor: nextCursor, HasMore: hasMore, Total: total}, nil
 }
 
@@ -205,6 +223,17 @@ func (s *Store) SyncTracks(ctx context.Context, params SyncTracksParams) (SyncTr
 	}
 
 	rows.Close()
+	trackIDs := make([]int64, len(items))
+	for i := range items {
+		trackIDs[i] = items[i].ID
+	}
+	trackRefs, err := s.trackArtistRefs(ctx, trackIDs)
+	if err != nil {
+		return SyncTracksResult{}, err
+	}
+	for i := range items {
+		items[i].Artists = nonNilRefs(trackRefs[items[i].ID])
+	}
 	if err := hydrateTrackExtras(ctx, s, func() []*SyncTrack {
 		ptrs := make([]*SyncTrack, len(items))
 		for i := range items {

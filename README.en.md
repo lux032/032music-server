@@ -276,7 +276,7 @@ The legacy `token` query alias is also accepted for media/report requests; new c
 | `GET` | `/api/v1/status`, `/api/v1/capabilities` | Status, library statistics, features, media rules, and available encoders. |
 | `GET` | `/api/v1/artists`, `/api/v1/albums`, `/api/v1/tracks` | Browse/search lists; corresponding `/{id}` routes return details. |
 | `PATCH` | `/api/v1/artists/{id}`, `/api/v1/albums/{id}`, `/api/v1/tracks/{id}` | Save manual metadata overrides. |
-| `GET` | `/api/v1/sync/albums`, `/api/v1/sync/tracks` | Cursor-based library synchronization. |
+| `GET` | `/api/v1/sync/albums`, `/api/v1/sync/tracks`, `/api/v1/sync/artists` | Cursor-based library synchronization; albums and tracks carry `artists: [{id,name}]` references, artist sync lists performers only (album artists or primary track artists). |
 | `GET` | `/api/v1/albums/{id}/works`, `/api/v1/artists/{id}/credits` | Work links and artist credits. |
 | `GET/POST` | `/api/v1/works` | List/create works; `/{id}` supports GET/PATCH/DELETE. |
 | `GET/POST` | `/api/v1/works/{id}/albums`, `/api/v1/works/{id}/tracks` | Read/add associations; DELETE the corresponding `/{albumId}` or `/{trackId}` to remove. |

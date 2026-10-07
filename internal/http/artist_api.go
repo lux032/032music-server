@@ -38,6 +38,28 @@ func (a *App) handleAPIArtist(w http.ResponseWriter, r *http.Request) {
 		a.writeFeatureError(w, r, err, "query_failed")
 		return
 	}
+	if err = a.store.AttachAlbumArtistRefs(r.Context(), albums); err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	// Releases mirror the web artist page: own and collaboration albums plus
+	// albums where the artist only sings some tracks (relation=appearance).
+	releases, err := a.store.ArtistDiscography(r.Context(), id)
+	if err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	releaseAlbums := make([]storage.Album, len(releases))
+	for i := range releases {
+		releaseAlbums[i] = releases[i].Album
+	}
+	if err = a.store.AttachAlbumArtistRefs(r.Context(), releaseAlbums); err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	for i := range releases {
+		releases[i].Album = releaseAlbums[i]
+	}
 	tracks, total, err := a.store.ArtistTracks(r.Context(), id)
 	if err != nil {
 		a.writeFeatureError(w, r, err, "query_failed")
@@ -53,10 +75,11 @@ func (a *App) handleAPIArtist(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Artist      artistDetailResponse `json:"artist"`
-		Albums      []storage.Album      `json:"albums"`
-		Tracks      []storage.Track      `json:"tracks"`
-		TracksTotal int64                `json:"tracksTotal"`
-	}{artistDetailResponse{detail.ID, detail.Name, detail.ImageURL, detail.IsFavorite, detail.AlbumCount, detail.TrackCount, detail.Biography, detail.BiographySource, detail.Country, detail.ArtistType, aliases, mergedFrom}, albums, tracks, total})
+		Albums      []storage.Album         `json:"albums"`
+		Releases    []storage.ArtistRelease `json:"releases"`
+		Tracks      []storage.Track         `json:"tracks"`
+		TracksTotal int64                   `json:"tracksTotal"`
+	}{artistDetailResponse{detail.ID, detail.Name, detail.ImageURL, detail.IsFavorite, detail.AlbumCount, detail.TrackCount, detail.Biography, detail.BiographySource, detail.Country, detail.ArtistType, aliases, mergedFrom}, albums, releases, tracks, total})
 }
 
 func (a *App) handleSetArtistFavorite(w http.ResponseWriter, r *http.Request) {

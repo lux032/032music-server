@@ -100,6 +100,9 @@ type Album struct {
 	// AlbumArtists links the album credits on browse pages; only filled by
 	// the list hydration and kept out of the API payload.
 	AlbumArtists []Artist `json:"-"`
+	// Artists are the credited album artists for API clients; filled by
+	// AttachAlbumArtistRefs on the endpoints that need them.
+	Artists []ArtistRef `json:"artists,omitempty"`
 }
 
 type AlbumEdit struct {

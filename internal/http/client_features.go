@@ -16,7 +16,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"playlistItemOps": true, "playlistArtwork": true, "playlistRevision": true,
 			"favorites": true, "playlists": true, "playbackProgress": true,
 			"playbackHistory": true, "playbackEvents": true, "rangeStreaming": true,
-			"syncAlbums": true, "syncTracks": true,
+			"syncAlbums": true, "syncTracks": true, "syncArtists": true, "artistRefs": true,
 			"lyrics": true, "instrumentalFilter": true,
 			"works": true, "multilingualIndex": true,
 			"artistDetail": true, "artistFavorites": true,
