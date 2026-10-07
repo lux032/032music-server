@@ -745,9 +745,16 @@ func (s *Store) CountTracks(ctx context.Context, f Filters) (int64, error) {
 	return total, err
 }
 
+// albumArtistSQL 是 API 下发的专辑歌手名：优先取 album_artists 关系（歌手合并、
+// 改名后会同步更新），与网页端、曲目 artist 字段同源；无关系时才回退到标签文本。
+// performed_by 是文件标签原文，合并歌手不会改写它，重新扫描也会恢复它，
+// 若优先使用会让客户端拿到已合并歌手的旧名字而无法跳转歌手页。
+const albumArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),NULLIF(a.user_performed_by,''),NULLIF(a.performed_by,''),'Unknown Artist')`
+
 const albumByIDSelect = `SELECT
 	a.id, COALESCE(a.user_title,a.title),
 	COALESCE(a.user_performed_by,a.performed_by,(SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),'Unknown Artist'),
+	` + albumArtistSQL + `,
 	COALESCE(a.user_release_year,a.release_year,0), a.disc_count,
 	(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),
 	COALESCE((SELECT GROUP_CONCAT(g.name,',' ORDER BY ago.position) FROM album_genre_overrides ago JOIN genres g ON g.id=ago.genre_id WHERE ago.album_id=a.id),(SELECT GROUP_CONCAT(name,',' ORDER BY gid) FROM (SELECT t.album_id, g.id AS gid, g.name FROM tracks t JOIN track_genre_overrides ox ON ox.track_id=t.id JOIN genres g ON g.id=ox.genre_id WHERE t.album_id=a.id UNION SELECT t.album_id, g.id, g.name FROM tracks t JOIN track_genres tg ON tg.track_id=t.id JOIN genres g ON g.id=tg.genre_id WHERE t.album_id=a.id AND NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id))),''),
@@ -770,10 +777,9 @@ func scanAlbum(row interface{ Scan(...any) error }) (Album, error) {
 	var customCover int
 	var storedType, typeSource string
 	var coreTracks, durationMillis int64
-	err := row.Scan(&a.ID, &a.Title, &a.PerformedBy, &a.Year, &a.DiscCount, &a.TrackCount, &a.Genres, &a.ArtworkURL, &a.AlbumType, &a.Version, &a.ReleaseDate, &a.OriginalReleaseDate, &a.Label, &a.CatalogNumber, &a.Country, &a.Review, &compilation, &live, &bootleg, &a.Formats, &a.TotalBytes, &a.AddedAt, &a.UpdatedAt, &favorite, &a.LastPlayedAt, &customCover, &a.UserAlbumType, &storedType, &typeSource, &coreTracks, &durationMillis)
+	err := row.Scan(&a.ID, &a.Title, &a.PerformedBy, &a.Artist, &a.Year, &a.DiscCount, &a.TrackCount, &a.Genres, &a.ArtworkURL, &a.AlbumType, &a.Version, &a.ReleaseDate, &a.OriginalReleaseDate, &a.Label, &a.CatalogNumber, &a.Country, &a.Review, &compilation, &live, &bootleg, &a.Formats, &a.TotalBytes, &a.AddedAt, &a.UpdatedAt, &favorite, &a.LastPlayedAt, &customCover, &a.UserAlbumType, &storedType, &typeSource, &coreTracks, &durationMillis)
 	a.ReleaseKind = resolveReleaseKind(releaseKindInput{UserType: a.UserAlbumType, StoredType: storedType, Source: typeSource, Title: a.Title, DiscCount: a.DiscCount, CoreTracks: coreTracks, TotalTracks: a.TrackCount, DurationMillis: durationMillis})
 	a.HasCustomArtwork = customCover != 0
-	a.Artist = a.PerformedBy
 	a.Compilation = compilation != 0
 	a.Live = live != 0
 	a.Bootleg = bootleg != 0

@@ -85,10 +85,7 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		a.id,
 		COALESCE(a.user_title, a.title),
-		COALESCE(a.user_performed_by, a.performed_by,
-			(SELECT GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ')
-			 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),
-			'Unknown Artist'),
+		`+albumArtistSQL+`,
 		COALESCE(a.user_release_year, a.release_year, 0),
 		`+albumReleaseDateSort+`,
 		`+albumArtworkURLSQL+`,

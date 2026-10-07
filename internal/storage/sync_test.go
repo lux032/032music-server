@@ -244,3 +244,54 @@ func TestSyncTracksPaginationAndFilters(t *testing.T) {
 		t.Fatalf("expected overridden title, got %q", overrideRes.Items[0].Title)
 	}
 }
+
+// 歌手合并只改写 album_artists 关系，不改写文件标签里的 performed_by。
+// API 下发的专辑歌手必须跟随关系，否则客户端会拿到已合并歌手的旧名字。
+func TestAlbumArtistFollowsMergedArtistOverTagText(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "merge-artist.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, err := store.db.ExecContext(ctx, `INSERT INTO libraries(name,root_path) VALUES('Music','/music')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libID, _ := res.LastInsertId()
+	source := insertRoleTestArtist(t, ctx, store, "ATLUS Sound Team", "atlus sound team")
+	target := insertRoleTestArtist(t, ctx, store, "アトラスサウンドチーム", "アトラスサウンドチーム")
+	res, err = store.db.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,performed_by) VALUES(?,'P5S OST','p5s ost','p5s','ATLUS Sound Team')`, libID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	albumID, _ := res.LastInsertId()
+	if _, err = store.db.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position) VALUES(?,?,0)`, albumID, source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.MergeArtists(ctx, source, target); err != nil {
+		t.Fatal(err)
+	}
+
+	synced, err := store.SyncAlbums(ctx, SyncAlbumsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(synced.Items) != 1 || synced.Items[0].Artist != "アトラスサウンドチーム" {
+		t.Fatalf("sync artist = %#v", synced.Items)
+	}
+	album, err := store.AlbumByID(ctx, albumID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if album.Artist != "アトラスサウンドチーム" {
+		t.Fatalf("album artist = %q", album.Artist)
+	}
+	// 演出者原文保留给网页端编辑表单，不随关系改写。
+	if album.PerformedBy != "ATLUS Sound Team" {
+		t.Fatalf("performedBy = %q", album.PerformedBy)
+	}
+}
