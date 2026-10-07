@@ -652,14 +652,14 @@
   document.addEventListener('submit', e => {
     const form = e.target;
     if (!(form instanceof HTMLFormElement)) return;
-    const picker = form.querySelector('[data-work-picker="/admin/options/albums"]');
+    const picker = form.querySelector('[data-work-picker="/admin/options/albums"], [data-work-picker-required]');
     if (!picker) return;
     const idInput = picker.querySelector('[data-work-id-input]');
     if (idInput?.value) return;
     e.preventDefault();
     const searchInput = picker.querySelector('[data-work-search]');
     if (searchInput) {
-      searchInput.setCustomValidity('请从搜索结果中选择专辑');
+      searchInput.setCustomValidity(picker.dataset.workPickerRequired || '请从搜索结果中选择专辑');
       searchInput.reportValidity();
       searchInput.addEventListener('input', () => searchInput.setCustomValidity(''), { once: true });
     }
@@ -687,14 +687,23 @@
       try {
         const url = new URL(picker.dataset.workPicker || '/admin/options/works', location.origin);
         url.searchParams.set('q', q);
-        url.searchParams.set('limit', '10');
+        url.searchParams.set('limit', picker.dataset.workLimit || '10');
         const res = await fetch(url, { credentials: 'same-origin', signal: ctrl.signal });
         if (!res.ok) return;
-        const items = await res.json();
+        const exclude = picker.dataset.workExclude;
+        const items = (await res.json()).filter(item => !exclude || String(item.id) !== exclude);
         if (ctrl.signal.aborted) return;
         results.replaceChildren();
         if (!items.length) {
-          results.hidden = true;
+          if (picker.dataset.workEmpty) {
+            const empty = document.createElement('p');
+            empty.className = 'work-picker-empty';
+            empty.textContent = picker.dataset.workEmpty;
+            results.appendChild(empty);
+            results.hidden = false;
+          } else {
+            results.hidden = true;
+          }
           return;
         }
         for (const item of items) {

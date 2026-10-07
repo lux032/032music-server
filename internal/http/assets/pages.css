@@ -2251,6 +2251,19 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
   color: var(--accent);
   background: var(--surface);
 }
+.work-picker-empty {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.artist-merge-picker {
+  display: grid;
+  gap: 6px;
+}
+.artist-merge-picker .work-picker-results {
+  max-height: 260px;
+}
 
 /* 3. Work Detail Page (4.5.6) */
 .work-hero {
