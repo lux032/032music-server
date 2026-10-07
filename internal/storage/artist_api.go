@@ -75,7 +75,7 @@ func (s *Store) FavoriteArtistCards(ctx context.Context, limit int) ([]FavoriteA
 	result := make([]FavoriteArtist, 0, len(artists))
 	for _, artist := range artists {
 		item := FavoriteArtist{Artist: artist, PerformedTrackCount: artist.TrackCount}
-		if err := s.db.QueryRowContext(ctx, `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE role IN ('composer','lyricist','arranger','producer') AND artist_id IN (SELECT id FROM m)`, artist.ID).Scan(&item.CreditTrackCount); err != nil {
+		if err := s.db.QueryRowContext(ctx, `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE role IN ('composer','lyricist','arranger','producer') AND artist_id IN (SELECT id FROM m) AND `+trackVisibleSQL("track_id"), artist.ID).Scan(&item.CreditTrackCount); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, item)
@@ -85,7 +85,7 @@ func (s *Store) FavoriteArtistCards(ctx context.Context, limit int) ([]FavoriteA
 
 // ArtistAlbums returns albums where this artist has the album-artist role.
 func (s *Store) ArtistAlbums(ctx context.Context, id int64) ([]Album, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?) ORDER BY `+albumOrder(Filters{Sort: "date"}), id)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?) AND `+albumVisibleSQL("a.id")+` ORDER BY `+albumOrder(Filters{Sort: "date"}), id)
 	if err != nil {
 		return nil, err
 	}
@@ -112,12 +112,13 @@ func (s *Store) ArtistAlbums(ctx context.Context, id int64) ([]Album, error) {
 }
 
 // Indexed role and album relations are unioned before loading the capped detail rows.
-const artistTrackIDs = `SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=? UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=?`
+// Tracks without an available file are hidden (see visibility.go).
+var artistTrackIDs = `SELECT track_id FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=? UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=?) atm WHERE ` + trackVisibleSQL("atm.track_id")
 
 var artistTrackLimit = 5000
 
 // Explicit projection for detail tracks, including the user-overridden credit fields.
-const artistTrackSelect = `SELECT
+var artistTrackSelect = `SELECT
  t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),
  ` + trackArtistSQL + `,
  COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),

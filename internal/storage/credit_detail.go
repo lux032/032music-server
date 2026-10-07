@@ -3,7 +3,9 @@ package storage
 import "context"
 
 // Restrict to this person's historical IDs before expanding performers.
-const creditDetailTracks = `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id), ct AS (SELECT DISTINCT t.id,t.album_id FROM track_artists ta JOIN tracks t ON t.id=ta.track_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND ta.artist_id IN (SELECT id FROM m)) `
+// Tracks without an available file are hidden (see visibility.go).
+var creditDetailTracks = `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id), ct AS (SELECT DISTINCT t.id,t.album_id FROM track_artists ta JOIN tracks t ON t.id=ta.track_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND ta.artist_id IN (SELECT id FROM m) AND ` + trackVisibleSQL("t.id") + `) `
+
 const creditDetailPerformers = `, performers(track_id,artist_id) AS (SELECT ct.id,ta.artist_id FROM ct JOIN track_artists ta ON ta.track_id=ct.id AND ta.role='primary' UNION SELECT ct.id,aa.artist_id FROM ct JOIN album_artists aa ON aa.album_id=ct.album_id WHERE NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=ct.id AND ta.role='primary')), resolved(track_id,id,next) AS (SELECT p.track_id,a.id,a.merged_into_artist_id FROM performers p JOIN artists a ON a.id=p.artist_id UNION SELECT r.track_id,a.id,a.merged_into_artist_id FROM resolved r JOIN artists a ON a.id=r.next) `
 
 func (s *Store) CreditCollaborators(ctx context.Context, id int64, limit int) ([]Artist, error) {

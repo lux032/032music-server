@@ -36,9 +36,10 @@ type SyncArtistsResult struct {
 	Total      int64        `json:"total"`
 }
 
-const syncArtistWhere = `ar.merged_into_artist_id IS NULL AND (
-	EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)
-	OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id AND ta.role='primary'))`
+// syncArtistWhere 只下发仍有可见专辑或可见主唱曲目的演唱歌手（见 visibility.go）。
+var syncArtistWhere = `ar.merged_into_artist_id IS NULL AND (
+	EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id AND ` + albumVisibleSQL("aa.album_id") + `)
+	OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id AND ta.role='primary' AND ` + trackVisibleSQL("ta.track_id") + `))`
 
 func (s *Store) SyncArtists(ctx context.Context, params SyncArtistsParams) (SyncArtistsResult, error) {
 	limit := params.Limit
@@ -58,8 +59,8 @@ func (s *Store) SyncArtists(ctx context.Context, params SyncArtistsParams) (Sync
 		COALESCE(NULLIF(ar.reading_name,''),NULLIF(ar.sort_name,''),''),
 		`+artistImageURLSQL("ar")+`,
 		ar.is_favorite,
-		(SELECT COUNT(*) FROM (SELECT aa.album_id FROM album_artists aa WHERE aa.artist_id=ar.id UNION SELECT t.album_id FROM track_artists ta JOIN tracks t ON t.id=ta.track_id WHERE ta.artist_id=ar.id AND ta.role='primary')),
-		(SELECT COUNT(*) FROM (SELECT ta.track_id FROM track_artists ta WHERE ta.role='primary' AND ta.artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id))
+		(SELECT COUNT(*) FROM (SELECT aa.album_id FROM album_artists aa WHERE aa.artist_id=ar.id UNION SELECT t.album_id FROM track_artists ta JOIN tracks t ON t.id=ta.track_id WHERE ta.artist_id=ar.id AND ta.role='primary') sa WHERE `+albumVisibleSQL("sa.album_id")+`),
+		(SELECT COUNT(*) FROM (SELECT ta.track_id FROM track_artists ta WHERE ta.role='primary' AND ta.artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id) st WHERE `+trackVisibleSQL("st.track_id")+`)
 	FROM artists ar
 	WHERE `+syncArtistWhere+` AND ar.id > ?
 	ORDER BY ar.id ASC

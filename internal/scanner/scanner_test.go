@@ -113,12 +113,18 @@ func TestCleanupOrphansKeepsMissingTracks(t *testing.T) {
 	if err := store.CleanupOrphans(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The row and its favorite survive (lookup by id still works) ...
+	track, err := store.TrackByID(ctx, 1)
+	if err != nil || !track.IsFavorite {
+		t.Fatalf("track=%+v err=%v; missing tracks and their client data must be kept", track, err)
+	}
+	// ... while browse statistics hide it until the file comes back.
 	stats, err := store.Statistics(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Tracks != 1 || stats.FavoriteTracks != 1 {
-		t.Fatalf("tracks=%d favorites=%d; missing tracks and their client data must be kept", stats.Tracks, stats.FavoriteTracks)
+	if stats.Tracks != 0 || stats.FavoriteTracks != 0 || stats.MissingFiles != 1 {
+		t.Fatalf("stats=%+v; a track without available files must be hidden", stats)
 	}
 }
 

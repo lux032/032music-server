@@ -33,8 +33,10 @@ const albumHasEffectiveGenre = `(EXISTS(SELECT 1 FROM album_genre_overrides ago 
 // any album artist via EXISTS so multi-artist albums keep all names), artist
 // (album credit or any track credit), release year and effective genre.
 func albumWhere(f Filters) (string, []any) {
-	clauses := make([]string, 0, 5)
+	clauses := make([]string, 0, 6)
 	args := make([]any, 0, 16)
+	// 已无可用文件的专辑不出现在任何浏览结果中（见 visibility.go）。
+	clauses = append(clauses, albumVisibleSQL("a.id"))
 	if condition, indexArgs := IndexCondition(albumIndexExpression, f.Index); condition != "" {
 		clauses = append(clauses, condition)
 		args = append(args, indexArgs...)
@@ -96,8 +98,10 @@ func albumOrder(f Filters) string {
 // user_display_name; the genre predicate uses effective (override-aware)
 // track genres.
 func trackWhere(f Filters) (string, []any) {
-	clauses := make([]string, 0, 6)
+	clauses := make([]string, 0, 7)
 	args := make([]any, 0, 16)
+	// 已无可用文件的歌曲不出现在任何浏览结果中（见 visibility.go）。
+	clauses = append(clauses, trackVisibleSQL("t.id"))
 	if variants := SearchVariants(f.Query); len(variants) > 0 {
 		parts := make([]string, 0, len(variants)*3)
 		for _, variant := range variants {
@@ -222,7 +226,7 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 			return numberHydration(`SELECT t.album_id, SUM(af.file_size) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id IN (`+placeholders+`) GROUP BY t.album_id`, func(a *Album, v int64) { a.TotalBytes = v })
 		},
 		func() error {
-			return numberHydration(`SELECT t.album_id, COUNT(*) FROM tracks t WHERE t.album_id IN (`+placeholders+`) GROUP BY t.album_id`, func(a *Album, v int64) { a.TrackCount = v })
+			return numberHydration(`SELECT t.album_id, COUNT(*) FROM tracks t WHERE t.album_id IN (`+placeholders+`) AND `+trackVisibleSQL("t.id")+` GROUP BY t.album_id`, func(a *Album, v int64) { a.TrackCount = v })
 		},
 		// 发行类型推断输入：核心曲目数与时长（不含伴奏/off vocal/TV size）。
 		func() error {
@@ -322,7 +326,7 @@ func (s *Store) ListArtistOptions(ctx context.Context, role, query string, limit
 	}
 	if creditRole {
 		// Start from the role index once, then follow only credited artists' merge chains.
-		clauses = []string{"ar.merged_into_artist_id IS NULL", `ar.id IN (WITH RECURSIVE credited(id,next) AS (SELECT a.id,a.merged_into_artist_id FROM artists a WHERE a.id IN (SELECT ta.artist_id FROM track_artists ta WHERE ta.role=?) UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN credited c ON a.id=c.next) SELECT id FROM credited WHERE next IS NULL)`}
+		clauses = []string{"ar.merged_into_artist_id IS NULL", `ar.id IN (WITH RECURSIVE credited(id,next) AS (SELECT a.id,a.merged_into_artist_id FROM artists a WHERE a.id IN (SELECT ta.artist_id FROM track_artists ta WHERE ta.role=? AND `+trackVisibleSQL("ta.track_id")+`) UNION SELECT a.id,a.merged_into_artist_id FROM artists a JOIN credited c ON a.id=c.next) SELECT id FROM credited WHERE next IS NULL)`}
 		args = []any{role}
 		if role == "credit" {
 			clauses[1] = strings.Replace(clauses[1], "ta.role=?", "ta.role IN ('composer','lyricist','arranger','producer')", 1)
@@ -336,6 +340,11 @@ func (s *Store) ListArtistOptions(ctx context.Context, role, query string, limit
 			args = append(args, variant, variant)
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	}
+	if !creditRole {
+		// Credit options are already restricted to visible tracks inside the
+		// merge-chain CTE (credits stay on the historical artist ids).
+		clauses = append(clauses, artistVisibleSQL("ar.id"))
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM artists ar WHERE `+strings.Join(clauses, " AND ")+` ORDER BY COALESCE(ar.user_display_name,ar.display_name) COLLATE NOCASE, ar.id LIMIT ?`, args...)
@@ -363,7 +372,7 @@ func (s *Store) ListAlbumOptions(ctx context.Context, query string, limit int) (
 	if limit > 500 {
 		limit = 500
 	}
-	where := "1=1"
+	where := albumVisibleSQL("a.id")
 	args := make([]any, 0, 4)
 	if variants := SearchVariants(query); len(variants) > 0 {
 		parts := make([]string, 0, len(variants)*2)
@@ -371,7 +380,7 @@ func (s *Store) ListAlbumOptions(ctx context.Context, query string, limit int) (
 			parts = append(parts, "COALESCE(a.user_title,a.title) LIKE '%'||?||'%'", "COALESCE(a.reading_title,'') LIKE '%'||?||'%'")
 			args = append(args, variant, variant)
 		}
-		where = "(" + strings.Join(parts, " OR ") + ")"
+		where += " AND (" + strings.Join(parts, " OR ") + ")"
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title) FROM albums a WHERE `+where+` ORDER BY a.sort_title COLLATE NOCASE, a.id LIMIT ?`, args...)

@@ -84,7 +84,7 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 	}
 
 	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums a WHERE `+albumVisibleSQL("a.id")).Scan(&total); err != nil {
 		return SyncAlbumsResult{}, err
 	}
 
@@ -99,10 +99,10 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 		a.updated_at,
 		COALESCE((SELECT MAX(pp.last_played_at) FROM tracks t JOIN playback_progress pp ON pp.track_id=t.id WHERE t.album_id=a.id), ''),
 		a.is_favorite,
- (SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_is_compilation,a.is_compilation,0),COALESCE(a.user_is_live,a.is_live,0),COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),''),
+ (SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id AND `+trackVisibleSQL("t.id")+`),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_is_compilation,a.is_compilation,0),COALESCE(a.user_is_live,a.is_live,0),COALESCE((SELECT GROUP_CONCAT(DISTINCT UPPER(af.container)) FROM tracks t JOIN audio_files af ON af.track_id=t.id AND af.status='available' WHERE t.album_id=a.id),''),
  COALESCE(a.user_album_type,''),COALESCE(a.album_type,''),COALESCE(a.album_type_source,''),a.disc_count,`+releaseKindCoreTracksSQL+`,`+releaseKindDurationSQL+`
  FROM albums a
-	WHERE a.id > ?
+	WHERE a.id > ? AND `+albumVisibleSQL("a.id")+`
 	ORDER BY a.id ASC
 	LIMIT ?`, params.Cursor, limit+1)
 	if err != nil {
@@ -161,7 +161,7 @@ func (s *Store) SyncTracks(ctx context.Context, params SyncTracksParams) (SyncTr
 	}
 
 	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks WHERE (? = 0 OR album_id = ?)`, params.AlbumID, params.AlbumID).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t WHERE (? = 0 OR t.album_id = ?) AND `+trackVisibleSQL("t.id"), params.AlbumID, params.AlbumID).Scan(&total); err != nil {
 		return SyncTracksResult{}, err
 	}
 
@@ -178,7 +178,7 @@ func (s *Store) SyncTracks(ctx context.Context, params SyncTracksParams) (SyncTr
 		t.is_favorite
 	FROM tracks t
 	JOIN albums a ON a.id = t.album_id
-	WHERE (? = 0 OR t.album_id = ?) AND t.id > ?
+	WHERE (? = 0 OR t.album_id = ?) AND t.id > ? AND ` + trackVisibleSQL("t.id") + `
 	ORDER BY t.id ASC
 	LIMIT ?`
 

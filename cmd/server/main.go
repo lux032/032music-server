@@ -84,6 +84,9 @@ func run() error {
 	// L2: collect custom-image orphans at startup and after every completed
 	// scan (merges and cascading deletes leave no other trigger).
 	go app.GCCustomImages(rootCtx)
+	// 缺失文件清理策略：管理页覆盖优先，否则 MUSIC_SERVER_PURGE_MISSING
+	// （默认 never，只隐藏不删除）；每次扫描结束时读取。
+	scannerManager.SetPurgeMissingPolicy(app.PurgeMissingPolicy)
 	scannerManager.SetOnComplete(func() {
 		enrichmentManager.StartAuto(rootCtx)
 		app.GCCustomImages(rootCtx)

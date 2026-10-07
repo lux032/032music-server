@@ -98,3 +98,21 @@ func TestLoadPosterBackfillWarning(t *testing.T) {
 		t.Fatalf("backfill=%v warnings=%v", cfg.WorkPosterBackfill, cfg.Warnings)
 	}
 }
+
+func TestPurgeMissingFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		value, want string
+		warn        bool
+	}{
+		{"", PurgeMissingNever, false},
+		{"never", PurgeMissingNever, false},
+		{" Always ", PurgeMissingAlways, false},
+		{"FULL", PurgeMissingFull, false},
+		{"true", PurgeMissingNever, true},
+	} {
+		got, warning := purgeMissingFromEnv(tc.value)
+		if got != tc.want || (warning != "") != tc.warn {
+			t.Fatalf("purgeMissingFromEnv(%q) = %q, %q", tc.value, got, warning)
+		}
+	}
+}

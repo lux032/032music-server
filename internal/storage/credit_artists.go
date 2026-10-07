@@ -11,7 +11,8 @@ type CreditArtistFilters struct {
 	Limit, Offset            int
 }
 
-const creditArtistChain = `WITH RECURSIVE chain(id,root) AS (SELECT id,id FROM artists WHERE merged_into_artist_id IS NULL UNION SELECT a.id,c.root FROM artists a JOIN chain c ON a.merged_into_artist_id=c.id), credits AS (SELECT c.root,COUNT(DISTINCT ta.track_id) track_count FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND (?='all' OR ta.role=?) GROUP BY c.root) `
+// Only credits on tracks with an available file count (see visibility.go).
+var creditArtistChain = `WITH RECURSIVE chain(id,root) AS (SELECT id,id FROM artists WHERE merged_into_artist_id IS NULL UNION SELECT a.id,c.root FROM artists a JOIN chain c ON a.merged_into_artist_id=c.id), credits AS (SELECT c.root,COUNT(DISTINCT ta.track_id) track_count FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND (?='all' OR ta.role=?) AND ` + trackVisibleSQL("ta.track_id") + ` GROUP BY c.root) `
 
 func creditArtistWhere(f CreditArtistFilters) (string, []any) {
 	role := f.Role

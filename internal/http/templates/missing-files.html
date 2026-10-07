@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>缺失文件 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main missing-main">
+    <header class="browser-header">
+      <div>
+        <h1>缺失文件</h1>
+        <p class="result-count">{{.Total}} 个音频文件在上次扫描时已不在音乐目录中。仅剩缺失文件的歌曲、专辑和歌手已对 App 和浏览页隐藏；文件放回原处后重新扫描会自动恢复，收藏与播放记录都还在。</p>
+      </div>
+      <a class="secondary-button" href="/admin">返回控制台</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card missing-policy" id="purge-missing">
+      <div>
+        <p class="kicker">自动清理</p>
+        <h2>扫描后如何处理缺失文件</h2>
+        <p class="result-count">当前：{{.Purge.PolicyLabel}}。自动删除会永久移除这些歌曲及其收藏、播放记录和歌单条目；疑似磁盘未挂载（超过一半文件消失）的扫描不会触发删除。</p>
+      </div>
+      <form class="missing-policy-form" method="post" action="/admin/settings/purge-missing">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <select name="policy" aria-label="清理策略">
+          {{range .Purge.Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+        <button class="secondary-button">保存</button>
+      </form>
+      {{if .Purge.Overridden}}
+      <form class="library-watch-reset" method="post" action="/admin/settings/purge-missing/reset">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <span>当前为管理页设置，环境变量 MUSIC_SERVER_PURGE_MISSING 默认值：{{.Purge.EnvSummary}}</span>
+        <button class="link-button">恢复默认</button>
+      </form>
+      {{end}}
+    </section>
+
+    {{if .Files}}
+    <form id="missing-files-form" method="post" action="/admin/library/missing/purge">
+      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+      <section class="missing-list">
+        {{range .Files}}
+        <label class="missing-row">
+          <input type="checkbox" name="id" value="{{.ID}}">
+          <span class="missing-copy">
+            <strong>{{if .TrackTitle}}{{.TrackTitle}}{{else}}（未关联歌曲）{{end}}</strong>
+            <small>{{if .Artist}}{{.Artist}} · {{end}}{{.AlbumTitle}}</small>
+            <code>{{.RelativePath}}</code>
+          </span>
+          <span class="missing-state">{{if .TrackHidden}}已隐藏{{else}}仍有其他文件{{end}}</span>
+          <time>{{formatAdminTime .MissingSince}}</time>
+        </label>
+        {{end}}
+      </section>
+      <details class="danger-confirm missing-selected-confirm">
+        <summary class="danger-button">删除勾选的文件…</summary>
+        <div class="danger-confirm-panel">
+          <strong>确定永久删除勾选的缺失文件吗？</strong>
+          <p>没有其他文件的歌曲会一并删除，包括收藏、播放记录和歌单条目；空专辑和歌手也会被清理。此操作不可撤销。</p>
+          <div class="missing-confirm-actions">
+            <button class="danger-button" name="confirm" value="selected">是，删除勾选项</button>
+            <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+          </div>
+        </div>
+      </details>
+    </form>
+    {{else}}
+    <div class="zero-state"><strong>没有缺失文件</strong><span>音乐目录中的文件都能找到。</span></div>
+    {{end}}
+
+    {{if gt .PageCount 1}}
+    <nav class="pagination" aria-label="分页">
+      {{if .PrevURL}}<a href="{{.PrevURL}}">上一页</a>{{else}}<span>上一页</span>{{end}}
+      <div>{{range .Pages}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}">{{.Number}}</a>{{end}}</div>
+      {{if .NextURL}}<a href="{{.NextURL}}">下一页</a>{{else}}<span>下一页</span>{{end}}
+    </nav>
+    {{end}}
+
+    {{if .Total}}
+    <section class="feature-card danger-zone playback-clear">
+      <div>
+        <p class="kicker">手动清理</p>
+        <h2>删除全部缺失文件</h2>
+        <p class="result-count">永久删除全部 {{.Total}} 个缺失文件记录，以及因此再无文件的歌曲、专辑和歌手。</p>
+      </div>
+      <details class="danger-confirm">
+        <summary class="danger-button">全部删除…</summary>
+        <div class="danger-confirm-panel">
+          <strong>确定删除全部缺失文件吗？</strong>
+          <p>此操作不可撤销；取消不会发送任何请求。</p>
+          <form method="post" action="/admin/library/missing/purge">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button class="danger-button" name="confirm" value="all">是，全部删除</button>
+            <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+          </form>
+        </div>
+      </details>
+    </section>
+    {{end}}
+  </main>
+</body>
+</html>

@@ -126,6 +126,7 @@ type dashboardPageData struct {
 	Statistics     storage.Statistics
 	Scan           storage.ScanJob
 	LibraryWatch   libraryWatchView
+	PurgeMissing   purgeMissingView
 	Notice         string
 }
 
@@ -350,6 +351,10 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/scan", a.requireAdmin(http.HandlerFunc(a.handleStartScan)))
 	mux.Handle("POST /admin/settings/library-watch", a.requireAdmin(http.HandlerFunc(a.handleSaveLibraryWatch)))
 	mux.Handle("POST /admin/settings/library-watch/reset", a.requireAdmin(http.HandlerFunc(a.handleResetLibraryWatch)))
+	mux.Handle("GET /admin/library/missing", a.requireAdmin(http.HandlerFunc(a.handleMissingFilesPage)))
+	mux.Handle("POST /admin/library/missing/purge", a.requireAdmin(http.HandlerFunc(a.handlePurgeMissingFiles)))
+	mux.Handle("POST /admin/settings/purge-missing", a.requireAdmin(http.HandlerFunc(a.handleSavePurgeMissing)))
+	mux.Handle("POST /admin/settings/purge-missing/reset", a.requireAdmin(http.HandlerFunc(a.handleResetPurgeMissing)))
 	mux.Handle("GET /admin/credits/{id}", a.requireAdmin(http.HandlerFunc(a.handleCreditArtistPage)))
 	mux.Handle("GET /admin/credits", a.requireAdmin(http.HandlerFunc(a.handleCreditArtistsPage)))
 	mux.Handle("GET /admin/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistsPage)))
@@ -645,6 +650,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Statistics:     stats,
 		Scan:           latestScan(a.store, r),
 		LibraryWatch:   a.libraryWatchView(r.Context()),
+		PurgeMissing:   a.purgeMissingView(r.Context()),
 		Notice:         r.URL.Query().Get("notice"),
 	})
 }

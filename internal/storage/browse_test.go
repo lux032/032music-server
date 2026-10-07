@@ -369,6 +369,7 @@ func TestAlbumPaginationStableAndDisjoint(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		// Identical titles force ORDER BY ties that only a.id can break.
 		id := fx.album(t, "Same", 2000+i, "Kinoko", kinoko)
+		fx.track(t, fmt.Sprintf("Same %d", i), id, 1, nil, nil) // albums without an available track are hidden
 		expected = append(expected, id)
 	}
 	seen := map[int64]int{}

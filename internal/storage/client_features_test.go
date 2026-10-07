@@ -32,6 +32,7 @@ func TestClientFeaturesLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	trackID, _ := result.LastInsertId()
+	giveTracksFiles(t, store)
 
 	if err := store.SetAlbumFavorite(ctx, albumID, true); err != nil {
 		t.Fatal(err)

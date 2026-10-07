@@ -42,6 +42,7 @@ func TestArtistRoleFilters(t *testing.T) {
 	if _, err = store.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position) VALUES(?,?,0),(?,?,1)`, trackID, trackArtist, trackID, bothArtist); err != nil {
 		t.Fatal(err)
 	}
+	giveTracksFiles(t, store)
 
 	assertArtistRoleNames(t, ctx, store, "album", []string{"Album Artist", "Both Artist"})
 	assertArtistRoleNames(t, ctx, store, "track", []string{"Both Artist", "Track Artist"})

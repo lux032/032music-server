@@ -75,10 +75,10 @@ func updateFavorite(ctx context.Context, db retryDB, table string, id int64, fav
 func (s *Store) FavoriteAlbums(ctx context.Context, limit, offset int) ([]Album, int64, error) {
 	limit, offset = page(Filters{Limit: limit, Offset: offset})
 	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums WHERE is_favorite=1`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums a WHERE a.is_favorite=1 AND `+albumVisibleSQL("a.id")).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM albums WHERE is_favorite=1 ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE a.is_favorite=1 AND `+albumVisibleSQL("a.id")+` ORDER BY a.updated_at DESC,a.id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -104,10 +104,10 @@ func (s *Store) FavoriteAlbums(ctx context.Context, limit, offset int) ([]Album,
 func (s *Store) FavoriteTracks(ctx context.Context, limit, offset int) ([]Track, int64, error) {
 	limit, offset = page(Filters{Limit: limit, Offset: offset})
 	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks WHERE is_favorite=1`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks t WHERE t.is_favorite=1 AND `+trackVisibleSQL("t.id")).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tracks WHERE is_favorite=1 ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id FROM tracks t WHERE t.is_favorite=1 AND `+trackVisibleSQL("t.id")+` ORDER BY t.updated_at DESC,t.id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}

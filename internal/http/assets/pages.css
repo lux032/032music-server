@@ -3508,3 +3508,23 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .library-watch-reset { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; color: var(--muted); font-size: var(--fs-xs); }
 .library-watch-reset .link-button { min-height: 0; padding: 0; border: 0; color: var(--accent); background: none; font-size: inherit; font-weight: 600; cursor: pointer; }
 .library-watch-reset .link-button:hover { text-decoration: underline; background: none; }
+.library-missing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
+.library-missing small { color: var(--muted); font-size: var(--fs-xs); }
+.library-missing a { color: var(--accent); font-weight: 600; }
+.missing-policy { display: grid; gap: 14px; margin-bottom: 24px; }
+.missing-policy-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; }
+.missing-policy-form select { min-width: 14rem; }
+.missing-list { border-top: 1px solid var(--line); }
+.missing-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto minmax(120px, auto); align-items: center; gap: 14px; border-bottom: 1px solid var(--line); padding: 11px 6px; cursor: pointer; }
+.missing-row:hover { background: var(--bg-soft); }
+.missing-copy { display: grid; gap: 3px; min-width: 0; }
+.missing-copy strong, .missing-copy small, .missing-copy code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.missing-copy small { color: var(--muted); font-size: var(--fs-xs); }
+.missing-copy code { color: var(--text-secondary); font-size: var(--fs-xs); }
+.missing-state, .missing-row time { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.missing-selected-confirm { margin-top: 16px; }
+.missing-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 640px) {
+  .missing-row { grid-template-columns: 22px minmax(0, 1fr); }
+  .missing-state, .missing-row time { grid-column: 2; }
+}

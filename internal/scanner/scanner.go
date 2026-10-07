@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/lyrics"
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
@@ -44,7 +45,35 @@ type Manager struct {
 	readMetadata     func(string) (metadata.AudioMetadata, error)
 	probeAudio       func(string, string) metadata.AudioProps
 	updateAudioProbe func(context.Context, int64, string, metadata.AudioProps, bool) error
+	purgePolicy      func(context.Context) string
 	wg               sync.WaitGroup
+}
+
+// SetPurgeMissingPolicy 设置缺失文件清理策略的来源（管理页覆盖优先，否则取
+// MUSIC_SERVER_PURGE_MISSING）。每次扫描结束时读取一次，因此运行期修改对下
+// 一次扫描立即生效。未设置时等同 never。
+func (m *Manager) SetPurgeMissingPolicy(policy func(context.Context) string) {
+	m.mu.Lock()
+	m.purgePolicy = policy
+	m.mu.Unlock()
+}
+
+// shouldPurge 判断本次扫描结束后是否永久删除缺失条目。
+func (m *Manager) shouldPurge(ctx context.Context, scanType string) bool {
+	m.mu.Lock()
+	policy := m.purgePolicy
+	m.mu.Unlock()
+	if policy == nil {
+		return false
+	}
+	switch policy(ctx) {
+	case config.PurgeMissingAlways:
+		return true
+	case config.PurgeMissingFull:
+		return scanType == "full"
+	default:
+		return false
+	}
 }
 
 func (m *Manager) SetOnComplete(callback func()) { m.mu.Lock(); m.onComplete = callback; m.mu.Unlock() }
@@ -242,6 +271,16 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 	if err != nil {
 		m.fail(ctx, jobID, err)
 		return
+	}
+	// 只有通过上面的 S1 保护（未取消、未疑似掉盘）后才会走到这里，因此
+	// 永久删除不会在挂载失效时把整个曲库清空。
+	if m.shouldPurge(ctx, scanType) {
+		purged, purgeErr := m.store.PurgeMissing(ctx, m.library.ID, nil)
+		if purgeErr != nil {
+			m.logger.Error("purge missing files", "jobId", jobID, "error", purgeErr)
+		} else if purged.Files > 0 {
+			m.logger.Info("purged missing files", "jobId", jobID, "files", purged.Files, "tracks", purged.Tracks, "albums", purged.Albums, "artists", purged.Artists)
+		}
 	}
 	if err = m.store.CleanupOrphans(ctx); err != nil {
 		m.fail(ctx, jobID, err)

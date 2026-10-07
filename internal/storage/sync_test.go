@@ -27,6 +27,11 @@ func TestSyncAlbumsPagination(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Albums are only synced while they have a track with an available file.
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO tracks(album_id,title,sort_title) SELECT id,'T','t' FROM albums`); err != nil {
+		t.Fatal(err)
+	}
+	giveTracksFiles(t, store)
 	first, err := store.SyncAlbums(ctx, SyncAlbumsParams{Limit: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +151,8 @@ func TestSyncTracksPaginationAndFilters(t *testing.T) {
 		tID, _ := r.LastInsertId()
 		trackIDs = append(trackIDs, tID)
 	}
+
+	giveTracksFiles(t, store)
 
 	// 1. Full sync across 3 pages with limit=2
 	// Page 1
@@ -275,6 +282,10 @@ func TestAlbumArtistFollowsMergedArtistOverTagText(t *testing.T) {
 	if _, err = store.MergeArtists(ctx, source, target); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = store.db.ExecContext(ctx, `INSERT INTO tracks(album_id,title,sort_title) VALUES(?,'T','t')`, albumID); err != nil {
+		t.Fatal(err)
+	}
+	giveTracksFiles(t, store)
 
 	synced, err := store.SyncAlbums(ctx, SyncAlbumsParams{})
 	if err != nil {

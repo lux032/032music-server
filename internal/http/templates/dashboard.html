@@ -92,6 +92,10 @@
           {{end}}
         </div>
         {{end}}{{end}}
+        <div class="library-missing" id="library-missing">
+          <span><strong>缺失文件</strong> <small>{{.PurgeMissing.PolicyLabel}}</small></span>
+          <a href="/admin/library/missing">{{if .Statistics.MissingFiles}}{{.Statistics.MissingFiles}} 个缺失文件，查看与清理{{else}}没有缺失文件 · 清理设置{{end}}</a>
+        </div>
         {{if eq .Statistics.AudioFiles 0}}
         <div id="empty-library-hint" class="zero-state">
           <strong>音乐库尚无文件</strong>

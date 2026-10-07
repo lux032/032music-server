@@ -53,6 +53,11 @@ type Config struct {
 	// the library directory is polled for changes that trigger an automatic
 	// incremental scan. 0 disables the watcher (startup scan still runs).
 	WatchInterval time.Duration
+	// PurgeMissing is MUSIC_SERVER_PURGE_MISSING (default never): whether a
+	// completed scan permanently deletes tracks whose files went missing.
+	// never = only hide them; always = after every scan; full = only after a
+	// full scan. The admin page can override it at runtime.
+	PurgeMissing string
 	// Warnings 是启动时应告警但不致命的配置问题（如无法识别的开关取值）。
 	Warnings []string
 }
@@ -142,6 +147,11 @@ func Load() (Config, error) {
 	cfg.WatchInterval = watchInterval
 	if watchWarning != "" {
 		cfg.Warnings = append(cfg.Warnings, watchWarning)
+	}
+	purgeMissing, purgeWarning := purgeMissingFromEnv(os.Getenv("MUSIC_SERVER_PURGE_MISSING"))
+	cfg.PurgeMissing = purgeMissing
+	if purgeWarning != "" {
+		cfg.Warnings = append(cfg.Warnings, purgeWarning)
 	}
 	if posterBackfillWarning != "" {
 		cfg.Warnings = append(cfg.Warnings, posterBackfillWarning)
@@ -280,6 +290,32 @@ func watchIntervalFromEnv(value string) (time.Duration, string) {
 		return MinWatchInterval, fmt.Sprintf("MUSIC_SERVER_WATCH_INTERVAL value %q is below the minimum; using %s", value, MinWatchInterval)
 	}
 	return interval, ""
+}
+
+// 缺失文件清理策略（MUSIC_SERVER_PURGE_MISSING，参照 Navidrome
+// Scanner.PurgeMissing）。
+const (
+	PurgeMissingNever  = "never"
+	PurgeMissingAlways = "always"
+	PurgeMissingFull   = "full"
+)
+
+// ValidPurgeMissing 报告 value 是否为合法的清理策略。
+func ValidPurgeMissing(value string) bool {
+	return value == PurgeMissingNever || value == PurgeMissingAlways || value == PurgeMissingFull
+}
+
+// purgeMissingFromEnv 解析 MUSIC_SERVER_PURGE_MISSING：空值取 never；无法
+// 识别的值回退 never（最安全，不删除任何数据）并返回 warning。
+func purgeMissingFromEnv(value string) (string, string) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return PurgeMissingNever, ""
+	}
+	if ValidPurgeMissing(normalized) {
+		return normalized, ""
+	}
+	return PurgeMissingNever, fmt.Sprintf("unrecognized MUSIC_SERVER_PURGE_MISSING value %q; using never (valid: never, always, full)", value)
 }
 
 func parseBool(value string) bool {

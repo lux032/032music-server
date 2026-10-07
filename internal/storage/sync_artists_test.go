@@ -64,6 +64,7 @@ func TestSyncArtistModel(t *testing.T) {
 	exec(`INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,0,'primary')`, guestTrack, guest)
 	exec(`INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,0,'composer')`, plainTrack, composer)
 	exec(`UPDATE artists SET merged_into_artist_id=? WHERE id=?`, team, merged)
+	giveTracksFiles(t, store)
 
 	albums, err := store.SyncAlbums(ctx, SyncAlbumsParams{})
 	if err != nil {

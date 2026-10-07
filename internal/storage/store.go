@@ -37,6 +37,9 @@ type Statistics struct {
 	Playlists      int64 `json:"playlists"`
 	FavoriteAlbums int64 `json:"favoriteAlbums"`
 	FavoriteTracks int64 `json:"favoriteTracks"`
+	// MissingFiles 是被扫描标记为缺失、尚未清理的音频文件数；专辑、歌曲、
+	// 歌手与收藏计数只统计仍有可用文件的条目（见 visibility.go）。
+	MissingFiles int64 `json:"missingFiles"`
 }
 
 func Open(databasePath string) (*Store, error) {
@@ -279,15 +282,16 @@ func (s *Store) Statistics(ctx context.Context) (Statistics, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM libraries),
-			(SELECT COUNT(*) FROM artists WHERE merged_into_artist_id IS NULL),
-			(SELECT COUNT(*) FROM albums),
-			(SELECT COUNT(*) FROM tracks),
-			(SELECT COUNT(*) FROM audio_files),
+			(SELECT COUNT(*) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND `+artistVisibleSQL("ar.id")+`),
+			(SELECT COUNT(*) FROM albums a WHERE `+albumVisibleSQL("a.id")+`),
+			(SELECT COUNT(*) FROM tracks t WHERE `+trackVisibleSQL("t.id")+`),
+			(SELECT COUNT(*) FROM audio_files WHERE status='available'),
 			(SELECT COUNT(*) FROM scan_jobs),
 			(SELECT COUNT(*) FROM playlists),
-			(SELECT COUNT(*) FROM albums WHERE is_favorite=1),
-			(SELECT COUNT(*) FROM tracks WHERE is_favorite=1)
-	`).Scan(&stats.Libraries, &stats.Artists, &stats.Albums, &stats.Tracks, &stats.AudioFiles, &stats.ScanJobs, &stats.Playlists, &stats.FavoriteAlbums, &stats.FavoriteTracks)
+			(SELECT COUNT(*) FROM albums a WHERE a.is_favorite=1 AND `+albumVisibleSQL("a.id")+`),
+			(SELECT COUNT(*) FROM tracks t WHERE t.is_favorite=1 AND `+trackVisibleSQL("t.id")+`),
+			(SELECT COUNT(*) FROM audio_files WHERE status='missing')
+	`).Scan(&stats.Libraries, &stats.Artists, &stats.Albums, &stats.Tracks, &stats.AudioFiles, &stats.ScanJobs, &stats.Playlists, &stats.FavoriteAlbums, &stats.FavoriteTracks, &stats.MissingFiles)
 	if err != nil {
 		return Statistics{}, fmt.Errorf("query library statistics: %w", err)
 	}

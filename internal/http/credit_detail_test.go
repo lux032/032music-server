@@ -124,7 +124,9 @@ func TestCreditDetailPagesAndRedirects(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &options); err != nil || w.Code != 200 {
 			t.Fatal(w.Code, err)
 		}
-		want := 3
+		// Singer + Creator; the relation-less "Empty" artist has nothing
+		// visible in the library and is hidden from options.
+		want := 2
 		if role == "credit" {
 			want = 1
 		}

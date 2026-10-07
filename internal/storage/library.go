@@ -582,10 +582,12 @@ func (s *Store) MarkMissing(ctx context.Context, libraryID int64, scanStarted st
 // Tracks are deliberately NEVER deleted here: a track whose files are all
 // 'missing' still carries client data (favorites, play counts, playlist
 // memberships, playback progress) that must survive remounts and file
-// reorganisation. The scanner guards reconciliation with plausibility
-// thresholds before MarkMissing runs.
+// reorganisation; browse queries hide it instead (visibility.go). Only
+// PurgeMissing deletes such tracks, per the configured policy or on an
+// explicit admin action. The scanner guards reconciliation with
+// plausibility thresholds before MarkMissing runs.
 func (s *Store) CleanupOrphans(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM albums WHERE NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=albums.id); DELETE FROM artists WHERE merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=artists.id) AND NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=artists.id); DELETE FROM genres WHERE NOT EXISTS(SELECT 1 FROM track_genres tg WHERE tg.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides tgo WHERE tgo.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM album_genre_overrides ago WHERE ago.genre_id=genres.id);`)
+	_, err := s.db.ExecContext(ctx, cleanupOrphansSQL)
 	return err
 }
 
@@ -602,11 +604,11 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	}
 	where, args := artistWhere(f, role)
 	args = append(args, limit, offset)
-	trackCount := "(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id)"
+	trackCount := "(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id AND " + trackVisibleSQL("ta.track_id") + ")"
 	if f.PerformerOnly {
-		trackCount = "(SELECT COUNT(*) FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id))"
+		trackCount = "(SELECT COUNT(*) FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id) pt WHERE " + trackVisibleSQL("pt.track_id") + ")"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id) album_count,`+trackCount+` track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id AND `+albumVisibleSQL("aa.album_id")+`) album_count,`+trackCount+` track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -666,7 +668,8 @@ func (s *Store) CountArtists(ctx context.Context, f Filters) (int64, error) {
 }
 
 func artistWhere(f Filters, role string) (string, []any) {
-	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id)))"}
+	// 已无可用文件的歌手不出现在任何浏览结果中；按角色筛选时也只看可见专辑/歌曲。
+	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id AND " + albumVisibleSQL("aa.album_id") + ")) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id AND " + trackVisibleSQL("ta.track_id") + ")))", artistVisibleSQL("ar.id")}
 	args := []any{role, role, role}
 	if f.PerformerOnly {
 		clauses[1] = strings.ReplaceAll(clauses[1], "ta.artist_id=ar.id", "ta.artist_id=ar.id AND ta.role='primary'")
@@ -754,12 +757,12 @@ func (s *Store) CountTracks(ctx context.Context, f Filters) (int64, error) {
 // 若优先使用会让客户端拿到已合并歌手的旧名字而无法跳转歌手页。
 const albumArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),NULLIF(a.user_performed_by,''),NULLIF(a.performed_by,''),'Unknown Artist')`
 
-const albumByIDSelect = `SELECT
+var albumByIDSelect = `SELECT
 	a.id, COALESCE(a.user_title,a.title),
 	COALESCE(a.user_performed_by,a.performed_by,(SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),'Unknown Artist'),
 	` + albumArtistSQL + `,
 	COALESCE(a.user_release_year,a.release_year,0), a.disc_count,
-	(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id),
+	(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id AND ` + trackVisibleSQL("t.id") + `),
 	COALESCE((SELECT GROUP_CONCAT(g.name,',' ORDER BY ago.position) FROM album_genre_overrides ago JOIN genres g ON g.id=ago.genre_id WHERE ago.album_id=a.id),(SELECT GROUP_CONCAT(name,',' ORDER BY gid) FROM (SELECT t.album_id, g.id AS gid, g.name FROM tracks t JOIN track_genre_overrides ox ON ox.track_id=t.id JOIN genres g ON g.id=ox.genre_id WHERE t.album_id=a.id UNION SELECT t.album_id, g.id, g.name FROM tracks t JOIN track_genres tg ON tg.track_id=t.id JOIN genres g ON g.id=tg.genre_id WHERE t.album_id=a.id AND NOT EXISTS(SELECT 1 FROM track_genre_overrides ox WHERE ox.track_id=t.id))),''),
 	` + albumArtworkURLSQL + `,
 	COALESCE(a.user_album_type,a.album_type,'album'), COALESCE(a.user_version,a.version,''),
@@ -843,7 +846,7 @@ func inClause(ids []int64) (string, []any) {
 }
 
 func (s *Store) ArtistsForAlbum(ctx context.Context, albumID int64) ([]Artist, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY aa.position,ar.id`, albumID)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id AND `+albumVisibleSQL("album_id")+`),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id AND `+trackVisibleSQL("track_id")+`) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=? AND ar.merged_into_artist_id IS NULL ORDER BY aa.position,ar.id`, albumID)
 	if err != nil {
 		return nil, err
 	}
@@ -860,7 +863,7 @@ func (s *Store) ArtistsForAlbum(ctx context.Context, albumID int64) ([]Artist, e
 }
 
 func (s *Store) ArtistsForAlbumTracks(ctx context.Context, albumID int64) (map[int64][]Artist, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists ar ON ar.id=ta.artist_id WHERE t.album_id=? AND ta.role='primary' AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, albumID)
+	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id AND `+albumVisibleSQL("album_id")+`),(SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id AND `+trackVisibleSQL("track_id")+`) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists ar ON ar.id=ta.artist_id WHERE t.album_id=? AND ta.role='primary' AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, albumID)
 	if err != nil {
 		return nil, err
 	}

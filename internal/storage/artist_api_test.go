@@ -186,6 +186,7 @@ func TestArtistTracksUnionOrderingFallbackAndLimit(t *testing.T) {
 			}
 		}
 	}
+	giveTracksFiles(t, store)
 	tracks, total, err := store.ArtistTracks(ctx, owner)
 	if err != nil || total != 5 || len(tracks) != 5 {
 		t.Fatalf("tracks=%+v total=%d err=%v", tracks, total, err)
