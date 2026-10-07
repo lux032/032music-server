@@ -10,6 +10,9 @@ type SyncAlbum struct {
 	Title        string `json:"title"`
 	Artist       string `json:"artist"`
 	Year         int    `json:"year"`
+	// ReleaseDate 是生效发行日期（手动 > 标签日期 > 年份），分隔符统一为 '-'，
+	// 可能只有年份（"2004"）或年月；与网页端“发行日期”排序同源。
+	ReleaseDate  string `json:"releaseDate,omitempty"`
 	ArtworkURL   string `json:"artworkUrl"`
 	AddedAt      string `json:"addedAt"`
 	UpdatedAt    string `json:"updatedAt"`
@@ -87,6 +90,7 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 			 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),
 			'Unknown Artist'),
 		COALESCE(a.user_release_year, a.release_year, 0),
+		`+albumReleaseDateSort+`,
 		`+albumArtworkURLSQL+`,
 		a.added_at,
 		a.updated_at,
@@ -108,7 +112,7 @@ func (s *Store) SyncAlbums(ctx context.Context, params SyncAlbumsParams) (SyncAl
 		var item SyncAlbum
 		var favorite, compilation, live int
 		kind := releaseKindInput{}
-		if err := rows.Scan(&item.ID, &item.Title, &item.Artist, &item.Year, &item.ArtworkURL, &item.AddedAt, &item.UpdatedAt, &item.LastPlayedAt, &favorite, &item.TrackCount, &item.AlbumType, &compilation, &live, &item.Formats, &kind.UserType, &kind.StoredType, &kind.Source, &kind.DiscCount, &kind.CoreTracks, &kind.DurationMillis); err != nil {
+		if err := rows.Scan(&item.ID, &item.Title, &item.Artist, &item.Year, &item.ReleaseDate, &item.ArtworkURL, &item.AddedAt, &item.UpdatedAt, &item.LastPlayedAt, &favorite, &item.TrackCount, &item.AlbumType, &compilation, &live, &item.Formats, &kind.UserType, &kind.StoredType, &kind.Source, &kind.DiscCount, &kind.CoreTracks, &kind.DurationMillis); err != nil {
 			return SyncAlbumsResult{}, err
 		}
 		kind.Title, kind.TotalTracks = item.Title, item.TrackCount

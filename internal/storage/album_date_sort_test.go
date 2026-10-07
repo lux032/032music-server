@@ -68,3 +68,41 @@ func TestListAlbumsHydratesArtistLinks(t *testing.T) {
 		t.Fatalf("artist links = %+v", links)
 	}
 }
+
+// TestSyncAlbumsExposesEffectiveReleaseDate: the App sync feed carries the same
+// effective date the web "date" sort uses, so clients can sort by full date.
+func TestSyncAlbumsExposesEffectiveReleaseDate(t *testing.T) {
+	f := newAlbumMergeFixture(t)
+	add := func(album, date string, year int) {
+		t.Helper()
+		raw := map[string][]string{}
+		if date != "" {
+			raw["DATE"] = []string{date}
+		}
+		input := ImportInput{LibraryID: f.library, RelativePath: album + "/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: album, Album: album, Year: year, Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"}, DiscNumber: 1, TrackNumber: 1, Raw: raw}}
+		if err := f.store.ImportTrack(f.ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("Dotted", "2004.12.01", 2004)
+	add("YearOnly", "", 2001)
+	add("Undated", "", 0)
+	add("Edited", "1999-01-01", 1999)
+	if err := f.store.UpdateAlbum(f.ctx, f.albumID(t, "Edited"), AlbumEdit{Title: "Edited", ReleaseDate: "2004/08/01"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.store.SyncAlbums(f.ctx, SyncAlbumsParams{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, item := range result.Items {
+		got[item.Title] = item.ReleaseDate
+	}
+	want := map[string]string{"Dotted": "2004-12-01", "YearOnly": "2001", "Undated": "", "Edited": "2004-08-01"}
+	for title, date := range want {
+		if got[title] != date {
+			t.Fatalf("releaseDate[%s] = %q, want %q (all = %v)", title, got[title], date, got)
+		}
+	}
+}
