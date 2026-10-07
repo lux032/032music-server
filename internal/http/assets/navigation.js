@@ -9,7 +9,7 @@ document.addEventListener("click", (event) => {
 
   try {
     const previous = new URL(state.previousURL, window.location.href);
-    if (previous.origin === window.location.origin && (previous.pathname === expectedPath || previous.pathname.startsWith(expectedPath + "/"))) {
+    if (previous.origin === window.location.origin && previous.pathname === expectedPath) {
       event.preventDefault();
       window.history.back();
     }

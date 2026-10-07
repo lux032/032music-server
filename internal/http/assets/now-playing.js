@@ -300,7 +300,26 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     });
     for (const id of ['np-more', 'player-btn-more']) document.getElementById(id)?.setAttribute('aria-haspopup', 'menu');
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && menu) { e.preventDefault(); e.stopImmediatePropagation(); closeMenu(); } }, true);
-    document.addEventListener('032:pjax-applied', () => { closeMenu(false); syncFavorite(); });
+    // A freshly rendered page is the server's truth: adopt its favorite state
+    // for the playing track instead of pushing a possibly stale cache onto it
+    // (that made a just-saved favorite look like it had rolled back).
+    document.addEventListener('032:pjax-applied', () => {
+      closeMenu(false);
+      const track = s.queue[s.currentIndex];
+      const detail = track && trackDetails.get(String(track.id));
+      const value = track && document.querySelector(`form[action="/admin/favorites/tracks/${encodeURIComponent(track.id)}"] input[name="favorite"]`);
+      if (detail && value && !favoriteBusy) detail.isFavorite = value.value === '0';
+      syncFavorite();
+    });
+    // In-page row toggles (queue.js) keep the player's cached state in step.
+    document.addEventListener('032:favorite-changed', (e) => {
+      const { kind, id, favorite } = e.detail || {};
+      if (kind !== 'tracks') return;
+      const detail = trackDetails.get(String(id));
+      if (detail) detail.isFavorite = !!favorite;
+      const track = s.queue[s.currentIndex];
+      if (track && String(track.id) === String(id)) syncFavorite();
+    });
     const live = document.createElement('div'); live.id = 'np-queue-live'; live.className = 'sr-only'; live.setAttribute('aria-live', 'polite');
     document.body.appendChild(live);
     const list = document.getElementById('np-queue-list');

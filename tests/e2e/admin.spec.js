@@ -432,6 +432,36 @@ test('album cover heart toggles favorite in place and syncs the card menu', asyn
   await expect(page.locator(`.library-album-card[data-album-id="${id}"] .album-fav`)).toHaveAttribute('aria-pressed', start);
 });
 
+test('album detail favorites toggle in place and back returns to the list in one click', async ({ page }) => {
+  await page.goto('/admin/albums');
+  await page.locator('.library-album-card .album-card-title a').first().click();
+  await expect(page).toHaveURL(/\/admin\/albums\/\d+$/);
+  const albumURL = page.url();
+  const historyBefore = await page.evaluate(() => history.length);
+
+  const trackHeart = page.locator('.detail-tracks .inline-favorite button').first();
+  const trackStart = await trackHeart.evaluate(el => el.classList.contains('selected'));
+  await trackHeart.click();
+  await expect.poll(() => trackHeart.evaluate(el => el.classList.contains('selected'))).toBe(!trackStart);
+  await expect(trackHeart.locator('svg')).toHaveCount(1);
+
+  const albumHeart = page.locator('.album-actions .favorite-button');
+  const albumStart = await albumHeart.getAttribute('aria-pressed');
+  await albumHeart.click();
+  await expect(albumHeart).toHaveAttribute('aria-pressed', albumStart === 'true' ? 'false' : 'true');
+
+  expect(page.url()).toBe(albumURL);
+  expect(await page.evaluate(() => history.length)).toBe(historyBefore);
+
+  // Restore both, then the back control must reach the list in one click.
+  await trackHeart.click();
+  await expect.poll(() => trackHeart.evaluate(el => el.classList.contains('selected'))).toBe(trackStart);
+  await albumHeart.click();
+  await expect(albumHeart).toHaveAttribute('aria-pressed', albumStart);
+  await page.getByRole('link', { name: '返回专辑列表' }).click();
+  await expect(page).toHaveURL(/\/admin\/albums$/);
+});
+
 test('artist heart toggles in place on list, detail and favorites pages', async ({ page }) => {
   await page.goto('/admin/artists/album');
   const row = page.locator('.artist-row').first();

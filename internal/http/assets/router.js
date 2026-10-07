@@ -157,7 +157,9 @@ import { updateTrackRowsUI } from './player-bar.js';
       if (pending) { button.dataset.wasDisabled = button.disabled ? '1' : '0'; button.disabled = true; }
       else if (button.dataset.wasDisabled !== '1') button.disabled = false;
     });
-    if (submitter instanceof HTMLButtonElement) {
+    // Icon-only buttons keep their icon; replacing textContent would destroy the
+    // <svg> for good (the label restore only puts back text).
+    if (submitter instanceof HTMLButtonElement && !submitter.querySelector('svg')) {
       if (pending) { submitter.dataset.originalText = submitter.textContent; submitter.textContent = '保存中…'; }
       else if (submitter.dataset.originalText) { submitter.textContent = submitter.dataset.originalText; delete submitter.dataset.originalText; }
     }
@@ -183,7 +185,14 @@ import { updateTrackRowsUI } from './player-bar.js';
         return;
       }
       sessionStorage.removeItem(draftStorageKey);
-      const applied = applyPage(html, res.url || window.location.href, true);
+      const favoriteMatch = /^\/admin\/favorites\/(albums|artists|tracks)\/(\d+)$/.exec(new URL(url, window.location.href).pathname);
+      if (favoriteMatch) document.dispatchEvent(new CustomEvent('032:favorite-changed', { detail: { kind: favoriteMatch[1], id: favoriteMatch[2], favorite: params.get('favorite') === '1' } }));
+      // POST-redirect-GET back onto the same page (typically with ?notice=)
+      // is a refresh, not a new history step: pushing it made "返回" need two
+      // clicks (the first only went back to the pre-save copy of this page).
+      const resultURL = new URL(res.url || window.location.href, window.location.href);
+      const samePage = resultURL.pathname === window.location.pathname;
+      const applied = applyPage(html, resultURL.href, !samePage, samePage ? { ...(history.state || {}), app: '032', url: resultURL.href, scrollX: window.scrollX, scrollY: window.scrollY, focus: '' } : null);
       if (applied === 'reload') {
         // The write succeeded but the response belongs to a newer build:
         // navigate to the result page directly instead of reporting a
@@ -313,7 +322,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     doc.querySelectorAll('script[src]').forEach((script) => { const src = script.getAttribute('src'); if (!src || document.querySelector(`script[src="${src}"]`)) return; const el = document.createElement('script'); if (script.type === 'module') el.type = 'module'; el.src = src; document.head.appendChild(el); });
     const destination = new URL(url, window.location.href);
     if (push && destination.href !== window.location.href) history.pushState({ app: '032', url: destination.href, previousURL: window.location.href, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
-    if (!push && restoreState && restoreState.app === '032' && destination.href !== window.location.href) history.replaceState({ app: '032', url: destination.href, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
+    if (!push && restoreState && restoreState.app === '032' && destination.href !== window.location.href) history.replaceState({ app: '032', url: destination.href, previousURL: restoreState.previousURL, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
     const state = !push && restoreState && restoreState.app === '032' ? restoreState : null;
     if (state && state.url === window.location.href) {
       window.scrollTo(state.scrollX || 0, state.scrollY || 0);

@@ -179,7 +179,7 @@
                 <button type="button" class="secondary-button queue-next-btn">下一首播放</button>
                 <button type="button" class="secondary-button queue-append-btn">添加到队列末尾</button>
               </div>
-              <form class="compact-action" method="post" action="/admin/favorites/tracks/{{.ID}}">
+              <form class="compact-action" method="post" action="/admin/favorites/tracks/{{.ID}}" data-favorite-toggle data-favorite-name="{{.Title}}">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="favorite" value="{{if .IsFavorite}}0{{else}}1{{end}}">
                 <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">

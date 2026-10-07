@@ -77,7 +77,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     document.addEventListener('submit', (e) => {
       const form = e.target;
       if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-favorite-toggle')) return;
-      const match = /^\/admin\/favorites\/(albums|artists)\/(\d+)$/.exec(form.getAttribute('action') || '');
+      const match = /^\/admin\/favorites\/(albums|artists|tracks)\/(\d+)$/.exec(form.getAttribute('action') || '');
       if (!match) return;
       e.preventDefault();
       e.stopPropagation();
@@ -91,7 +91,7 @@ import { updateTrackRowsUI } from './player-bar.js';
   }
 
   const favoriteBusy = new Set();
-  const favoriteNouns = { albums: '专辑', artists: '艺术家' };
+  const favoriteNouns = { albums: '专辑', artists: '艺术家', tracks: '歌曲' };
   function syncFavorite(kind, id, favorite) {
     document.querySelectorAll(`form[data-favorite-toggle][action="/admin/favorites/${kind}/${id}"]`).forEach((form) => {
       const value = form.querySelector('input[name="favorite"]');
@@ -100,7 +100,7 @@ import { updateTrackRowsUI } from './player-bar.js';
       if (!button) return;
       if (!button.querySelector('use')) { button.textContent = favorite ? '取消收藏' : '加入收藏'; return; }
       const name = form.dataset.favoriteName || '';
-      button.classList.toggle('is-favorite', favorite);
+      button.classList.toggle(form.dataset.favoriteClass || 'is-favorite', favorite);
       button.setAttribute('aria-pressed', String(favorite));
       button.title = favorite ? '取消收藏' : '加入收藏';
       button.setAttribute('aria-label', `${favorite ? '取消收藏' : '收藏'} ${name}`.trim());
@@ -114,12 +114,15 @@ import { updateTrackRowsUI } from './player-bar.js';
     if (favoriteBusy.has(key)) return;
     favoriteBusy.add(key);
     syncFavorite(kind, id, favorite);
+    const announce = (value) => document.dispatchEvent(new CustomEvent('032:favorite-changed', { detail: { kind, id: String(id), favorite: value } }));
+    announce(favorite);
     try {
       const res = await apiFetch(`/api/v1/${kind}/${encodeURIComponent(id)}/favorite`, { method: favorite ? 'PUT' : 'DELETE' });
       if (!res.ok) throw new Error('favorite failed');
       showToast(favorite ? `已收藏${favoriteNouns[kind]}` : `已取消收藏${favoriteNouns[kind]}`);
     } catch (_) {
       syncFavorite(kind, id, !favorite);
+      announce(!favorite);
       showToast('收藏操作失败，请重试');
     } finally {
       favoriteBusy.delete(key);
