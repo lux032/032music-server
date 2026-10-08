@@ -76,7 +76,7 @@ func TestAdminFavoritesTracksTab(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	mustContain(t, "tracks tab", body, `id="app-main"`, "data-track-list", "播放本页", "随机播放本页")
+	mustContain(t, "tracks tab", body, `id="app-main"`, "data-track-list", "播放单曲", "随机播放")
 	filtered := followLocation(t, app, cookie, "/admin/favorites?kind=tracks&q=不存在的歌")
 	mustContain(t, "empty search", filtered.Body.String(), "没有找到匹配的收藏歌曲", "清除搜索")
 }

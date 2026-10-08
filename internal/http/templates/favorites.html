@@ -29,25 +29,27 @@
 
     <div class="favorites-toolbar">
       {{if eq .Kind "albums"}}
-      <button type="button" class="primary-round" data-play-albums-page><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放本页</button>
-      <button type="button" class="secondary-button" data-shuffle-albums-page><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-shuffle"></use></svg> 随机播放本页</button>
+      <button type="button" class="primary-round" data-play-albums-page><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放专辑</button>
+      <button type="button" class="secondary-button" data-shuffle-albums-page><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-shuffle"></use></svg> 随机播放</button>
       {{end}}
       {{if eq .Kind "tracks"}}
-      <button type="button" class="primary-round" data-play-all><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放本页</button>
-      <button type="button" class="secondary-button" data-play-shuffle><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-shuffle"></use></svg> 随机播放本页</button>
+      <button type="button" class="primary-round" data-play-all><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放单曲</button>
+      <button type="button" class="secondary-button" data-play-shuffle><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-shuffle"></use></svg> 随机播放</button>
       {{end}}
-      <form class="favorites-sort" method="get">
-        <input type="hidden" name="kind" value="{{.Kind}}">
-        {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
-        {{if ne .PageSize 24}}<input type="hidden" name="size" value="{{.PageSize}}">{{end}}
-        <label><span>排序</span><select name="sort" data-autosubmit aria-label="排序方式">
-          <option value="recent" {{if eq .Sort "recent"}}selected{{end}}>最近收藏</option>
-          <option value="old" {{if eq .Sort "old"}}selected{{end}}>最早收藏</option>
-          <option value="title" {{if eq .Sort "title"}}selected{{end}}>名称</option>
-        </select></label>
-        <noscript><button type="submit">应用</button></noscript>
-      </form>
-      {{if eq .Kind "albums"}}<label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}</output></label>{{end}}
+      <div class="favorites-toolbar-end">
+        <form class="favorites-sort" method="get">
+          <input type="hidden" name="kind" value="{{.Kind}}">
+          {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
+          {{if ne .PageSize 24}}<input type="hidden" name="size" value="{{.PageSize}}">{{end}}
+          <label><span>排序</span><select name="sort" data-autosubmit aria-label="排序方式">
+            <option value="recent" {{if eq .Sort "recent"}}selected{{end}}>最近收藏</option>
+            <option value="old" {{if eq .Sort "old"}}selected{{end}}>最早收藏</option>
+            <option value="title" {{if eq .Sort "title"}}selected{{end}}>名称</option>
+          </select></label>
+          <noscript><button type="submit">应用</button></noscript>
+        </form>
+        {{if eq .Kind "albums"}}<label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}</output></label>{{end}}
+      </div>
     </div>
 
     <p class="result-count favorites-range" aria-live="polite">{{if .Total}}显示 {{.From}}–{{.To}} 项 · {{if .Query}}匹配 {{end}}共 {{.Total}} 项{{if gt .PageCount 1}} · 第 {{.Page}} / {{.PageCount}} 页{{end}}{{else}}共 0 项{{end}}</p>
