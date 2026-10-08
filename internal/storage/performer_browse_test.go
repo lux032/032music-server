@@ -66,7 +66,7 @@ func TestPerformerBrowseAndCreditDirectory(t *testing.T) {
 	}
 	for _, name := range []string{"Singer", "Album Singer", "Composer"} {
 		d, e := s.ArtistDetail(ctx, ids[name])
-		_, total, te := s.ArtistTracks(ctx, ids[name])
+		_, total, te := s.ArtistTracks(ctx, ids[name], ArtistTrackQuery{Limit: 100})
 		n, ce := s.CountTracks(ctx, Filters{ArtistID: ids[name], PerformerOnly: true})
 		if e != nil || te != nil || ce != nil || d.PerformedTrackCount != total || n != total {
 			t.Fatalf("%s detail=%d total=%d count=%d errors=%v/%v/%v", name, d.PerformedTrackCount, total, n, e, te, ce)

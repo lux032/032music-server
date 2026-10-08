@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 )
 
 // CanonicalArtistID follows merge links; the original ID remains available to callers.
@@ -115,8 +117,6 @@ func (s *Store) ArtistAlbums(ctx context.Context, id int64) ([]Album, error) {
 // Tracks without an available file are hidden (see visibility.go).
 var artistTrackIDs = `SELECT track_id FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=? UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=?) atm WHERE ` + trackVisibleSQL("atm.track_id")
 
-var artistTrackLimit = 5000
-
 // Explicit projection for detail tracks, including the user-overridden credit fields.
 var artistTrackSelect = `SELECT
  t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),
@@ -132,29 +132,119 @@ var artistTrackSelect = `SELECT
  COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0)
  FROM (` + artistTrackIDs + `) matches JOIN tracks t ON t.id=matches.track_id JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id`
 
-func (s *Store) ArtistTracks(ctx context.Context, id int64) ([]Track, int64, error) {
-	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+artistTrackIDs+`)`, id, id).Scan(&total); err != nil {
-		return nil, 0, err
+// ArtistTrackQuery selects one page of an artist's tracks. Sort is one of
+// ArtistTrackSorts ("" means album); Order is "", "asc" or "desc", where ""
+// uses the sort's natural direction.
+type ArtistTrackQuery struct {
+	Sort   string
+	Order  string
+	Limit  int
+	Offset int
+}
+
+// ArtistTopTrackLimit caps the most-played tracks embedded in artist detail.
+const ArtistTopTrackLimit = 10
+
+// artistAlbumOrder is the discography order; %[1]s is the direction.
+const artistAlbumOrder = `COALESCE(a.user_release_year,a.release_year,0) %[1]s,COALESCE(a.user_title,a.title) COLLATE NOCASE %[1]s,a.id %[1]s,COALESCE(t.user_disc_number,t.disc_number) %[1]s,COALESCE(t.user_track_number,t.track_number) %[1]s,t.id %[1]s`
+
+// artistTrackSorts maps each sort to its primary keys (%[1]s is the
+// direction) and its natural direction. Ties fall back to album order.
+var artistTrackSorts = map[string]struct {
+	keys string
+	desc bool
+}{
+	"album": {"", false},
+	"plays": {"COALESCE(pp.play_count,0) %[1]s,COALESCE(pp.last_played_at,'') %[1]s", true},
+	// Never-played tracks stay last in both directions.
+	"recent":   {"COALESCE(pp.last_played_at,'')='' ASC,COALESCE(pp.last_played_at,'') %[1]s", true},
+	"title":    {"COALESCE(t.user_title,t.title) COLLATE NOCASE %[1]s", false},
+	"added":    {"t.added_at %[1]s", true},
+	"duration": {"COALESCE(t.duration_ms,0) %[1]s", false},
+}
+
+// ArtistTrackSorts lists the accepted ArtistTrackQuery.Sort values.
+var ArtistTrackSorts = []string{"album", "plays", "recent", "title", "added", "duration"}
+
+func artistTrackOrder(sortKey, order string) (string, error) {
+	if sortKey == "" {
+		sortKey = "album"
 	}
-	rows, err := s.db.QueryContext(ctx, artistTrackSelect+` ORDER BY COALESCE(a.user_release_year,a.release_year,0),COALESCE(a.user_title,a.title) COLLATE NOCASE,a.id,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id LIMIT ?`, id, id, artistTrackLimit)
+	spec, ok := artistTrackSorts[sortKey]
+	if !ok {
+		return "", fmt.Errorf("invalid sort %q: must be one of %s", sortKey, strings.Join(ArtistTrackSorts, ", "))
+	}
+	desc := spec.desc
+	switch order {
+	case "":
+	case "asc":
+		desc = false
+	case "desc":
+		desc = true
+	default:
+		return "", fmt.Errorf("invalid order %q: must be asc or desc", order)
+	}
+	direction := "ASC"
+	if desc {
+		direction = "DESC"
+	}
+	if spec.keys == "" {
+		return fmt.Sprintf(artistAlbumOrder, direction), nil
+	}
+	return fmt.Sprintf(spec.keys, direction) + "," + fmt.Sprintf(artistAlbumOrder, "ASC"), nil
+}
+
+// ArtistTracks returns one sorted page of the tracks the artist performs
+// (primary credit or album artist) and the total count.
+func (s *Store) ArtistTracks(ctx context.Context, id int64, q ArtistTrackQuery) ([]Track, int64, error) {
+	order, err := artistTrackOrder(q.Sort, q.Order)
 	if err != nil {
 		return nil, 0, err
+	}
+	total, err := s.ArtistTrackCount(ctx, id)
+	if err != nil {
+		return nil, 0, err
+	}
+	tracks, err := s.queryArtistTracks(ctx, artistTrackSelect+` ORDER BY `+order+` LIMIT ? OFFSET ?`, id, id, q.Limit, q.Offset)
+	return tracks, total, err
+}
+
+// ArtistTrackCount counts the tracks ArtistTracks pages through.
+func (s *Store) ArtistTrackCount(ctx context.Context, id int64) (int64, error) {
+	var total int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+artistTrackIDs+`)`, id, id).Scan(&total)
+	return total, err
+}
+
+// ArtistTopTracks returns the artist's most-played tracks; never-played
+// tracks are excluded, so the result may be shorter than limit or empty.
+func (s *Store) ArtistTopTracks(ctx context.Context, id int64, limit int) ([]Track, error) {
+	order, err := artistTrackOrder("plays", "")
+	if err != nil {
+		return nil, err
+	}
+	return s.queryArtistTracks(ctx, artistTrackSelect+` WHERE COALESCE(pp.play_count,0)>0 ORDER BY `+order+` LIMIT ?`, id, id, limit)
+}
+
+func (s *Store) queryArtistTracks(ctx context.Context, query string, args ...any) ([]Track, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 	tracks := make([]Track, 0)
 	for rows.Next() {
 		track, err := scanArtistTrack(rows)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		tracks = append(tracks, track)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	rows.Close()
-	return tracks, total, s.hydrateTracks(ctx, tracks)
+	return tracks, s.hydrateTracks(ctx, tracks)
 }
 
 func scanArtistTrack(row interface{ Scan(...any) error }) (Track, error) {

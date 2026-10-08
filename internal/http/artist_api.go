@@ -60,7 +60,12 @@ func (a *App) handleAPIArtist(w http.ResponseWriter, r *http.Request) {
 	for i := range releases {
 		releases[i].Album = releaseAlbums[i]
 	}
-	tracks, total, err := a.store.ArtistTracks(r.Context(), id)
+	topTracks, err := a.store.ArtistTopTracks(r.Context(), id, storage.ArtistTopTrackLimit)
+	if err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	total, err := a.store.ArtistTrackCount(r.Context(), id)
 	if err != nil {
 		a.writeFeatureError(w, r, err, "query_failed")
 		return
@@ -74,12 +79,30 @@ func (a *App) handleAPIArtist(w http.ResponseWriter, r *http.Request) {
 		aliases = []string{}
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Artist      artistDetailResponse `json:"artist"`
+		Artist      artistDetailResponse    `json:"artist"`
 		Albums      []storage.Album         `json:"albums"`
 		Releases    []storage.ArtistRelease `json:"releases"`
-		Tracks      []storage.Track         `json:"tracks"`
+		TopTracks   []storage.Track         `json:"topTracks"`
 		TracksTotal int64                   `json:"tracksTotal"`
-	}{artistDetailResponse{detail.ID, detail.Name, detail.ImageURL, detail.IsFavorite, detail.AlbumCount, detail.TrackCount, detail.Biography, detail.BiographySource, detail.Country, detail.ArtistType, aliases, mergedFrom}, albums, releases, tracks, total})
+	}{artistDetailResponse{detail.ID, detail.Name, detail.ImageURL, detail.IsFavorite, detail.AlbumCount, detail.TrackCount, detail.Biography, detail.BiographySource, detail.Country, detail.ArtistType, aliases, mergedFrom}, albums, releases, topTracks, total})
+}
+
+// handleAPIArtistTracks pages the tracks shown on the artist detail page
+// with a selectable sort; see storage.ArtistTrackSorts.
+func (a *App) handleAPIArtistTracks(w http.ResponseWriter, r *http.Request) {
+	id, err := a.store.CanonicalArtistID(r.Context(), parseInt64(r.PathValue("id")))
+	if err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	limit, offset := pageValues(r)
+	q := r.URL.Query()
+	tracks, total, err := a.store.ArtistTracks(r.Context(), id, storage.ArtistTrackQuery{Sort: q.Get("sort"), Order: q.Get("order"), Limit: limit, Offset: offset})
+	if err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	writePage(w, tracks, total, limit, offset)
 }
 
 func (a *App) handleSetArtistFavorite(w http.ResponseWriter, r *http.Request) {

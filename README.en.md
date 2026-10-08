@@ -278,6 +278,7 @@ The legacy `token` query alias is also accepted for media/report requests; new c
 | `GET` | `/api/v1/artists`, `/api/v1/albums`, `/api/v1/tracks` | Browse/search lists; corresponding `/{id}` routes return details. |
 | `PATCH` | `/api/v1/artists/{id}`, `/api/v1/albums/{id}`, `/api/v1/tracks/{id}` | Save manual metadata overrides. |
 | `GET` | `/api/v1/sync/albums`, `/api/v1/sync/tracks`, `/api/v1/sync/artists` | Cursor-based library synchronization; albums and tracks carry `artists: [{id,name}]` references, artist sync lists performers only (album artists or primary track artists). |
+| `GET` | `/api/v1/artists/{id}/tracks` | Paged tracks the artist performs (primary or album artist); `sort=album\|plays\|recent\|title\|added\|duration`, `order=asc\|desc` overrides the default direction; invalid values return 400. |
 | `GET` | `/api/v1/albums/{id}/works`, `/api/v1/artists/{id}/credits` | Work links and artist credits. |
 | `GET/POST` | `/api/v1/works` | List/create works; `/{id}` supports GET/PATCH/DELETE. |
 | `GET/POST` | `/api/v1/works/{id}/albums`, `/api/v1/works/{id}/tracks` | Read/add associations; DELETE the corresponding `/{albumId}` or `/{trackId}` to remove. |
@@ -297,6 +298,8 @@ The legacy `token` query alias is also accepted for media/report requests; new c
 Paths with `{artists|albums|tracks}` or format alternatives are shorthand, not literal URLs. Candidate-review APIs are also registered in `internal/http/app.go`.
 
 Ordinary lists return `{"items":[],"total":0,"limit":100,"offset":0}` with a maximum page size of 500. Sync endpoints have their own cursor response. Browse parameters include `q`, `artist`, `album`, `year`, `genre`, `sort`, `limit`, and `offset`; applicability depends on the resource. Artist lists support `role=album|track|all` and `favorite=true`; track lists support `hideInstrumental=true`. Kana variants are matched, but romaji search needs reading/sort tags. Similarity is metadata-based, **not acoustic analysis**.
+
+Artist detail `/api/v1/artists/{id}` no longer embeds every track: it returns `topTracks` (up to 10 most-played tracks, never-played tracks excluded, ordered by play count then last played) and `tracksTotal`; page through the full list with `/api/v1/artists/{id}/tracks`. Default track sort directions: `album` (year → album → disc → track), `title` and `duration` ascending; `plays`, `recent` and `added` descending; `recent` always keeps never-played tracks last; ties fall back to album order.
 
 Playlist creation accepts `{"name":"Evening","description":"Living room","trackIds":[12,34]}`; at most 5000 unique tracks, preserving first-occurrence order.
 

@@ -258,6 +258,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/capabilities", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCapabilities)))
 	mux.Handle("GET /api/v1/artists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIArtists)))
 	mux.Handle("GET /api/v1/artists/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIArtist)))
+	mux.Handle("GET /api/v1/artists/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIArtistTracks)))
 	mux.Handle("PUT /api/v1/artists/{id}/favorite", a.requireAPIOrAdmin(http.HandlerFunc(a.handleSetArtistFavorite)))
 	mux.Handle("DELETE /api/v1/artists/{id}/favorite", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUnsetArtistFavorite)))
 	mux.Handle("GET /api/v1/favorites/artists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleFavoriteArtists)))

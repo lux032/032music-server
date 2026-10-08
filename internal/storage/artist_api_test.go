@@ -187,7 +187,7 @@ func TestArtistTracksUnionOrderingFallbackAndLimit(t *testing.T) {
 		}
 	}
 	giveTracksFiles(t, store)
-	tracks, total, err := store.ArtistTracks(ctx, owner)
+	tracks, total, err := store.ArtistTracks(ctx, owner, ArtistTrackQuery{Limit: 100})
 	if err != nil || total != 5 || len(tracks) != 5 {
 		t.Fatalf("tracks=%+v total=%d err=%v", tracks, total, err)
 	}
@@ -202,7 +202,7 @@ func TestArtistTracksUnionOrderingFallbackAndLimit(t *testing.T) {
 	if _, err = store.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,0,'primary')`, entries[5].id, composer); err != nil {
 		t.Fatal(err)
 	}
-	fallback, total, err := store.ArtistTracks(ctx, composer)
+	fallback, total, err := store.ArtistTracks(ctx, composer, ArtistTrackQuery{Limit: 100})
 	if err != nil || total != 1 || len(fallback) != 1 || fallback[0].Artist != "Composer" {
 		t.Fatalf("composer=%+v total=%d err=%v", fallback, total, err)
 	}
@@ -225,12 +225,9 @@ func TestArtistTracksUnionOrderingFallbackAndLimit(t *testing.T) {
 	if err != nil || unknownTrack.Artist != "Unknown Artist" {
 		t.Fatalf("unknown artist fallback=%q err=%v", unknownTrack.Artist, err)
 	}
-	oldLimit := artistTrackLimit
-	artistTrackLimit = 2
-	defer func() { artistTrackLimit = oldLimit }()
-	limited, total, err := store.ArtistTracks(ctx, owner)
-	if err != nil || total != 5 || len(limited) != 2 {
-		t.Fatalf("limit=%d/%d err=%v", len(limited), total, err)
+	limited, total, err := store.ArtistTracks(ctx, owner, ArtistTrackQuery{Limit: 2, Offset: 3})
+	if err != nil || total != 5 || len(limited) != 2 || limited[0].ID != entries[3].id || limited[1].ID != entries[4].id {
+		t.Fatalf("page=%+v total=%d err=%v", limited, total, err)
 	}
 }
 
@@ -377,5 +374,106 @@ func assertArtistMergeFavoriteFlag(t *testing.T, ctx context.Context, store *Sto
 	var got int
 	if err := store.db.QueryRowContext(ctx, `SELECT favorite_set_by_merge FROM artist_merge_operations WHERE id=?`, id).Scan(&got); err != nil || got != want {
 		t.Fatalf("merge %d flag=%d want=%d err=%v", id, got, want, err)
+	}
+}
+
+func TestArtistTracksSortsAndTopTracks(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "sorts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err = store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.db.ExecContext(ctx, `INSERT INTO libraries(name,root_path) VALUES('Test','/music')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	library, _ := result.LastInsertId()
+	artist := insertRoleTestArtist(t, ctx, store, "Artist", "artist")
+	result, err = store.db.ExecContext(ctx, `INSERT INTO albums(library_id,title,sort_title,grouping_key,release_year) VALUES(?,'Album','album','album',2020)`, library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	album, _ := result.LastInsertId()
+	if _, err = store.db.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position) VALUES(?,?,0)`, album, artist); err != nil {
+		t.Fatal(err)
+	}
+	// Echo has a progress row that was never played (NULL last_played_at).
+	fixtures := []struct {
+		title      string
+		duration   int64
+		added      string
+		plays      int64
+		lastPlayed any
+		progress   bool
+	}{
+		{"Delta", 300, "2024-01-03", 2, "2024-05-01", true},
+		{"alpha", 100, "2024-01-01", 5, "2024-04-01", true},
+		{"Charlie", 200, "2024-01-04", 2, "2024-06-01", true},
+		{"Bravo", 200, "2024-01-02", 0, nil, false},
+		{"Echo", 50, "2024-01-05", 0, nil, true},
+	}
+	ids := map[string]int64{}
+	for i, f := range fixtures {
+		result, err = store.db.ExecContext(ctx, `INSERT INTO tracks(album_id,title,sort_title,disc_number,track_number,duration_ms,added_at) VALUES(?,?,?,1,?,?,?)`, album, f.title, f.title, i+1, f.duration, f.added)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[f.title], _ = result.LastInsertId()
+		if f.progress {
+			if _, err = store.db.ExecContext(ctx, `INSERT INTO playback_progress(track_id,play_count,last_played_at) VALUES(?,?,?)`, ids[f.title], f.plays, f.lastPlayed); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	giveTracksFiles(t, store)
+	titles := func(tracks []Track) string {
+		names := make([]string, len(tracks))
+		for i, track := range tracks {
+			names[i] = track.Title
+		}
+		return strings.Join(names, ",")
+	}
+	for _, tc := range []struct {
+		sort, order, want string
+	}{
+		{"", "", "Delta,alpha,Charlie,Bravo,Echo"},
+		{"album", "desc", "Echo,Bravo,Charlie,alpha,Delta"},
+		{"plays", "", "alpha,Charlie,Delta,Bravo,Echo"},
+		{"plays", "asc", "Bravo,Echo,Delta,Charlie,alpha"},
+		{"recent", "", "Charlie,Delta,alpha,Bravo,Echo"},
+		{"recent", "asc", "alpha,Delta,Charlie,Bravo,Echo"},
+		{"title", "", "alpha,Bravo,Charlie,Delta,Echo"},
+		{"title", "desc", "Echo,Delta,Charlie,Bravo,alpha"},
+		{"added", "", "Echo,Charlie,Delta,Bravo,alpha"},
+		{"duration", "", "Echo,alpha,Charlie,Bravo,Delta"},
+		{"duration", "desc", "Delta,Charlie,Bravo,alpha,Echo"},
+	} {
+		tracks, total, err := store.ArtistTracks(ctx, artist, ArtistTrackQuery{Sort: tc.sort, Order: tc.order, Limit: 100})
+		if err != nil || total != 5 || titles(tracks) != tc.want {
+			t.Errorf("sort=%q order=%q got %s total=%d err=%v, want %s", tc.sort, tc.order, titles(tracks), total, err, tc.want)
+		}
+	}
+	page, total, err := store.ArtistTracks(ctx, artist, ArtistTrackQuery{Sort: "plays", Limit: 2, Offset: 2})
+	if err != nil || total != 5 || titles(page) != "Delta,Bravo" || page[0].PlayCount != 2 {
+		t.Fatalf("plays page=%s total=%d err=%v", titles(page), total, err)
+	}
+	for _, q := range []ArtistTrackQuery{{Sort: "popular", Limit: 1}, {Sort: "plays", Order: "down", Limit: 1}} {
+		if _, _, err := store.ArtistTracks(ctx, artist, q); err == nil || !strings.Contains(err.Error(), "invalid") {
+			t.Errorf("query %+v err=%v", q, err)
+		}
+	}
+	top, err := store.ArtistTopTracks(ctx, artist, ArtistTopTrackLimit)
+	if err != nil || titles(top) != "alpha,Charlie,Delta" {
+		t.Fatalf("top=%s err=%v", titles(top), err)
+	}
+	if top, err = store.ArtistTopTracks(ctx, artist, 2); err != nil || titles(top) != "alpha,Charlie" {
+		t.Fatalf("top limit=%s err=%v", titles(top), err)
+	}
+	if count, err := store.ArtistTrackCount(ctx, artist); err != nil || count != 5 {
+		t.Fatalf("count=%d err=%v", count, err)
 	}
 }

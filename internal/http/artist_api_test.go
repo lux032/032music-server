@@ -91,7 +91,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 			IsFavorite bool  `json:"isFavorite"`
 		} `json:"artist"`
 		Albums      []storage.Album `json:"albums"`
-		Tracks      []storage.Track `json:"tracks"`
+		TopTracks   []storage.Track `json:"topTracks"`
 		TracksTotal int64           `json:"tracksTotal"`
 	}
 	if err := json.Unmarshal(detail.Body.Bytes(), &body); err != nil {
@@ -109,7 +109,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 		sort.Strings(result)
 		return result
 	}
-	if got, want := keys(raw), []string{"albums", "artist", "releases", "tracks", "tracksTotal"}; !reflect.DeepEqual(got, want) {
+	if got, want := keys(raw), []string{"albums", "artist", "releases", "topTracks", "tracksTotal"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("top-level keys=%v", got)
 	}
 	var artistJSON map[string]json.RawMessage
@@ -119,7 +119,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 	if got, want := keys(artistJSON), []string{"albumCount", "aliases", "artistType", "biography", "biographySource", "country", "id", "imageUrl", "isFavorite", "mergedFrom", "name", "trackCount"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("artist keys=%v", got)
 	}
-	if len(body.Albums) != 1 || len(body.Tracks) != 1 || body.TracksTotal != 1 || body.Tracks[0].Artist != "Singer" {
+	if len(body.Albums) != 1 || body.TopTracks == nil || len(body.TopTracks) != 0 || body.TracksTotal != 1 {
 		t.Fatalf("detail=%+v", body)
 	}
 	if rec := request("GET", "/api/v1/artists/999999"); rec.Code != 404 {
@@ -150,6 +150,15 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 	if err := json.Unmarshal(merged.Body.Bytes(), &body); err != nil || merged.Code != 200 || body.Artist.ID != singer || body.Artist.MergedFrom != albumArtist || !body.Artist.IsFavorite {
 		t.Fatalf("merged=%d %s err=%v", merged.Code, merged.Body.String(), err)
 	}
+	// The track list follows the merge to the surviving artist as well.
+	mergedTracks := request("GET", "/api/v1/artists/"+jsonNumber(albumArtist)+"/tracks")
+	var mergedPage struct {
+		Items []storage.Track `json:"items"`
+		Total int64           `json:"total"`
+	}
+	if err := json.Unmarshal(mergedTracks.Body.Bytes(), &mergedPage); err != nil || mergedTracks.Code != 200 || mergedPage.Total != 1 || len(mergedPage.Items) != 1 || mergedPage.Items[0].Title != "Song" {
+		t.Fatalf("merged tracks=%d %s err=%v", mergedTracks.Code, mergedTracks.Body.String(), err)
+	}
 	if rec := request("DELETE", "/api/v1/artists/"+jsonNumber(albumArtist)+"/favorite"); rec.Code != 204 {
 		t.Fatalf("unset via merged=%d", rec.Code)
 	}
@@ -174,5 +183,97 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || page.Total != 1 {
 		t.Fatalf("empty=%s err=%v", rec.Body.String(), err)
+	}
+}
+
+func TestArtistTracksAPISortsPagesAndTopTracks(t *testing.T) {
+	ctx := context.Background()
+	app, store, token := setupTestApp(t)
+	if err := store.EnsureLibrary(ctx, "Default", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	library, err := store.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, title := range []string{"Unplayed", "Played"} {
+		input := storage.ImportInput{LibraryID: library.ID, RelativePath: title + ".flac", FileSize: 100, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: title, Album: "Album", Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"}, DiscNumber: 1, TrackNumber: i + 1}}
+		if err := store.ImportTrack(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tracks, err := store.ListTracks(ctx, storage.Filters{Query: "Played", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var played int64
+	for _, track := range tracks {
+		if track.Title == "Played" {
+			played = track.ID
+		}
+	}
+	for seq, event := range []storage.PlaybackEventInput{
+		{Type: "start", State: "playing", PositionMillis: 0},
+		{Type: "end", EndReason: "completed", PositionMillis: 200000},
+	} {
+		event.ClientID, event.ClientKind, event.SessionID, event.Seq, event.TrackID, event.DurationMillis = "device-1", "android", "artist-top-session", int64(seq+1), played, 200000
+		if _, err := store.RecordPlaybackEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artists, err := store.ListArtists(ctx, storage.Filters{Limit: 100})
+	if err != nil || len(artists) != 1 {
+		t.Fatalf("artists=%+v err=%v", artists, err)
+	}
+	singer := jsonNumber(artists[0].ID)
+	request := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		app.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	titles := func(items []storage.Track) string {
+		names := make([]string, len(items))
+		for i, track := range items {
+			names[i] = track.Title
+		}
+		return strings.Join(names, ",")
+	}
+
+	var detail struct {
+		TopTracks   []storage.Track `json:"topTracks"`
+		TracksTotal int64           `json:"tracksTotal"`
+	}
+	rec := request("/api/v1/artists/" + singer)
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil || rec.Code != 200 || titles(detail.TopTracks) != "Played" || detail.TopTracks[0].PlayCount != 1 || detail.TracksTotal != 2 {
+		t.Fatalf("detail=%d %s err=%v", rec.Code, rec.Body.String(), err)
+	}
+
+	for _, tc := range []struct{ query, want string }{
+		{"", "Unplayed,Played"},
+		{"?sort=plays", "Played,Unplayed"},
+		{"?sort=plays&order=asc", "Unplayed,Played"},
+		{"?sort=title&limit=1&offset=1", "Unplayed"},
+	} {
+		var page struct {
+			Items  []storage.Track `json:"items"`
+			Total  int64           `json:"total"`
+			Limit  int             `json:"limit"`
+			Offset int             `json:"offset"`
+		}
+		rec := request("/api/v1/artists/" + singer + "/tracks" + tc.query)
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || rec.Code != 200 || page.Total != 2 || titles(page.Items) != tc.want {
+			t.Fatalf("%s=%d %s err=%v want %s", tc.query, rec.Code, rec.Body.String(), err, tc.want)
+		}
+	}
+	for _, query := range []string{"?sort=popular", "?order=sideways"} {
+		if rec := request("/api/v1/artists/" + singer + "/tracks" + query); rec.Code != 400 || !strings.Contains(rec.Body.String(), "invalid_request") {
+			t.Fatalf("%s=%d %s", query, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := request("/api/v1/artists/999999/tracks"); rec.Code != 404 {
+		t.Fatalf("missing=%d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -34,7 +34,7 @@ func TestTrackEffectiveGenreOrder(t *testing.T) {
 	assertGenre("list", list[0], nil)
 	track, err := fx.store.TrackByID(ctx, id)
 	assertGenre("by ID", track, err)
-	artistTracks, _, err := fx.store.ArtistTracks(ctx, fx.artists["Singer"])
+	artistTracks, _, err := fx.store.ArtistTracks(ctx, fx.artists["Singer"], ArtistTrackQuery{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestTrackEffectiveGenreOrder(t *testing.T) {
 	if track.Genres != "Beta,Zulu" {
 		t.Errorf("override by ID genres = %q", track.Genres)
 	}
-	artistTracks, _, err = fx.store.ArtistTracks(ctx, fx.artists["Singer"])
+	artistTracks, _, err = fx.store.ArtistTracks(ctx, fx.artists["Singer"], ArtistTrackQuery{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

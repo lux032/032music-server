@@ -132,7 +132,7 @@ func TestCustomAlbumArtworkPreferredAcrossReads(t *testing.T) {
 	if err := f.store.db.QueryRowContext(f.ctx, `SELECT artist_id FROM album_artists WHERE album_id=?`, albumID).Scan(&artistID); err != nil {
 		t.Fatal(err)
 	}
-	artistTracks, _, err := f.store.ArtistTracks(f.ctx, artistID)
+	artistTracks, _, err := f.store.ArtistTracks(f.ctx, artistID, ArtistTrackQuery{Limit: 100})
 	if err != nil || len(artistTracks) != 1 {
 		t.Fatalf("ArtistTracks = %v, %v", artistTracks, err)
 	}

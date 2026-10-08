@@ -279,6 +279,7 @@ docker compose logs --tail=100 music-server
 | `GET` | `/api/v1/artists`、`/api/v1/albums`、`/api/v1/tracks` | 浏览/搜索，对应 `/{id}` 获取详情。 |
 | `PATCH` | `/api/v1/artists/{id}`、`/api/v1/albums/{id}`、`/api/v1/tracks/{id}` | 保存人工元数据覆盖。 |
 | `GET` | `/api/v1/sync/albums`、`/api/v1/sync/tracks`、`/api/v1/sync/artists` | 游标曲库同步；专辑与曲目附带 `artists: [{id,name}]` 歌手引用，歌手同步只含演唱者（专辑歌手或曲目主唱）。 |
+| `GET` | `/api/v1/artists/{id}/tracks` | 歌手单曲分页列表（演唱或专辑歌手），`sort=album\|plays\|recent\|title\|added\|duration`，`order=asc\|desc` 覆盖默认方向；非法值返回 400。 |
 | `GET` | `/api/v1/albums/{id}/works`、`/api/v1/artists/{id}/credits` | 作品关联与艺人 credit。 |
 | `GET/POST` | `/api/v1/works` | 列出/新建作品；`/{id}` 支持 GET/PATCH/DELETE。 |
 | `GET/POST` | `/api/v1/works/{id}/albums`、`/api/v1/works/{id}/tracks` | 读取/添加关联；DELETE 对应 `/{albumId}` 或 `/{trackId}` 解除。 |
@@ -298,6 +299,8 @@ docker compose logs --tail=100 music-server
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 
 普通列表返回 `{"items":[],"total":0,"limit":100,"offset":0}`，单页最多 500 条；同步接口使用独立游标响应。浏览参数包括 `q`、`artist`、`album`、`year`、`genre`、`sort`、`limit`、`offset`，适用性取决于资源。歌手列表支持 `role=album|track|all`、`favorite=true`；歌曲支持 `hideInstrumental=true`。支持假名变体匹配，罗马音搜索需标签提供 reading/sort 字段。相似推荐基于元数据，**不是声学分析**。
+
+歌手详情 `/api/v1/artists/{id}` 不再内嵌全部单曲：返回 `topTracks`（播放次数最多的至多 10 首，未播放过的歌不计入，按播放次数、最近播放时间排序）与 `tracksTotal`，完整列表通过 `/api/v1/artists/{id}/tracks` 分页获取。单曲排序默认方向：`album`（年份→专辑→碟号→曲号）、`title`、`duration` 升序；`plays`、`recent`、`added` 降序；`recent` 中未播放过的歌始终排在最后；同值时按专辑顺序。
 
 创建歌单可传 `{"name":"晚间播放","description":"客厅","trackIds":[12,34]}`，最多 5000 首去重歌曲，保留第一次出现的顺序。
 
