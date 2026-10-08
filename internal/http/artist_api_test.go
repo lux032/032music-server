@@ -92,6 +92,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 		} `json:"artist"`
 		Albums      []storage.Album `json:"albums"`
 		TopTracks   []storage.Track `json:"topTracks"`
+		Popular     bool            `json:"topTracksArePopular"`
 		TracksTotal int64           `json:"tracksTotal"`
 	}
 	if err := json.Unmarshal(detail.Body.Bytes(), &body); err != nil {
@@ -109,7 +110,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 		sort.Strings(result)
 		return result
 	}
-	if got, want := keys(raw), []string{"albums", "artist", "releases", "topTracks", "tracksTotal"}; !reflect.DeepEqual(got, want) {
+	if got, want := keys(raw), []string{"albums", "artist", "releases", "topTracks", "topTracksArePopular", "tracksTotal"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("top-level keys=%v", got)
 	}
 	var artistJSON map[string]json.RawMessage
@@ -119,7 +120,7 @@ func TestArtistDetailFavoritesAndMergeAPI(t *testing.T) {
 	if got, want := keys(artistJSON), []string{"albumCount", "aliases", "artistType", "biography", "biographySource", "country", "id", "imageUrl", "isFavorite", "mergedFrom", "name", "trackCount"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("artist keys=%v", got)
 	}
-	if len(body.Albums) != 1 || body.TopTracks == nil || len(body.TopTracks) != 0 || body.TracksTotal != 1 {
+	if len(body.Albums) != 1 || len(body.TopTracks) != 1 || body.TopTracks[0].Title != "Song" || body.Popular || body.TracksTotal != 1 {
 		t.Fatalf("detail=%+v", body)
 	}
 	if rec := request("GET", "/api/v1/artists/999999"); rec.Code != 404 {
@@ -244,10 +245,11 @@ func TestArtistTracksAPISortsPagesAndTopTracks(t *testing.T) {
 
 	var detail struct {
 		TopTracks   []storage.Track `json:"topTracks"`
+		Popular     bool            `json:"topTracksArePopular"`
 		TracksTotal int64           `json:"tracksTotal"`
 	}
 	rec := request("/api/v1/artists/" + singer)
-	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil || rec.Code != 200 || titles(detail.TopTracks) != "Played" || detail.TopTracks[0].PlayCount != 1 || detail.TracksTotal != 2 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil || rec.Code != 200 || titles(detail.TopTracks) != "Played" || !detail.Popular || detail.TopTracks[0].PlayCount != 1 || detail.TracksTotal != 2 {
 		t.Fatalf("detail=%d %s err=%v", rec.Code, rec.Body.String(), err)
 	}
 

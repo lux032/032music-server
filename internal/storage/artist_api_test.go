@@ -473,6 +473,15 @@ func TestArtistTracksSortsAndTopTracks(t *testing.T) {
 	if top, err = store.ArtistTopTracks(ctx, artist, 2); err != nil || titles(top) != "alpha,Charlie" {
 		t.Fatalf("top limit=%s err=%v", titles(top), err)
 	}
+	if highlight, popular, err := store.ArtistHighlightTracks(ctx, artist, 2); err != nil || !popular || titles(highlight) != "alpha,Charlie" {
+		t.Fatalf("highlight=%s popular=%v err=%v", titles(highlight), popular, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE playback_progress SET play_count=0`); err != nil {
+		t.Fatal(err)
+	}
+	if highlight, popular, err := store.ArtistHighlightTracks(ctx, artist, 2); err != nil || popular || titles(highlight) != "Delta,alpha" {
+		t.Fatalf("fallback highlight=%s popular=%v err=%v", titles(highlight), popular, err)
+	}
 	if count, err := store.ArtistTrackCount(ctx, artist); err != nil || count != 5 {
 		t.Fatalf("count=%d err=%v", count, err)
 	}

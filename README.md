@@ -300,7 +300,7 @@ docker compose logs --tail=100 music-server
 
 普通列表返回 `{"items":[],"total":0,"limit":100,"offset":0}`，单页最多 500 条；同步接口使用独立游标响应。浏览参数包括 `q`、`artist`、`album`、`year`、`genre`、`sort`、`limit`、`offset`，适用性取决于资源。歌手列表支持 `role=album|track|all`、`favorite=true`；歌曲支持 `hideInstrumental=true`，`sort` 支持 `title`、`year`、`date`、`plays`（播放次数）、`recentlyPlayed`（最近播放）。支持假名变体匹配，罗马音搜索需标签提供 reading/sort 字段。相似推荐基于元数据，**不是声学分析**。
 
-歌手详情 `/api/v1/artists/{id}` 不再内嵌全部单曲：返回 `topTracks`（播放次数最多的至多 10 首，未播放过的歌不计入，按播放次数、最近播放时间排序）与 `tracksTotal`，完整列表通过 `/api/v1/artists/{id}/tracks` 分页获取。单曲排序默认方向：`album`（年份→专辑→碟号→曲号）、`title`、`duration` 升序；`plays`、`recent`、`added` 降序；`recent` 中未播放过的歌始终排在最后；同值时按专辑顺序。
+歌手详情 `/api/v1/artists/{id}` 不再内嵌全部单曲：返回 `topTracks`、`topTracksArePopular` 与 `tracksTotal`：有播放记录时 `topTracks` 为播放次数最多的至多 10 首（未播放过的歌不计入，按播放次数、最近播放时间排序），`topTracksArePopular=true`；歌手的歌都没播放过时兜底为专辑顺序的前 10 首，`topTracksArePopular=false`（web 歌手页同理），完整列表通过 `/api/v1/artists/{id}/tracks` 分页获取。单曲排序默认方向：`album`（年份→专辑→碟号→曲号）、`title`、`duration` 升序；`plays`、`recent`、`added` 降序；`recent` 中未播放过的歌始终排在最后；同值时按专辑顺序。
 
 创建歌单可传 `{"name":"晚间播放","description":"客厅","trackIds":[12,34]}`，最多 5000 首去重歌曲，保留第一次出现的顺序。
 

@@ -412,20 +412,10 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.ReleaseGroups = groupArtistDiscography(releases)
-	// The songs section shows the most-played tracks, like the API's
-	// topTracks; an artist with no plays falls back to discography order.
-	data.Tracks, err = a.store.ArtistTopTracks(r.Context(), id, storage.ArtistTopTrackLimit)
+	data.Tracks, data.TracksArePopular, err = a.store.ArtistHighlightTracks(r.Context(), id, storage.ArtistTopTrackLimit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	data.TracksArePopular = len(data.Tracks) > 0
-	if !data.TracksArePopular {
-		data.Tracks, _, err = a.store.ArtistTracks(r.Context(), id, storage.ArtistTrackQuery{Limit: storage.ArtistTopTrackLimit})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 	}
 	a.render(w, 200, "artist.html", data)
 }

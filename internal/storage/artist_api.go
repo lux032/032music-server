@@ -226,6 +226,17 @@ func (s *Store) ArtistTopTracks(ctx context.Context, id int64, limit int) ([]Tra
 	return s.queryArtistTracks(ctx, artistTrackSelect+` WHERE COALESCE(pp.play_count,0)>0 ORDER BY `+order+` LIMIT ?`, id, id, limit)
 }
 
+// ArtistHighlightTracks returns the tracks shown at the top of an artist's
+// detail: the most-played ones when any were played (popular=true),
+// otherwise the first tracks in discography order.
+func (s *Store) ArtistHighlightTracks(ctx context.Context, id int64, limit int) (tracks []Track, popular bool, err error) {
+	if tracks, err = s.ArtistTopTracks(ctx, id, limit); err != nil || len(tracks) > 0 {
+		return tracks, len(tracks) > 0, err
+	}
+	tracks, _, err = s.ArtistTracks(ctx, id, ArtistTrackQuery{Limit: limit})
+	return tracks, false, err
+}
+
 func (s *Store) queryArtistTracks(ctx context.Context, query string, args ...any) ([]Track, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

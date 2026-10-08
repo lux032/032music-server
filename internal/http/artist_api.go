@@ -60,7 +60,7 @@ func (a *App) handleAPIArtist(w http.ResponseWriter, r *http.Request) {
 	for i := range releases {
 		releases[i].Album = releaseAlbums[i]
 	}
-	topTracks, err := a.store.ArtistTopTracks(r.Context(), id, storage.ArtistTopTrackLimit)
+	topTracks, popular, err := a.store.ArtistHighlightTracks(r.Context(), id, storage.ArtistTopTrackLimit)
 	if err != nil {
 		a.writeFeatureError(w, r, err, "query_failed")
 		return
@@ -83,8 +83,9 @@ func (a *App) handleAPIArtist(w http.ResponseWriter, r *http.Request) {
 		Albums      []storage.Album         `json:"albums"`
 		Releases    []storage.ArtistRelease `json:"releases"`
 		TopTracks   []storage.Track         `json:"topTracks"`
+		Popular     bool                    `json:"topTracksArePopular"`
 		TracksTotal int64                   `json:"tracksTotal"`
-	}{artistDetailResponse{detail.ID, detail.Name, detail.ImageURL, detail.IsFavorite, detail.AlbumCount, detail.TrackCount, detail.Biography, detail.BiographySource, detail.Country, detail.ArtistType, aliases, mergedFrom}, albums, releases, topTracks, total})
+	}{artistDetailResponse{detail.ID, detail.Name, detail.ImageURL, detail.IsFavorite, detail.AlbumCount, detail.TrackCount, detail.Biography, detail.BiographySource, detail.Country, detail.ArtistType, aliases, mergedFrom}, albums, releases, topTracks, popular, total})
 }
 
 // handleAPIArtistTracks pages the tracks shown on the artist detail page
