@@ -484,7 +484,7 @@ test('artist heart toggles in place on list, detail and favorites pages', async 
   await expect(hero).toHaveAttribute('aria-pressed', 'true');
   await expect(hero).toContainText('已收藏');
 
-  await page.goto('/admin/favorites');
+  await page.goto('/admin/favorites?kind=singers');
   const card = page.locator(`#favorite-singers .favorite-artist[data-artist-id="${id}"]`);
   await expect(card).toBeVisible();
   await card.locator('.artist-fav-icon').click();

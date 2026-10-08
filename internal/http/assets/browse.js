@@ -203,15 +203,18 @@
   // capped by the grid's own width (the now-playing panel and sidebar take
   // their share), so covers never shrink below a recognisable size. Without
   // a saved preference the count follows the available width.
-  const MIN_COVER = 150, AUTO_COVER = 190;
+  const MIN_COVER = 150, AUTO_COVER = 190, FAVORITES_MIN_COVER = 88;
   function effectiveCols(grid) {
     const width = grid.clientWidth;
     if (!width) return null;
     const gap = parseFloat(getComputedStyle(grid).columnGap) || 24;
+    // The favorites grid defaults to 8 columns, so its covers may shrink
+    // further than the library browser's before the width cap applies.
+    const minCover = grid.classList.contains('favorite-albums') ? FAVORITES_MIN_COVER : MIN_COVER;
     const fit = (cover) => Math.max(2, Math.floor((width + gap) / (cover + gap)));
     const chosen = parseInt(grid.style.getPropertyValue('--album-cols'), 10);
     if (!chosen) return { chosen: null, cols: Math.min(8, fit(AUTO_COVER)) };
-    return { chosen, cols: Math.min(chosen, fit(MIN_COVER)) };
+    return { chosen, cols: Math.min(chosen, fit(minCover)) };
   }
   function syncGridOutput(state) {
     const input = document.querySelector('[data-grid-cols]');
@@ -231,7 +234,7 @@
     const state = effectiveCols(grid);
     if (!state) return;
     grid.style.setProperty('--album-cols-eff', String(state.cols));
-    if (!grid.classList.contains('favorite-albums')) syncGridOutput(state);
+    syncGridOutput(state);
   }
   const gridObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => entries.forEach(entry => fitGrid(entry.target))) : null;
   function observeGrids() {
@@ -253,6 +256,12 @@
     if (!(e.target instanceof HTMLInputElement) || !e.target.matches('[data-grid-cols]')) return;
     const cols = applyGridCols(e.target);
     document.cookie = `032_album_cols=${cols}; path=/admin; max-age=31536000; samesite=lax`;
+  });
+  // Selects marked data-autosubmit (e.g. favorites sort/page-size) submit
+  // their GET form immediately; the router turns that into a PJAX navigation.
+  document.addEventListener('change', e => {
+    if (!(e.target instanceof HTMLSelectElement) || !e.target.matches('[data-autosubmit]')) return;
+    e.target.form?.requestSubmit();
   });
   document.addEventListener('compositionstart', e => { if (e.target.matches?.('.instant-search input, .filter-control [role="combobox"]')) { composing = true; clearTimeout(searchTimer); clearTimeout(optionTimer); } });
   document.addEventListener('compositionend', e => { if (e.target.matches?.('.instant-search input, .filter-control [role="combobox"]')) { composing = false; e.target.dispatchEvent(new Event('input', { bubbles: true })); } });

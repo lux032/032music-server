@@ -16,17 +16,35 @@ import (
 
 const adminFeaturePageSize = 50
 
+const favoritesDefaultPageSize = 24
+
+var favoritesPageSizes = []int{24, 48, 96}
+
+type favoriteTab struct {
+	Kind, Label, URL string
+	Count            int64
+	Current          bool
+}
+
 type favoritesPageData struct {
 	Chrome
-	Notice, ReturnTo       string
-	Albums                 []storage.Album
-	Tracks                 []storage.Track
-	AlbumTotal, TrackTotal int64
-	AlbumCols              int
-	// Singers and Credits split the favorited artists by role; an artist with
-	// both roles appears in both lists, each linking to its own page.
-	Singers, Credits []storage.FavoriteArtist
-	ArtistTotal      int64
+	Notice, ReturnTo          string
+	Kind, KindLabel           string
+	Query, Sort               string
+	Page, PageCount, PageSize int
+	PrevURL, NextURL          string
+	Pages                     []pageLink
+	PageSizes                 []int
+	Total                     int64
+	From, To                  int
+	ClearQueryURL             string
+	Tabs                      []favoriteTab
+	Albums                    []storage.Album
+	Tracks                    []storage.Track
+	Artists                   []storage.FavoriteArtist
+	AlbumTotal, TrackTotal    int64
+	SingerTotal, CreditTotal  int64
+	AlbumCols                 int
 }
 
 type playlistsPageData struct {
@@ -56,35 +74,141 @@ type playbackPageData struct {
 
 func (a *App) handleAdminFavorites(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
-	albums, albumTotal, err := a.store.FavoriteAlbums(r.Context(), 500, 0)
-	if err != nil {
-		a.renderAdminFeatureError(w, "favorites", err)
-		return
+	kind := r.URL.Query().Get("kind")
+	switch kind {
+	case "tracks", "singers", "credits":
+	default:
+		kind = "albums"
 	}
-	tracks, trackTotal, err := a.store.FavoriteTracks(r.Context(), 500, 0)
-	if err != nil {
-		a.renderAdminFeatureError(w, "favorites", err)
-		return
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "old", "title":
+	default:
+		sort = "recent"
 	}
-	artists, artistTotal, err := a.store.FavoriteArtistCards(r.Context(), 500)
+	size := int(parseInt64(r.URL.Query().Get("size")))
+	validSize := false
+	for _, allowed := range favoritesPageSizes {
+		if size == allowed {
+			validSize = true
+		}
+	}
+	if !validSize {
+		size = favoritesDefaultPageSize
+	}
+	page := int(parseInt64(r.URL.Query().Get("page")))
+	if page < 1 {
+		page = 1
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	albumTotal, trackTotal, singerTotal, creditTotal, err := a.store.FavoriteCounts(r.Context())
 	if err != nil {
 		a.renderAdminFeatureError(w, "favorites", err)
 		return
 	}
 	data := favoritesPageData{
-		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"), ReturnTo: "/admin/favorites",
-		Albums: albums, Tracks: tracks, AlbumTotal: albumTotal, TrackTotal: trackTotal, AlbumCols: albumGridCols(r),
-		ArtistTotal: artistTotal,
+		Chrome: a.chromeFor(r.Context(), session, "favorites"), Notice: r.URL.Query().Get("notice"), ReturnTo: r.URL.RequestURI(),
+		Kind: kind, KindLabel: favoriteKindLabel(kind), Query: query, Sort: sort, Page: page, PageSize: size, PageSizes: favoritesPageSizes,
+		AlbumTotal: albumTotal, TrackTotal: trackTotal, SingerTotal: singerTotal, CreditTotal: creditTotal,
+		AlbumCols: albumGridCols(r), ClearQueryURL: favoritesPageURL(kind, "", sort, size, 1),
 	}
-	for _, artist := range artists {
-		if artist.AlbumCount > 0 || artist.PerformedTrackCount > 0 {
-			data.Singers = append(data.Singers, artist)
+	var total int64
+	load := func(pageNumber int) error {
+		var loadErr error
+		offset := (pageNumber - 1) * size
+		switch kind {
+		case "tracks":
+			data.Tracks, total, loadErr = a.store.FavoriteTracksPage(r.Context(), query, sort, size, offset)
+		case "singers", "credits":
+			data.Artists, total, loadErr = a.store.FavoriteArtistCardsPage(r.Context(), kind, query, sort, size, offset)
+		default:
+			data.Albums, total, loadErr = a.store.FavoriteAlbumsPage(r.Context(), query, sort, size, offset)
 		}
-		if artist.CreditTrackCount > 0 {
-			data.Credits = append(data.Credits, artist)
+		return loadErr
+	}
+	if err := load(page); err != nil {
+		a.renderAdminFeatureError(w, "favorites", err)
+		return
+	}
+	pageCount := int((total + int64(size) - 1) / int64(size))
+	if pageCount > 0 && page > pageCount {
+		page = pageCount
+		if err := load(page); err != nil {
+			a.renderAdminFeatureError(w, "favorites", err)
+			return
 		}
+	}
+	data.Page, data.PageCount, data.Total = page, pageCount, total
+	if total > 0 {
+		data.From = (page-1)*size + 1
+		remaining := total - int64((page-1)*size)
+		if remaining > int64(size) {
+			remaining = int64(size)
+		}
+		data.To = data.From - 1 + int(remaining)
+	}
+	if page > 1 {
+		data.PrevURL = favoritesPageURL(kind, query, sort, size, page-1)
+	}
+	if page < pageCount {
+		data.NextURL = favoritesPageURL(kind, query, sort, size, page+1)
+	}
+	for number := 1; number <= pageCount; number++ {
+		if number == 1 || number == pageCount || (number >= page-2 && number <= page+2) {
+			data.Pages = append(data.Pages, pageLink{Number: number, URL: favoritesPageURL(kind, query, sort, size, number), Current: number == page})
+		}
+	}
+	for _, tab := range []struct {
+		kind, label string
+		count       int64
+	}{
+		{"albums", "专辑", albumTotal},
+		{"tracks", "歌曲", trackTotal},
+		{"singers", "歌手", singerTotal},
+		{"credits", "幕后人员", creditTotal},
+	} {
+		data.Tabs = append(data.Tabs, favoriteTab{Kind: tab.kind, Label: tab.label, Count: tab.count, URL: favoritesPageURL(tab.kind, query, sort, size, 1), Current: tab.kind == kind})
 	}
 	a.render(w, http.StatusOK, "favorites.html", data)
+}
+
+func favoriteKindLabel(kind string) string {
+	switch kind {
+	case "tracks":
+		return "歌曲"
+	case "singers":
+		return "歌手"
+	case "credits":
+		return "幕后人员"
+	default:
+		return "专辑"
+	}
+}
+
+// favoritesPageURL keeps the tab, search, sort and page size stable across
+// pagination links; defaults are omitted to keep URLs short.
+func favoritesPageURL(kind, query, sort string, size, page int) string {
+	values := url.Values{}
+	if kind != "albums" {
+		values.Set("kind", kind)
+	}
+	if query != "" {
+		values.Set("q", query)
+	}
+	if sort != "recent" {
+		values.Set("sort", sort)
+	}
+	if size != favoritesDefaultPageSize {
+		values.Set("size", strconv.Itoa(size))
+	}
+	if page > 1 {
+		values.Set("page", strconv.Itoa(page))
+	}
+	if len(values) == 0 {
+		return "/admin/favorites"
+	}
+	return "/admin/favorites?" + values.Encode()
 }
 
 func (a *App) handleAdminArtistFavorite(w http.ResponseWriter, r *http.Request) {

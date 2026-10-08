@@ -66,16 +66,13 @@ func TestAdminFavoritesShowsSingersAndCredits(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rec := followLocation(t, app, cookie, "/admin/favorites")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	singers := body[strings.Index(body, `id="favorite-singers"`):strings.Index(body, `id="favorite-credits"`)]
-	credits := body[strings.Index(body, `id="favorite-credits"`):]
-	mustContain(t, "header", body, "2 位艺术家")
-	mustContain(t, "singers", singers, `href="/admin/artists/`+strconv.FormatInt(singer, 10)+`"`, "FavSinger", `action="/admin/favorites/artists/`+strconv.FormatInt(singer, 10)+`"`, `artist-fav-icon is-favorite`)
-	mustContain(t, "credits", credits, `href="/admin/credits/`+strconv.FormatInt(composer, 10)+`"`, "FavComposer", "幕后 1 首")
+	body := followLocation(t, app, cookie, "/admin/favorites").Body.String()
+	mustContain(t, "header", body, "1 位歌手")
+	mustContain(t, "header", body, "1 位幕后人员")
+	singers := followLocation(t, app, cookie, "/admin/favorites?kind=singers").Body.String()
+	credits := followLocation(t, app, cookie, "/admin/favorites?kind=credits").Body.String()
+	mustContain(t, "singers", singers, `id="favorite-singers"`, `href="/admin/artists/`+strconv.FormatInt(singer, 10)+`"`, "FavSinger", `action="/admin/favorites/artists/`+strconv.FormatInt(singer, 10)+`"`, `artist-fav-icon is-favorite`)
+	mustContain(t, "credits", credits, `id="favorite-credits"`, `href="/admin/credits/`+strconv.FormatInt(composer, 10)+`"`, "FavComposer", "幕后 1 首")
 	if strings.Contains(singers, "FavComposer") {
 		t.Fatal("credit-only person listed as a singer")
 	}

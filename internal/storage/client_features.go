@@ -584,3 +584,118 @@ func (s *Store) CreatePlaylistWithItems(ctx context.Context, name, description s
 	}
 	return s.PlaylistByID(ctx, id)
 }
+
+// FavoriteAlbumsPage returns one searchable, sortable page of favorited
+// albums for the web favorites tab. Sort: recent (default) / old / title.
+func (s *Store) FavoriteAlbumsPage(ctx context.Context, query, sort string, limit, offset int) ([]Album, int64, error) {
+	limit, offset = page(Filters{Limit: limit, Offset: offset})
+	where := "a.is_favorite=1 AND " + albumVisibleSQL("a.id")
+	args := []any{}
+	if variants := SearchVariants(query); len(variants) > 0 {
+		parts := make([]string, 0, len(variants))
+		for _, variant := range variants {
+			parts = append(parts, "(COALESCE(a.user_title,a.title) LIKE '%'||?||'%' OR COALESCE(a.reading_title,'') LIKE '%'||?||'%' OR COALESCE(a.sort_title,'') LIKE '%'||?||'%' OR EXISTS(SELECT 1 FROM album_artists faa JOIN artists far ON far.id=faa.artist_id WHERE faa.album_id=a.id AND (COALESCE(far.user_display_name,far.display_name) LIKE '%'||?||'%' OR COALESCE(far.reading_name,'') LIKE '%'||?||'%')))")
+			args = append(args, variant, variant, variant, variant, variant)
+		}
+		where += " AND (" + strings.Join(parts, " OR ") + ")"
+	}
+	order := "a.updated_at DESC,a.id DESC"
+	switch sort {
+	case "old":
+		order = "a.updated_at ASC,a.id ASC"
+	case "title":
+		order = "a.sort_title COLLATE NOCASE,a.id"
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM albums a WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	queryArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, "SELECT a.id FROM albums a WHERE "+where+" ORDER BY "+order+" LIMIT ? OFFSET ?", queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	result, err := s.albumsByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, total, nil
+}
+
+// FavoriteTracksPage returns one searchable, sortable page of favorited
+// tracks for the web favorites tab. Sort: recent (default) / old / title.
+func (s *Store) FavoriteTracksPage(ctx context.Context, query, sort string, limit, offset int) ([]Track, int64, error) {
+	limit, offset = page(Filters{Limit: limit, Offset: offset})
+	where := "t.is_favorite=1 AND " + trackVisibleSQL("t.id")
+	args := []any{}
+	if variants := SearchVariants(query); len(variants) > 0 {
+		parts := make([]string, 0, len(variants))
+		for _, variant := range variants {
+			parts = append(parts, "(COALESCE(t.user_title,t.title) LIKE '%'||?||'%' OR COALESCE(fa.user_title,fa.title) LIKE '%'||?||'%' OR EXISTS(SELECT 1 FROM track_artists fta JOIN artists far ON far.id=fta.artist_id WHERE fta.track_id=t.id AND fta.role='primary' AND (COALESCE(far.user_display_name,far.display_name) LIKE '%'||?||'%' OR COALESCE(far.reading_name,'') LIKE '%'||?||'%')))")
+			args = append(args, variant, variant, variant, variant)
+		}
+		where += " AND (" + strings.Join(parts, " OR ") + ")"
+	}
+	order := "t.updated_at DESC,t.id DESC"
+	switch sort {
+	case "old":
+		order = "t.updated_at ASC,t.id ASC"
+	case "title":
+		order = "COALESCE(t.user_title,t.title) COLLATE NOCASE,t.id"
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tracks t JOIN albums fa ON fa.id=t.album_id WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	queryArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, "SELECT t.id FROM tracks t JOIN albums fa ON fa.id=t.album_id WHERE "+where+" ORDER BY "+order+" LIMIT ? OFFSET ?", queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	result, err := s.tracksByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, total, nil
+}
+
+// FavoriteCounts returns unfiltered totals for the four favorites tabs.
+func (s *Store) FavoriteCounts(ctx context.Context) (albums, tracks, singers, credits int64, err error) {
+	if err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM albums a WHERE a.is_favorite=1 AND "+albumVisibleSQL("a.id")).Scan(&albums); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tracks t WHERE t.is_favorite=1 AND "+trackVisibleSQL("t.id")).Scan(&tracks); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if singers, err = s.countFavoriteArtistRole(ctx, "singers"); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if credits, err = s.countFavoriteArtistRole(ctx, "credits"); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return albums, tracks, singers, credits, nil
+}

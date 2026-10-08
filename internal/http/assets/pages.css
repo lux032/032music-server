@@ -3528,3 +3528,29 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
   .missing-row { grid-template-columns: 22px minmax(0, 1fr); }
   .missing-state, .missing-row time { grid-column: 2; }
 }
+
+/* Favorites page: kind tabs, toolbar and pagination controls. */
+.favorites-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 20px; }
+.favorites-tabs a { display: inline-flex; align-items: baseline; gap: 6px; padding: 8px 14px; border-radius: 8px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.favorites-tabs a:hover { color: var(--text); background: var(--fill); }
+.favorites-tabs a.current { color: var(--bg); background: var(--text); }
+.favorites-tabs a .tab-count { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.favorites-tabs a.current .tab-count { color: inherit; opacity: 0.75; }
+.favorites-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.favorites-toolbar .primary-round { min-height: 38px; }
+.favorites-sort { display: flex; align-items: center; margin-left: auto; }
+.favorites-sort label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-sm); }
+.favorites-sort select, .favorites-page-size select, .favorites-page-size input[type="number"] { border: 0; border-radius: 8px; padding: 8px 10px; color: var(--text); background: var(--fill); font: inherit; font-size: var(--fs-sm); }
+.favorites-sort select:hover, .favorites-page-size select:hover { background: var(--fill-hover); }
+.favorites-range { margin: 0 0 12px; }
+.favorites-page-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 18px; margin-top: 18px; }
+.favorites-page-controls .pagination { margin: 0; }
+.favorites-page-size { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 14px; margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.favorites-page-size label { display: inline-flex; align-items: center; gap: 6px; }
+.favorites-page-size select, .favorites-page-size input[type="number"] { padding: 6px 8px; border-radius: 6px; font-size: var(--fs-xs); }
+.favorites-page-size input[type="number"] { width: 58px; }
+@media (max-width: 900px) {
+  .favorites-tabs { gap: 4px; margin: 14px 0 16px; overflow-x: auto; flex-wrap: nowrap; }
+  .favorites-tabs a { white-space: nowrap; }
+  .favorites-sort { margin-left: 0; }
+}

@@ -47,6 +47,12 @@ import { updateTrackRowsUI } from './player-bar.js';
         if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
         return;
       }
+      const pageAlbumsBtn = e.target.closest('[data-play-albums-page], [data-shuffle-albums-page]');
+      if (pageAlbumsBtn) {
+        e.preventDefault();
+        playAlbumsPage(pageAlbumsBtn.hasAttribute('data-shuffle-albums-page'));
+        return;
+      }
       const albumPlayBtn = e.target.closest('.album-hero .primary-round, [data-play-all], [data-play-shuffle], [data-queue-all]');
       if (albumPlayBtn) {
         e.preventDefault();
@@ -323,15 +329,33 @@ import { updateTrackRowsUI } from './player-bar.js';
     showToast(`${mode === 'next' ? '已加入下一首播放' : '已添加到队列末尾'}：“${track.title}”`);
   }
 
-  const loadingAlbums = new Set();
-  async function queueAlbumFromPage(albumId, mode) {
-    if (loadingAlbums.has(albumId)) return;
-    loadingAlbums.add(albumId);
-    const card = document.querySelector(`[data-album-id="${CSS.escape(String(albumId))}"]`);
-    if (card) { card.setAttribute('aria-busy', 'true'); card.classList.add('is-loading'); }
+  let albumsPageBusy = false;
+  async function playAlbumsPage(shuffle) {
+    if (albumsPageBusy) return;
+    const ids = [...document.querySelectorAll('.album-browser [data-album-id]')].map((el) => el.dataset.albumId).filter(Boolean);
+    if (!ids.length) { showToast('本页没有可播放的专辑'); return; }
+    albumsPageBusy = true;
+    try {
+      const tracks = [];
+      for (const id of ids) {
+        const result = await fetchAlbumTracks(id);
+        if (!result) return;
+        tracks.push(...result.tracks);
+      }
+      if (!tracks.length) { showToast('本页专辑没有可播放的歌曲'); return; }
+      if (shuffle) {
+        for (let i = tracks.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [tracks[i], tracks[j]] = [tracks[j], tracks[i]]; }
+      }
+      replaceQueue(tracks, 0, listLabel());
+    } finally {
+      albumsPageBusy = false;
+    }
+  }
+
+  async function fetchAlbumTracks(albumId) {
     try {
       const response = await fetch(`/api/v1/albums/${encodeURIComponent(albumId)}`, { credentials: 'same-origin' });
-      if (response.status === 401) { window.location.assign('/admin/login'); return; }
+      if (response.status === 401) { window.location.assign('/admin/login'); return null; }
       if (!response.ok) throw new Error('专辑加载失败');
       const payload = await response.json();
       const tracks = (payload.tracks || []).map(track => ({
@@ -341,12 +365,27 @@ import { updateTrackRowsUI } from './player-bar.js';
         container: track.container, durationMs: track.durationMillis,
         streamUrl: `/api/v1/tracks/${track.id}/stream`
       }));
-      if (!tracks.length) { showToast('这张专辑没有可播放的歌曲'); return; }
-      const label = albumLabel(payload.album?.title);
-      if (mode === 'play') replaceQueue(tracks, 0, label);
-      else queueTracks(tracks, mode === 'next' ? 'next' : 'append', label);
-    } catch (error) { showToast('专辑加载失败，请检查网络后重试'); }
-    finally {
+      return { tracks, title: payload.album?.title };
+    } catch (error) {
+      showToast('专辑加载失败，请检查网络后重试');
+      return null;
+    }
+  }
+
+  const loadingAlbums = new Set();
+  async function queueAlbumFromPage(albumId, mode) {
+    if (loadingAlbums.has(albumId)) return;
+    loadingAlbums.add(albumId);
+    const card = document.querySelector(`[data-album-id="${CSS.escape(String(albumId))}"]`);
+    if (card) { card.setAttribute('aria-busy', 'true'); card.classList.add('is-loading'); }
+    try {
+      const result = await fetchAlbumTracks(albumId);
+      if (!result) return;
+      if (!result.tracks.length) { showToast('这张专辑没有可播放的歌曲'); return; }
+      const label = albumLabel(result.title);
+      if (mode === 'play') replaceQueue(result.tracks, 0, label);
+      else queueTracks(result.tracks, mode === 'next' ? 'next' : 'append', label);
+    } finally {
       loadingAlbums.delete(albumId);
       if (card) { card.removeAttribute('aria-busy'); card.classList.remove('is-loading'); }
     }

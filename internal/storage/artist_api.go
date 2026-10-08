@@ -265,3 +265,77 @@ func scanArtistTrack(row interface{ Scan(...any) error }) (Track, error) {
 	v.IsFavorite = favorite != 0
 	return v, err
 }
+
+// favoriteArtistRoleClause restricts favorited artists to one favorites tab:
+// singers perform (album-artist albums or primary track credits), credits
+// hold composer/lyricist/arranger/producer roles across the merge chain.
+func favoriteArtistRoleClause(role string) string {
+	if role == "credits" {
+		return `EXISTS(SELECT 1 FROM track_artists fcra WHERE fcra.role IN ('composer','lyricist','arranger','producer') AND fcra.artist_id IN (WITH RECURSIVE favm(id) AS (SELECT ar.id UNION SELECT fa2.id FROM artists fa2 JOIN favm ON fa2.merged_into_artist_id=favm.id) SELECT id FROM favm) AND ` + trackVisibleSQL("fcra.track_id") + `)`
+	}
+	return `(EXISTS(SELECT 1 FROM album_artists fsaa WHERE fsaa.artist_id=ar.id AND ` + albumVisibleSQL("fsaa.album_id") + `) OR EXISTS(SELECT 1 FROM track_artists fsta WHERE fsta.artist_id=ar.id AND fsta.role='primary' AND ` + trackVisibleSQL("fsta.track_id") + `))`
+}
+
+func (s *Store) countFavoriteArtistRole(ctx context.Context, role string) (int64, error) {
+	var total int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND ar.is_favorite=1 AND `+artistVisibleSQL("ar.id")+` AND (`+favoriteArtistRoleClause(role)+`)`).Scan(&total)
+	return total, err
+}
+
+// FavoriteArtistCardsPage returns one searchable, sortable page of favorited
+// artists for a single web favorites tab (role "singers" or "credits").
+// Sort: recent (default) / old / title.
+func (s *Store) FavoriteArtistCardsPage(ctx context.Context, role, query, sort string, limit, offset int) ([]FavoriteArtist, int64, error) {
+	limit, offset = page(Filters{Limit: limit, Offset: offset})
+	where := `ar.merged_into_artist_id IS NULL AND ar.is_favorite=1 AND ` + artistVisibleSQL("ar.id") + ` AND (` + favoriteArtistRoleClause(role) + `)`
+	args := []any{}
+	if variants := SearchVariants(query); len(variants) > 0 {
+		parts := make([]string, 0, len(variants))
+		for _, variant := range variants {
+			parts = append(parts, "(COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%' OR COALESCE(ar.reading_name,'') LIKE '%'||?||'%')")
+			args = append(args, variant, variant)
+		}
+		where += " AND (" + strings.Join(parts, " OR ") + ")"
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists ar WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	order := "ar.favorited_at DESC, ar.id DESC"
+	switch sort {
+	case "old":
+		order = "ar.favorited_at ASC, ar.id ASC"
+	case "title":
+		order = "COALESCE(ar.user_display_name,ar.display_name) COLLATE NOCASE, ar.id"
+	}
+	trackCount := "(SELECT COUNT(*) FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id) pt WHERE " + trackVisibleSQL("pt.track_id") + ")"
+	queryArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id AND `+albumVisibleSQL("aa.album_id")+`) album_count,`+trackCount+` track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	artists := make([]Artist, 0)
+	for rows.Next() {
+		var v Artist
+		var favorite int
+		if err = rows.Scan(&v.ID, &v.Name, &v.ImageURL, &v.AlbumCount, &v.TrackCount, &favorite); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		v.IsFavorite = favorite != 0
+		artists = append(artists, v)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	result := make([]FavoriteArtist, 0, len(artists))
+	for _, artist := range artists {
+		item := FavoriteArtist{Artist: artist, PerformedTrackCount: artist.TrackCount}
+		if err := s.db.QueryRowContext(ctx, `WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN m ON a.merged_into_artist_id=m.id) SELECT COUNT(DISTINCT track_id) FROM track_artists WHERE role IN ('composer','lyricist','arranger','producer') AND artist_id IN (SELECT id FROM m) AND `+trackVisibleSQL("track_id"), artist.ID).Scan(&item.CreditTrackCount); err != nil {
+			return nil, 0, err
+		}
+		result = append(result, item)
+	}
+	return result, total, nil
+}

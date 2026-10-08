@@ -11,67 +11,62 @@
     <header class="browser-header">
       <div>
         <h1>我的收藏</h1>
-        <p class="result-count">{{.AlbumTotal}} 张专辑 · {{.ArtistTotal}} 位艺术家 · {{.TrackTotal}} 首歌曲</p>
+        <p class="result-count">{{.AlbumTotal}} 张专辑 · {{.SingerTotal}} 位歌手 · {{.CreditTotal}} 位幕后人员 · {{.TrackTotal}} 首歌曲</p>
       </div>
+      <form class="instant-search" method="get">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+        <input name="q" value="{{.Query}}" placeholder="搜索收藏{{.KindLabel}}…" aria-label="搜索收藏{{.KindLabel}}">
+        <input type="hidden" name="kind" value="{{.Kind}}">
+        {{if ne .Sort "recent"}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
+        {{if ne .PageSize 24}}<input type="hidden" name="size" value="{{.PageSize}}">{{end}}
+      </form>
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
+    <nav class="favorites-tabs" aria-label="收藏分类">
+      {{range .Tabs}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}} <span class="tab-count">{{.Count}}</span></a>{{end}}
+    </nav>
+
+    <div class="favorites-toolbar">
+      {{if eq .Kind "albums"}}
+      <button type="button" class="primary-round" data-play-albums-page><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放本页</button>
+      <button type="button" class="secondary-button" data-shuffle-albums-page><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-shuffle"></use></svg> 随机播放本页</button>
+      {{end}}
+      {{if eq .Kind "tracks"}}
+      <button type="button" class="primary-round" data-play-all><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放本页</button>
+      <button type="button" class="secondary-button" data-play-shuffle><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-shuffle"></use></svg> 随机播放本页</button>
+      {{end}}
+      <form class="favorites-sort" method="get">
+        <input type="hidden" name="kind" value="{{.Kind}}">
+        {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
+        {{if ne .PageSize 24}}<input type="hidden" name="size" value="{{.PageSize}}">{{end}}
+        <label><span>排序</span><select name="sort" data-autosubmit aria-label="排序方式">
+          <option value="recent" {{if eq .Sort "recent"}}selected{{end}}>最近收藏</option>
+          <option value="old" {{if eq .Sort "old"}}selected{{end}}>最早收藏</option>
+          <option value="title" {{if eq .Sort "title"}}selected{{end}}>名称</option>
+        </select></label>
+        <noscript><button type="submit">应用</button></noscript>
+      </form>
+      {{if eq .Kind "albums"}}<label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}</output></label>{{end}}
+    </div>
+
+    <p class="result-count favorites-range" aria-live="polite">{{if .Total}}显示 {{.From}}–{{.To}} 项 · {{if .Query}}匹配 {{end}}共 {{.Total}} 项{{if gt .PageCount 1}} · 第 {{.Page}} / {{.PageCount}} 页{{end}}{{else}}共 0 项{{end}}</p>
+
+    {{if eq .Kind "albums"}}
     {{if .Albums}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
     <section class="feature-section">
-      <div class="section-title">
-        <div><h2>收藏专辑</h2></div>
-        <div class="section-title-actions"><span>{{.AlbumTotal}} 张</span><label class="grid-size-control" title="每行显示的专辑数量"><span>每行</span><input type="range" min="2" max="10" step="1" value="{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}" aria-label="每行显示的专辑数量" data-grid-cols><output>{{if .AlbumCols}}{{.AlbumCols}}{{else}}4{{end}}</output></label></div>
-      </div>
-      <div class="album-browser favorite-albums"{{if .AlbumCols}} style="--album-cols:{{.AlbumCols}}"{{end}}>
+      <div class="album-browser favorite-albums" style="--album-cols:{{if .AlbumCols}}{{.AlbumCols}}{{else}}8{{end}}">
         {{range .Albums}}
         {{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
         {{else}}
-        <div class="zero-state"><strong>还没有收藏专辑</strong><span>在专辑浏览器或专辑详情中点击收藏。</span></div>
+        {{if .Query}}<div class="zero-state"><strong>没有找到匹配的收藏专辑</strong><span>试试其他专辑名或歌手名。</span><a class="zero-state-action" href="{{$.ClearQueryURL}}">清除搜索</a></div>{{else}}<div class="zero-state"><strong>还没有收藏专辑</strong><span>在专辑浏览器或专辑详情中点击收藏。</span></div>{{end}}
         {{end}}
       </div>
     </section>
+    {{end}}
 
-    <section class="feature-section" id="favorite-singers">
-      <div class="section-title">
-        <div><h2>收藏歌手</h2></div>
-        <span>{{len .Singers}} 位</span>
-      </div>
-      <div class="favorite-artists">
-        {{range .Singers}}
-        <article class="favorite-artist" data-artist-id="{{.ID}}">
-          <a class="favorite-artist-avatar" href="/admin/artists/{{.ID}}" tabindex="-1" aria-hidden="true">{{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="artist-avatar">{{initial .Name}}</span>{{end}}</a>
-          <a class="favorite-artist-copy" href="/admin/artists/{{.ID}}"><strong>{{.Name}}</strong><small>{{if .AlbumCount}}{{.AlbumCount}} 张专辑 · {{end}}演唱 {{.PerformedTrackCount}} 首</small></a>
-          {{template "artist-favorite" (artistFavorite .ID .Name .IsFavorite $.CSRFToken $.ReturnTo "icon")}}
-        </article>
-        {{else}}
-        <div class="zero-state"><strong>还没有收藏歌手</strong><span>在歌手列表或歌手页点击红心收藏。</span></div>
-        {{end}}
-      </div>
-    </section>
-
-    <section class="feature-section" id="favorite-credits">
-      <div class="section-title">
-        <div><h2>收藏幕后人员</h2></div>
-        <span>{{len .Credits}} 位</span>
-      </div>
-      <div class="favorite-artists">
-        {{range .Credits}}
-        <article class="favorite-artist" data-artist-id="{{.ID}}">
-          <a class="favorite-artist-avatar" href="/admin/credits/{{.ID}}" tabindex="-1" aria-hidden="true">{{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="artist-avatar">{{initial .Name}}</span>{{end}}</a>
-          <a class="favorite-artist-copy" href="/admin/credits/{{.ID}}"><strong>{{.Name}}</strong><small>幕后 {{.CreditTrackCount}} 首</small></a>
-          {{template "artist-favorite" (artistFavorite .ID .Name .IsFavorite $.CSRFToken $.ReturnTo "icon")}}
-        </article>
-        {{else}}
-        <div class="zero-state"><strong>还没有收藏幕后人员</strong><span>在幕后人员列表或详情页点击红心收藏。</span></div>
-        {{end}}
-      </div>
-    </section>
-
+    {{if eq .Kind "tracks"}}
     <section class="feature-section">
-      <div class="section-title">
-        <div><h2>收藏歌曲</h2></div>
-        <span>{{.TrackTotal}} 首</span>
-      </div>
       <div class="feature-track-list" data-track-list>
         {{range .Tracks}}
         <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
@@ -85,17 +80,70 @@
           <form method="post" action="/admin/favorites/tracks/{{.ID}}">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
             <input type="hidden" name="favorite" value="0">
-            <input type="hidden" name="returnTo" value="/admin/favorites">
+            <input type="hidden" name="returnTo" value="{{$.ReturnTo}}">
             <button class="icon-action" title="取消收藏 {{.Title}}" aria-label="取消收藏 {{.Title}}">
               <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart-fill"></use></svg>
             </button>
           </form>
         </article>
         {{else}}
-        <div class="zero-state"><strong>还没有收藏歌曲</strong><span>在歌曲列表或专辑详情中点击收藏。</span></div>
+        {{if .Query}}<div class="zero-state"><strong>没有找到匹配的收藏歌曲</strong><span>试试其他歌名、歌手或专辑名。</span><a class="zero-state-action" href="{{$.ClearQueryURL}}">清除搜索</a></div>{{else}}<div class="zero-state"><strong>还没有收藏歌曲</strong><span>在歌曲列表或专辑详情中点击收藏。</span></div>{{end}}
         {{end}}
       </div>
     </section>
+    {{end}}
+
+    {{if eq .Kind "singers"}}
+    <section class="feature-section" id="favorite-singers">
+      <div class="favorite-artists">
+        {{range .Artists}}
+        <article class="favorite-artist" data-artist-id="{{.ID}}">
+          <a class="favorite-artist-avatar" href="/admin/artists/{{.ID}}" tabindex="-1" aria-hidden="true">{{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="artist-avatar">{{initial .Name}}</span>{{end}}</a>
+          <a class="favorite-artist-copy" href="/admin/artists/{{.ID}}"><strong>{{.Name}}</strong><small>{{if .AlbumCount}}{{.AlbumCount}} 张专辑 · {{end}}演唱 {{.PerformedTrackCount}} 首</small></a>
+          {{template "artist-favorite" (artistFavorite .ID .Name .IsFavorite $.CSRFToken $.ReturnTo "icon")}}
+        </article>
+        {{else}}
+        {{if .Query}}<div class="zero-state"><strong>没有找到匹配的收藏歌手</strong><span>试试其他名字。</span><a class="zero-state-action" href="{{$.ClearQueryURL}}">清除搜索</a></div>{{else}}<div class="zero-state"><strong>还没有收藏歌手</strong><span>在歌手列表或歌手页点击红心收藏。</span></div>{{end}}
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if eq .Kind "credits"}}
+    <section class="feature-section" id="favorite-credits">
+      <div class="favorite-artists">
+        {{range .Artists}}
+        <article class="favorite-artist" data-artist-id="{{.ID}}">
+          <a class="favorite-artist-avatar" href="/admin/credits/{{.ID}}" tabindex="-1" aria-hidden="true">{{if .ImageURL}}<img class="artist-avatar fade-img" src="{{thumb .ImageURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="artist-avatar">{{initial .Name}}</span>{{end}}</a>
+          <a class="favorite-artist-copy" href="/admin/credits/{{.ID}}"><strong>{{.Name}}</strong><small>幕后 {{.CreditTrackCount}} 首</small></a>
+          {{template "artist-favorite" (artistFavorite .ID .Name .IsFavorite $.CSRFToken $.ReturnTo "icon")}}
+        </article>
+        {{else}}
+        {{if .Query}}<div class="zero-state"><strong>没有找到匹配的收藏幕后人员</strong><span>试试其他名字。</span><a class="zero-state-action" href="{{$.ClearQueryURL}}">清除搜索</a></div>{{else}}<div class="zero-state"><strong>还没有收藏幕后人员</strong><span>在幕后人员列表或详情页点击红心收藏。</span></div>{{end}}
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if or (gt .PageCount 1) .Total}}
+    <div class="favorites-page-controls">
+      {{if gt .PageCount 1}}
+      <nav class="pagination" aria-label="分页">
+        {{if .PrevURL}}<a href="{{.PrevURL}}">‹ 上一页</a>{{else}}<span>‹ 上一页</span>{{end}}
+        <div>{{range .Pages}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}"{{if .Current}} aria-current="page"{{end}}>{{.Number}}</a>{{end}}</div>
+        {{if .NextURL}}<a href="{{.NextURL}}">下一页 ›</a>{{else}}<span>下一页 ›</span>{{end}}
+      </nav>
+      {{else}}<span></span>{{end}}
+      <form class="favorites-page-size" method="get">
+        <input type="hidden" name="kind" value="{{.Kind}}">
+        {{if .Query}}<input type="hidden" name="q" value="{{.Query}}">{{end}}
+        {{if ne .Sort "recent"}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
+        <label>每页 <select name="size" data-autosubmit aria-label="每页数量">{{range .PageSizes}}<option value="{{.}}" {{if eq . $.PageSize}}selected{{end}}>{{.}}</option>{{end}}</select> 项</label>
+        {{if gt .PageCount 1}}<label>跳至 <input type="number" name="page" min="1" max="{{.PageCount}}" value="{{.Page}}" aria-label="跳至页码"> / {{.PageCount}} 页</label>{{end}}
+        <noscript><button type="submit">应用</button></noscript>
+      </form>
+    </div>
+    {{end}}
   </main>
 </body>
 </html>
