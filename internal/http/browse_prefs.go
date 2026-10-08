@@ -17,7 +17,7 @@ const browsePrefMaxAge = 365 * 24 * 60 * 60
 var librarySortOptions = map[string][]string{
 	"credits":       {"name", "tracks"},
 	"albums":        {"title", "year", "date", "added"},
-	"tracks":        {"title", "year", "date"},
+	"tracks":        {"title", "year", "date", "plays", "recentlyPlayed"},
 	"artists-album": {"name", "albums"},
 	"artists-track": {"name", "tracks"},
 	"works":         {"title", "year", "updated"},

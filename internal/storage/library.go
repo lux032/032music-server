@@ -896,6 +896,8 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 		order = albumReleaseDateSort + " DESC," + order
 	} else if f.Sort == "recentlyPlayed" {
 		order = "COALESCE(pp.last_played_at,'') DESC," + order
+	} else if f.Sort == "plays" {
+		order = "COALESCE(pp.play_count,0) DESC,COALESCE(pp.last_played_at,'') DESC," + order
 	}
 	where, args := trackWhere(f)
 	args = append(args, limit, offset)

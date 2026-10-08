@@ -322,6 +322,10 @@ func librarySortLabel(value string) string {
 		return "发行日期"
 	case "added":
 		return "加入时间"
+	case "plays":
+		return "播放次数"
+	case "recentlyPlayed":
+		return "最近播放"
 	case "name":
 		return "名称"
 	case "albums":

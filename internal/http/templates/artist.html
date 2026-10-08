@@ -100,7 +100,7 @@
         {{end}}
         {{if .Tracks}}<section class="artist-tracks-section">
           <div class="section-title">
-            <div><h2>歌曲</h2></div>
+            <div><h2>{{if .TracksArePopular}}热门歌曲{{else}}歌曲{{end}}</h2></div>
             <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.PerformedTrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
           </div>
           <div class="artist-track-list" data-track-list>
@@ -109,7 +109,7 @@
               <a class="artist-track-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
               <div class="artist-track-copy">
                 <strong>{{.Title}}</strong>
-                <small><a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}</small>
+                <small><a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}{{if $.TracksArePopular}} · 播放 {{.PlayCount}} 次{{end}}</small>
               </div>
               {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
               <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>

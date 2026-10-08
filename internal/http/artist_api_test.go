@@ -277,3 +277,87 @@ func TestArtistTracksAPISortsPagesAndTopTracks(t *testing.T) {
 		t.Fatalf("missing=%d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestArtistPageHotTracksAndTracksPlaySort(t *testing.T) {
+	ctx := context.Background()
+	app, store, token := setupTestApp(t)
+	if err := store.EnsureLibrary(ctx, "Default", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	library, err := store.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, title := range []string{"Quiet Song", "Loud Song"} {
+		input := storage.ImportInput{LibraryID: library.ID, RelativePath: title + ".flac", FileSize: 100, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: title, Album: "Album", Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"}, DiscNumber: 1, TrackNumber: i + 1}}
+		if err := store.ImportTrack(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artists, err := store.ListArtists(ctx, storage.Filters{Limit: 100})
+	if err != nil || len(artists) != 1 {
+		t.Fatalf("artists=%+v err=%v", artists, err)
+	}
+	singer := jsonNumber(artists[0].ID)
+	cookie := adminCookie(t, app)
+	get := func(path string, admin bool) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if admin {
+			req.AddCookie(cookie)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s=%d %s", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	section := func() string {
+		body := get("/admin/artists/"+singer, true)
+		start := strings.Index(body, `<section class="artist-tracks-section">`)
+		if start < 0 {
+			t.Fatal("missing tracks section")
+		}
+		end := strings.Index(body[start:], "</section>")
+		return body[start : start+end]
+	}
+
+	// Without plays the section falls back to discography order.
+	unplayed := section()
+	if !strings.Contains(unplayed, "<h2>歌曲</h2>") || strings.Contains(unplayed, " 次</small>") || strings.Index(unplayed, "Quiet Song") > strings.Index(unplayed, "Loud Song") {
+		t.Fatalf("fallback section=%s", unplayed)
+	}
+
+	tracks, err := store.ListTracks(ctx, storage.Filters{Query: "Loud", Limit: 10})
+	if err != nil || len(tracks) != 1 {
+		t.Fatalf("tracks=%+v err=%v", tracks, err)
+	}
+	for seq, event := range []storage.PlaybackEventInput{
+		{Type: "start", State: "playing", PositionMillis: 0},
+		{Type: "end", EndReason: "completed", PositionMillis: 200000},
+	} {
+		event.ClientID, event.ClientKind, event.SessionID, event.Seq, event.TrackID, event.DurationMillis = "device-1", "web", "artist-page-session", int64(seq+1), tracks[0].ID, 200000
+		if _, err := store.RecordPlaybackEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	popular := section()
+	if !strings.Contains(popular, "<h2>热门歌曲</h2>") || !strings.Contains(popular, "播放 1 次") || !strings.Contains(popular, "Loud Song") || strings.Contains(popular, "Quiet Song") {
+		t.Fatalf("popular section=%s", popular)
+	}
+
+	// The tracks page and API expose the play-count sort.
+	page := get("/admin/tracks?artist="+singer+"&sort=plays", true)
+	if loud, quiet := strings.Index(page, `data-track-title="Loud Song"`), strings.Index(page, `data-track-title="Quiet Song"`); loud < 0 || quiet < 0 || loud > quiet || !strings.Contains(page, "播放次数") {
+		t.Fatalf("tracks page plays sort loud=%d quiet=%d", loud, quiet)
+	}
+	var list struct {
+		Items []storage.Track `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(get("/api/v1/tracks?sort=plays", false)), &list); err != nil || len(list.Items) != 2 || list.Items[0].Title != "Loud Song" {
+		t.Fatalf("api plays sort=%+v err=%v", list.Items, err)
+	}
+}
