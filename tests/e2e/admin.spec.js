@@ -23,6 +23,8 @@ test('keeps one audio element across navigation and restores history context', a
   const audioMarker = await page.evaluate(() => { document.querySelector('#global-audio-element').dataset.marker = 'same'; return true; });
   expect(audioMarker).toBeTruthy();
   await page.getByRole('link', { name: '专辑' }).first().click();
+  // goBack before the PJAX push lands would step past /admin/tracks.
+  await expect(page).toHaveURL(/\/admin\/albums$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/admin\/tracks/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
