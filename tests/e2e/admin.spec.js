@@ -83,12 +83,20 @@ test('expired login stores only non-sensitive draft and never replays POST', asy
     if (route.request().method() === 'POST') { posts++; await route.fulfill({ status: 200, contentType: 'text/html', body: loginHtml }); }
     else await route.continue();
   });
+  let draft = null;
+  const loginURLs = [];
+  page.on('request', req => { if (req.isNavigationRequest() && new URL(req.url()).pathname === '/admin/login') loginURLs.push(new URL(req.url())); });
+  await page.exposeFunction('__captureDraft', value => { draft = value; });
+  await page.addInitScript(() => { try { const d = sessionStorage.getItem('032_form_draft'); if (d) window.__captureDraft(d); } catch (_) {} });
   await form.getByRole('button', { name: /保存/ }).click();
-  // Session in this fixture is still valid, so the server bounces /admin/login back to /admin;
-  // what matters is leaving the form page without replaying the POST.
-  await expect(page).toHaveURL(/\/admin(\/login)?\/?$/);
+  // The login page carries next=, and the fixture's session is still valid,
+  // so the server sends the browser straight back to the form page, where
+  // the non-sensitive draft is restored. The POST is never replayed.
+  await expect(page.locator('.client-toast, .toast').filter({ hasText: '已恢复登录前的非敏感输入' })).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\/settings\/metadata$/);
+  await expect(page.locator('form.source-card-form').first().locator('input[name="musicbrainz_application_name"]')).toHaveValue('safe draft');
   expect(posts).toBe(1);
-  const draft = await page.evaluate(() => sessionStorage.getItem('032_form_draft'));
+  expect(loginURLs.map(u => u.searchParams.get('next'))).toEqual(['/admin/settings/metadata']);
   expect(draft).toContain('safe draft');
   expect(draft).not.toContain('SECRET-VALUE');
 });
