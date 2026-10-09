@@ -295,6 +295,18 @@ import { updateTrackRowsUI } from './player-bar.js';
     });
   }
 
+  // backTarget records where a detail page's "返回" button leads: the page
+  // the user came from. Same-page steps (?view=, ?role= …) inherit the
+  // current entry's target and count how many entries to skip, so "返回"
+  // leaves the page instead of undoing an in-page switch.
+  function backTarget(destination, previousTitle) {
+    const state = history.state || {};
+    if (destination.pathname === window.location.pathname && state.app === '032' && state.previousURL) {
+      return { previousURL: state.previousURL, previousTitle: state.previousTitle, backSteps: (state.backSteps || 1) + 1 };
+    }
+    return { previousURL: window.location.href, previousTitle, backSteps: 1 };
+  }
+
   function applyPage(html, url, push, restoreState) {
     currentDocUrl = url;
     const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -314,6 +326,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     }
     const newMain = doc.querySelector('main#app-main'), curMain = document.querySelector('main#app-main');
     if (!newMain || !curMain) return false;
+    const previousTitle = document.title;
     doc.querySelectorAll('[autofocus]').forEach((el) => el.removeAttribute('autofocus'));
     document.title = doc.title || document.title;
     // Keep the shell state classes the page cannot know about.
@@ -330,8 +343,8 @@ import { updateTrackRowsUI } from './player-bar.js';
     syncChrome(doc);
     doc.querySelectorAll('script[src]').forEach((script) => { const src = script.getAttribute('src'); if (!src || document.querySelector(`script[src="${src}"]`)) return; const el = document.createElement('script'); if (script.type === 'module') el.type = 'module'; el.src = src; document.head.appendChild(el); });
     const destination = new URL(url, window.location.href);
-    if (push && destination.href !== window.location.href) history.pushState({ app: '032', url: destination.href, previousURL: window.location.href, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
-    if (!push && restoreState && restoreState.app === '032' && destination.href !== window.location.href) history.replaceState({ app: '032', url: destination.href, previousURL: restoreState.previousURL, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
+    if (push && destination.href !== window.location.href) history.pushState({ app: '032', url: destination.href, ...backTarget(destination, previousTitle), scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
+    if (!push && restoreState && restoreState.app === '032' && destination.href !== window.location.href) history.replaceState({ app: '032', url: destination.href, previousURL: restoreState.previousURL, previousTitle: restoreState.previousTitle, backSteps: restoreState.backSteps, scrollX: 0, scrollY: 0, focus: '' }, '', destination.href);
     const state = !push && restoreState && restoreState.app === '032' ? restoreState : null;
     if (state && state.url === window.location.href) {
       window.scrollTo(state.scrollX || 0, state.scrollY || 0);

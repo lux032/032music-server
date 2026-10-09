@@ -352,6 +352,9 @@
   transition: transform var(--dur-fast) var(--ease);
 }
 .back-button-icon .icon { width: 16px; height: 16px; }
+.back-button { min-width: 0; max-width: min(100%, 360px); }
+.back-button-icon { flex: none; }
+.back-button-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .back-button:hover { color: var(--text); background: var(--surface-hover); }
 .back-button:hover .back-button-icon { transform: translateX(-2px); }
 .detail-context { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }

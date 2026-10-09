@@ -207,8 +207,9 @@ test('flat works list opens series management with all members', async ({ page }
   await expect(page.locator('h1')).toContainText('鬼滅の刃');
   await expect(page.locator('.series-member-row')).toHaveCount(3);
   await expect(page.locator('.series-member-row', { hasText: '遊郭編' })).toBeVisible();
+  // 返回回到来时的列表，搜索条件保留。
   await page.getByRole('link', { name: '返回系列管理' }).click();
-  await expect(page).toHaveURL(/\/admin\/series$/);
+  await expect(page).toHaveURL(/\/admin\/series\?q=/);
 });
 
 test('captures real page screenshots to .local/mockups/impl/', async ({ page }, testInfo) => {
