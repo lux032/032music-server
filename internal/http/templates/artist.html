@@ -199,7 +199,7 @@
         <section class="identity-panel danger-panel">
           <p class="kicker">合并歌手</p>
           <p>源歌手不会删除，所有关系迁移均可从合并历史回退。</p>
-          <form method="post" action="/admin/artists/{{.Artist.ID}}/merge">
+          <form method="post" action="/admin/artists/{{.Artist.ID}}/merge" data-replace-history>
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
             <div class="work-picker artist-merge-picker" data-work-picker="/admin/options/artists?role=all" data-work-picker-required="请从搜索结果中选择目标歌手" data-work-exclude="{{.Artist.ID}}" data-work-limit="30" data-work-empty="没有匹配的歌手">
               <label>合并到<input type="search" data-work-search required placeholder="输入歌手名或读音搜索…" autocomplete="off"></label>

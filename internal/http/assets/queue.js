@@ -355,7 +355,7 @@ import { updateTrackRowsUI } from './player-bar.js';
   async function fetchAlbumTracks(albumId) {
     try {
       const response = await fetch(`/api/v1/albums/${encodeURIComponent(albumId)}`, { credentials: 'same-origin' });
-      if (response.status === 401) { window.location.assign('/admin/login'); return null; }
+      if (response.status === 401) { window.location.assign('/admin/login?next=' + encodeURIComponent(location.pathname + location.search)); return null; }
       if (!response.ok) throw new Error('专辑加载失败');
       const payload = await response.json();
       const tracks = (payload.tracks || []).map(track => ({

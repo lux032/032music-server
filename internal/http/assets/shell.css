@@ -443,6 +443,8 @@ body.np-collapsed .np-expand { display: grid; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.player-meta strong a { color: inherit; }
+.player-meta strong a:hover { text-decoration: underline; }
 .player-meta small { overflow: hidden; color: var(--muted); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .player-left .np-icon-btn { flex: none; }
 

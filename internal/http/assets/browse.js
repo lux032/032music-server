@@ -87,7 +87,7 @@
     url.searchParams.set('limit', '30');
     try {
       const res = await fetch(url, { credentials: 'same-origin', signal: current.signal });
-      if (res.status === 401) { location.assign('/admin/login'); return; }
+      if (res.status === 401) { location.assign('/admin/login?next=' + encodeURIComponent(location.pathname + location.search)); return; }
       if (!res.ok) throw Error('筛选项加载失败');
       const items = await res.json();
       if (current.signal.aborted || !control.isConnected || input.value !== query) return;
@@ -401,9 +401,61 @@
     clearTimeout(timer);
     finish();
   }
-  function activateDrawer(drawer, trigger) {
+  // An open drawer owns a same-URL history entry, so the browser's back
+  // button (or a phone's back gesture) closes it instead of leaving the
+  // page. The entry is keyed by the drawer's id, or by its position for
+  // the id-less row drawers, so it can be reopened when the user comes
+  // back to it.
+  let switchingDrawer = false;
+  function drawerKey(drawer) {
+    if (drawer.id) return drawer.id;
+    const index = [...document.querySelectorAll('main .edit-drawer')].indexOf(drawer);
+    return index < 0 ? '' : `row:${index}`;
+  }
+  function drawerByKey(key) {
+    if (!key) return null;
+    const drawer = key.startsWith('row:') ? document.querySelectorAll('main .edit-drawer')[Number(key.slice(4))] : document.getElementById(key);
+    return drawer?.matches('.edit-drawer') ? drawer : null;
+  }
+  function recordDrawerEntry(drawer) {
+    const key = drawerKey(drawer);
+    const state = history.state || {};
+    if (!key || state.app !== '032' || state.drawer === key) return;
+    if (state.drawer) { history.replaceState({ ...state, drawer: key }, '', location.href); return; }
+    const entry = { ...state, drawer: key };
+    // The page's own "返回" must skip this entry too.
+    if (state.previousURL) entry.backSteps = (state.backSteps || 1) + 1;
+    history.pushState(entry, '', location.href);
+  }
+  function releaseDrawerEntry(drawer) {
+    if (switchingDrawer) return;
+    const key = drawerKey(drawer);
+    if (key && history.state?.drawer === key) history.back();
+  }
+  function openDrawerFromState() {
+    const drawer = drawerByKey(history.state?.drawer);
+    if (!drawer || drawerIsOpen(drawer)) return;
+    if (drawer instanceof HTMLDetailsElement) { activateDrawer(drawer, drawer.querySelector(':scope > summary'), true); drawer.open = true; }
+    else openPageDrawer(drawer, document.querySelector(`[data-drawer-open="${CSS.escape(drawer.id)}"]`), true);
+  }
+  // popstate also fires for cross-page history steps, before the router has
+  // swapped the page; those are handled by 032:pjax-applied on the new page.
+  const pageKey = url => { const u = new URL(url, location.href); u.searchParams.delete('notice'); return u.pathname + u.search; };
+  let shownPage = pageKey(location.href);
+  document.addEventListener('032:pjax-applied', () => { shownPage = pageKey(location.href); });
+  window.addEventListener('popstate', () => {
+    if (pageKey(location.href) !== shownPage) return;
+    const key = history.state?.drawer || '';
+    if (activeDrawer && drawerKey(activeDrawer) !== key) closeDrawer(activeDrawer);
+    if (key) openDrawerFromState();
+  });
+  function activateDrawer(drawer, trigger, fromHistory = false) {
     flushDrawerClose();
-    if (activeDrawer && activeDrawer !== drawer) closeDrawer(activeDrawer, false, true);
+    if (activeDrawer && activeDrawer !== drawer) {
+      switchingDrawer = true;
+      try { closeDrawer(activeDrawer, false, true); } finally { switchingDrawer = false; }
+    }
+    if (!fromHistory) recordDrawerEntry(drawer);
     activeDrawer = drawer;
     drawerTrigger = trigger;
     const panel = drawerPanel(drawer);
@@ -419,6 +471,7 @@
     if (panel) { panel.removeAttribute('role'); panel.removeAttribute('aria-modal'); panel.removeAttribute('tabindex'); }
     drawer.classList.remove('is-closing');
     if (activeDrawer !== drawer) return;
+    releaseDrawerEntry(drawer);
     const trigger = drawerTrigger;
     activeDrawer = null;
     drawerTrigger = null;
@@ -428,6 +481,9 @@
   }
   function closeDrawer(drawer, restoreFocus = true, immediate = false) {
     if (!drawerIsOpen(drawer) || drawer.classList.contains('is-closing')) return;
+    // Release the history entry now, not after the close animation: a link
+    // clicked meanwhile must not have its navigation undone by a late back().
+    if (activeDrawer === drawer) releaseDrawerEntry(drawer);
     const finish = () => {
       deactivateDrawer(drawer, restoreFocus);
       if (drawer instanceof HTMLDetailsElement) drawer.open = false;
@@ -437,11 +493,11 @@
     drawer.classList.add('is-closing');
     pendingDrawerClose = { timer: setTimeout(flushDrawerClose, 280), finish };
   }
-  function openPageDrawer(drawer, trigger) {
+  function openPageDrawer(drawer, trigger, fromHistory = false) {
     if (drawerIsOpen(drawer)) return;
     flushDrawerClose();
     drawer.classList.add('is-open');
-    activateDrawer(drawer, trigger);
+    activateDrawer(drawer, trigger, fromHistory);
   }
   function openDrawerFromHash() {
     if (!location.hash) return;
@@ -486,6 +542,19 @@
     if (panel && e.target instanceof Node && !panel.contains(e.target)) (drawerItems(panel)[0] || panel).focus({ preventScroll: true });
   });
   openDrawerFromHash();
+  openDrawerFromState();
+  // Forms the PJAX router leaves to the browser (file uploads, data-no-pjax)
+  // would stack their result page on top of the drawer's entry; drop that
+  // entry first, then submit for real.
+  document.addEventListener('submit', e => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || e.defaultPrevented || !history.state?.drawer || !activeDrawer?.contains(form)) return;
+    if (!form.hasAttribute('data-no-pjax') && ![...form.elements].some(el => el.type === 'file')) return;
+    e.preventDefault();
+    const submitter = e.submitter;
+    window.addEventListener('popstate', () => form.requestSubmit(submitter && submitter.form === form ? submitter : undefined), { once: true });
+    history.back();
+  }, true);
 
   // ------------------------------------------------ Work Hover Popover (4.5.5)
   let hoverOpenTimer = null;
@@ -752,6 +821,7 @@
     drawerTrigger = null;
     document.documentElement.classList.remove('drawer-open');
     openDrawerFromHash();
+    openDrawerFromState();
     composing = false;
     closeAll();
     if (pendingFilter) {

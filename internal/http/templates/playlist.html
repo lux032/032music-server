@@ -110,7 +110,7 @@
             <div class="danger-confirm-panel">
               <strong>确定删除“{{.Detail.Playlist.Name}}”吗？</strong>
               <p>取消不会发送任何请求。</p>
-              <form method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}/delete">
+              <form method="post" action="/admin/playlists/{{.Detail.Playlist.ID}}/delete" data-replace-history>
                 <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
                 <button class="danger-button" name="confirm" value="delete">是，永久删除歌单</button>
                 <button class="secondary-button" type="button" data-cancel-confirm>取消</button>

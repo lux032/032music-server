@@ -132,7 +132,7 @@ test('wrong current password is rejected with a fixed notice and changes nothing
   await card.locator('.security-inline-form input[name="current_password"]').fill('not-the-password');
   await card.getByRole('button', { name: '生成新 Token' }).click();
   await expect(page.locator('[data-security-notice]')).toHaveText('当前密码不正确。');
-  await expect(page).toHaveURL(/notice=wrong_password$/);
+  await expect(page).not.toHaveURL(/notice=/);
   await expect(page.locator('[data-security-flash]')).toHaveCount(0);
   await expect(item(page, 'api-token').locator('[data-source="env"]')).toBeVisible();
   expect(await apiStatus(request, ENV_API_TOKEN)).toBe(200);

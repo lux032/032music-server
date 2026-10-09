@@ -11,6 +11,7 @@ import { updateTrackRowsUI } from './player-bar.js';
   export function setupPjaxNavigation() {
     if (!window.fetch || !window.history || !window.DOMParser) return;
     ensureCurrentHistoryState();
+    stripNoticeParam();
     restoreSafeDraft();
     document.addEventListener('click', (e) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -70,6 +71,16 @@ import { updateTrackRowsUI } from './player-bar.js';
     if (active instanceof Element && active.id) focus = '#' + CSS.escape(active.id);
     else if (active instanceof Element && active.closest('[data-track-id]')) focus = `[data-track-id="${CSS.escape(active.closest('[data-track-id]').dataset.trackId || '')}"] .row-play-btn`;
     return { app: '032', url: window.location.href, scrollX: window.scrollX, scrollY: window.scrollY, focus };
+  }
+  // ?notice= is a one-shot message from a POST-redirect-GET. Once the page
+  // has rendered its toast the parameter is dropped from the address bar so
+  // a reload, a copied link or coming back here later does not repeat it.
+  function stripNoticeParam() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('notice')) return;
+    url.searchParams.delete('notice');
+    currentDocUrl = url.href;
+    history.replaceState({ ...(history.state || {}), url: url.href }, '', url.href);
   }
   function ensureCurrentHistoryState() { history.replaceState({ ...(history.state || {}), ...pageState() }, '', window.location.href); }
   function saveCurrentHistoryState() { history.replaceState({ ...(history.state || {}), ...pageState() }, '', window.location.href); }
@@ -176,8 +187,11 @@ import { updateTrackRowsUI } from './player-bar.js';
         storeSafeDraft(form);
         // res.url can still equal the POST target when the redirect is mocked or
         // not followed; never navigate back to the form action in that case.
-        const target = res.url && res.url !== url ? res.url : '/admin/login';
-        window.location.href = target;
+        // A POST cannot be replayed after logging in, so the login returns
+        // to this page instead, where the saved draft is restored.
+        const target = new URL(res.url && res.url !== url ? res.url : '/admin/login', window.location.href);
+        if (target.pathname === '/admin/login' && !target.searchParams.has('next')) target.searchParams.set('next', window.location.pathname + window.location.search);
+        window.location.href = target.href;
         return;
       }
       if (!res.ok) {
@@ -190,14 +204,21 @@ import { updateTrackRowsUI } from './player-bar.js';
         return;
       }
       sessionStorage.removeItem(draftStorageKey);
+      // Saving from a drawer: drop the drawer's history entry first, so the
+      // result does not leave a stale copy of this page behind it.
+      await leaveDrawerEntry();
       const favoriteMatch = /^\/admin\/favorites\/(albums|artists|tracks)\/(\d+)$/.exec(new URL(url, window.location.href).pathname);
       if (favoriteMatch) document.dispatchEvent(new CustomEvent('032:favorite-changed', { detail: { kind: favoriteMatch[1], id: favoriteMatch[2], favorite: params.get('favorite') === '1' } }));
       // POST-redirect-GET back onto the same page (typically with ?notice=)
       // is a refresh, not a new history step: pushing it made "返回" need two
       // clicks (the first only went back to the pre-save copy of this page).
+      // A form whose page stops existing (delete, dissolve, merge-away) is
+      // marked data-replace-history: its result replaces the entry too, so
+      // the browser's back button cannot land on the removed page.
       const resultURL = new URL(res.url || window.location.href, window.location.href);
       const samePage = resultURL.pathname === window.location.pathname;
-      const applied = applyPage(html, resultURL.href, !samePage, samePage ? { ...(history.state || {}), app: '032', url: resultURL.href, scrollX: window.scrollX, scrollY: window.scrollY, focus: '' } : null);
+      const replaceEntry = samePage || form.hasAttribute('data-replace-history');
+      const applied = applyPage(html, resultURL.href, !replaceEntry, replaceEntry ? { ...(history.state || {}), app: '032', url: resultURL.href, scrollX: samePage ? window.scrollX : 0, scrollY: samePage ? window.scrollY : 0, focus: '' } : null);
       if (applied === 'reload') {
         // The write succeeded but the response belongs to a newer build:
         // navigate to the result page directly instead of reporting a
@@ -212,6 +233,16 @@ import { updateTrackRowsUI } from './player-bar.js';
       pendingForms.delete(form);
       if (document.contains(form)) setFormPending(form, submitter, false);
     }
+  }
+
+  function leaveDrawerEntry() {
+    if (!history.state || !history.state.drawer) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => { window.removeEventListener('popstate', done); clearTimeout(timer); resolve(); };
+      const timer = setTimeout(done, 500);
+      window.addEventListener('popstate', done);
+      history.back();
+    });
   }
 
   function showFormError(form, message) {
@@ -355,6 +386,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     updateTrackRowsUI();
     markLoadedImages(adoptedMain);
     restoreSafeDraft();
+    stripNoticeParam();
     document.dispatchEvent(new CustomEvent('032:pjax-applied'));
     return true;
   }

@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -75,6 +76,47 @@ type statusResponse struct {
 
 type loginPageData struct {
 	Error string
+	// Next is the validated admin page to return to after logging in.
+	Next string
+}
+
+// loginNext validates the page a login should return to: a same-origin
+// admin path (safeAdminReturnTo), never the login/logout endpoints and
+// never the dashboard itself, which is the default anyway.
+func loginNext(raw string) string {
+	next := safeAdminReturnTo(raw, "")
+	path := next
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	if path == "" || path == "/admin" || path == "/admin/" || strings.HasPrefix(path, "/admin/login") || strings.HasPrefix(path, "/admin/logout") {
+		return ""
+	}
+	return next
+}
+
+// loginPath is the login page URL carrying an optional return target.
+func loginPath(next, notice string) string {
+	values := url.Values{}
+	if notice != "" {
+		values.Set("notice", notice)
+	}
+	if next = loginNext(next); next != "" {
+		values.Set("next", next)
+	}
+	if len(values) == 0 {
+		return "/admin/login"
+	}
+	return "/admin/login?" + values.Encode()
+}
+
+// afterLoginPath is where a successful login (or an already logged-in
+// visit to the login page) lands.
+func afterLoginPath(next string) string {
+	if next = loginNext(next); next != "" {
+		return next
+	}
+	return "/admin"
 }
 
 // Chrome carries the shared page-frame fields into every admin template:
@@ -542,13 +584,14 @@ func (a *App) health(r *http.Request) healthResponse {
 }
 
 func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	next := loginNext(r.URL.Query().Get("next"))
 	if _, ok := a.sessions.get(r); ok {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		http.Redirect(w, r, afterLoginPath(next), http.StatusSeeOther)
 		return
 	}
 	// Only fixed messages keyed by a short code are shown, so the query
 	// string cannot inject arbitrary text into the login page.
-	a.render(w, http.StatusOK, "login.html", loginPageData{Error: loginNotices[r.URL.Query().Get("notice")]})
+	a.render(w, http.StatusOK, "login.html", loginPageData{Error: loginNotices[r.URL.Query().Get("notice")], Next: next})
 }
 
 // loginNotices are the 303 redirect notices of handleLogin.
@@ -569,10 +612,11 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	next := loginNext(r.FormValue("next"))
 	username := r.FormValue("username")
 	if locked, remaining := a.loginLimiter.lockedFor(r, username); locked {
 		a.logger.Warn("login attempt while locked out", "usernameHash", loginUsernameLogID(username), "remoteAddr", r.RemoteAddr)
-		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %d 分钟后再试。", int(remaining.Minutes())+1)})
+		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %d 分钟后再试。", int(remaining.Minutes())+1), Next: next})
 		return
 	}
 
@@ -590,32 +634,32 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// response time does not reveal whether the username exists.
 	passwordOK, err := a.checkAdminPassword(r, creds, r.FormValue("password"))
 	if errors.Is(err, errPasswordBusy) {
-		http.Redirect(w, r, "/admin/login?notice=busy", http.StatusSeeOther)
+		http.Redirect(w, r, loginPath(next, "busy"), http.StatusSeeOther)
 		return
 	}
 	if err != nil {
 		a.logger.Error("verify admin password", "error", err)
-		a.render(w, http.StatusServiceUnavailable, "login.html", loginPageData{Error: "暂时无法验证登录信息,请稍后再试。"})
+		a.render(w, http.StatusServiceUnavailable, "login.html", loginPageData{Error: "暂时无法验证登录信息,请稍后再试。", Next: next})
 		return
 	}
 	if !usernameOK || !passwordOK {
 		a.loginLimiter.recordFailureFor(r, username)
 		time.Sleep(loginFailureDelay)
-		a.render(w, http.StatusUnauthorized, "login.html", loginPageData{Error: "用户名或密码不正确。"})
+		a.render(w, http.StatusUnauthorized, "login.html", loginPageData{Error: "用户名或密码不正确。", Next: next})
 		return
 	}
 	a.loginLimiter.recordSuccessFor(r, username)
 
 	if _, err := a.sessions.createAt(w, creds.username, generation); err != nil {
 		if errors.Is(err, errSessionsRevoked) {
-			http.Redirect(w, r, "/admin/login?notice=retry", http.StatusSeeOther)
+			http.Redirect(w, r, loginPath(next, "retry"), http.StatusSeeOther)
 			return
 		}
 		a.logger.Error("create admin session", "error", err)
-		a.render(w, http.StatusInternalServerError, "login.html", loginPageData{Error: "暂时无法创建登录会话。"})
+		a.render(w, http.StatusInternalServerError, "login.html", loginPageData{Error: "暂时无法创建登录会话。", Next: next})
 		return
 	}
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, afterLoginPath(next), http.StatusSeeOther)
 }
 
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -770,7 +814,14 @@ func (a *App) requireMediaAccess(next http.Handler) http.Handler {
 func (a *App) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := a.sessions.get(r); !ok {
-			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			// A page request (address bar, bookmark, PJAX fetch) comes back
+			// to the same page after logging in; JSON polls and form posts
+			// just land on the login page.
+			target := "/admin/login"
+			if (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.Contains(r.Header.Get("Accept"), "text/html") {
+				target = loginPath(r.URL.RequestURI(), "")
+			}
+			http.Redirect(w, r, target, http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)

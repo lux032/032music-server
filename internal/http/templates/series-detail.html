@@ -111,7 +111,7 @@
         <p class="kicker">危险操作</p>
         <h2>解散系列</h2>
       </div>
-      <form method="post" action="/admin/series/{{.Series.ID}}/dissolve">
+      <form method="post" action="/admin/series/{{.Series.ID}}/dissolve" data-replace-history>
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <input type="hidden" name="returnTo" value="/admin/series">
         <p class="dissolve-hint"><small>解散后这些作品将不再参与自动归组。</small></p>

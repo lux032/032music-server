@@ -27,10 +27,8 @@ async function restoreAlbumCover(page, albumUrl) {
   await expect(drawer).toHaveClass(/is-open/);
   const reset = drawer.getByRole('button', { name: '恢复默认封面' });
   if (!(await reset.count())) return;
-  await Promise.all([
-    page.waitForURL(/\/admin\/albums\/\d+\?notice=/),
-    reset.click()
-  ]);
+  await reset.click();
+  await expect(page.locator('.toast')).toContainText('已恢复默认封面');
 }
 
 // restoreArtistImage 在自定义歌手图片（含继承）存在时通过 UI 恢复默认。
@@ -41,10 +39,8 @@ async function restoreArtistImage(page, artistUrl) {
   await expect(drawer).toHaveClass(/is-open/);
   const reset = drawer.getByRole('button', { name: '恢复默认图片' });
   if (!(await reset.count())) return;
-  await Promise.all([
-    page.waitForURL(/\/admin\/artists\/\d+\?view=profile&notice=/),
-    reset.click()
-  ]);
+  await reset.click();
+  await expect(page.locator('.toast')).toContainText('已恢复默认歌手图片');
 }
 
 test.beforeEach(async ({ page }) => { await login(page); });
@@ -69,11 +65,9 @@ test('album drawer uploads a custom cover and restores the default', async ({ pa
 
     // 带文件输入的上传表单走原生提交（data-no-pjax），提交后回到专辑页并显示提示。
     await drawer.locator('input[type="file"][name="image"]').setInputFiles(PNG_FILE);
-    await Promise.all([
-      page.waitForURL(/\/admin\/albums\/\d+\?notice=/),
-      drawer.getByRole('button', { name: '上传封面' }).click()
-    ]);
+    await drawer.getByRole('button', { name: '上传封面' }).click();
     await expect(page.locator('.toast')).toContainText('封面已更新');
+    await expect(page).toHaveURL(/\/admin\/albums\/\d+$/);
 
     const cover = page.locator('img.hero-cover');
     await expect(cover).toBeVisible();
@@ -106,11 +100,9 @@ test('artist drawer uploads a custom image and restores the default', async ({ p
     await expect(drawer).toHaveClass(/is-open/);
 
     await drawer.locator('input[type="file"][name="image"]').setInputFiles(PNG_FILE);
-    await Promise.all([
-      page.waitForURL(/\/admin\/artists\/\d+\?view=profile&notice=/),
-      drawer.getByRole('button', { name: '上传图片' }).click()
-    ]);
+    await drawer.getByRole('button', { name: '上传图片' }).click();
     await expect(page.locator('.toast')).toContainText('歌手图片已更新');
+    await expect(page).toHaveURL(/\/admin\/artists\/\d+\?view=profile$/);
 
     const portrait = page.locator('img.artist-portrait');
     await expect(portrait).toBeVisible();

@@ -495,6 +495,13 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       }
     }
     renderAlbumLink(albumEl, detail, track?.album, detail?.year ? ` · ${detail.year}` : '');
+    // The player bar's title opens the album, like the artist/album line below it.
+    const playerTitle = document.getElementById('player-title');
+    if (playerTitle && track) {
+      const title = track.title || '未知曲目';
+      renderAlbumLink(playerTitle, detail, title);
+      playerTitle.title = title;
+    }
     const playerArtist = document.getElementById('player-artist');
     if (playerArtist && track) {
       renderArtistLinks(playerArtist, detail, track.artist);

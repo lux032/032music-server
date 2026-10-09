@@ -155,7 +155,8 @@ test('metadata source card saves independently', async ({ page }) => {
   await form.getByRole('button', { name: '保存 MusicBrainz 设置' }).click();
   // Brand-named success notice, not the raw scope key.
   await expect(page.locator('.toast')).toContainText('MusicBrainz 设置已保存');
-  await expect(page).toHaveURL(/notice=MusicBrainz/);
+  // The one-shot notice is dropped from the address bar once shown.
+  await expect(page).not.toHaveURL(/notice=/);
   expect(posts).toBe(1);
 
   // Saving the MusicBrainz card must not touch the other source cards.

@@ -293,7 +293,7 @@
     </dialog>
 
     <dialog id="work-delete-dialog" class="work-dialog danger-dialog">
-      <form method="post" action="/admin/works/{{.Work.ID}}/delete">
+      <form method="post" action="/admin/works/{{.Work.ID}}/delete" data-replace-history>
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="confirm" value="1">
         <div class="dialog-head"><div><p class="kicker">危险操作</p><h2>确认删除作品</h2></div><button type="button" class="icon-action" data-dialog-close aria-label="关闭">×</button></div>
         <p>作品及其专辑关联、曲目用途会被移除；音乐文件和专辑不受影响；之后重扫也不会自动建回这个作品。</p>

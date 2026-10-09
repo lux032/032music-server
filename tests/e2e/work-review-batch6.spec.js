@@ -122,7 +122,8 @@ test('series suggestion tab: accept a create-series suggestion', async ({ page }
   await expect(card).toContainText('互为不同演绎');
   await expect(card).toContainText('接受后：新建系列');
   await card.getByRole('button', { name: '接受建议' }).click();
-  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series&notice=/);
+  await expect(page.locator('.toast')).toContainText('建议已接受');
+  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series$/);
   // 系列已创建：系列管理页可搜到，含两名成员。
   await page.goto('/admin/series?q=' + encodeURIComponent('Fate/stay night'));
   await expect(page.locator('.series-list-row')).toHaveCount(1);
@@ -140,7 +141,8 @@ test('series suggestion tab: accept an add-to-series suggestion', async ({ page 
   await expect(card).toContainText('《鬼滅の刃 ヒノカミ血風譚》是《鬼滅の刃 竈門炭治郎 立志編》的游戏');
   await expect(card).toContainText('加入《鬼滅の刃 竈門炭治郎 立志編》');
   await card.getByRole('button', { name: '接受建议' }).click();
-  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series&notice=/);
+  await expect(page.locator('.toast')).toContainText('建议已接受');
+  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series$/);
   // 鬼滅 系列变为 4 名成员（游戏被手动加入）。
   await page.goto('/admin/series?q=' + encodeURIComponent('鬼滅'));
   await expect(page.locator('.series-list-row')).toContainText('共 4 部作品');
@@ -154,7 +156,8 @@ test('series suggestion tab: reject a suggestion', async ({ page }) => {
   await expect(card).toContainText('主线故事 ↔ 衍生');
   await expect(card).toContainText('《とある科学の超電磁砲》是《とある魔術の禁書目録》的衍生');
   await card.getByRole('button', { name: '拒绝' }).click();
-  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series&notice=/);
+  await expect(page.locator('.toast')).toContainText('建议已拒绝');
+  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series$/);
   await expect(page.locator('.series-suggestion-card', { hasText: '超電磁砲' })).toHaveCount(0);
   // 没有产生任何新系列。
   await page.goto('/admin/series?q=' + encodeURIComponent('超電磁砲'));
@@ -173,7 +176,8 @@ test('series suggestion tab: merge suggestion requires and honors a chosen name'
   await card.getByRole('radio', { name: /新名字/ }).check();
   await card.locator('input[name=title]').fill('龍の国全集');
   await card.getByRole('button', { name: '接受建议' }).click();
-  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series&notice=/);
+  await expect(page.locator('.toast')).toContainText('建议已接受');
+  await expect(page).toHaveURL(/\/admin\/work-review\?tab=series$/);
   // 两个系列合并为一个，名字为所选新名字，共 2 名成员。
   await page.goto('/admin/series?q=' + encodeURIComponent('龍の国'));
   await expect(page.locator('.series-list-row')).toHaveCount(1);
@@ -192,7 +196,8 @@ test('series management: create, rename, add, remove, merge, dissolve', async ({
     await form.locator('input[name=title]').fill(title);
     await form.locator('select[name=type]').selectOption('anime');
     await form.getByRole('button', { name: '创建作品' }).click();
-    await expect(page).toHaveURL(/\/admin\/works\/\d+\?notice=/);
+    await expect(page).toHaveURL(/\/admin\/works\/\d+$/);
+    await expect(page.locator('.toast')).toContainText('作品已创建');
   }
 
   // 新建系列（作品甲）。
@@ -203,7 +208,8 @@ test('series management: create, rename, add, remove, merge, dissolve', async ({
   await createPicker.locator('[data-work-search]').fill('E2E 管理作品甲');
   await createPicker.locator('[data-work-results] button', { hasText: 'E2E 管理作品甲' }).first().click();
   await createForm.getByRole('button', { name: '创建系列' }).click();
-  await expect(page).toHaveURL(/\/admin\/series\/\d+\?notice=/);
+  await expect(page).toHaveURL(/\/admin\/series\/\d+$/);
+  await expect(page.locator('.toast')).toContainText('系列已创建');
   await expect(page.locator('h1')).toContainText('E2E 管理系列');
   await expect(page.locator('.series-member-row')).toHaveCount(1);
 
@@ -219,12 +225,13 @@ test('series management: create, rename, add, remove, merge, dissolve', async ({
   await addForm.locator('[data-work-search]').fill('E2E 管理作品乙');
   await addForm.locator('[data-work-results] button', { hasText: 'E2E 管理作品乙' }).first().click();
   await addForm.getByRole('button', { name: '加入系列' }).click();
-  await expect(page).toHaveURL(/\/admin\/series\/\d+\?notice=/);
+  await expect(page.locator('.toast')).toContainText('已加入系列');
+  await expect(page).toHaveURL(/\/admin\/series\/\d+$/);
   await expect(page.locator('.series-member-row')).toHaveCount(2);
 
   // 移出作品乙（提示不再自动归组）。
   await page.locator('.series-member-row', { hasText: 'E2E 管理作品乙' }).getByRole('button', { name: '移出' }).click();
-  await expect(page).toHaveURL(/notice=/);
+  await expect(page.locator('.toast')).toContainText('已移出本系列');
   await expect(page.locator('.series-member-row')).toHaveCount(1);
 
   // 用作品乙另建一个系列，随后并入主系列。
@@ -235,7 +242,8 @@ test('series management: create, rename, add, remove, merge, dissolve', async ({
   await picker2.locator('[data-work-search]').fill('E2E 管理作品乙');
   await picker2.locator('[data-work-results] button', { hasText: 'E2E 管理作品乙' }).first().click();
   await createForm2.getByRole('button', { name: '创建系列' }).click();
-  await expect(page).toHaveURL(/\/admin\/series\/\d+\?notice=/);
+  await expect(page).toHaveURL(/\/admin\/series\/\d+$/);
+  await expect(page.locator('.toast')).toContainText('系列已创建');
 
   await page.goto('/admin/series?q=' + encodeURIComponent('E2E 管理系列改'));
   await page.locator('.series-list-row a.secondary-button').first().click();
@@ -246,13 +254,13 @@ test('series management: create, rename, add, remove, merge, dissolve', async ({
   // 当前系列已改名，默认“保留《E2E 管理系列改》”。
   await expect(mergeForm.getByRole('radio', { name: /保留《E2E 管理系列改》/ })).toBeChecked();
   await mergeForm.getByRole('button', { name: '合并到本系列' }).click();
-  await expect(page).toHaveURL(/notice=/);
+  await expect(page.locator('.toast')).toContainText('系列已合并');
   await expect(page.locator('.series-member-row')).toHaveCount(2);
   await expect(page.locator('.series-member-row', { hasText: 'E2E 管理作品乙' })).toContainText('手动加入');
 
   // 解散：回到列表页，系列消失。
   await page.getByRole('button', { name: '解散系列' }).click();
-  await expect(page).toHaveURL(/\/admin\/series\?notice=/);
+  await expect(page).toHaveURL(/\/admin\/series$/);
   await expect(page.locator('.series-list-row', { hasText: 'E2E 管理系列改' })).toHaveCount(0);
 });
 
