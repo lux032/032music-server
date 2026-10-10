@@ -187,6 +187,35 @@ test('按作品漫游：类型筛选', async ({ page }) => {
   await expect(rail.locator('.h-work:visible')).toHaveCount(total);
 });
 
+test('按作品漫游：作品卡播放按钮用作品歌曲替换队列', async ({ page }) => {
+  await login(page);
+  await home(page);
+  const card = page.locator('.h-works .h-work', { has: page.locator('[data-play-work]') }).first();
+  const workID = await card.locator('[data-play-work]').getAttribute('data-play-work');
+  const res = await page.request.get(`/api/v1/works/${workID}/tracks`);
+  expect(res.ok()).toBe(true);
+  const ids = [...new Set((await res.json()).items.map((t) => t.id))];
+  expect(ids.length).toBeGreaterThan(0);
+  await card.hover();
+  await card.locator('[data-play-work]').click();
+  await expect.poll(async () => (await queueState(page)).queue.length).toBe(ids.length);
+  const state = await queueState(page);
+  expect(state.queue.map((t) => Number(t.id))).toEqual(ids);
+  await expect(page.getByText('加载失败，请检查网络后重试')).toHaveCount(0);
+});
+
+test('作品聚焦：播放系列全部歌曲', async ({ page }) => {
+  await login(page);
+  await home(page);
+  await page.locator('.h-hero[data-focus="recent"] [data-focus-tab="series"]').click();
+  const btn = page.locator('.h-hero[data-focus="series"] [data-play-series]');
+  await btn.click();
+  await expect.poll(async () => (await queueState(page)).queue.length).toBeGreaterThan(0);
+  const ids = (await queueState(page)).queue.map((t) => String(t.id));
+  expect(new Set(ids).size).toBe(ids.length);
+  await expect(page.getByText('加载失败，请检查网络后重试')).toHaveCount(0);
+});
+
 test('编年：点击柱子切换年份，链接到专辑页年份筛选', async ({ page }) => {
   await login(page);
   await home(page);

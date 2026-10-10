@@ -157,7 +157,9 @@
     const res = await fetch(`/api/v1/works/${encodeURIComponent(workID)}/tracks`, { credentials: 'same-origin' });
     if (res.status === 401) { location.assign('/admin/login?next=' + encodeURIComponent(location.pathname)); return null; }
     if (!res.ok) throw new Error('work tracks failed');
-    return res.json();
+    // The list endpoint wraps rows as { items: [...] } (apiResult).
+    const body = await res.json();
+    return Array.isArray(body?.items) ? body.items : [];
   }
 
   let workPlayBusy = false;
@@ -166,10 +168,16 @@
     workPlayBusy = true;
     try {
       const tracks = [];
+      const seen = new Set();
       for (const id of ids) {
         const list = await fetchWorkTracks(id);
         if (!list) return;
-        tracks.push(...list);
+        // A song linked to several works of one series is queued once.
+        for (const t of list) {
+          if (seen.has(t.id)) continue;
+          seen.add(t.id);
+          tracks.push(t);
+        }
       }
       playEntries(tracks);
       if (label && tracks.length) toast(`正在播放${label}（${tracks.length} 首）`);
