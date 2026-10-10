@@ -236,13 +236,18 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 .h-row-art:hover, .h-trow-art:hover { background: var(--surface-sunken); }
 .h-row-art img, .h-trow-art img { width: 100%; height: 100%; object-fit: cover; }
 .h-row-art .cover-placeholder, .h-trow-art .cover-placeholder { display: grid; place-items: center; width: 100%; height: 100%; font-size: 0.8rem; }
+/* Small centered play disc instead of a full-cover mask, so the artwork
+   stays readable on hover and while the row is playing. */
 .h-row-play {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  color: var(--bg); background: color-mix(in oklab, var(--text) 45%, transparent); opacity: 0; transition: opacity var(--dur-fast) var(--ease);
+  position: absolute; top: 50%; left: 50%; display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  color: #fff; background: rgba(0, 0, 0, 0.5); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  opacity: 0; transform: translate(-50%, -50%) scale(0.9);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
-.h-row-play .icon { width: 20px; height: 20px; }
-.h-row:hover .h-row-play, .h-trow:hover .h-row-play, .h-row-art:focus-visible .h-row-play, .h-trow-art:focus-visible .h-row-play { opacity: 1; }
-.h-row.now-playing-row .h-row-play, .h-trow.now-playing-row .h-row-play { opacity: 1; background: color-mix(in oklab, var(--accent) 70%, transparent); color: var(--text-on-accent); }
+.h-row-play .icon { width: 14px; height: 14px; }
+.h-row:hover .h-row-play, .h-trow:hover .h-row-play, .h-row-art:focus-visible .h-row-play, .h-trow-art:focus-visible .h-row-play { opacity: 1; transform: translate(-50%, -50%); }
+.h-row.now-playing-row .h-row-play, .h-trow.now-playing-row .h-row-play { opacity: 1; transform: translate(-50%, -50%); background: var(--accent); color: var(--text-on-accent); }
 .h-row-main { min-width: 0; display: grid; gap: 1px; }
 .h-row-title { overflow: hidden; color: var(--text); font-size: var(--fs-md); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .now-playing-row > .h-row-title, .now-playing-row > .h-row-main > .h-row-title { color: var(--accent-strong-text); }
