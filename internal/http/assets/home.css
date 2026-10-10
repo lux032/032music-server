@@ -127,13 +127,14 @@
 .h-hero-swap { animation: h-swap var(--dur-slow) var(--ease); }
 @keyframes h-swap { from { opacity: 0.35; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-/* hero side: tracklist / related albums — only when the hero is wide enough */
-.h-hero-side { display: none; min-width: 0; align-self: stretch; flex-direction: column; gap: 10px; border-radius: var(--radius-lg); padding: 16px 14px 14px; background: color-mix(in oklab, var(--surface) 62%, transparent); backdrop-filter: blur(6px); }
+/* hero side: tracklist / related albums — only when the hero is wide enough.
+   min-height: 0 让曲目列表在卡片自然高度内滚动，而不是把卡片撑高。 */
+.h-hero-side { display: none; min-width: 0; min-height: 0; align-self: stretch; flex-direction: column; gap: 10px; border-radius: var(--radius-lg); padding: 16px 14px 14px; background: color-mix(in oklab, var(--surface) 62%, transparent); backdrop-filter: blur(6px); }
 .h-hero-side > .h-link { margin: auto 6px 0; }
 .h-hero-side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 6px; }
 .h-hero-side-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 750; }
 .h-hero-side-head span { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-.h-hero-tracks { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; overflow-y: auto; }
+.h-hero-tracks { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 0; flex: 1 1 0; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .h-hero-tracks button {
   display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px;
   width: 100%; min-height: 50px; border: 0; border-radius: var(--radius-md); padding: 6px 8px;
