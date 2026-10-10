@@ -16,6 +16,7 @@ import (
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/upnp"
 )
 
 var version = "dev"
@@ -94,6 +95,10 @@ func run() error {
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
 	app.SetLastFM(lastFMService)
+	// Sonos/DLNA casting: discovery runs on demand (device list requests).
+	castManager := upnp.NewManager(upnp.Options{StaticDevices: cfg.CastDevices, DisableSSDP: !cfg.CastSSDP, Logger: logger})
+	defer castManager.Close()
+	app.SetCastManager(castManager)
 	// Playback sessions: finalizes expired leases and purges ended sessions
 	// past their retention; stops with rootCtx at shutdown. Reads derive the
 	// effective state on their own, so this only persists the outcome.

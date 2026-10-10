@@ -5,6 +5,7 @@ import { formatTime, svgIcon, showUndoToast, showToast, showActionToast, apiFetc
 import { navigateFromPlayer } from './router.js';
 import { bindSeekBar, updateTrackRowsUI, updatePlayerMetaUI, updatePlayButtonUI } from './player-bar.js';
 import { loadLyrics } from './lyrics.js';
+import { isCasting, mediaTime, mediaDuration } from './cast.js';
 import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQueuePlayback, saveState, updateMediaSession } from './player-core.js';
 
   const trackDetails = new Map();
@@ -172,7 +173,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     if (dismissUndo) dismissUndo();
     if (restorePosition && s.audio) s.audio.removeEventListener('loadedmetadata', restorePosition);
     restorePosition = null;
-    const snapshot = s.queue.slice(), index = s.currentIndex, position = s.audio?.currentTime || 0;
+    const snapshot = s.queue.slice(), index = s.currentIndex, position = mediaTime();
     s.queue = [];
     stopQueuePlayback();
     dismissUndo = showUndoToast('已清空播放队列', () => {
@@ -690,9 +691,9 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
   }
 
   export function syncPanelProgress() {
-    if (!s.audio) return;
-    const curTime = s.audio.currentTime || 0;
-    const durTime = s.audio.duration || 0;
+    if (!s.audio && !isCasting()) return;
+    const curTime = mediaTime();
+    const durTime = mediaDuration();
     const curElem = document.getElementById('np-time-cur');
     const totalElem = document.getElementById('np-time-total');
     const fillElem = document.getElementById('np-progress-fill');

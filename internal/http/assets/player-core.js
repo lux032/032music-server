@@ -5,6 +5,7 @@ import { updatePlayButtonUI, updateTrackRowsUI, updatePlayerMetaUI, updateVolume
 import { syncPanelProgress, emitPlayerState } from './now-playing.js';
 import { loadLyrics, updateActiveLyric } from './lyrics.js';
 import { createPlaybackReporter } from './playback-reporter.js';
+import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop, castPlayMode, castQueueChanged, mediaTime, mediaDuration, mediaSeek } from './cast.js';
 
   // ---------------------------------------------------- playback reporter
   // Event-driven session reporter (apiRevision 3). The reporter module is
@@ -232,6 +233,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
   }
 
   export function stopQueuePlayback() {
+    if (isCasting()) castStop();
     // End the session before touching the audio element so the 'pause'
     // listener cannot double-report and the final position is still real.
     if (reporter) reporter.stopSession('stopped');
@@ -274,6 +276,13 @@ import { createPlaybackReporter } from './playback-reporter.js';
     if (!skipHistoryPush && s.currentIndex !== -1 && index !== s.currentIndex && s.queue[s.currentIndex]) {
       s.playHistory.push(String(s.queue[s.currentIndex].id));
       if (s.playHistory.length > 100) s.playHistory.shift();
+    }
+    if (isCasting()) {
+      // The renderer plays its own queue; the bar mirrors its status.
+      s.failedTrackId = null;
+      castPlayIndex(index);
+      saveState();
+      return;
     }
     s.currentIndex = index;
     const track = s.queue[s.currentIndex];
@@ -337,6 +346,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
   }
 
   export function togglePlay() {
+    if (isCasting()) { castToggle(); return; }
     if (!s.audio) return;
     if (!s.audio.src && s.queue.length > 0) {
       playTrackAtIndex(s.currentIndex >= 0 ? s.currentIndex : 0);
@@ -376,6 +386,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
   }
 
   export function playPrevious() {
+    if (isCasting()) { castPrevious(); return; }
     if (!s.audio || s.queue.length === 0) return;
     if (s.audio.currentTime > 3) {
       s.audio.currentTime = 0;
@@ -403,6 +414,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
   }
 
   export function playNext() {
+    if (isCasting()) { castNext(); return; }
     if (!s.audio || s.queue.length === 0) return;
     if (s.shuffleOn) { playRandomNext('skipped'); return; }
     let nextIndex = s.currentIndex + 1;
@@ -481,6 +493,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
     const i = LOOP_MODES.indexOf(s.loopMode);
     s.loopMode = LOOP_MODES[(i + 1) % LOOP_MODES.length];
     syncLoopButton();
+    castPlayMode();
     saveState();
     emitPlayerState();
   }
@@ -493,14 +506,15 @@ import { createPlaybackReporter } from './playback-reporter.js';
       shuffleBtn.setAttribute('aria-pressed', String(s.shuffleOn));
       shuffleBtn.title = s.shuffleOn ? '随机播放 (开)' : '随机播放';
     }
+    castPlayMode();
     saveState();
     emitPlayerState();
   }
 
   export function onTimeUpdate() {
-    if (!s.audio) return;
-    const curTime = s.audio.currentTime || 0;
-    const durTime = s.audio.duration || 0;
+    if (!s.audio && !isCasting()) return;
+    const curTime = mediaTime();
+    const durTime = mediaDuration();
 
     const curElem = document.getElementById('player-time-cur');
     const totalElem = document.getElementById('player-time-total');
@@ -543,9 +557,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
       navigator.mediaSession.setActionHandler('previoustrack', playPrevious);
       navigator.mediaSession.setActionHandler('nexttrack', playNext);
       navigator.mediaSession.setActionHandler('seekto', (details) => {
-        if (details.seekTime !== undefined && s.audio && s.audio.duration) {
-          s.audio.currentTime = details.seekTime;
-        }
+        if (details.seekTime !== undefined && mediaDuration()) mediaSeek(details.seekTime);
       });
     } catch (_) {}
   }
@@ -561,7 +573,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
       const state = {
         queue: s.queue,
         currentIndex: s.currentIndex,
-        currentTime: s.audio ? s.audio.currentTime : 0,
+        currentTime: mediaTime(),
         isPlaying: s.isPlaying,
         loopMode: s.loopMode,
         shuffle: s.shuffleOn,
@@ -569,6 +581,7 @@ import { createPlaybackReporter } from './playback-reporter.js';
       };
       sessionStorage.setItem('032_player_state', JSON.stringify(state));
     } catch (_) {}
+    castQueueChanged();
   }
 
   export function restoreState() {
@@ -600,7 +613,8 @@ import { createPlaybackReporter } from './playback-reporter.js';
         const track = s.queue[s.currentIndex];
         if (track) {
           updatePlayerMetaUI(track);
-          if (s.audio) {
+          // While casting the renderer owns playback: no local audio.
+          if (s.audio && !isCasting()) {
             s.audio.src = track.streamUrl;
             s.audio.load();
             // Refresh/restoreState of the same track resumes the persisted

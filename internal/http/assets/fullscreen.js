@@ -2,6 +2,7 @@ import { s } from './state.js';
 import { artworkForSize, formatTime, svgIcon, swapIcon } from './util.js';
 import { togglePlay, playPrevious, playNext, cycleLoopMode, toggleShuffle } from './player-core.js';
 import { lyrics } from './lyrics.js';
+import { mediaTime, mediaDuration, mediaSeek } from './cast.js';
 
 let overlay = null;
 let trigger = null;
@@ -46,7 +47,7 @@ export function syncFullscreen() {
   overlay.querySelector('.fs-shuffle').classList.toggle('active', s.shuffleOn);
   overlay.querySelector('.fs-loop').classList.toggle('active', s.loopMode !== 'off');
   swapIcon(overlay.querySelector('.fs-loop'), s.loopMode === 'one' ? 'icon-repeat-1' : 'icon-repeat');
-  const time = s.audio?.currentTime || 0, duration = s.audio?.duration || 0;
+  const time = mediaTime(), duration = mediaDuration();
   const progress = overlay.querySelector('.fs-progress');
   progress.setAttribute('aria-valuemax', String(Math.floor(duration)));
   progress.setAttribute('aria-valuenow', String(Math.floor(time)));
@@ -107,8 +108,8 @@ export function setupFullscreen() {
     progress.addEventListener('lostpointercapture', () => { seeking = false; syncFullscreen(); });
     progress.addEventListener('change', () => { seeking = false; syncFullscreen(); });
     progress.addEventListener('input', () => {
-      if (!s.audio?.duration) return;
-      s.audio.currentTime = Number(progress.value) * s.audio.duration / 100;
+      if (!mediaDuration()) return;
+      mediaSeek(Number(progress.value) * mediaDuration() / 100);
       syncFullscreen();
     });
     const duration = document.createElement('span'); duration.className = 'fs-duration';

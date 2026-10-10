@@ -56,6 +56,9 @@ type App struct {
 	// watcher is the optional library watcher (automatic incremental scans);
 	// nil hides its controls on the dashboard.
 	watcher *scanner.Watcher
+	// cast drives UPnP/Sonos renderers (nil disables /api/v1/cast).
+	cast      castRenderers
+	castState castState
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -348,6 +351,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PUT /api/v1/playlists/{id}/artwork", a.requireAPIOrAdmin(http.HandlerFunc(a.handleUploadPlaylistArtwork)))
 	mux.Handle("DELETE /api/v1/playlists/{id}/artwork", a.requireAPIOrAdmin(http.HandlerFunc(a.handleResetPlaylistArtwork)))
 	mux.Handle("GET /api/v1/playlists/{id}/artwork", a.requireMediaAccess(http.HandlerFunc(a.handlePlaylistArtwork)))
+
+	mux.Handle("GET /api/v1/cast/devices", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastDevices)))
+	mux.Handle("GET /api/v1/cast/devices/{id}/status", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastStatus)))
+	mux.Handle("GET /api/v1/cast/devices/{id}/queue", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastQueue)))
+	mux.Handle("POST /api/v1/cast/devices/{id}/queue", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastLoadQueue)))
+	mux.Handle("POST /api/v1/cast/devices/{id}/queue/remove", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastRemove)))
+	mux.Handle("POST /api/v1/cast/devices/{id}/queue/move", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastMove)))
+	mux.Handle("POST /api/v1/cast/devices/{id}/control", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCastControl)))
 
 	mux.Handle("POST /api/v1/playback/events", a.requirePlaybackReport(http.HandlerFunc(a.handlePlaybackEvents)))
 	// Legacy playback endpoints were removed without a compatibility path

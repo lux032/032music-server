@@ -545,6 +545,30 @@ body.np-collapsed .np-expand { display: grid; }
   font-size: var(--fs-xs);
 }
 .player-shortcuts-help[hidden] { display: none; }
+.cast-menu {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--player-h) + 10px);
+  z-index: 1200;
+  width: min(300px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+}
+.cast-menu[hidden] { display: none; }
+.cast-menu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; color: var(--text-secondary); font-size: var(--fs-xs); }
+.cast-menu-head button { padding: 2px 8px; }
+.cast-menu ul { margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow: auto; }
+.cast-menu li button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; border-radius: var(--radius-sm); padding: 8px; color: var(--text); background: transparent; text-align: left; }
+.cast-menu li button:hover, .cast-menu li button:focus-visible { background: var(--surface-hover); }
+.cast-menu li button[aria-checked="true"] { color: var(--accent); }
+.cast-menu li small { color: var(--text-secondary); font-size: var(--fs-xs); white-space: nowrap; }
+.cast-menu-empty { padding: 8px; color: var(--text-secondary); }
+.player-cast-label { display: none; max-width: 120px; overflow: hidden; color: var(--accent); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+body.is-casting .player-cast-label { display: inline; }
 .player-shortcuts-help button { padding: 4px 8px; }
 
 /* ------------------------------------------------------------------ lyrics overlay */

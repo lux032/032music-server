@@ -1,6 +1,7 @@
 // 032 Music Server - lyrics.js
 import { s } from './state.js';
 import { syncFullscreen } from './fullscreen.js';
+import { isCasting, mediaSeek, castToggle } from './cast.js';
 
 export function lyrics() { return s.lyrics; }
 
@@ -43,7 +44,10 @@ export function lyrics() { return s.lyrics; }
       p.setAttribute('data-time', line.timeMs || 0);
       p.textContent = line.text;
       p.addEventListener('click', () => {
-        if (s.audio && line.timeMs !== undefined) {
+        if (isCasting() && line.timeMs !== undefined) {
+          mediaSeek(line.timeMs / 1000);
+          if (!s.isPlaying) castToggle();
+        } else if (s.audio && line.timeMs !== undefined) {
           s.audio.currentTime = line.timeMs / 1000;
           if (s.audio.paused) s.audio.play().catch(console.warn);
         }

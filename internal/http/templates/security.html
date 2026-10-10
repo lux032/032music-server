@@ -152,7 +152,7 @@
         <div><p class="kicker">客户端访问</p><h2>媒体 Token</h2></div>
         {{template "security-source" .Sources.MediaToken}}
       </header>
-      <p>Sonos 等外部播放器通过 <code>mediaToken</code> 参数读取音频、封面与歌词，不能访问其他 API。修改后正在播放的一首会播完，下一首开始需要新 Token。</p>
+      <p>Sonos 等外部播放器通过 <code>mediaToken</code> 参数读取音频、封面与歌词，不能访问其他 API。修改后正在播放的一首会播完，下一首开始需要新 Token；已写入 Sonos 播放队列的曲目需要重新投送。</p>
       {{if .MediaTokenSharesAPIToken}}<p class="security-note">开发模式：未设置 MUSIC_SERVER_MEDIA_TOKEN，媒体 Token 当前与环境变量中的 API Token 相同。生产环境请单独设置。</p>{{end}}
       {{if .MediaTokenEphemeral}}<p class="security-note">未设置 MUSIC_SERVER_MEDIA_TOKEN：当前媒体 Token 为本次启动随机生成，重启后会变化。建议在此生成固定 Token，或在 .env 中设置。</p>{{end}}
       <form method="post" action="/admin/settings/security/media-token" class="security-inline-form">

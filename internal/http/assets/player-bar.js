@@ -4,6 +4,7 @@ import { hydrateIconSlots, formatTime, swapIcon, showToast } from './util.js';
 import { togglePlay, playPrevious, playNext, cycleLoopMode, toggleShuffle, saveState, onTimeUpdate } from './player-core.js';
 import { toggleNowPlayingPanel, emitPlayerState, syncPanelQueueCurrent } from './now-playing.js';
 import { scrollLyricsToActive } from './lyrics.js';
+import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './cast.js';
 
   export function createPlayerDOM() {
     if (document.getElementById('global-player')) {
@@ -58,6 +59,8 @@ import { scrollLyricsToActive } from './lyrics.js';
           <button id="player-btn-mute" class="player-tool-btn" title="静音" aria-label="静音"><span class="icon-slot" data-icon="icon-volume"></span></button>
           <input id="player-volume-slider" type="range" min="0" max="1" step="0.01" value="1" title="音量">
         </div>
+        <span id="player-cast-label" class="player-cast-label" aria-hidden="true"></span>
+        <button id="player-btn-cast" class="player-tool-btn" title="投送到 Sonos / DLNA 设备" aria-label="投送到其他设备" aria-haspopup="menu" aria-expanded="false" aria-controls="cast-menu"><span class="icon-slot" data-icon="icon-cast"></span></button>
         <button id="player-btn-lyrics" class="player-tool-btn" title="歌词 (L)" aria-label="歌词" aria-expanded="false" aria-controls="lyrics-overlay"><span class="icon-slot" data-icon="icon-lyrics"></span></button>
         <button id="player-btn-queue" class="player-tool-btn" title="播放队列" aria-label="播放队列" aria-expanded="false" aria-controls="now-playing"><span class="icon-slot" data-icon="icon-queue"></span></button>
         <button id="player-btn-fullscreen" class="player-tool-btn" title="全屏" aria-label="全屏"><span class="icon-slot" data-icon="icon-fullscreen"></span></button>
@@ -128,6 +131,7 @@ import { scrollLyricsToActive } from './lyrics.js';
     if (volumeSlider) {
       volumeSlider.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
+        if (isCasting()) { castVolume(val); updateVolumeUI(val); return; }
         if (s.audio) {
           s.audio.volume = val;
           s.audio.muted = false;
@@ -197,19 +201,24 @@ import { scrollLyricsToActive } from './lyrics.js';
   // dragging so the bar can preview the target position.
   export function bindSeekBar(bar, applyPreview) {
     const seekToPosition = (clientX) => {
-      if (!s.audio || !s.audio.duration) return;
+      const duration = mediaDuration();
+      if (!duration) return;
       const rect = bar.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const targetTime = ratio * s.audio.duration;
-      s.audio.currentTime = targetTime;
+      const targetTime = ratio * duration;
+      // A cast seek is one renderer command, sent when the drag ends.
+      if (!isCasting()) s.audio.currentTime = targetTime;
+      lastTarget = targetTime;
 
       const curElem = document.getElementById('player-time-cur');
       if (curElem) curElem.textContent = formatTime(targetTime);
       applyPreview(`${ratio * 100}%`, `${ratio * 100}%`);
     };
 
+    let lastTarget = null;
+    const commitCast = () => { if (isCasting() && lastTarget !== null) mediaSeek(lastTarget); lastTarget = null; };
     bar.addEventListener('mousedown', (e) => {
-      if (!s.audio || !s.audio.duration) return;
+      if (!mediaDuration()) return;
       s.isDraggingProgress = true;
       seekToPosition(e.clientX);
 
@@ -221,6 +230,7 @@ import { scrollLyricsToActive } from './lyrics.js';
 
       const onMouseUp = () => {
         s.isDraggingProgress = false;
+        commitCast();
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
       };
@@ -231,7 +241,7 @@ import { scrollLyricsToActive } from './lyrics.js';
 
     // Touch support for mobile/tablets
     bar.addEventListener('touchstart', (e) => {
-      if (!s.audio || !s.audio.duration || !e.touches[0]) return;
+      if (!mediaDuration() || !e.touches[0]) return;
       s.isDraggingProgress = true;
       seekToPosition(e.touches[0].clientX);
 
@@ -243,6 +253,7 @@ import { scrollLyricsToActive } from './lyrics.js';
 
       const onTouchEnd = () => {
         s.isDraggingProgress = false;
+        commitCast();
         window.removeEventListener('touchmove', onTouchMove);
         window.removeEventListener('touchend', onTouchEnd);
       };
@@ -251,14 +262,15 @@ import { scrollLyricsToActive } from './lyrics.js';
       window.addEventListener('touchend', onTouchEnd);
     }, { passive: true });
     bar.addEventListener('keydown', (e) => {
-      if (!s.audio || !s.audio.duration) return;
-      let next = s.audio.currentTime || 0;
+      const duration = mediaDuration();
+      if (!duration) return;
+      let next = mediaTime();
       if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next -= 5;
       else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next += 5;
       else if (e.key === 'Home') next = 0;
-      else if (e.key === 'End') next = s.audio.duration;
+      else if (e.key === 'End') next = duration;
       else return;
-      e.preventDefault(); s.audio.currentTime = Math.max(0, Math.min(s.audio.duration, next)); onTimeUpdate();
+      e.preventDefault(); mediaSeek(Math.max(0, Math.min(duration, next))); onTimeUpdate();
     });
   }
 

@@ -223,6 +223,9 @@ docker compose logs --tail=100 music-server
 | `MUSIC_SERVER_WORK_POSTER_BACKFILL` | `true` | 启动约 30 秒后、扫描后、增强后补全缺失作品海报。`0/false/off/no` 关闭；未知值告警并保持开启。手动补全仍可用。 |
 | `MUSIC_SERVER_WATCH_INTERVAL` | `60s` | 曲库目录监控的轮询间隔（纯数字按秒，或 `5m` 这类时长，最小 `10s`）。检测到变化且连续两次轮询保持一致后自动执行增量扫描。采用只做 stat、不读文件内容的轮询，Docker Desktop 绑定挂载、SMB/NFS 等收不到 inotify 事件的场景同样有效。`0/off` 关闭，启动扫描不受影响。这里只是默认值：也可在管理 → 控制台的“自动入库”中开关和调整间隔，立即生效且无需重启；管理页设置优先于环境变量，可一键恢复默认。 |
 | `MUSIC_SERVER_PURGE_MISSING` | `never` | 扫描发现音乐文件被删除后如何处理（参照 Navidrome）。缺失文件对应的歌曲，以及因此没有可用歌曲的专辑和歌手，会立即从浏览页、App 接口与同步接口中隐藏；文件放回后重新扫描自动恢复，收藏和播放记录都保留。`never` 只隐藏不删除；`always` 每次扫描后永久删除；`full` 仅完整重扫后删除。永久删除会一并移除这些歌曲的收藏、播放记录和歌单条目；疑似掉盘（超过一半文件消失）的扫描不会触发删除。这里只是默认值：管理 → 控制台 → 缺失文件页可随时修改或手动清理，管理页设置优先于环境变量。 |
+| `MUSIC_SERVER_CAST_BASE_URL` | 自动 | Sonos/DLNA 拉取音频与封面所用的局域网地址，如 `http://192.168.1.10:4533`。未设置时：浏览器访问的私网 IP 与音箱同网段则沿用该地址，否则取通往音箱的本机网卡地址 + 监听端口。Docker 桥接网络下建议显式设置。 |
+| `MUSIC_SERVER_CAST_DEVICES` | 空 | 额外探测的投送设备，逗号分隔：Sonos 主机 IP（默认端口 1400）或设备描述 URL。容器内收不到组播时使用。 |
+| `MUSIC_SERVER_CAST_SSDP` | `true` | SSDP 组播发现。`0/false/off/no` 关闭后只使用 `MUSIC_SERVER_CAST_DEVICES`。Docker 中使用组播需 `network_mode: host`。 |
 
 缓存容量/并发数要求正整数，非法或非正数回退默认值。在线元数据设置和服务密钥通过 Web 管理页配置，保存在 SQLite，不是 `.env` 配置项。
 
@@ -233,6 +236,15 @@ docker compose logs --tail=100 music-server
 密码覆盖值使用 PBKDF2-SHA256（600000 次迭代），API Token 覆盖值保存 SHA-256 哈希；媒体 Token 明文保存，以便验证密码后查看。修改用户名/密码会使其他会话退出；轮换 Token 后旧值的新请求立即失效，但不会中断已授权的音频流。
 
 忘记覆盖密码时，临时向服务传入 `MUSIC_SERVER_RESET_CREDENTIALS=password`，重新创建/启动服务，即可恢复环境变量中的用户名和密码。Compose 中需先添加到 `environment`。恢复后移除该变量并再次重建容器。也可使用 `tokens` 或 `all`。安全页输入的 Token 至少 24 个字符，仅允许字母、数字、`-`、`_`、`.`、`~`。
+
+### 投送到 Sonos / DLNA
+
+播放栏右侧的投送按钮列出局域网内的 Sonos 房间（按编组协调器合并）和 DLNA 渲染器。选择设备后，当前播放队列整体推送过去：
+
+- **Sonos**：通过 AVTransport 把整个队列写入音箱自己的播放队列（`AddMultipleURIsToQueue`，每批 16 首），传输源切到 `x-rincon-queue`，从当前曲目和位置开始。之后由音箱自己连续播放，关闭网页或 App 都不影响。播放、暂停、上一首/下一首、进度跳转、循环/随机、音量，以及“下一首播放”“加入队列”、删除、拖动排序，都会同步到音箱队列；页面按 Track 序号和曲目 URI 每秒同步一次状态。刷新页面或从别的客户端打开时，会接管音箱上正在播放的队列。
+- **普通 DLNA**：一次只接受一个 URI。由服务端保存队列，并在曲目播完后推送下一首，同样不依赖客户端在线。
+- **音频格式**：Sonos 可直接解码的格式按原文件推送；高于 48 kHz 的无损转 FLAC 48 kHz，服务端会提前在后台生成缓存；Opus 等格式实时转 MP3 320k。队列 URI 带媒体 Token，轮换 Token 后需要重新推送。
+- **接口**：`GET /api/v1/cast/devices[?refresh=1]`、`GET …/{id}/status`、`GET/POST …/{id}/queue`（`replace`/`append`/`insert`）、`POST …/{id}/queue/remove`、`…/queue/move`、`…/control`（`play`/`pause`/`stop`/`next`/`previous`/`seek`/`playIndex`/`playMode`/`volume`），使用 API Token 或管理员会话。
 
 ## 元数据与作品关联
 

@@ -58,6 +58,18 @@ type Config struct {
 	// never = only hide them; always = after every scan; full = only after a
 	// full scan. The admin page can override it at runtime.
 	PurgeMissing string
+	// CastBaseURL is MUSIC_SERVER_CAST_BASE_URL: the LAN origin (e.g.
+	// http://192.168.1.10:4533) Sonos/DLNA renderers use to fetch audio and
+	// covers. Empty derives it from the request host or the outbound
+	// interface towards the speaker.
+	CastBaseURL string
+	// CastDevices is MUSIC_SERVER_CAST_DEVICES: comma-separated renderer
+	// hosts (Sonos, port 1400 assumed) or device description URLs probed in
+	// addition to SSDP — needed when multicast cannot reach the server.
+	CastDevices []string
+	// CastSSDP is MUSIC_SERVER_CAST_SSDP (default on): multicast discovery.
+	// Off limits casting to CastDevices.
+	CastSSDP bool
 	// Warnings 是启动时应告警但不致命的配置问题（如无法识别的开关取值）。
 	Warnings []string
 }
@@ -140,6 +152,9 @@ func Load() (Config, error) {
 		MediaTokenGenerated: mediaTokenGenerated,
 		ResetCredentials:    strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
 		TrustedProxies:      strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
+		CastBaseURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_CAST_BASE_URL")), "/"),
+		CastDevices:         splitList(os.Getenv("MUSIC_SERVER_CAST_DEVICES")),
+		CastSSDP:            !isOffValue(os.Getenv("MUSIC_SERVER_CAST_SSDP")),
 	}
 
 	cfg.WorkPosterBackfill = posterBackfill
@@ -325,4 +340,24 @@ func parseBool(value string) bool {
 	default:
 		return false
 	}
+}
+
+// splitList splits a comma-separated environment value, dropping blanks.
+func splitList(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// isOffValue reports an explicit off switch ("0", "false", "no", "off").
+func isOffValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "false", "no", "off":
+		return true
+	}
+	return false
 }

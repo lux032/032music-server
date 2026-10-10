@@ -300,7 +300,7 @@ func TestLibraryPagesUseThumbnails(t *testing.T) {
 
 func TestVersionedPlayerModulesJavaScriptMIME(t *testing.T) {
 	app, _, _ := setupTestApp(t)
-	for _, name := range []string{"player-main.js", "router.js", "player-core.js", "queue.js", "now-playing.js", "player-bar.js", "lyrics.js", "shortcuts.js", "util.js", "state.js", "fullscreen.js"} {
+	for _, name := range []string{"player-main.js", "router.js", "player-core.js", "queue.js", "now-playing.js", "player-bar.js", "lyrics.js", "shortcuts.js", "util.js", "state.js", "fullscreen.js", "cast.js"} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, app.assets.assetURL(name), nil)
 			rec := httptest.NewRecorder()

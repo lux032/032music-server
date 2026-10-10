@@ -8,6 +8,7 @@ import { setupPjaxNavigation } from './router.js';
 import { setupImageFadeIn } from './util.js';
 import { setupPlaylists } from './playlist-picker.js';
 import { setupFullscreen } from './fullscreen.js';
+import { setupCast, restoreCast } from './cast.js';
 
 if (!window.__032_player_initialized) {
   window.__032_player_initialized = true;
@@ -19,6 +20,9 @@ if (!window.__032_player_initialized) {
     setupNowPlayingPanel();
     setupPlaylists();
     setupFullscreen();
+    setupCast();
+    // Before restoreState: a restored cast session must not start local audio.
+    restoreCast();
     restoreState();
     bindTrackListEvents();
     bindGlobalShortcuts();

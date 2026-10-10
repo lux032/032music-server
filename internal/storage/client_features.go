@@ -166,6 +166,12 @@ func (s *Store) TrackByID(ctx context.Context, id int64) (Track, error) {
 	return items[0], err
 }
 
+// TracksByIDs returns the tracks in the given order (duplicates allowed);
+// a missing id yields sql.ErrNoRows.
+func (s *Store) TracksByIDs(ctx context.Context, ids []int64) ([]Track, error) {
+	return s.tracksByIDs(ctx, ids)
+}
+
 // tracksByIDs loads many tracks in a single query (N+1 fix) and returns them
 // in the order of the given ids. A missing id yields sql.ErrNoRows.
 func (s *Store) tracksByIDs(ctx context.Context, ids []int64) ([]Track, error) {

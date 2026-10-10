@@ -4,6 +4,7 @@ import { svgIcon, showToast, showUndoToast, artworkForSize, apiFetch, swapIcon }
 import { playTrackAtIndex, togglePlay, saveState } from './player-core.js';
 import { emitPlayerState } from './now-playing.js';
 import { updateTrackRowsUI } from './player-bar.js';
+import { mediaTime } from './cast.js';
 
   export function bindTrackListEvents() {
     document.addEventListener('click', (e) => {
@@ -230,7 +231,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     const previous = s.queue.slice();
     const snapshot = previous.length && !sameQueue(previous, tracks) ? {
       queue: previous, index: s.currentIndex, history: s.playHistory.slice(),
-      position: s.audio?.currentTime || 0, wasPlaying: s.isPlaying
+      position: mediaTime(), wasPlaying: s.isPlaying
     } : null;
     s.queue = tracks;
     s.playHistory = []; // queue replaced: position history is meaningless

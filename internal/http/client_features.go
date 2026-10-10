@@ -22,6 +22,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"artistDetail": true, "artistFavorites": true,
 			"audioProperties": true, "lyricsText": true, "playlistCreateWithItems": true,
 			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true,
+			"cast": a.cast != nil,
 		},
 		"transcode": map[string]any{
 			"available":   a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"],

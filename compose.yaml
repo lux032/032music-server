@@ -23,6 +23,10 @@ services:
       MUSIC_SERVER_COOKIE_SECURE: "${MUSIC_SERVER_COOKIE_SECURE:-false}"
       MUSIC_SERVER_WATCH_INTERVAL: "${MUSIC_SERVER_WATCH_INTERVAL:-60s}"
       MUSIC_SERVER_PURGE_MISSING: "${MUSIC_SERVER_PURGE_MISSING:-never}"
+      # Sonos/DLNA casting: renderers must reach this LAN address; with bridge
+      # networking SSDP multicast does not reach the container, so list speakers.
+      MUSIC_SERVER_CAST_BASE_URL: "${MUSIC_SERVER_CAST_BASE_URL:-}"
+      MUSIC_SERVER_CAST_DEVICES: "${MUSIC_SERVER_CAST_DEVICES:-}"
     volumes:
       - "${MUSIC_SERVER_DATA_PATH:-./data}:/data"
       - "${MUSIC_SERVER_MUSIC_PATH:?set MUSIC_SERVER_MUSIC_PATH in .env}:/music:ro"
