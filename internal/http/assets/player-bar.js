@@ -27,10 +27,12 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
         <div class="player-meta">
           <div class="player-title-row">
             <strong id="player-title" title="未在播放">未在播放</strong>
-            <span id="player-format" class="format-pill" style="display:none;">FLAC</span>
             <span id="player-status" class="player-status" role="status" aria-live="polite"></span>
           </div>
-          <small id="player-artist">选择一首歌曲开始播放</small>
+          <div class="player-sub-row">
+            <span id="player-format" class="format-pill" style="display:none;"></span>
+            <small id="player-artist">选择一首歌曲开始播放</small>
+          </div>
         </div>
         <button type="button" id="player-btn-favorite" class="np-icon-btn" title="收藏" aria-label="收藏" aria-pressed="false" disabled><span class="icon-slot" data-icon="icon-heart"></span></button>
         <button type="button" id="player-btn-more" class="np-icon-btn" title="更多" aria-label="更多" disabled><span class="icon-slot" data-icon="icon-dots"></span></button>
@@ -332,9 +334,12 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
       artistEl.textContent = track.artist ? `${track.artist} · ${track.album || ''}` : '';
     }
     if (formatPill) {
-      const container = (track.container || '').trim().toUpperCase();
-      formatPill.textContent = container;
-      formatPill.style.display = container ? 'inline-block' : 'none';
+      // Full spec ("FLAC / 24bit / 48kHz") when known; queues saved before
+      // specs existed, or cast-adopted items, fall back to the container.
+      const label = (track.spec || '').trim() || (track.container || '').trim().toUpperCase();
+      formatPill.textContent = label;
+      formatPill.title = label;
+      formatPill.style.display = label ? 'inline-block' : 'none';
     }
 
     if (coverImg && coverPlaceholder) {

@@ -187,6 +187,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"artistFavorite":         artistFavoriteContext,
 		"albumKindLabel":         albumKindLabel,
 		"formatDurationMillis":   formatDurationMillis,
+		"audioSpec":              audioSpecLabel,
+		"albumSpec":              albumSpecLabel,
 		"firstGenre":             firstGenre,
 		"creditLabel":            creditLabel,
 		"creditPeople":           creditPeople,

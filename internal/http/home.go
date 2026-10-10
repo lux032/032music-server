@@ -123,22 +123,6 @@ func homeToday() string {
 	return fmt.Sprintf("%d月%d日 星期%s", int(now.Month()), now.Day(), weekdays[now.Weekday()])
 }
 
-// homeSpecLabel renders the small format tag of the spotlight card
-// ("FLAC / 24bit / 96kHz"); empty when nothing was probed.
-func homeSpecLabel(track storage.Track) string {
-	parts := make([]string, 0, 3)
-	if track.Codec != "" {
-		parts = append(parts, strings.ToUpper(track.Codec))
-	}
-	if track.BitDepth > 0 {
-		parts = append(parts, fmt.Sprintf("%dbit", track.BitDepth))
-	}
-	if track.SampleRate > 0 {
-		parts = append(parts, fmt.Sprintf("%gkHz", float64(track.SampleRate)/1000))
-	}
-	return strings.Join(parts, " / ")
-}
-
 func homeFocusTabs(current string, listening, series bool) []homeFocusTab {
 	tabs := []homeFocusTab{{Key: "recent", Label: "最新入库"}}
 	if listening {
@@ -165,12 +149,7 @@ func (a *App) homeAlbumSpotlight(ctx context.Context, album storage.Album, note 
 	}
 	view.Tracks = tracks
 	view.DurationLabel = formatDurationMillis(tracksDuration(tracks))
-	for _, track := range tracks {
-		if spec := homeSpecLabel(track); spec != "" {
-			view.Spec = spec
-			break
-		}
-	}
+	view.Spec = albumSpecLabel(tracks, "")
 	return view
 }
 

@@ -60,7 +60,7 @@
         {{if .Resume}}
         <div class="h-rows" data-track-list>
           {{range .Resume}}
-          <article class="h-row" data-track-id="{{.Record.Track.ID}}" data-track-title="{{.Record.Track.Title}}" data-track-artist="{{.Record.Track.Artist}}" data-track-album="{{.Record.Track.Album}}" data-track-artwork="{{thumb .Record.Track.ArtworkURL 256}}"{{with .Record.Track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{.Record.Track.DurationMillis}}">
+          <article class="h-row" data-track-id="{{.Record.Track.ID}}" data-track-title="{{.Record.Track.Title}}" data-track-artist="{{.Record.Track.Artist}}" data-track-album="{{.Record.Track.Album}}" data-track-artwork="{{thumb .Record.Track.ArtworkURL 256}}"{{with .Record.Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Record.Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Record.Track.DurationMillis}}">
             <button type="button" class="h-row-art row-play-btn" data-resume-ms="{{.Record.PositionMillis}}" aria-label="从 {{formatDurationMillis .Record.PositionMillis}} 继续播放 {{.Record.Track.Title}}">
               {{if .Record.Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Record.Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
               <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
@@ -134,7 +134,7 @@
       </div>
       <div class="h-tlist" data-track-list>
         {{range .RoleTracks}}
-        <article class="h-trow" data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}"{{with .Track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{.Track.DurationMillis}}">
+        <article class="h-trow" data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}"{{with .Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Track.DurationMillis}}">
           <button type="button" class="h-trow-art row-play-btn" aria-label="播放 {{.Track.Title}}">
             {{if .Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
             <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
@@ -278,7 +278,7 @@
     <div class="h-hero-side-head"><h3>曲目</h3><span>共 {{.Album.TrackCount}} 首{{if gt .Album.DiscCount 1}} · {{.Album.DiscCount}} 碟{{end}}</span></div>
     <ol class="h-hero-tracks" data-track-list>
       {{range $index, $track := .Tracks}}
-      <li data-track-id="{{$track.ID}}" data-track-title="{{$track.Title}}" data-track-artist="{{$track.Artist}}" data-track-album="{{$.Album.Title}}" data-track-artwork="{{thumb $.Album.ArtworkURL 256}}"{{with $track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{$track.DurationMillis}}">
+      <li data-track-id="{{$track.ID}}" data-track-title="{{$track.Title}}" data-track-artist="{{$track.Artist}}" data-track-album="{{$.Album.Title}}" data-track-artwork="{{thumb $.Album.ArtworkURL 256}}"{{with $track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec $track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{$track.DurationMillis}}">
         <button type="button" class="row-play-btn h-track-row" aria-label="播放 {{$track.Title}}">
           <span class="no">{{if $track.TrackNumber}}{{$track.TrackNumber}}{{else}}{{add $index 1}}{{end}}</span>
           <span class="t"><b title="{{$track.Title}}">{{$track.Title}}</b><small>{{$track.Artist}}</small></span>

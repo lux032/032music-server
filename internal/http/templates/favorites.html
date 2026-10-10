@@ -71,7 +71,7 @@
     <section class="feature-section">
       <div class="feature-track-list" data-track-list>
         {{range .Tracks}}
-        <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
+        <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
           <a class="feature-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
           <div class="feature-track-copy">
             <strong>{{.Title}}</strong>

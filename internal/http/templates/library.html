@@ -154,7 +154,7 @@
     <section class="track-browser" data-track-list>
       <div class="track-table-head"><span>序号</span><span>标题 / 歌手</span><span>专辑</span><span>格式</span><span>时长</span><span></span></div>
       {{range .Tracks}}
-      <article class="track-table-row" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-container="{{.Container}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-duration-ms="{{.DurationMillis}}">
+      <article class="track-table-row" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-duration-ms="{{.DurationMillis}}">
         <span class="track-number playable-number">
           <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
           <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>

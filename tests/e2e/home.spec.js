@@ -245,6 +245,19 @@ test('主题曲与插曲：加入队列追加到末尾', async ({ page }) => {
   expect(state.queue[20].title).toBe(title);
 });
 
+test('音频参数：播放条与专辑页显示完整规格', async ({ page }) => {
+  await login(page);
+  await home(page);
+  const card = fixtureAlbumCard(page);
+  await card.hover();
+  await card.locator('.album-queue-action[data-mode="play"]').click();
+  // 夹具是 44.1kHz MP3（有损无位深）；窄屏下标签可能被容器查询隐藏，只断言文本。
+  await expect(page.locator('#player-format')).toHaveText('MP3 / 44.1kHz');
+  await card.locator('a.h-card-title').click();
+  await expect(page.locator('.album-facts')).toContainText('MP3 / 44.1kHz');
+  await expect(page.locator('.detail-tracks .format-pill').first()).toHaveText('MP3 / 44.1kHz');
+});
+
 test('PJAX 进出主页播放不中断', async ({ page }) => {
   await login(page);
   await home(page);

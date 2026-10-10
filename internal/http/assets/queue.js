@@ -1,6 +1,6 @@
 // 032 Music Server - queue.js
 import { s } from './state.js';
-import { svgIcon, showToast, showUndoToast, artworkForSize, apiFetch, swapIcon } from './util.js';
+import { svgIcon, showToast, showUndoToast, artworkForSize, apiFetch, swapIcon, audioSpec } from './util.js';
 import { playTrackAtIndex, togglePlay, saveState } from './player-core.js';
 import { emitPlayerState } from './now-playing.js';
 import { updateTrackRowsUI } from './player-bar.js';
@@ -347,6 +347,7 @@ import { mediaTime } from './cast.js';
       const album = el.getAttribute('data-track-album') || el.querySelector('a[href*="/admin/albums/"]')?.textContent.trim() || '';
       const artwork = el.getAttribute('data-track-artwork') || el.querySelector('img')?.src || '';
       const container = el.getAttribute('data-track-container') || el.querySelector('.format-pill')?.textContent.trim() || '';
+      const spec = el.getAttribute('data-track-spec') || '';
       const durationMs = parseInt(el.getAttribute('data-track-duration-ms') || '0', 10) || 0;
 
       tracks.push({
@@ -356,6 +357,7 @@ import { mediaTime } from './cast.js';
         album: album,
         artwork: artwork,
         container: container,
+        spec: spec,
         durationMs: durationMs,
         streamUrl: `/api/v1/tracks/${id}/stream`
       });
@@ -417,7 +419,7 @@ import { mediaTime } from './cast.js';
         id: String(track.id), title: track.title, artist: track.artist,
         album: track.album || payload.album?.title || '',
         artwork: artworkForSize(track.artworkUrl || payload.album?.artworkUrl || '', 256),
-        container: track.container, durationMs: track.durationMillis,
+        container: track.container, spec: audioSpec(track), durationMs: track.durationMillis,
         streamUrl: `/api/v1/tracks/${track.id}/stream`
       }));
       return { tracks, title: payload.album?.title };

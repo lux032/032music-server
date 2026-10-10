@@ -21,7 +21,7 @@
 <div class="section-title"><h2>幕后作品</h2><a class="section-link" href="/admin/tracks?credit={{.FocusRole}}:{{.Artist.ID}}">在歌曲列表中筛选</a></div>
 {{if .Tabs}}<nav class="filter-tags">{{range .Tabs}}<a class="filter-tag {{if .Current}}active{{end}}" href="{{.URL}}" {{if .Current}}aria-current="page"{{end}}>{{.Value}}</a>{{end}}</nav>{{end}}
 <div class="artist-track-list" data-track-list>{{range .Tracks}}
-<article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
+<article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
 <a class="artist-track-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
 <div class="artist-track-copy"><strong>{{.Title}}</strong><small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}</small></div>
 {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}

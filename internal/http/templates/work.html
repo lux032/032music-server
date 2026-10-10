@@ -181,7 +181,7 @@
         {{if .Tracks}}
         <div class="collected-in-list detail-tracks work-tracks" data-track-list>
           {{range $index, $t := .Tracks}}
-          <article class="collected-in-row" data-track-id="{{$t.ID}}" data-track-title="{{$t.Title}}" data-track-artist="{{$t.Artist}}" data-track-album="{{$t.Album}}" data-track-artwork="{{thumb $t.ArtworkURL 256}}" data-track-container="{{$t.Container}}" data-track-duration-ms="{{$t.DurationMillis}}">
+          <article class="collected-in-row" data-track-id="{{$t.ID}}" data-track-title="{{$t.Title}}" data-track-artist="{{$t.Artist}}" data-track-album="{{$t.Album}}" data-track-artwork="{{thumb $t.ArtworkURL 256}}" data-track-container="{{$t.Container}}" data-track-spec="{{audioSpec $t.Track}}" data-track-duration-ms="{{$t.DurationMillis}}">
             <span class="playable-number">
               <span class="num-text">{{$t.DiscNumber}}.{{$t.TrackNumber}}</span>
               <button type="button" class="row-play-btn" title="播放 {{$t.Title}}" aria-label="播放 {{$t.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>

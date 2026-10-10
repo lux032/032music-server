@@ -46,7 +46,7 @@
           <span>{{.AlbumDetail.DiscCount}} 碟</span>
           <span>{{.AlbumDetail.TrackCount}} 首</span>
           {{with tracksDuration .Tracks}}<span>{{formatDurationMillis .}}</span>{{end}}
-          {{if .AlbumDetail.Formats}}<span>{{.AlbumDetail.Formats}}</span>{{end}}
+          {{with albumSpec .Tracks .AlbumDetail.Formats}}<span>{{.}}</span>{{end}}
         </div>
         <div class="album-actions">
           <button type="button" class="primary-round"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
@@ -77,7 +77,7 @@
           {{range .Tracks}}
           {{$tieups := index $.TrackTieups .ID}}
           {{if and $multiDisc (ne .DiscNumber $disc)}}{{$disc = .DiscNumber}}<div class="disc-head"><strong>Disc {{.DiscNumber}}</strong><span>{{discSummary $.Tracks .DiscNumber}}</span></div>{{end}}
-          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-duration-ms="{{.DurationMillis}}">
+          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="playable-number">
               <span class="num-text" data-disc="{{.DiscNumber}}" data-track-no="{{.TrackNumber}}">{{if $multiDisc}}{{.TrackNumber}}{{else}}{{.DiscNumber}}.{{.TrackNumber}}{{end}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
@@ -115,7 +115,7 @@
               </div>
               {{end}}
             </div>
-            {{if .Container}}<span class="format-pill">{{.Container}}</span>{{else}}<span></span>{{end}}
+            {{with audioSpec .}}<span class="format-pill">{{.}}</span>{{else}}<span></span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <div class="track-row-actions">
               <details class="queue-menu track-queue-menu">

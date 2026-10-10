@@ -75,6 +75,17 @@
   }
 
   // ------------------------------------------------------------------- misc
+  // audioSpec renders an API track's full format tag, mirroring the Go-side
+  // audioSpecLabel: "FLAC / 24bit / 48kHz"; codec falls back to container.
+  export function audioSpec(track) {
+    if (!track) return '';
+    const codec = String(track.codec || track.container || '').trim().toUpperCase();
+    const parts = [codec];
+    if (track.bitDepth > 0) parts.push(`${track.bitDepth}bit`);
+    if (track.sampleRate > 0) parts.push(`${track.sampleRate / 1000}kHz`);
+    return parts.filter(Boolean).join(' / ');
+  }
+
   // [P3] m:ss everywhere (h:mm:ss past one hour), matching the Go-side
   // formatDurationMillis used by album/work detail pages.
   export function formatTime(seconds) {

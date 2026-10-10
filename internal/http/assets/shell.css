@@ -435,6 +435,12 @@ body.np-collapsed .np-expand { display: grid; }
 }
 .player-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .player-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Second line: full format spec tag, then artist · album (which truncates). */
+.player-sub-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* The meta column fills the left block so its width can drive a container
+   query: the spec tag only shows when artist · album still has room. */
+.player-meta { flex: 1 1 auto; container: player-meta / inline-size; }
+@container player-meta (max-width: 200px) { #player-format { display: none !important; } }
 .player-meta strong {
   overflow: hidden;
   color: var(--text);
@@ -445,7 +451,7 @@ body.np-collapsed .np-expand { display: grid; }
 }
 .player-meta strong a { color: inherit; }
 .player-meta strong a:hover { text-decoration: underline; }
-.player-meta small { overflow: hidden; color: var(--muted); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.player-meta small { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .player-left .np-icon-btn { flex: none; }
 
 .player-center { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 44%; max-width: 620px; }
@@ -855,7 +861,7 @@ body.is-casting .player-cast-label { display: inline; }
 }
 
 @media (max-width: 480px) {
-  .player-meta small, #player-format, #player-btn-mute, #player-btn-shortcuts { display: none; }
+  .player-sub-row, #player-btn-mute, #player-btn-shortcuts { display: none; }
   .player-controls { gap: 2px; }
 }
 
@@ -886,8 +892,6 @@ body.is-casting .player-cast-label { display: inline; }
   .player-ctrl-btn.play-main-btn.is-buffering::after { animation: none; border-color: var(--accent); border-style: dashed; }
 }
 .player-status:empty { display: none; }
-/* While a status is shown the format pill yields its space to the title. */
-.player-title-row:has(.player-status:not(:empty)) #player-format { display: none !important; }
 .player-status {
   flex: none;
   border-radius: 999px;
@@ -981,7 +985,8 @@ body.player-buffering .np-queue-list li.current .eq-bars i { animation-play-stat
 
 /* Player bar: neutral surface, ink transport, format as a quiet tag. */
 .global-player { border-top: 1px solid var(--line); }
-.global-player .format-pill, #player-format { border: 0; border-radius: 6px; padding: 3px 7px; color: var(--text-secondary); background: var(--fill); font-size: 0.66rem; font-weight: 700; }
+.global-player .format-pill, #player-format { border: 0; border-radius: 6px; padding: 3px 7px; color: var(--text-secondary); background: var(--fill); font-size: 0.66rem; font-weight: 700; white-space: nowrap; text-transform: none; }
+#player-format { flex: none; padding: 1px 6px; line-height: 1.4; }
 .player-volume-wrap input[type="range"] { accent-color: var(--text); }
 
 /* The whole sidebar scrolls when the admin group is open on short windows,

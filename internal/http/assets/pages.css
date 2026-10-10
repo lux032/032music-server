@@ -1981,8 +1981,10 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 }
 
 .detail-tracks.has-tieup-col article {
-  grid-template-columns: 44px minmax(0, 1fr) auto 58px 52px 74px;
+  grid-template-columns: 44px minmax(0, 1fr) auto 132px 52px 74px;
 }
+/* Full format spec ("FLAC / 24bit / 48kHz"): keep unit case, one line. */
+.detail-tracks.has-tieup-col .format-pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
 .track-title-line {
   display: flex;
   align-items: center;

@@ -127,6 +127,14 @@
   // playEntries builds a transient hidden track list and clicks its first
   // row's play button, so queue replacement (with undo toast) stays entirely
   // inside queue.js semantics.
+  // Same rule as util.js audioSpec (home.js is a classic script, not a module).
+  function audioSpec(t) {
+    const parts = [String(t.codec || t.container || '').trim().toUpperCase()];
+    if (t.bitDepth > 0) parts.push(`${t.bitDepth}bit`);
+    if (t.sampleRate > 0) parts.push(`${t.sampleRate / 1000}kHz`);
+    return parts.filter(Boolean).join(' / ');
+  }
+
   function playEntries(tracks) {
     if (!tracks.length) { toast('没有可播放的歌曲'); return; }
     const holder = document.createElement('div');
@@ -140,6 +148,7 @@
       row.setAttribute('data-track-album', t.album || '');
       row.setAttribute('data-track-artwork', t.artworkUrl || '');
       row.setAttribute('data-track-container', t.container || '');
+      row.setAttribute('data-track-spec', audioSpec(t));
       row.setAttribute('data-track-duration-ms', String(t.durationMillis || 0));
       const btn = document.createElement('button');
       btn.type = 'button';
