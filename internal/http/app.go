@@ -239,11 +239,13 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"assetBaseCSS":      func() string { return assets.assetURL("base.css") },
 		"assetShellCSS":     func() string { return assets.assetURL("shell.css") },
 		"assetPagesCSS":     func() string { return assets.assetURL("pages.css") },
+		"assetHomeCSS":      func() string { return assets.assetURL("home.css") },
 		"assetIconsSVG":     func() string { return assets.assetURL("icons.svg") },
 		"assetNavJS":        func() string { return assets.assetURL("navigation.js") },
 		"assetPlayerMainJS": func() string { return assets.assetURL("player-main.js") },
 		"assetAdminJS":      func() string { return assets.assetURL("admin.js") },
 		"assetBrowseJS":     func() string { return assets.assetURL("browse.js") },
+		"assetHomeJS":       func() string { return assets.assetURL("home.js") },
 		"assetThemeJS":      func() string { return assets.assetURL("theme.js") },
 		"assetFaviconICO":   func() string { return assets.assetURL("favicon.ico") },
 		"assetIcon192":      func() string { return assets.assetURL("icon-192.png") },
@@ -397,6 +399,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/login", a.handleLogin)
 	mux.Handle("POST /admin/logout", a.requireAdmin(http.HandlerFunc(a.handleLogout)))
 	mux.Handle("GET /admin", a.requireAdmin(http.HandlerFunc(a.handleDashboard)))
+	mux.Handle("GET /admin/home", a.requireAdmin(http.HandlerFunc(a.handleHome)))
+	mux.Handle("GET /admin/home/spotlight/random", a.requireAdmin(http.HandlerFunc(a.handleHomeRandomSpotlight)))
+	mux.Handle("GET /admin/home/chronicle", a.requireAdmin(http.HandlerFunc(a.handleHomeChronicle)))
 	mux.Handle("GET /admin/status", a.requireAdmin(http.HandlerFunc(a.handleAdminStatus)))
 	mux.Handle("GET /admin/options/artists", a.requireAdminJSON(http.HandlerFunc(a.handleAdminArtistOptions)))
 	mux.Handle("GET /admin/options/albums", a.requireAdminJSON(http.HandlerFunc(a.handleAdminAlbumOptions)))
@@ -541,7 +546,7 @@ func (a *App) Handler() http.Handler {
 		a.assets.serveNamed(w, r, "favicon.ico", "public, max-age=86400")
 	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		http.Redirect(w, r, "/admin/home", http.StatusSeeOther)
 	})
 
 	// The /api/v1 subtree goes through apiFallback so OPTIONS preflights

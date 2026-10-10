@@ -17,6 +17,7 @@ export const SHARED_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-state.json
 export const BATCH3_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-batch3-state.json');
 export const BIN_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-bin.json');
 export const BATCH3_PORT = 45441;
+export const EMPTY_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-empty-state.json');
 
 // 与 fixture 复用同一个 findTool（env GO → PATH → 平台兜底路径），保证两处解析
 // 结果一致；Playwright globalSetup 进程里按 PATH 解析 go 可能 ENOENT（MSYS bash
@@ -80,4 +81,15 @@ export default async function setup() {
     serverBin
   });
   await seedBatch3(go);
+
+  // 空曲库实例：主页“首次安装引导”状态的验收（不播种、不生成音频）。
+  await fixtureSetup({
+    port: 45443,
+    stateFile: EMPTY_STATE_FILE,
+    tempPrefix: '032music-e2e-empty-',
+    emptyMusic: true,
+    go,
+    ffmpeg,
+    serverBin
+  });
 }

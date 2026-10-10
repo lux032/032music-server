@@ -3,11 +3,11 @@
 // global setup 中途失败时，已启动的实例也按各自 state file 关闭。
 import fs from 'node:fs';
 import { teardown as fixtureTeardown } from './e2e-fixture.mjs';
-import { SHARED_STATE_FILE, BATCH3_STATE_FILE, BIN_STATE_FILE } from './e2e-global-setup.mjs';
+import { SHARED_STATE_FILE, BATCH3_STATE_FILE, EMPTY_STATE_FILE, BIN_STATE_FILE } from './e2e-global-setup.mjs';
 
 export default async function teardown() {
   const errors = [];
-  for (const stateFile of [SHARED_STATE_FILE, BATCH3_STATE_FILE]) {
+  for (const stateFile of [SHARED_STATE_FILE, BATCH3_STATE_FILE, EMPTY_STATE_FILE]) {
     try {
       await fixtureTeardown({ stateFile });
     } catch (err) {

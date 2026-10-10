@@ -48,3 +48,9 @@ track*.bin
 # 用户本地待排查的播放失败文件（不入库）
 /播放失败的文件/
 /docker设备数据库/
+
+# 设计稿原型（本地参考，不入库）
+/docs/design/home-prototypes/
+/docs/gemini-home-prototypes/
+/docs/kimi-home-prototypes/
+/docs/home-final/

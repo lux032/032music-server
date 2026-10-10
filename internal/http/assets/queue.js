@@ -7,6 +7,14 @@ import { updateTrackRowsUI } from './player-bar.js';
 import { mediaTime } from './cast.js';
 
   export function bindTrackListEvents() {
+    // Home page fragments (随机重温 / 编年) swap HTML without a PJAX
+    // navigation; this event re-decorates the new rows and re-applies the
+    // now-playing marker.
+    document.addEventListener('032:decorate', (e) => {
+      const root = (e.detail && e.detail.root) || document;
+      decorateTrackRows(root);
+      updateTrackRowsUI();
+    });
     document.addEventListener('click', (e) => {
       if (!(e.target instanceof Element)) return;
       const playBtn = e.target.closest('.row-play-btn');
@@ -15,8 +23,19 @@ import { mediaTime } from './cast.js';
         if (row) {
           e.preventDefault();
           e.stopPropagation();
-          playRowTrack(row);
+          playRowTrack(row, parseInt(playBtn.getAttribute('data-resume-ms') || '0', 10) || 0);
         }
+        return;
+      }
+      // Resume button outside the row itself (hero “从 x:xx 继续”): it names
+      // the track to resume inside its own track scope.
+      const resumeBtn = e.target.closest('[data-resume-track-id]');
+      if (resumeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const scope = trackScopeFor(resumeBtn);
+        const row = scope.querySelector(`[data-track-id="${CSS.escape(resumeBtn.getAttribute('data-resume-track-id'))}"]`);
+        if (row) playRowTrack(row, parseInt(resumeBtn.getAttribute('data-resume-ms') || '0', 10) || 0);
         return;
       }
       const queueBtn = e.target.closest('.queue-next-btn, .queue-append-btn');
@@ -136,18 +155,45 @@ import { mediaTime } from './cast.js';
     }
   }
 
-  function playRowTrack(row) {
+  // trackScopeFor resolves which list a click belongs to: the nearest
+  // [data-track-list], or a [data-track-scope] wrapper whose side list stands
+  // in for the row (home hero). Pages with a single list behave exactly as
+  // before; the home page keeps its three lists (spotlight / resume / theme
+  // songs) from merging into one queue.
+  function trackScopeFor(el) {
+    return el.closest('[data-track-list]') || el.closest('[data-track-scope]') || document;
+  }
+
+  function playRowTrack(row, resumeMs) {
     const trackId = row.getAttribute('data-track-id');
     if (!trackId) return;
-    const pageTracks = extractAllTracksFromPage();
+    const pageTracks = extractTracksFrom(trackScopeFor(row));
     const targetIndex = pageTracks.findIndex(t => String(t.id) === String(trackId));
     if (targetIndex !== -1) {
-      if (s.currentIndex !== -1 && s.queue[s.currentIndex] && String(s.queue[s.currentIndex].id) === String(trackId)) {
+      if (!resumeMs && s.currentIndex !== -1 && s.queue[s.currentIndex] && String(s.queue[s.currentIndex].id) === String(trackId)) {
         togglePlay();
       } else {
         replaceQueue(pageTracks, targetIndex, `“${pageTracks[targetIndex].title}”`);
+        if (resumeMs > 0) seekToPosition(resumeMs);
       }
     }
+  }
+
+  // seekToPosition moves the freshly started track to a saved breakpoint.
+  // The reporter still sees a normal play (position 0) followed by a seek
+  // event, so play counting keeps its existing semantics.
+  function seekToPosition(ms) {
+    const audio = s.audio;
+    if (!audio) return;
+    const apply = () => {
+      try {
+        const target = ms / 1000;
+        if (isFinite(audio.duration) && audio.duration > 0) audio.currentTime = Math.min(target, Math.max(0, audio.duration - 0.5));
+        else audio.currentTime = target;
+      } catch (_) {}
+    };
+    if (audio.readyState >= 1) apply();
+    else audio.addEventListener('loadedmetadata', apply, { once: true });
   }
 
   // annotateTrackGaps notes missing track numbers on an album page so a
@@ -281,8 +327,16 @@ import { mediaTime } from './cast.js';
   }
 
   function extractAllTracksFromPage() {
+    return extractTracksFrom(document);
+  }
+
+  function extractTracksFrom(scope) {
     const tracks = [];
-    const elements = document.querySelectorAll('[data-track-list] [data-track-id]');
+    // document scope keeps the historical selector; an element scope is (or
+    // contains) the track list itself.
+    const elements = scope === document
+      ? scope.querySelectorAll('[data-track-list] [data-track-id]')
+      : scope.querySelectorAll('[data-track-id]');
 
     elements.forEach(el => {
       const id = el.getAttribute('data-track-id');

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>主页 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main home-main">
+    <header class="h-head">
+      <div>
+        <h1>主页</h1>
+        <p class="h-date">{{.Today}}</p>
+      </div>
+      {{if not .Empty}}
+      <div class="h-head-tools">
+        <form class="h-search" method="get" action="/admin/albums" role="search">
+          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+          <input type="search" name="q" placeholder="搜索专辑或歌手（支持假名）" aria-label="搜索专辑或歌手">
+          <kbd>/</kbd>
+        </form>
+      </div>
+      {{end}}
+    </header>
+
+    {{if .Empty}}
+    <section class="h-first-run">
+      <div class="h-first-run-art" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h2>曲库还是空的</h2>
+      <p>在控制台确认音乐目录并运行一次扫描。扫描只读取文件和标签，不会改写、移动或删除源文件；完成后，这里会出现最近添加、作品和你的播放进度。</p>
+      <div class="h-actions">
+        <a class="h-btn h-btn-primary" href="/admin"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 前往控制台扫描</a>
+        <a class="h-btn h-btn-secondary" href="/admin/settings/metadata">配置数据来源</a>
+      </div>
+      <dl class="h-first-run-facts">
+        <div><dt>支持格式</dt><dd>FLAC · MP3 · M4A/AAC · Ogg · Opus</dd></div>
+        <div><dt>歌词</dt><dd>读取同名 .lrc 与内嵌歌词</dd></div>
+        <div><dt>在线增强</dt><dd>MusicBrainz · Last.fm · Bangumi，可选、需人工审核</dd></div>
+      </dl>
+    </section>
+    {{else}}
+
+    {{if .Hero.Recent}}
+    <div class="h-hero-stack">
+      <section class="h-hero" data-focus="recent" data-album-id="{{.Hero.Recent.Album.ID}}" aria-label="最新入库">{{template "home-hero-album" .Hero.Recent}}</section>
+      {{with .Hero.Listening}}<section class="h-hero" data-focus="listening" data-album-id="{{.Album.ID}}" aria-label="最近在听" hidden>{{template "home-hero-album" .}}</section>{{end}}
+      {{with .Hero.Series}}<section class="h-hero" data-focus="series" aria-label="作品聚焦" hidden>{{template "home-hero-series" .}}</section>{{end}}
+      {{with .Hero.Random}}<section class="h-hero" data-focus="random" data-album-id="{{.Album.ID}}" aria-label="随机重温" hidden>{{template "home-hero-album" .}}</section>{{end}}
+    </div>
+    {{end}}
+
+    <div class="h-duo h-section">
+      <section class="h-section" aria-labelledby="s-resume">
+        <div class="h-section-head">
+          <h2 id="s-resume">接着听</h2>
+          {{if .Resume}}<span class="h-count">{{len .Resume}} 首未听完</span>{{end}}
+          <div class="h-tools"><a class="h-link" href="/admin/playback">播放记录 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
+        </div>
+        {{if .Resume}}
+        <div class="h-rows" data-track-list>
+          {{range .Resume}}
+          <article class="h-row" data-track-id="{{.Record.Track.ID}}" data-track-title="{{.Record.Track.Title}}" data-track-artist="{{.Record.Track.Artist}}" data-track-album="{{.Record.Track.Album}}" data-track-artwork="{{thumb .Record.Track.ArtworkURL 256}}"{{with .Record.Track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{.Record.Track.DurationMillis}}">
+            <button type="button" class="h-row-art row-play-btn" data-resume-ms="{{.Record.PositionMillis}}" aria-label="从 {{formatDurationMillis .Record.PositionMillis}} 继续播放 {{.Record.Track.Title}}">
+              {{if .Record.Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Record.Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
+              <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
+            </button>
+            <div class="h-row-main">
+              <span class="h-row-title" title="{{.Record.Track.Title}}">{{.Record.Track.Title}}</span>
+              <span class="h-row-sub">{{.Record.Track.Artist}} · <a href="/admin/albums/{{.Record.Track.AlbumID}}">{{.Record.Track.Album}}</a></span>
+              <span class="h-row-progress"><span class="h-meter" role="img" aria-label="已听 {{.Percent}}%"><i style="width:{{.Percent}}%"></i></span><span class="h-row-time">{{formatDurationMillis .Record.PositionMillis}} / {{formatDurationMillis .Record.DurationMillis}}</span></span>
+            </div>
+            <span class="h-row-when">{{formatAdminTime .Record.LastPlayedAt}}</span>
+          </article>
+          {{end}}
+        </div>
+        {{else}}
+        <div class="h-empty-inline"><strong>还没有未听完的歌曲</strong><span>开始播放后，中途停下的歌曲会出现在这里，可以从断点继续。</span></div>
+        {{end}}
+      </section>
+      <section class="h-section" aria-labelledby="s-new">
+        <div class="h-section-head">
+          <h2 id="s-new">最近添加</h2>
+          <div class="h-tools"><a class="h-link" href="/admin/albums?sort=added">查看全部 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
+        </div>
+        <div class="h-grid cols-3">
+          {{range .RecentAlbums}}{{template "home-album-card" .}}{{end}}
+        </div>
+      </section>
+    </div>
+
+    {{if .Works}}
+    <section class="h-section" aria-labelledby="s-works">
+      <div class="h-section-head">
+        <h2 id="s-works">按作品漫游</h2>
+        <span class="h-count">{{.WorksCount}} 部作品</span>
+        <div class="h-tools">
+          <div class="h-seg" role="group" aria-label="作品类型">
+            <button type="button" data-work-filter="all" class="on" aria-pressed="true">全部</button>
+            <button type="button" data-work-filter="anime" aria-pressed="false">动画</button>
+            <button type="button" data-work-filter="game" aria-pressed="false">游戏</button>
+            <button type="button" data-work-filter="movie" aria-pressed="false">电影</button>
+          </div>
+          <button type="button" class="h-icon-btn" data-shelf-nav="works" data-dir="prev" aria-label="向左滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></button>
+          <button type="button" class="h-icon-btn" data-shelf-nav="works" data-dir="next" aria-label="向右滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></button>
+        </div>
+      </div>
+      <div class="h-works" data-shelf="works">
+        {{range .Works}}
+        <article class="h-work" data-work-type="{{.Work.Type}}">
+          <div class="h-work-art">
+            {{if .Cover}}<img class="fade-img" src="{{.Cover}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
+            <button type="button" class="h-fab" data-play-work="{{.Work.ID}}" aria-label="播放作品 {{.Work.Title}} 的全部歌曲"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+          </div>
+          <div class="h-work-body">
+            <span class="h-work-type">{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}}</span>
+            <a class="h-work-title" href="/admin/works/{{.Work.ID}}" title="{{.Work.Title}}">{{.Work.Title}}</a>
+            {{if .Work.RoleCounts}}<div class="h-work-roles">{{range .Work.RoleCounts}}<span>{{workRoleShortLabel .Role}} {{.Count}}</span>{{end}}</div>{{end}}
+            {{if .Work.SeriesTitle}}<span class="h-work-series" title="系列：{{.Work.SeriesTitle}}">系列：{{.Work.SeriesTitle}}</span>{{end}}
+          </div>
+        </article>
+        {{end}}
+      </div>
+      <div class="h-empty-inline" data-works-empty hidden><strong>这个类型下还没有关联歌曲的作品</strong><span>换个类型，或先在作品页关联专辑与歌曲。</span></div>
+    </section>
+    {{end}}
+
+    {{if .RoleTracks}}
+    <section class="h-section" aria-labelledby="s-songs">
+      <div class="h-section-head">
+        <h2 id="s-songs">主题曲与插曲</h2>
+        <span class="h-count">来自作品关联的歌曲角色</span>
+        <div class="h-tools"><a class="h-link" href="/admin/tracks">歌曲 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
+      </div>
+      <div class="h-tlist" data-track-list>
+        {{range .RoleTracks}}
+        <article class="h-trow" data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}"{{with .Track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{.Track.DurationMillis}}">
+          <button type="button" class="h-trow-art row-play-btn" aria-label="播放 {{.Track.Title}}">
+            {{if .Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
+            <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
+          </button>
+          <div class="h-row-main">
+            <span class="h-row-title" title="{{.Track.Title}}">{{.Track.Title}}</span>
+            <span class="h-row-sub">{{.Track.Artist}}</span>
+          </div>
+          <span class="h-role h-role-{{.Role}}">{{workRoleShortLabel .Role}}</span>
+          <a class="h-trow-work" href="/admin/works/{{.WorkID}}" title="{{.WorkTitle}}">{{.WorkTitle}}</a>
+          <span class="h-row-time">{{formatDurationMillis .Track.DurationMillis}}</span>
+          <button type="button" class="h-icon-btn queue-append-btn" aria-label="将 {{.Track.Title}} 加入队列" title="加入队列"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Years}}
+    <section class="h-section" aria-labelledby="s-era">
+      <div class="h-section-head">
+        <h2 id="s-era">编年</h2>
+        <span class="h-count">按发行年份 · 点击柱子查看那一年</span>
+      </div>
+      <div class="h-years" role="group" aria-label="按发行年份浏览" id="era-chart">
+        {{range .Years}}<button type="button" class="h-year" data-year="{{.Year}}" aria-pressed="{{if .Selected}}true{{else}}false{{end}}" aria-label="{{.Year}} 年，{{.Count}} 张专辑" style="--h:{{.Height}}%"><b>{{.Count}}</b><i></i></button>{{end}}
+      </div>
+      <div class="h-year-axis" aria-hidden="true" id="era-axis">{{range .Years}}<span class="{{.AxisClass}}" data-year="{{.Year}}">{{.Year}}</span>{{end}}</div>
+      <div class="h-era-result" id="era-result">{{template "home-chronicle-result" .Chronicle}}</div>
+    </section>
+    {{end}}
+
+    {{if .Playlists}}
+    <section class="h-section" aria-labelledby="s-pl">
+      <div class="h-section-head">
+        <h2 id="s-pl">歌单</h2>
+        <span class="h-count">{{len .Playlists}} 个</span>
+        <div class="h-tools">
+          <button type="button" class="h-icon-btn" data-shelf-nav="pl" data-dir="prev" aria-label="向左滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></button>
+          <button type="button" class="h-icon-btn" data-shelf-nav="pl" data-dir="next" aria-label="向右滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></button>
+          <a class="h-link" href="/admin/playlists">全部歌单 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+        </div>
+      </div>
+      <div class="h-shelf" data-shelf="pl">
+        {{range .Playlists}}
+        <article class="h-card h-card-pl">
+          <div class="h-cover">
+            {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="h-pl-empty"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg></span>{{end}}
+            <div class="h-cover-actions"><button type="button" class="h-fab" data-play-playlist="{{.ID}}" aria-label="播放歌单 {{.Name}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button></div>
+          </div>
+          <a class="h-card-title" href="/admin/playlists/{{.ID}}" title="{{.Name}}">{{.Name}}</a>
+          <span class="h-card-meta">{{.ItemCount}} 首 · 更新于 {{formatTime .UpdatedAt}}</span>
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    <footer class="h-foot">
+      <span><strong>{{.Stats.Albums}}</strong> 张专辑</span>
+      <span><strong>{{.Stats.Tracks}}</strong> 首歌曲</span>
+      <span><strong>{{.WorksCount}}</strong> 部作品</span>
+      {{if .LastScan}}<span>上次扫描 {{.LastScan}}</span>{{end}}
+      <a class="h-foot-review" href="/admin/work-review">作品关联待审核{{with .PendingReviewCount}} <span class="nav-badge">{{.}}</span>{{end}}</a>
+    </footer>
+    {{end}}
+  </main>
+</body>
+</html>
+
+{{/* ------------------------------------------------------- partials */}}
+
+{{define "home-hero-tabs"}}
+<div class="h-hero-tabs"><div class="h-seg" role="tablist" aria-label="首页聚焦方式">{{range .}}<button type="button" role="tab" data-focus-tab="{{.Key}}" aria-selected="{{if .Current}}true{{else}}false{{end}}" class="{{if .Current}}on{{end}}">{{.Label}}</button>{{end}}</div></div>
+{{end}}
+
+{{define "home-album-card"}}
+<article class="h-card" data-album-id="{{.Album.ID}}">
+  <div class="h-cover">
+    {{if .Album.ArtworkURL}}<img class="fade-img" src="{{thumb .Album.ArtworkURL 512}}" alt="" loading="lazy" decoding="async">{{else}}<div class="cover-placeholder">032</div>{{end}}
+    <div class="h-cover-actions">
+      <button type="button" class="h-fab album-queue-action" data-mode="play" aria-label="播放 {{.Album.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+      <button type="button" class="h-fab h-fab-ghost album-queue-action" data-mode="append" aria-label="将 {{.Album.Title}} 加入队列" title="加入队列"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
+    </div>
+  </div>
+  <a class="h-card-title" href="/admin/albums/{{.Album.ID}}" title="{{.Album.Title}}">{{.Album.Title}}</a>
+  {{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}, {{end}}<a class="h-card-sub" href="/admin/artists/{{$artist.ID}}" title="{{$artist.Name}}">{{$artist.Name}}</a>{{end}}{{else}}<span class="h-card-sub">{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}</span>{{end}}
+  <span class="h-card-meta">{{.Meta}}</span>
+</article>
+{{end}}
+
+{{define "home-chronicle-result"}}
+<div class="h-section-head">
+  <h3>{{.Year}} 年</h3>
+  <span class="h-count">{{.Total}} 张专辑</span>
+  <div class="h-tools"><a class="h-link" href="/admin/albums?year={{.Year}}">在专辑页查看全部 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
+</div>
+{{if .Albums}}
+<div class="h-shelf">{{range .Albums}}{{template "home-album-card" .}}{{end}}</div>
+{{else}}
+<div class="h-empty-inline"><strong>{{.Year}} 年没有专辑</strong><span>曲库里这一年暂无记录。</span></div>
+{{end}}
+{{end}}
+
+{{define "home-hero-album"}}
+<div class="h-hero-bg">{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="" aria-hidden="true">{{end}}</div>
+<div class="h-hero-inner" data-track-scope>
+  <div class="h-hero-art">{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="{{.Album.Title}} 封面">{{else}}<div class="cover-placeholder">032</div>{{end}}</div>
+  <div class="h-hero-info">
+    {{template "home-hero-tabs" .Tabs}}
+    <h2 title="{{.Album.Title}}">{{.Album.Title}}</h2>
+    <p class="h-hero-by">{{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}, {{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{end}}{{else}}{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}{{end}}</p>
+    <ul class="h-facts">
+      {{if .Album.Year}}<li>{{.Album.Year}}</li>{{end}}
+      {{with albumKindLabel .Album}}<li>{{.}}</li>{{end}}
+      {{if gt .Album.DiscCount 1}}<li>{{.Album.DiscCount}} 碟</li>{{end}}
+      <li>{{.Album.TrackCount}} 首</li>
+      {{if .DurationLabel}}<li>{{.DurationLabel}}</li>{{end}}
+    </ul>
+    <p class="h-sub-facts">{{if .Spec}}<span class="h-spec-tag">{{.Spec}}</span>{{end}}<span>{{.Note}}</span></p>
+    <div class="h-actions">
+      {{if .Listening}}
+      <button type="button" class="h-btn h-btn-primary" data-resume-track-id="{{.ResumeTrackID}}" data-resume-ms="{{.ResumeMS}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> {{.ResumeLabel}}</button>
+      <button type="button" class="h-btn h-btn-secondary album-queue-action" data-mode="play">从头播放</button>
+      {{else}}
+      <button type="button" class="h-btn h-btn-primary album-queue-action" data-mode="play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> 播放</button>
+      <button type="button" class="h-btn h-btn-secondary album-queue-action" data-mode="append"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg> 加入队列</button>
+      {{end}}
+      <form class="album-fav-form" method="post" action="/admin/favorites/albums/{{.Album.ID}}" data-favorite-toggle data-favorite-name="{{.Album.Title}}">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="returnTo" value="/admin/home">
+        <input type="hidden" name="favorite" value="{{if .Album.IsFavorite}}0{{else}}1{{end}}">
+        <button type="submit" class="h-icon-btn filled album-fav{{if .Album.IsFavorite}} is-favorite{{end}}" aria-pressed="{{if .Album.IsFavorite}}true{{else}}false{{end}}" title="{{if .Album.IsFavorite}}取消收藏{{else}}加入收藏{{end}}" aria-label="{{if .Album.IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Album.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#{{if .Album.IsFavorite}}icon-heart-fill{{else}}icon-heart{{end}}"></use></svg></button>
+      </form>
+      {{if eq .Focus "random"}}<button type="button" class="h-btn h-btn-ghost" data-reroll="{{.Album.ID}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dice"></use></svg> 换一张</button>{{end}}
+      <a class="h-link h-hero-detail" href="/admin/albums/{{.Album.ID}}">专辑详情 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+    </div>
+  </div>
+  {{if .Tracks}}
+  <aside class="h-hero-side" aria-label="聚焦内容预览">
+    <div class="h-hero-side-head"><h3>曲目</h3><span>共 {{.Album.TrackCount}} 首{{if gt .Album.DiscCount 1}} · {{.Album.DiscCount}} 碟{{end}}</span></div>
+    <ol class="h-hero-tracks" data-track-list>
+      {{range $index, $track := .Tracks}}
+      <li data-track-id="{{$track.ID}}" data-track-title="{{$track.Title}}" data-track-artist="{{$track.Artist}}" data-track-album="{{$.Album.Title}}" data-track-artwork="{{thumb $.Album.ArtworkURL 256}}"{{with $track.Container}} data-track-container="{{.}}"{{end}} data-track-duration-ms="{{$track.DurationMillis}}">
+        <button type="button" class="row-play-btn h-track-row" aria-label="播放 {{$track.Title}}">
+          <span class="no">{{if $track.TrackNumber}}{{$track.TrackNumber}}{{else}}{{add $index 1}}{{end}}</span>
+          <span class="t"><b title="{{$track.Title}}">{{$track.Title}}</b><small>{{$track.Artist}}</small></span>
+          <span class="d">{{formatDurationMillis $track.DurationMillis}}</span>
+        </button>
+      </li>
+      {{end}}
+    </ol>
+    <a class="h-link" href="/admin/albums/{{.Album.ID}}">查看全部 {{.Album.TrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+  </aside>
+  {{end}}
+</div>
+{{end}}
+
+{{define "home-hero-series"}}
+<div class="h-hero-bg">{{with index .Albums 0}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="" aria-hidden="true">{{end}}{{end}}</div>
+<div class="h-hero-inner">
+  <div class="h-hero-art is-fan"><div class="h-fan">{{range $index, $entry := .Albums}}{{if lt $index 3}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="">{{end}}{{end}}{{end}}</div></div>
+  <div class="h-hero-info">
+    {{template "home-hero-tabs" .Tabs}}
+    <h2 title="{{.Title}}">{{.Title}}</h2>
+    <p class="h-hero-by">{{if .IsSeries}}系列{{else}}作品{{end}} · {{len .Works}} 部作品</p>
+    <ul class="h-facts">
+      <li>{{.AlbumCount}} 张关联专辑</li>
+      <li>{{.TrackTotal}} 首关联歌曲</li>
+      {{if .YearRange}}<li>{{.YearRange}}</li>{{end}}
+    </ul>
+    <div class="h-chips">{{range .Works}}<a class="h-chip" href="/admin/works/{{.Work.ID}}">{{.Work.Title}} <b>{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}}</b></a>{{end}}</div>
+    <div class="h-actions">
+      <button type="button" class="h-btn h-btn-primary" data-play-series="{{.WorkIDsParam}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> {{if .IsSeries}}播放系列全部歌曲{{else}}播放作品全部歌曲{{end}}</button>
+      {{if .IsSeries}}<a class="h-btn h-btn-secondary" href="/admin/series/{{.SeriesID}}">查看系列</a>{{else}}{{with index .Works 0}}<a class="h-btn h-btn-secondary" href="/admin/works/{{.Work.ID}}">查看作品</a>{{end}}{{end}}
+      <a class="h-link h-hero-detail" href="/admin/works">全部作品 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+    </div>
+  </div>
+  {{if .Albums}}
+  <aside class="h-hero-side" aria-label="聚焦内容预览">
+    <div class="h-hero-side-head"><h3>关联专辑</h3><span>{{.AlbumCount}} 张</span></div>
+    <ol class="h-hero-tracks is-albums">
+      {{range .Albums}}
+      <li data-album-id="{{.Album.AlbumID}}"><button type="button" class="album-queue-action h-album-row" data-mode="play" aria-label="播放 {{.Album.Title}}">
+        {{if .Album.ArtworkURL}}<img class="fade-img" src="{{thumb .Album.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
+        <span class="t"><b title="{{.Album.Title}}">{{.Album.Title}}</b><small>{{.WorkTitle}} · {{.Album.TrackCount}} 首</small></span>
+        <span class="d">{{if .Album.Year}}{{.Album.Year}}{{end}}</span>
+      </button></li>
+      {{end}}
+    </ol>
+    {{if .IsSeries}}<a class="h-link" href="/admin/series/{{.SeriesID}}">查看系列 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+  </aside>
+  {{end}}
+</div>
+{{end}}

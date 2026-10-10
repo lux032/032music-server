@@ -72,13 +72,16 @@ export async function setup(options = {}) {
 
   // 60-second tracks: long enough that playback never advances to the
   // next queue entry while a test inspects or reorders the queue.
-  const fixture = path.join(music, 'fixture-01.mp3');
-  run(ffmpeg, ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=60',
-    '-metadata', 'title=E2E Track 01', '-metadata', 'artist=E2E Artist', '-metadata', 'album=E2E Album',
-    ...(options.credits ? ['-metadata', 'composer=E2E Composer'] : []),
-    '-y', fixture], 'ffmpeg fixture generation');
-  for (let i = 2; i <= 20; i++) {
-    fs.copyFileSync(fixture, path.join(music, `fixture-${String(i).padStart(2, '0')}.mp3`));
+  // emptyMusic（主页空曲库测试）跳过音频生成：实例扫描一个空目录。
+  if (!options.emptyMusic) {
+    const fixture = path.join(music, 'fixture-01.mp3');
+    run(ffmpeg, ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=60',
+      '-metadata', 'title=E2E Track 01', '-metadata', 'artist=E2E Artist', '-metadata', 'album=E2E Album',
+      ...(options.credits ? ['-metadata', 'composer=E2E Composer'] : []),
+      '-y', fixture], 'ffmpeg fixture generation');
+    for (let i = 2; i <= 20; i++) {
+      fs.copyFileSync(fixture, path.join(music, `fixture-${String(i).padStart(2, '0')}.mp3`));
+    }
   }
 
   const exe = options.serverBin || path.join(tempRoot, process.platform === 'win32' ? 'server.exe' : 'server');

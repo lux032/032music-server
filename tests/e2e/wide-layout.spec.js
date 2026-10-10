@@ -52,7 +52,7 @@ async function routes(page) {
   const work = await page.locator('a[href^="/admin/works/"]').first().getAttribute('href');
   await page.goto('/admin/albums');
   const album = await page.locator('a[href^="/admin/albums/"]').first().getAttribute('href');
-  return ['/admin/matches', '/admin/work-review', '/admin/work-review?tab=tracks', '/admin/work-review?tab=works', '/admin/work-review?tab=series', '/admin/series', series, '/admin/enrichment', '/admin/merges', '/admin/settings/metadata', '/admin/settings/security', `/admin/credits/${credit}?role=composer`, '/admin/works', '/admin/favorites?kind=tracks', '/admin/playlists', playlist, '/admin/playback', work, album, `/admin/artists/${artist}`, '/admin/albums', '/admin/tracks', '/admin'];
+  return ['/admin/home', '/admin/matches', '/admin/work-review', '/admin/work-review?tab=tracks', '/admin/work-review?tab=works', '/admin/work-review?tab=series', '/admin/series', series, '/admin/enrichment', '/admin/merges', '/admin/settings/metadata', '/admin/settings/security', `/admin/credits/${credit}?role=composer`, '/admin/works', '/admin/favorites?kind=tracks', '/admin/playlists', playlist, '/admin/playback', work, album, `/admin/artists/${artist}`, '/admin/albums', '/admin/tracks', '/admin'];
 }
 async function density(page) {
   // These selectors are populated by the isolated fixture. Fail rather than
