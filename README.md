@@ -153,6 +153,36 @@ docker compose up -d
 - 转发地址必须是无端口的纯 IP。只有连接对端属于受信代理时，服务才从右向左解析 `X-Forwarded-For`。此设置当前只影响登录限流，不负责 TLS 终止。
 - 媒体 URL 含凭据，反向代理访问日志也应避免记录查询参数。
 
+### 投送到 Sonos / DLNA（可选）
+
+投送时，服务端通过局域网控制音箱，音箱再**直接回连服务端**拉取音频和封面。Docker 默认的 bridge 网络有两个限制：容器收不到 SSDP 组播，所以发现不了设备；服务端推断出的回连地址是容器 IP（`172.x`），音箱访问不到。因此需要二选一：
+
+**方式 A：保持 bridge 网络（通用，Windows/macOS 也适用）**
+
+在 `.env` 中设置（`compose.yaml` 已透传这两个变量）：
+
+```env
+# 宿主机的局域网 IP + MUSIC_SERVER_PORT，必须是音箱能直接访问的 http 地址
+MUSIC_SERVER_CAST_BASE_URL=http://192.168.1.10:4533
+# Sonos 填 IP（默认端口 1400）；DLNA 设备填完整的设备描述 URL；多个用逗号分隔
+MUSIC_SERVER_CAST_DEVICES=192.168.1.30
+```
+
+Sonos 编组只需填任意一台音箱的 IP，服务端会通过拓扑自动找到组协调器和其他房间。
+
+**方式 B：host 网络（仅 Linux 宿主机）**
+
+在 `services.music-server` 下加 `network_mode: host`，并删除 `ports:`（host 模式下端口映射无效，服务直接监听宿主机 `4533`）。这样 SSDP 自动发现 Sonos 和 DLNA 设备，回连地址也会自动推断，上面两个变量可以不设。反向代理如原来指向容器端口，需要改为指向宿主机 `4533`。
+
+**注意事项**
+
+- 不要把端口映射限制成 `127.0.0.1:...`（见上文的反向代理建议），否则音箱连不上；需要同时满足时，改用 `MUSIC_SERVER_CAST_BASE_URL` 指向一个音箱能访问的地址（例如局域网内的反向代理）。
+- 宿主机防火墙要允许音箱访问该端口。
+- 也可以把 `MUSIC_SERVER_CAST_BASE_URL` 设为 HTTPS 域名（需有效证书），但音频会绕经代理，内网访问还依赖 NAT 回流，局域网 IP 更稳。
+- 队列中的 URL 带媒体 Token：轮换媒体 Token 后，需要重新投送。
+- 验证：`curl -H 'Authorization: Bearer YOUR_API_TOKEN' http://localhost:4533/api/v1/cast/devices` 应列出音箱；网页播放栏的投送按钮能看到房间名，即为配置成功。
+- MusicBridge App 由手机直接控制 Sonos，不受上述设置影响；音箱拉流使用 App 中配置的服务器地址。
+
 ### 备份与升级
 
 备份 `.env` 和**整个数据目录**，不要只备份 `music.db`。数据库含凭据覆盖值和外部服务密钥，应保护备份。SQLite 使用 WAL，运行期间单独复制数据库可能漏掉近期写入；最简单的一致性备份方式是先停服：
