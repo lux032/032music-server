@@ -43,6 +43,9 @@
 .h-btn-ghost { color: var(--text-secondary); background: transparent; }
 .h-btn-ghost:hover { color: var(--text); background: var(--surface-hover); }
 .h-btn:active { transform: translateY(1px); }
+.h-btn-sm { min-height: 32px; padding: 0 12px; gap: 5px; }
+.h-btn-sm .icon { width: 15px; height: 15px; }
+.h-btn[hidden] { display: none; }
 
 .h-icon-btn {
   display: grid; place-items: center; flex: none;
@@ -294,6 +297,12 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 .h-work-roles span { border-radius: 5px; padding: 1px 6px; color: var(--text-secondary); background: var(--fill); font-size: 0.68rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .h-work-series { overflow: hidden; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; text-overflow: ellipsis; }
 .h-work[hidden] { display: none; }
+
+/* ------------------------------------------------------------ daily rotation panels (works / songs) */
+.h-rotation-panel[aria-busy="true"] { opacity: 0.55; transition: opacity var(--dur) var(--ease); }
+.h-rotation-panel.h-rotation-swap > .h-rotation-page { animation: h-rotation-in var(--dur) var(--ease); }
+@keyframes h-rotation-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .h-rotation-panel.h-rotation-swap > .h-rotation-page { animation: none; } }
 
 /* ------------------------------------------------------------ role track list */
 .h-tlist { display: grid; gap: 2px; }

@@ -1,6 +1,6 @@
 /* 032 Music Server - home.js
-   主页（/admin/home）交互：聚焦页签切换、换一张、作品类型筛选、编年点年份、
-   货架滚动、/ 聚焦搜索。播放与队列一律走 queue.js 的既有委托：
+   主页（/admin/home）交互：聚焦页签切换、换一张、作品/主题曲每日轮换（类型筛选、
+   换一批）、编年点年份、货架滚动、/ 聚焦搜索。播放与队列一律走 queue.js 的既有委托：
    播放 = 替换队列；加入队列 = 追加，空队列时立即开始。 */
 (() => {
   'use strict';
@@ -108,19 +108,98 @@
     }
   }
 
-  /* -------------------------------------------------------- works filter */
-  function filterWorks(key) {
-    const section = document.querySelector('[data-shelf="works"]');
-    if (!section) return;
-    let visible = 0;
-    section.querySelectorAll('.h-work').forEach((card) => {
-      const show = key === 'all' || card.dataset.workType === key;
-      card.hidden = !show;
-      if (show) visible += 1;
+  /* ------------------------------------------- daily rotation (works / songs) */
+  // Each panel is one server-rendered page of the day's frozen rotation.
+  // Type filter / 换一批 fetch a fragment; a per-section sequence number drops
+  // stale responses (fast clicks, filter switches, PJAX navigation away).
+  const rotationSeq = { works: 0, songs: 0 };
+  const workFilterLabels = { all: '全部', anime: '动画', game: '游戏', movie: '电影' };
+
+  function rotationPage(name) {
+    return document.querySelector(`[data-rotation-panel="${name}"] > .h-rotation-page`);
+  }
+
+  function syncWorkFilter(key) {
+    document.querySelectorAll('[data-work-filter]').forEach((b) => {
+      const on = b.dataset.workFilter === key;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
     });
-    section.scrollTo({ left: 0 });
-    const empty = document.querySelector('[data-works-empty]');
-    if (empty) empty.hidden = visible > 0;
+  }
+
+  function rotationStatus(name, page) {
+    const batch = Number(page.dataset.batch || 0) + 1;
+    const pages = Number(page.dataset.pages || 0);
+    const count = Number(page.dataset.count || 0);
+    if (name === 'works') {
+      const label = workFilterLabels[page.dataset.filter] || '';
+      if (!count) return `${label}：没有关联歌曲的作品`;
+      return `${label}，第 ${batch}/${pages} 批，共 ${count} 部作品`;
+    }
+    return `第 ${batch}/${pages} 批，共 ${count} 首`;
+  }
+
+  async function loadRotation(name, params) {
+    const panel = document.querySelector(`[data-rotation-panel="${name}"]`);
+    if (!panel) return;
+    const seq = ++rotationSeq[name];
+    const current = rotationPage(name);
+    if (current?.dataset.generation) params.set('gen', current.dataset.generation);
+    panel.setAttribute('aria-busy', 'true');
+    try {
+      const res = await fetch(`/admin/home/${name}?${params}`, {
+        credentials: 'same-origin', headers: { Accept: 'text/html' },
+      });
+      if (res.status === 401) { location.assign('/admin/login?next=' + encodeURIComponent(location.pathname)); return; }
+      if (!res.ok) throw new Error('rotation failed');
+      const html = await res.text();
+      if (seq !== rotationSeq[name] || !panel.isConnected) return;
+      panel.innerHTML = html;
+      const page = rotationPage(name);
+      if (!page) return;
+      const next = document.querySelector(`[data-rotation-next="${name}"]`);
+      if (next) {
+        const hide = Number(page.dataset.pages || 0) <= 1;
+        if (hide && document.activeElement === next) {
+          const heading = panel.closest('section')?.querySelector('h2');
+          if (heading) { heading.tabIndex = -1; heading.focus(); }
+        }
+        next.hidden = hide;
+      }
+      if (name === 'works') {
+        syncWorkFilter(page.dataset.filter || 'all');
+        const count = document.querySelector('[data-rotation="works"] [data-rotation-count]');
+        if (count) count.textContent = `${page.dataset.count || 0} 部作品`;
+      }
+      const status = document.querySelector(`[data-rotation-status="${name}"]`);
+      if (status) status.textContent = rotationStatus(name, page);
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        panel.classList.remove('h-rotation-swap');
+        void panel.offsetWidth;
+        panel.classList.add('h-rotation-swap');
+      }
+      redecorate(panel);
+      if (res.headers.get('X-Home-Rotation') === 'renewed') toast('今日推荐已更新');
+    } catch (_) {
+      if (seq !== rotationSeq[name]) return;
+      // Keep the old page; put the filter buttons back in sync with it.
+      if (name === 'works') syncWorkFilter(rotationPage('works')?.dataset.filter || 'all');
+      toast('加载失败，请重试');
+    } finally {
+      if (seq === rotationSeq[name] && panel.isConnected) panel.removeAttribute('aria-busy');
+    }
+  }
+
+  function filterWorks(key) {
+    syncWorkFilter(key);
+    loadRotation('works', new URLSearchParams({ type: key, batch: '0' }));
+  }
+
+  function nextRotation(name) {
+    const page = rotationPage(name);
+    const params = new URLSearchParams({ batch: String(Number(page?.dataset.batch || 0) + 1) });
+    if (name === 'works') params.set('type', page?.dataset.filter || 'all');
+    loadRotation(name, params);
   }
 
   /* -------------------------------------------------- play work / series */
@@ -219,15 +298,9 @@
     const yearBtn = e.target.closest('.h-year[data-year]');
     if (yearBtn) { selectYear(yearBtn); return; }
     const filterBtn = e.target.closest('[data-work-filter]');
-    if (filterBtn) {
-      filterBtn.parentElement.querySelectorAll('[data-work-filter]').forEach((b) => {
-        const on = b === filterBtn;
-        b.classList.toggle('on', on);
-        b.setAttribute('aria-pressed', String(on));
-      });
-      filterWorks(filterBtn.dataset.workFilter);
-      return;
-    }
+    if (filterBtn) { filterWorks(filterBtn.dataset.workFilter); return; }
+    const nextBtn = e.target.closest('[data-rotation-next]');
+    if (nextBtn) { nextRotation(nextBtn.dataset.rotationNext); return; }
     const nav = e.target.closest('[data-shelf-nav]');
     if (nav) {
       const shelf = document.querySelector(`[data-shelf="${nav.dataset.shelfNav}"]`);

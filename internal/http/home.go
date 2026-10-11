@@ -98,27 +98,47 @@ type homeWorkView struct {
 	Cover string
 }
 
+// homeWorksPanel is one page of the “按作品漫游” rotation; also the payload
+// of the /admin/home/works fragment.
+type homeWorksPanel struct {
+	Filter     string
+	Generation string
+	Batch      int
+	Pages      int
+	Count      int
+	Works      []homeWorkView
+}
+
+// homeSongsPanel is one page of the “主题曲与插曲” rotation; also the payload
+// of the /admin/home/songs fragment.
+type homeSongsPanel struct {
+	Generation string
+	Batch      int
+	Pages      int
+	Count      int
+	Tracks     []storage.HomeRoleTrack
+}
+
 type homePageData struct {
 	Chrome
-	Empty         bool
-	Today         string
-	Hero          homeHeroView
-	Resume        []homeResumeRow
-	RecentAlbums  []homeAlbumView
-	Works         []homeWorkView
-	WorksTotal    int64
-	RoleTracks    []storage.HomeRoleTrack
-	Years         []homeYearBar
-	Chronicle     homeChronicleView
-	Playlists     []storage.Playlist
-	Stats         storage.Statistics
-	WorksCount    int64
-	LastScan      string
+	Empty        bool
+	Today        string
+	Hero         homeHeroView
+	Resume       []homeResumeRow
+	RecentAlbums []homeAlbumView
+	WorksPanel   homeWorksPanel
+	SongsPanel   homeSongsPanel
+	Years        []homeYearBar
+	Chronicle    homeChronicleView
+	Playlists    []storage.Playlist
+	Stats        storage.Statistics
+	WorksCount   int64
+	LastScan     string
 }
 
 // homeToday renders the header date, e.g. "10月11日 星期五".
 func homeToday() string {
-	now := time.Now()
+	now := time.Now().In(homeZone)
 	weekdays := []string{"日", "一", "二", "三", "四", "五", "六"}
 	return fmt.Sprintf("%d月%d日 星期%s", int(now.Month()), now.Day(), weekdays[now.Weekday()])
 }
@@ -314,22 +334,16 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.logger.Warn("home recent albums", "error", err)
 	}
-	if works, err := a.store.HomeWorks(ctx, "", 24); err == nil {
-		for _, work := range works {
-			cover := workPosterURL(a.enrichment, storage.Work{ID: work.ID, PosterURL: work.PosterURL}, 360)
-			if cover == "" {
-				cover = thumbURL(work.CoverURL, 360)
-			}
-			data.Works = append(data.Works, homeWorkView{Work: work, Cover: cover})
-		}
+	if panel, _, err := a.homeWorksPanel(ctx, "all", 0, ""); err == nil {
+		data.WorksPanel = panel
 	} else {
 		a.logger.Warn("home works", "error", err)
 	}
 	if total, err := a.store.CountWorks(ctx, storage.WorkFilters{}); err == nil {
 		data.WorksCount = total
 	}
-	if tracks, err := a.store.HomeRoleTracks(ctx, 20); err == nil {
-		data.RoleTracks = tracks
+	if panel, _, err := a.homeSongsPanel(ctx, 0, ""); err == nil {
+		data.SongsPanel = panel
 	} else {
 		a.logger.Warn("home role tracks", "error", err)
 	}
@@ -425,4 +439,114 @@ func (a *App) handleHomeChronicle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, http.StatusOK, "home-chronicle-result", chronicle)
+}
+
+// homeWorksPanel renders page `batch` of the frozen works view for filter.
+// A non-empty generation that no longer matches (new day / restart) resets
+// to page 0 of the current generation and reports renewed.
+func (a *App) homeWorksPanel(ctx context.Context, filter string, batch int, generation string) (homeWorksPanel, bool, error) {
+	view, err := a.homeWorksRotation(ctx, filter)
+	if err != nil {
+		return homeWorksPanel{}, false, err
+	}
+	renewed := generation != "" && generation != view.Generation
+	if renewed {
+		batch = 0
+	}
+	panel := homeWorksPanel{Filter: filter, Generation: view.Generation, Pages: view.Pages(), Count: view.Count}
+	if panel.Pages == 0 {
+		return panel, renewed, nil
+	}
+	panel.Batch = homeBatchIndex(batch, panel.Pages)
+	works, err := a.store.HomeWorksByIDs(ctx, view.workPages[panel.Batch])
+	if err != nil {
+		return homeWorksPanel{}, false, err
+	}
+	for _, work := range works {
+		cover := workPosterURL(a.enrichment, storage.Work{ID: work.ID, PosterURL: work.PosterURL, UpdatedAt: work.UpdatedAt}, 360)
+		if cover == "" {
+			cover = thumbURL(work.CoverURL, 360)
+		}
+		panel.Works = append(panel.Works, homeWorkView{Work: work, Cover: cover})
+	}
+	return panel, renewed, nil
+}
+
+// homeSongsPanel renders page `batch` of the frozen songs view (see
+// homeWorksPanel for the generation rule).
+func (a *App) homeSongsPanel(ctx context.Context, batch int, generation string) (homeSongsPanel, bool, error) {
+	view, err := a.homeSongsRotation(ctx)
+	if err != nil {
+		return homeSongsPanel{}, false, err
+	}
+	renewed := generation != "" && generation != view.Generation
+	if renewed {
+		batch = 0
+	}
+	panel := homeSongsPanel{Generation: view.Generation, Pages: view.Pages(), Count: view.Count}
+	if panel.Pages == 0 {
+		return panel, renewed, nil
+	}
+	panel.Batch = homeBatchIndex(batch, panel.Pages)
+	tracks, err := a.store.HomeRoleTracksFor(ctx, view.songPages[panel.Batch])
+	if err != nil {
+		return homeSongsPanel{}, false, err
+	}
+	panel.Tracks = tracks
+	return panel, renewed, nil
+}
+
+// homeRotationParams parses ?batch=&gen= of a rotation fragment request.
+// batch must be a non-negative integer (absent = 0).
+func homeRotationParams(r *http.Request) (int, string, bool) {
+	query := r.URL.Query()
+	batch := 0
+	if raw := query.Get("batch"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			return 0, "", false
+		}
+		batch = value
+	}
+	return batch, query.Get("gen"), true
+}
+
+func (a *App) handleHomeWorks(w http.ResponseWriter, r *http.Request) {
+	filter := r.URL.Query().Get("type")
+	if filter == "" {
+		filter = "all"
+	}
+	batch, generation, ok := homeRotationParams(r)
+	if !ok || !homeWorkFilterValid(filter) {
+		http.Error(w, "invalid parameters", http.StatusBadRequest)
+		return
+	}
+	panel, renewed, err := a.homeWorksPanel(r.Context(), filter, batch, generation)
+	if err != nil {
+		a.logger.Error("home works fragment", "error", err)
+		http.Error(w, "home unavailable", http.StatusInternalServerError)
+		return
+	}
+	if renewed {
+		w.Header().Set("X-Home-Rotation", "renewed")
+	}
+	a.render(w, http.StatusOK, "home-works-panel", panel)
+}
+
+func (a *App) handleHomeSongs(w http.ResponseWriter, r *http.Request) {
+	batch, generation, ok := homeRotationParams(r)
+	if !ok {
+		http.Error(w, "invalid parameters", http.StatusBadRequest)
+		return
+	}
+	panel, renewed, err := a.homeSongsPanel(r.Context(), batch, generation)
+	if err != nil {
+		a.logger.Error("home songs fragment", "error", err)
+		http.Error(w, "home unavailable", http.StatusInternalServerError)
+		return
+	}
+	if renewed {
+		w.Header().Set("X-Home-Rotation", "renewed")
+	}
+	a.render(w, http.StatusOK, "home-songs-panel", panel)
 }

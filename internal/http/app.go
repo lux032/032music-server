@@ -59,6 +59,8 @@ type App struct {
 	// cast drives UPnP/Sonos renderers (nil disables /api/v1/cast).
 	cast      castRenderers
 	castState castState
+	// homeRotation freezes the home page's daily works/songs rotation.
+	homeRotation *homeRotation
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -294,6 +296,7 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		transcoder:      newTranscodeManager(cfg, logger),
 		thumbnails:      newThumbnailManager(cfg),
 		assets:          assets,
+		homeRotation:    newHomeRotation(time.Now),
 	}, nil
 }
 
@@ -404,6 +407,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/home", a.requireAdmin(http.HandlerFunc(a.handleHome)))
 	mux.Handle("GET /admin/home/spotlight/random", a.requireAdmin(http.HandlerFunc(a.handleHomeRandomSpotlight)))
 	mux.Handle("GET /admin/home/chronicle", a.requireAdmin(http.HandlerFunc(a.handleHomeChronicle)))
+	mux.Handle("GET /admin/home/works", a.requireAdmin(http.HandlerFunc(a.handleHomeWorks)))
+	mux.Handle("GET /admin/home/songs", a.requireAdmin(http.HandlerFunc(a.handleHomeSongs)))
 	mux.Handle("GET /admin/status", a.requireAdmin(http.HandlerFunc(a.handleAdminStatus)))
 	mux.Handle("GET /admin/options/artists", a.requireAdminJSON(http.HandlerFunc(a.handleAdminArtistOptions)))
 	mux.Handle("GET /admin/options/albums", a.requireAdminJSON(http.HandlerFunc(a.handleAdminAlbumOptions)))

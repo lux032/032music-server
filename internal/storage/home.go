@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"time"
 )
 
 // home.go holds the read-only queries behind the web home page
@@ -19,14 +20,15 @@ type HomeRoleCount struct {
 
 // HomeWork is one card of the home page's works rail: the work itself, the
 // series it belongs to ("" when none), a cover fallback (the poster is
-// preferred by the caller; CoverURL is the first linked album's artwork) and
-// the per-role counts of its linked tracks.
+// preferred by the caller; CoverURL is the first visible linked album's
+// artwork) and the per-role counts of its linked tracks.
 type HomeWork struct {
 	ID          int64
 	Title       string
 	Type        string
 	Year        int
 	PosterURL   string
+	UpdatedAt   string
 	SeriesTitle string
 	CoverURL    string
 	TrackCount  int64
@@ -64,31 +66,82 @@ type HomeSpotlight struct {
 // Requires the works table alias `w`.
 var homeTrackCountSQL = `(SELECT COUNT(*) FROM (SELECT track_id FROM work_tracks WHERE work_id=w.id UNION SELECT t.id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE aw.work_id=w.id) wtc WHERE ` + trackVisibleSQL("wtc.track_id") + `)`
 
-// HomeWorks lists works that have at least one linked visible track, ordered
-// by linked-track count. workType filters by works.type ("" = all).
-func (s *Store) HomeWorks(ctx context.Context, workType string, limit int) ([]HomeWork, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 24
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT w.id,w.title,w.type,COALESCE(w.year,0) AS year,COALESCE(w.poster_url,''),`+homeTrackCountSQL+` AS track_count,COALESCE((SELECT s.title FROM work_series_members m JOIN work_series s ON s.id=m.series_id WHERE m.work_id=w.id),'') AS series_title,COALESCE((SELECT '/api/v1/artwork/'||art.id FROM artworks art JOIN albums al ON al.id=art.album_id WHERE `+albumVisibleSQL("al.id")+` AND art.album_id IN (SELECT alw.album_id FROM album_works alw WHERE alw.work_id=w.id UNION SELECT t2.album_id FROM work_tracks wt2 JOIN tracks t2 ON t2.id=wt2.track_id WHERE wt2.work_id=w.id) ORDER BY (art.source_type='custom') DESC,art.is_primary DESC,art.id LIMIT 1),'') AS cover_url FROM works w WHERE (?='' OR w.type=?)) WHERE track_count>0 ORDER BY track_count DESC,year DESC,id LIMIT ?`, workType, workType, limit)
+// homeSongRolesSQL lists the work_tracks roles that count as songs for the
+// “主题曲与插曲” section (never ost/other).
+const homeSongRolesSQL = `('op','ed','insert','theme','character','image_song')`
+
+// HomeWorkCandidate is one entry of the works-rail rotation pool: a work with
+// at least one linked visible track. TrackCount counts distinct visible
+// tracks linked directly (work_tracks) or through a linked album
+// (album_works). Played / RecentlyPlayed are derived from the same link set:
+// some linked track was ever started (playback_progress.last_played_at set),
+// respectively started at or after the caller's cutoff.
+type HomeWorkCandidate struct {
+	ID             int64
+	Type           string
+	TrackCount     int64
+	Played         bool
+	RecentlyPlayed bool
+}
+
+// HomeWorkCandidates returns the whole works-rail pool ordered by id, so the
+// caller's seeded shuffle is reproducible for the same data.
+func (s *Store) HomeWorkCandidates(ctx context.Context, recentSince time.Time) ([]HomeWorkCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `WITH links AS (SELECT work_id,track_id FROM work_tracks UNION SELECT aw.work_id,t.id FROM album_works aw JOIN tracks t ON t.album_id=aw.album_id)
+SELECT w.id,w.type,COUNT(*),COALESCE(MAX(p.last_played_at IS NOT NULL),0),COALESCE(MAX(p.last_played_at IS NOT NULL AND julianday(p.last_played_at)>=julianday(?)),0)
+FROM works w JOIN links l ON l.work_id=w.id LEFT JOIN playback_progress p ON p.track_id=l.track_id
+WHERE `+trackVisibleSQL("l.track_id")+` GROUP BY w.id ORDER BY w.id`, recentSince.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	values := make([]HomeWork, 0)
-	ids := make([]int64, 0)
+	values := make([]HomeWorkCandidate, 0)
 	for rows.Next() {
-		var value HomeWork
-		if err := rows.Scan(&value.ID, &value.Title, &value.Type, &value.Year, &value.PosterURL, &value.TrackCount, &value.SeriesTitle, &value.CoverURL); err != nil {
+		var value HomeWorkCandidate
+		var played, recent int
+		if err := rows.Scan(&value.ID, &value.Type, &value.TrackCount, &played, &recent); err != nil {
 			return nil, err
 		}
+		value.Played, value.RecentlyPlayed = played != 0, recent != 0
 		values = append(values, value)
-		ids = append(ids, value.ID)
+	}
+	return values, rows.Err()
+}
+
+// HomeWorksByIDs loads the works-rail cards for the given ids in the given
+// order. Works that lost every visible linked track since the pool was built
+// are dropped (the page simply comes out shorter).
+func (s *Store) HomeWorksByIDs(ctx context.Context, ids []int64) ([]HomeWork, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders, args := inClause(ids)
+	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT w.id,w.title,w.type,COALESCE(w.year,0),COALESCE(w.poster_url,''),w.updated_at,`+homeTrackCountSQL+` AS track_count,COALESCE((SELECT s.title FROM work_series_members m JOIN work_series s ON s.id=m.series_id WHERE m.work_id=w.id),''),COALESCE((SELECT '/api/v1/artwork/'||art.id FROM artworks art JOIN albums al ON al.id=art.album_id WHERE `+albumVisibleSQL("al.id")+` AND art.album_id IN (SELECT alw.album_id FROM album_works alw WHERE alw.work_id=w.id UNION SELECT t2.album_id FROM work_tracks wt2 JOIN tracks t2 ON t2.id=wt2.track_id WHERE wt2.work_id=w.id AND `+trackVisibleSQL("t2.id")+`) ORDER BY (art.source_type='custom') DESC,art.is_primary DESC,art.id LIMIT 1),'') FROM works w WHERE w.id IN (`+placeholders+`)) WHERE track_count>0`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := map[int64]HomeWork{}
+	for rows.Next() {
+		var value HomeWork
+		if err := rows.Scan(&value.ID, &value.Title, &value.Type, &value.Year, &value.PosterURL, &value.UpdatedAt, &value.TrackCount, &value.SeriesTitle, &value.CoverURL); err != nil {
+			return nil, err
+		}
+		byID[value.ID] = value
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	counts, err := s.homeRoleCounts(ctx, ids)
+	rows.Close()
+	values := make([]HomeWork, 0, len(byID))
+	found := make([]int64, 0, len(byID))
+	for _, id := range ids {
+		if value, ok := byID[id]; ok {
+			values = append(values, value)
+			found = append(found, id)
+		}
+	}
+	counts, err := s.homeRoleCounts(ctx, found)
 	if err != nil {
 		return nil, err
 	}
@@ -99,14 +152,15 @@ func (s *Store) HomeWorks(ctx context.Context, workType string, limit int) ([]Ho
 }
 
 // homeRoleCounts returns the visible per-role track counts of the given
-// works, ordered by display rank (WorkRoleRank).
+// works (distinct tracks per role, so several season/sequence rows of one
+// song count once), ordered by display rank (WorkRoleRank).
 func (s *Store) homeRoleCounts(ctx context.Context, workIDs []int64) (map[int64][]HomeRoleCount, error) {
 	out := map[int64][]HomeRoleCount{}
 	if len(workIDs) == 0 {
 		return out, nil
 	}
 	placeholders, args := inClause(workIDs)
-	rows, err := s.db.QueryContext(ctx, `SELECT wt.work_id,wt.role,COUNT(*) FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id IN (`+placeholders+`) AND `+trackVisibleSQL("t.id")+` GROUP BY wt.work_id,wt.role`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT wt.work_id,wt.role,COUNT(DISTINCT wt.track_id) FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id IN (`+placeholders+`) AND `+trackVisibleSQL("t.id")+` GROUP BY wt.work_id,wt.role`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -128,47 +182,122 @@ func (s *Store) homeRoleCounts(ctx context.Context, workIDs []int64) (map[int64]
 	return out, nil
 }
 
-// HomeRoleTracks lists work-linked tracks with a song role (op/ed/insert/
-// theme/…— never ost/other), newest work first, one row per work-track link.
-func (s *Store) HomeRoleTracks(ctx context.Context, limit int) ([]HomeRoleTrack, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT wt.track_id,wt.role,w.id,w.title,COALESCE(w.year,0) FROM work_tracks wt JOIN works w ON w.id=wt.work_id JOIN tracks t ON t.id=wt.track_id WHERE wt.role IN ('op','ed','insert','theme','character','image_song') AND `+trackVisibleSQL("t.id")+` ORDER BY COALESCE(w.year,0) DESC,w.id,CASE wt.role WHEN 'op' THEN 0 WHEN 'ed' THEN 1 WHEN 'insert' THEN 2 WHEN 'theme' THEN 3 WHEN 'character' THEN 4 ELSE 5 END,wt.season,wt.sequence,wt.track_id LIMIT ?`, limit)
+// HomeRoleCandidate is one song of the “主题曲与插曲” rotation pool: a
+// distinct (work, visible track) pair with a song role. When the pair has
+// several song roles (or several season/sequence rows) Role is the
+// best-ranked one (WorkRoleRank). Played / RecentlyPlayed describe the track.
+type HomeRoleCandidate struct {
+	WorkID         int64
+	TrackID        int64
+	Role           string
+	Played         bool
+	RecentlyPlayed bool
+}
+
+// HomeRoleCandidates returns the song pool ordered by (work, track).
+func (s *Store) HomeRoleCandidates(ctx context.Context, recentSince time.Time) ([]HomeRoleCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT wt.work_id,wt.track_id,wt.role,p.last_played_at IS NOT NULL,COALESCE(p.last_played_at IS NOT NULL AND julianday(p.last_played_at)>=julianday(?),0) FROM work_tracks wt LEFT JOIN playback_progress p ON p.track_id=wt.track_id WHERE wt.role IN `+homeSongRolesSQL+` AND `+trackVisibleSQL("wt.track_id")+` ORDER BY wt.work_id,wt.track_id,wt.season,wt.sequence,wt.role`, recentSince.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	type link struct {
-		role      string
-		workID    int64
-		workTitle string
-		workYear  int
-	}
-	links := make([]link, 0)
-	ids := make([]int64, 0)
+	values := make([]HomeRoleCandidate, 0)
 	for rows.Next() {
-		var l link
-		var trackID int64
-		if err := rows.Scan(&trackID, &l.role, &l.workID, &l.workTitle, &l.workYear); err != nil {
+		var value HomeRoleCandidate
+		var played, recent int
+		if err := rows.Scan(&value.WorkID, &value.TrackID, &value.Role, &played, &recent); err != nil {
 			return nil, err
 		}
-		links = append(links, l)
-		ids = append(ids, trackID)
+		value.Played, value.RecentlyPlayed = played != 0, recent != 0
+		if n := len(values); n > 0 && values[n-1].WorkID == value.WorkID && values[n-1].TrackID == value.TrackID {
+			if WorkRoleRank(value.Role) < WorkRoleRank(values[n-1].Role) {
+				values[n-1].Role = value.Role
+			}
+			continue
+		}
+		values = append(values, value)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
+	return values, rows.Err()
+}
+
+// HomeRolePick is one song chosen for a “主题曲与插曲” page.
+type HomeRolePick struct {
+	WorkID  int64
+	TrackID int64
+	Role    string
+}
+
+// HomeRoleTracksFor hydrates the picked songs in order. Picks whose track or
+// work disappeared (or whose track lost its available file) since the pool
+// was built are dropped.
+func (s *Store) HomeRoleTracksFor(ctx context.Context, picks []HomeRolePick) ([]HomeRoleTrack, error) {
+	if len(picks) == 0 {
 		return nil, nil
 	}
-	tracks, err := s.tracksByIDs(ctx, ids)
+	trackIDs := make([]int64, 0, len(picks))
+	workIDs := make([]int64, 0, len(picks))
+	for _, pick := range picks {
+		trackIDs = append(trackIDs, pick.TrackID)
+		workIDs = append(workIDs, pick.WorkID)
+	}
+	type workInfo struct {
+		title string
+		year  int
+	}
+	works := map[int64]workInfo{}
+	placeholders, args := inClause(workIDs)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title,COALESCE(year,0) FROM works WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
-	values := make([]HomeRoleTrack, 0, len(links))
-	for i, l := range links {
-		values = append(values, HomeRoleTrack{Track: tracks[i], Role: l.role, WorkID: l.workID, WorkTitle: l.workTitle, WorkYear: l.workYear})
+	for rows.Next() {
+		var id int64
+		var info workInfo
+		if err := rows.Scan(&id, &info.title, &info.year); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		works[id] = info
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	visible := map[int64]bool{}
+	placeholders, args = inClause(trackIDs)
+	rows, err = s.db.QueryContext(ctx, `SELECT t.id FROM tracks t WHERE t.id IN (`+placeholders+`) AND `+trackVisibleSQL("t.id"), args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		visible[id] = true
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	kept := make([]HomeRolePick, 0, len(picks))
+	keptIDs := make([]int64, 0, len(picks))
+	for _, pick := range picks {
+		if _, ok := works[pick.WorkID]; ok && visible[pick.TrackID] {
+			kept = append(kept, pick)
+			keptIDs = append(keptIDs, pick.TrackID)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	tracks, err := s.tracksByIDs(ctx, keptIDs)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]HomeRoleTrack, 0, len(kept))
+	for i, pick := range kept {
+		info := works[pick.WorkID]
+		values = append(values, HomeRoleTrack{Track: tracks[i], Role: pick.Role, WorkID: pick.WorkID, WorkTitle: info.title, WorkYear: info.year})
 	}
 	return values, nil
 }

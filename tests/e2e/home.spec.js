@@ -171,20 +171,58 @@ test('断点续播：接着听与最近在听页签', async ({ page }) => {
   await expect(page.locator('#player-title')).toHaveText(track.title);
 });
 
-test('按作品漫游：类型筛选', async ({ page }) => {
+test('按作品漫游：类型筛选走服务端，当天轮换固定', async ({ page }) => {
   await login(page);
   await home(page);
-  const rail = page.locator('.h-works');
-  const total = await rail.locator('.h-work').count();
-  expect(total).toBeGreaterThan(2);
+  const panel = page.locator('[data-rotation-panel="works"]');
+  const titles = await panel.locator('.h-work-title').allTextContents();
+  expect(titles.length).toBeGreaterThan(2);
+  const pages = Number(await panel.locator('.h-rotation-page').getAttribute('data-pages'));
+  await expect(page.locator('[data-rotation-next="works"]')).toBeVisible({ visible: pages > 1 });
+
   await page.locator('[data-work-filter="movie"]').click();
-  await expect(rail.locator('.h-work:visible')).toHaveCount(1);
-  await expect(rail.locator('.h-work:visible .h-work-title')).toHaveText('劇場版「鬼滅の刃」無限列車編');
+  await expect(panel.locator('.h-rotation-page')).toHaveAttribute('data-filter', 'movie');
+  await expect(panel.locator('.h-work')).toHaveCount(1);
+  await expect(panel.locator('.h-work-title')).toHaveText('劇場版「鬼滅の刃」無限列車編');
+  await expect(page.locator('[data-work-filter="movie"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-rotation="works"] [data-rotation-count]')).toHaveText('1 部作品');
+  await expect(page.locator('[data-rotation-status="works"]')).toContainText('电影，第 1/1 批');
+  await expect(page.locator('[data-rotation-next="works"]')).toBeHidden();
+
   await page.locator('[data-work-filter="game"]').click();
-  await expect(rail.locator('.h-work:visible')).toHaveCount(1);
-  await expect(rail.locator('.h-work:visible .h-work-title')).toHaveText('鬼滅の刃 ヒノカミ血風譚');
+  await expect(panel.locator('.h-rotation-page')).toHaveAttribute('data-filter', 'game');
+  await expect(panel.locator('.h-work')).toHaveCount(1);
+  await expect(panel.locator('.h-work-title')).toHaveText('鬼滅の刃 ヒノカミ血風譚');
+
+  // 回到“全部”：同一天内是同一批、同一顺序。
   await page.locator('[data-work-filter="all"]').click();
-  await expect(rail.locator('.h-work:visible')).toHaveCount(total);
+  await expect(panel.locator('.h-rotation-page')).toHaveAttribute('data-filter', 'all');
+  await expect.poll(() => panel.locator('.h-work-title').allTextContents()).toEqual(titles);
+  await page.reload();
+  await expect.poll(() => page.locator('[data-rotation-panel="works"] .h-work-title').allTextContents()).toEqual(titles);
+});
+
+test('按作品漫游：换一批按页翻、翻到底回到第一批', async ({ page }) => {
+  await login(page);
+  await home(page);
+  const first = page.locator('[data-rotation-panel="works"] .h-rotation-page');
+  const pages = Number(await first.getAttribute('data-pages'));
+  const gen = await first.getAttribute('data-generation');
+  const ids = async (html) => [...html.matchAll(/data-play-work="(\d+)"/g)].map((m) => m[1]);
+  const seen = new Set();
+  for (let batch = 0; batch < pages; batch += 1) {
+    const res = await page.request.get(`/admin/home/works?type=all&batch=${batch}&gen=${encodeURIComponent(gen)}`);
+    expect(res.ok()).toBe(true);
+    for (const id of await ids(await res.text())) {
+      expect(seen.has(id)).toBe(false);
+      seen.add(id);
+    }
+  }
+  const wrapped = await page.request.get(`/admin/home/works?type=all&batch=${pages}&gen=${encodeURIComponent(gen)}`);
+  expect(await wrapped.text()).toContain('data-batch="0"');
+  const stale = await page.request.get('/admin/home/works?type=all&batch=1&gen=2000-01-01.old');
+  expect(stale.headers()['x-home-rotation']).toBe('renewed');
+  expect((await page.request.get('/admin/home/works?type=drama')).status()).toBe(400);
 });
 
 test('按作品漫游：作品卡播放按钮用作品歌曲替换队列', async ({ page }) => {
@@ -237,7 +275,7 @@ test('主题曲与插曲：加入队列追加到末尾', async ({ page }) => {
   await card.hover();
   await card.locator('.album-queue-action[data-mode="play"]').click();
   await expect.poll(async () => (await queueState(page)).queue.length).toBe(20);
-  const row = page.locator('.h-tlist .h-trow').first();
+  const row = page.locator('[data-rotation-panel="songs"] .h-trow').first();
   const title = await row.getAttribute('data-track-title');
   await row.locator('.queue-append-btn').click();
   await expect.poll(async () => (await queueState(page)).queue.length).toBe(21);

@@ -89,11 +89,11 @@
       </section>
     </div>
 
-    {{if .Works}}
-    <section class="h-section" aria-labelledby="s-works">
+    {{if .WorksPanel.Count}}
+    <section class="h-section" aria-labelledby="s-works" data-rotation="works">
       <div class="h-section-head">
         <h2 id="s-works">按作品漫游</h2>
-        <span class="h-count">{{.WorksCount}} 部作品</span>
+        <span class="h-count" data-rotation-count>{{.WorksPanel.Count}} 部作品</span>
         <div class="h-tools">
           <div class="h-seg" role="group" aria-label="作品类型">
             <button type="button" data-work-filter="all" class="on" aria-pressed="true">全部</button>
@@ -101,55 +101,28 @@
             <button type="button" data-work-filter="game" aria-pressed="false">游戏</button>
             <button type="button" data-work-filter="movie" aria-pressed="false">电影</button>
           </div>
+          <button type="button" class="h-btn h-btn-ghost h-btn-sm" data-rotation-next="works" aria-label="换一批作品"{{if le .WorksPanel.Pages 1}} hidden{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dice"></use></svg> 换一批</button>
           <button type="button" class="h-icon-btn" data-shelf-nav="works" data-dir="prev" aria-label="向左滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></button>
           <button type="button" class="h-icon-btn" data-shelf-nav="works" data-dir="next" aria-label="向右滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></button>
         </div>
       </div>
-      <div class="h-works" data-shelf="works">
-        {{range .Works}}
-        <article class="h-work" data-work-type="{{.Work.Type}}">
-          <div class="h-work-art">
-            {{if .Cover}}<img class="fade-img" src="{{.Cover}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
-            <button type="button" class="h-fab" data-play-work="{{.Work.ID}}" aria-label="播放作品 {{.Work.Title}} 的全部歌曲"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
-          </div>
-          <div class="h-work-body">
-            <span class="h-work-type">{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}}</span>
-            <a class="h-work-title" href="/admin/works/{{.Work.ID}}" title="{{.Work.Title}}">{{.Work.Title}}</a>
-            {{if .Work.RoleCounts}}<div class="h-work-roles">{{range .Work.RoleCounts}}<span>{{workRoleShortLabel .Role}} {{.Count}}</span>{{end}}</div>{{end}}
-            {{if .Work.SeriesTitle}}<span class="h-work-series" title="系列：{{.Work.SeriesTitle}}">系列：{{.Work.SeriesTitle}}</span>{{end}}
-          </div>
-        </article>
-        {{end}}
-      </div>
-      <div class="h-empty-inline" data-works-empty hidden><strong>这个类型下还没有关联歌曲的作品</strong><span>换个类型，或先在作品页关联专辑与歌曲。</span></div>
+      <div class="h-rotation-panel" data-rotation-panel="works">{{template "home-works-panel" .WorksPanel}}</div>
+      <p class="sr-only" role="status" aria-live="polite" data-rotation-status="works"></p>
     </section>
     {{end}}
 
-    {{if .RoleTracks}}
-    <section class="h-section" aria-labelledby="s-songs">
+    {{if .SongsPanel.Count}}
+    <section class="h-section" aria-labelledby="s-songs" data-rotation="songs">
       <div class="h-section-head">
         <h2 id="s-songs">主题曲与插曲</h2>
-        <span class="h-count">来自作品关联的歌曲角色</span>
-        <div class="h-tools"><a class="h-link" href="/admin/tracks">歌曲 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
+        <span class="h-count">来自作品关联的歌曲角色 · 每日轮换</span>
+        <div class="h-tools">
+          <button type="button" class="h-btn h-btn-ghost h-btn-sm" data-rotation-next="songs" aria-label="换一批歌曲"{{if le .SongsPanel.Pages 1}} hidden{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dice"></use></svg> 换一批</button>
+          <a class="h-link" href="/admin/tracks">歌曲 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+        </div>
       </div>
-      <div class="h-tlist" data-track-list>
-        {{range .RoleTracks}}
-        <article class="h-trow" data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}"{{with .Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Track.DurationMillis}}">
-          <button type="button" class="h-trow-art row-play-btn" aria-label="播放 {{.Track.Title}}">
-            {{if .Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
-            <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
-          </button>
-          <div class="h-row-main">
-            <span class="h-row-title" title="{{.Track.Title}}">{{.Track.Title}}</span>
-            <span class="h-row-sub">{{.Track.Artist}}</span>
-          </div>
-          <span class="h-role h-role-{{.Role}}">{{workRoleShortLabel .Role}}</span>
-          <a class="h-trow-work" href="/admin/works/{{.WorkID}}" title="{{.WorkTitle}}">{{.WorkTitle}}</a>
-          <span class="h-row-time">{{formatDurationMillis .Track.DurationMillis}}</span>
-          <button type="button" class="h-icon-btn queue-append-btn" aria-label="将 {{.Track.Title}} 加入队列" title="加入队列"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
-        </article>
-        {{end}}
-      </div>
+      <div class="h-rotation-panel" data-rotation-panel="songs">{{template "home-songs-panel" .SongsPanel}}</div>
+      <p class="sr-only" role="status" aria-live="polite" data-rotation-status="songs"></p>
     </section>
     {{end}}
 
@@ -224,6 +197,54 @@
   {{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}, {{end}}<a class="h-card-sub" href="/admin/artists/{{$artist.ID}}" title="{{$artist.Name}}">{{$artist.Name}}</a>{{end}}{{else}}<span class="h-card-sub">{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}</span>{{end}}
   <span class="h-card-meta">{{.Meta}}</span>
 </article>
+{{end}}
+
+{{define "home-works-panel"}}
+<div class="h-rotation-page" data-generation="{{.Generation}}" data-batch="{{.Batch}}" data-pages="{{.Pages}}" data-count="{{.Count}}" data-filter="{{.Filter}}">
+  {{if .Works}}
+  <div class="h-works" data-shelf="works">
+    {{range .Works}}
+    <article class="h-work" data-work-type="{{.Work.Type}}">
+      <div class="h-work-art">
+        {{if .Cover}}<img class="fade-img" src="{{.Cover}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>{{end}}
+        <button type="button" class="h-fab" data-play-work="{{.Work.ID}}" aria-label="播放作品 {{.Work.Title}} 的全部歌曲"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+      </div>
+      <div class="h-work-body">
+        <span class="h-work-type">{{workTypeLabel .Work.Type}}{{if .Work.Year}} · {{.Work.Year}}{{end}}</span>
+        <a class="h-work-title" href="/admin/works/{{.Work.ID}}" title="{{.Work.Title}}">{{.Work.Title}}</a>
+        {{if .Work.RoleCounts}}<div class="h-work-roles">{{range .Work.RoleCounts}}<span>{{workRoleShortLabel .Role}} {{.Count}}</span>{{end}}</div>{{end}}
+        {{if .Work.SeriesTitle}}<span class="h-work-series" title="系列：{{.Work.SeriesTitle}}">系列：{{.Work.SeriesTitle}}</span>{{end}}
+      </div>
+    </article>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="h-empty-inline" data-works-empty><strong>这个类型下还没有关联歌曲的作品</strong><span>换个类型，或先在作品页关联专辑与歌曲。</span></div>
+  {{end}}
+</div>
+{{end}}
+
+{{define "home-songs-panel"}}
+<div class="h-rotation-page" data-generation="{{.Generation}}" data-batch="{{.Batch}}" data-pages="{{.Pages}}" data-count="{{.Count}}">
+  <div class="h-tlist" data-track-list>
+    {{range .Tracks}}
+    <article class="h-trow" data-track-id="{{.Track.ID}}" data-track-title="{{.Track.Title}}" data-track-artist="{{.Track.Artist}}" data-track-album="{{.Track.Album}}" data-track-artwork="{{thumb .Track.ArtworkURL 256}}"{{with .Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Track.DurationMillis}}">
+      <button type="button" class="h-trow-art row-play-btn" aria-label="播放 {{.Track.Title}}">
+        {{if .Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
+        <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
+      </button>
+      <div class="h-row-main">
+        <span class="h-row-title" title="{{.Track.Title}}">{{.Track.Title}}</span>
+        <span class="h-row-sub">{{.Track.Artist}}</span>
+      </div>
+      <span class="h-role h-role-{{.Role}}">{{workRoleShortLabel .Role}}</span>
+      <a class="h-trow-work" href="/admin/works/{{.WorkID}}" title="{{.WorkTitle}}">{{.WorkTitle}}</a>
+      <span class="h-row-time">{{formatDurationMillis .Track.DurationMillis}}</span>
+      <button type="button" class="h-icon-btn queue-append-btn" aria-label="将 {{.Track.Title}} 加入队列" title="加入队列"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg></button>
+    </article>
+    {{end}}
+  </div>
+</div>
 {{end}}
 
 {{define "home-chronicle-result"}}
