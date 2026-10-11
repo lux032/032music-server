@@ -11,7 +11,7 @@
     <header class="h-head">
       <div>
         <h1>主页</h1>
-        <p class="h-date">{{.Today}}</p>
+        <p class="h-date" data-local-today>{{.Today}}</p>
       </div>
       {{if not .Empty}}
       <div class="h-head-tools">
@@ -170,7 +170,7 @@
       <span><strong>{{.Stats.Albums}}</strong> 张专辑</span>
       <span><strong>{{.Stats.Tracks}}</strong> 首歌曲</span>
       <span><strong>{{.WorksCount}}</strong> 部作品</span>
-      {{if .LastScan}}<span>上次扫描 {{.LastScan}}</span>{{end}}
+      {{if .LastScan}}<span>上次扫描 {{formatAdminTime .LastScan}}</span>{{end}}
       <a class="h-foot-review" href="/admin/work-review">作品关联待审核{{with .PendingReviewCount}} <span class="nav-badge">{{.}}</span>{{end}}</a>
     </footer>
     {{end}}
@@ -195,7 +195,7 @@
   </div>
   <a class="h-card-title" href="/admin/albums/{{.Album.ID}}" title="{{.Album.Title}}">{{.Album.Title}}</a>
   {{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}, {{end}}<a class="h-card-sub" href="/admin/artists/{{$artist.ID}}" title="{{$artist.Name}}">{{$artist.Name}}</a>{{end}}{{else}}<span class="h-card-sub">{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}</span>{{end}}
-  <span class="h-card-meta">{{.Meta}}</span>
+  <span class="h-card-meta">{{if .AddedTime}}入库于 {{formatAdminTime .AddedTime}}{{else}}{{.Meta}}{{end}}</span>
 </article>
 {{end}}
 
@@ -275,7 +275,7 @@
       <li>{{.Album.TrackCount}} 首</li>
       {{if .DurationLabel}}<li>{{.DurationLabel}}</li>{{end}}
     </ul>
-    <p class="h-sub-facts">{{if .Spec}}<span class="h-spec-tag">{{.Spec}}</span>{{end}}<span>{{.Note}}</span></p>
+    <p class="h-sub-facts">{{if .Spec}}<span class="h-spec-tag">{{.Spec}}</span>{{end}}<span>{{if .NoteTime}}{{.NotePrefix}}{{formatAdminTime .NoteTime}}{{.NoteSuffix}}{{else}}{{.Note}}{{end}}</span></p>
     <div class="h-actions">
       {{if .Listening}}
       <button type="button" class="h-btn h-btn-primary" data-resume-track-id="{{.ResumeTrackID}}" data-resume-ms="{{.ResumeMS}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> {{.ResumeLabel}}</button>

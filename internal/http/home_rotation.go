@@ -28,7 +28,8 @@ import (
 //   - Requests carry the generation they were rendered from; a stale one
 //     (new day or restart) is answered with page 0 of the current generation.
 
-// homeZone fixes the rotation day boundary (and the header date) to UTC+8.
+// homeZone fixes the shared rotation day boundary to UTC+8.
+// The header's server fallback uses this zone; browsers display their local day.
 // China has no DST, so a fixed zone is exact and needs no tzdata in the image.
 var homeZone = time.FixedZone("UTC+8", 8*60*60)
 

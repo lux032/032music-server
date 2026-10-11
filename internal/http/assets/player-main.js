@@ -6,6 +6,7 @@ import { bindTrackListEvents } from './queue.js';
 import { bindGlobalShortcuts } from './shortcuts.js';
 import { setupPjaxNavigation } from './router.js';
 import { setupImageFadeIn } from './util.js';
+import { setupLocalTimes } from './local-time.js';
 import { setupPlaylists } from './playlist-picker.js';
 import { setupFullscreen } from './fullscreen.js';
 import { setupCast, restoreCast } from './cast.js';
@@ -28,6 +29,7 @@ if (!window.__032_player_initialized) {
     bindGlobalShortcuts();
     setupPjaxNavigation();
     setupImageFadeIn();
+    setupLocalTimes();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       document.body.classList.add('np-animated');
     }));

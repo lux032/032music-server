@@ -19,6 +19,20 @@ func TestFormatTime(t *testing.T) {
 	}
 }
 
+func TestLocalTimeMarkup(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"2026-09-26T07:07:30.123Z", `<time datetime="2026-09-26T07:07:30.123Z" data-local-time>2026-09-26 07:07 UTC</time>`},
+		{"2026-09-26T15:07:30+08:00", `<time datetime="2026-09-26T07:07:30Z" data-local-time>2026-09-26 07:07 UTC</time>`},
+		{"", "—"},
+		{"<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"},
+		{"2026-09-26", "2026-09-26"},
+	} {
+		if got := string(localTimeMarkup(tc.input)); got != tc.want {
+			t.Errorf("localTimeMarkup(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestAlbumTypeLabel(t *testing.T) {
 	for _, tc := range []struct{ input, want string }{
 		{"album", "专辑"}, {"single", "单曲"}, {"ep", "EP"},

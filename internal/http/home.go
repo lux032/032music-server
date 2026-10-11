@@ -32,6 +32,9 @@ type homeHeroAlbumView struct {
 	Tracks        []storage.Track
 	Spec          string
 	Note          string
+	NoteTime      string
+	NotePrefix    string
+	NoteSuffix    string
 	DurationLabel string
 	// Listening-only fields: the unfinished track to resume.
 	Listening     bool
@@ -73,8 +76,9 @@ type homeResumeRow struct {
 
 // homeAlbumView is one card of 最近添加 / 编年货架：album + precomputed meta line.
 type homeAlbumView struct {
-	Album storage.Album
-	Meta  string
+	Album     storage.Album
+	Meta      string
+	AddedTime string
 }
 
 // homeChronicleView is the per-year result block under the chronicle chart;
@@ -220,6 +224,8 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 	if albums, err := a.store.ListAlbums(ctx, storage.Filters{Sort: "added", Limit: 1}); err == nil && len(albums) > 0 {
 		album := albums[0]
 		hero.Recent = a.homeAlbumSpotlight(ctx, album, "入库于 "+formatAdminTime(album.AddedAt))
+		hero.Recent.NotePrefix = "入库于 "
+		hero.Recent.NoteTime = album.AddedAt
 		hero.Recent.Focus = "recent"
 	} else if err != nil {
 		a.logger.Warn("home recent album", "error", err)
@@ -228,6 +234,9 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 		record := unfinished[0]
 		if album, err := a.store.AlbumByID(ctx, record.Track.AlbumID); err == nil {
 			view := a.homeAlbumSpotlight(ctx, album, fmt.Sprintf("上次播放 %s · 听到 %s %s", formatAdminTime(record.LastPlayedAt), record.Track.Title, formatDurationMillis(record.PositionMillis)))
+			view.NotePrefix = "上次播放 "
+			view.NoteTime = record.LastPlayedAt
+			view.NoteSuffix = fmt.Sprintf(" · 听到 %s %s", record.Track.Title, formatDurationMillis(record.PositionMillis))
 			view.Listening = true
 			view.Focus = "listening"
 			view.ResumeTrackID = record.TrackID
@@ -249,6 +258,8 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 			note = "上次播放 " + formatAdminTime(album.LastPlayedAt)
 		}
 		hero.Random = a.homeAlbumSpotlight(ctx, album, note)
+		hero.Random.NotePrefix = "上次播放 "
+		hero.Random.NoteTime = album.LastPlayedAt
 		hero.Random.Focus = "random"
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		a.logger.Warn("home random album", "error", err)
@@ -310,7 +321,7 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 		Stats:  stats,
 	}
 	if scan := latestScan(a.store, r); scan.FinishedAt != "" {
-		data.LastScan = formatAdminTime(scan.FinishedAt)
+		data.LastScan = scan.FinishedAt
 	}
 	if stats.Albums == 0 {
 		data.Empty = true
@@ -329,7 +340,7 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	if albums, err := a.store.ListAlbums(ctx, storage.Filters{Sort: "added", Limit: 12}); err == nil {
 		for _, album := range albums {
-			data.RecentAlbums = append(data.RecentAlbums, homeAlbumCard(album, "入库于 "+formatAdminTime(album.AddedAt)))
+			data.RecentAlbums = append(data.RecentAlbums, homeAlbumView{Album: album, AddedTime: album.AddedAt})
 		}
 	} else {
 		a.logger.Warn("home recent albums", "error", err)
@@ -408,6 +419,8 @@ func (a *App) handleHomeRandomSpotlight(w http.ResponseWriter, r *http.Request) 
 		note = "上次播放 " + formatAdminTime(album.LastPlayedAt)
 	}
 	view := a.homeAlbumSpotlight(r.Context(), album, note)
+	view.NotePrefix = "上次播放 "
+	view.NoteTime = album.LastPlayedAt
 	view.Focus = "random"
 	// The fragment re-renders the whole pane, tabs included, so tab
 	// availability is recomputed here the same way the full page does.

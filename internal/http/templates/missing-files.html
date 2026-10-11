@@ -52,7 +52,7 @@
             <code>{{.RelativePath}}</code>
           </span>
           <span class="missing-state">{{if .TrackHidden}}已隐藏{{else}}仍有其他文件{{end}}</span>
-          <time>{{formatAdminTime .MissingSince}}</time>
+          <span>{{formatAdminTime .MissingSince}}</span>
         </label>
         {{end}}
       </section>

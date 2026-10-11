@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"html"
+	"html/template"
 	"net/http"
 	"net/url"
 	"path"
@@ -560,6 +562,17 @@ func formatDurationMillis(value int64) string {
 		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 	}
 	return fmt.Sprintf("%d:%02d", minutes, seconds)
+}
+
+// localTimeMarkup preserves the instant for browser-side timezone conversion.
+// A labelled UTC fallback remains readable when JavaScript is unavailable.
+func localTimeMarkup(value string) template.HTML {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return template.HTML(html.EscapeString(formatAdminTime(value)))
+	}
+	return template.HTML(fmt.Sprintf(`<time datetime="%s" data-local-time>%s UTC</time>`,
+		parsed.UTC().Format(time.RFC3339Nano), parsed.UTC().Format("2006-01-02 15:04")))
 }
 
 func formatAdminTime(value string) string {
