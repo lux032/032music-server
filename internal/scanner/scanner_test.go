@@ -107,8 +107,16 @@ func TestCleanupOrphansKeepsMissingTracks(t *testing.T) {
 	if err := store.SetTrackFavorite(ctx, 1, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.MarkMissing(ctx, library.ID, storage.ScanTimestamp()); err != nil {
+	// Simulate a later scan without sleeping: import and ScanTimestamp can
+	// otherwise fall in the same millisecond, while MarkMissing deliberately
+	// uses a strict comparison to preserve files seen during the current scan.
+	scanStarted := time.Now().UTC().Add(time.Second).Format("2006-01-02T15:04:05.000Z")
+	missing, err := store.MarkMissing(ctx, library.ID, scanStarted)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if missing != 1 {
+		t.Fatalf("marked missing = %d, want 1", missing)
 	}
 	if err := store.CleanupOrphans(ctx); err != nil {
 		t.Fatal(err)
