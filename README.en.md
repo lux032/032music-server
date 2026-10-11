@@ -10,7 +10,7 @@ A self-hosted music library and streaming server built with Go. Local tags and m
 
 ## Preview
 
-![Album library with navigation, playback queue, and player controls](docs/images/main-view.png)
+![Album library with navigation, playback queue, and player controls](docs/images/main-view.png?v=2)
 
 ## Features
 

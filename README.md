@@ -10,7 +10,7 @@
 
 ## 界面预览
 
-![专辑主视图：曲库导航、播放队列与播放器控制栏](docs/images/main-view.png)
+![专辑主视图：曲库导航、播放队列与播放器控制栏](docs/images/main-view.png?v=2)
 
 ## 功能概览
 
