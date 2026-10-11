@@ -308,7 +308,7 @@
       </li>
       {{end}}
     </ol>
-    <a class="h-link" href="/admin/albums/{{.Album.ID}}">查看全部 {{.Album.TrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+    <a class="h-link" href="/admin/albums/{{.Album.ID}}">{{if lt (len .Tracks) .Album.TrackCount}}查看全部 {{.Album.TrackCount}} 首{{else}}专辑详情{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
   </aside>
   {{end}}
 </div>
