@@ -79,11 +79,6 @@ func (a *App) handleAPICreateWork(w http.ResponseWriter, r *http.Request) {
 	writeWorkResult(w, http.StatusCreated, value, err)
 }
 
-func (a *App) handleAPIWork(w http.ResponseWriter, r *http.Request) {
-	value, err := a.store.WorkByID(r.Context(), parseInt64(r.PathValue("id")))
-	writeWorkResult(w, http.StatusOK, value, err)
-}
-
 func (a *App) handleAPIUpdateWork(w http.ResponseWriter, r *http.Request) {
 	var input storage.WorkInput
 	if !decode(w, r, &input) {
@@ -272,13 +267,7 @@ func (a *App) handleWorkPage(w http.ResponseWriter, r *http.Request) {
 		data.Series = &seriesCopy
 		data.SeriesMembers = members
 		data.SeriesGroups = groupSeriesMembersByType(members)
-		for idx, m := range members {
-			if m.Work.ID == id {
-				data.CurrentMemberIndex = idx + 1
-				data.CurrentMemberSource = m.Source
-				break
-			}
-		}
+		data.CurrentMemberIndex, data.CurrentMemberSource = workSeriesPosition(members, id)
 	} else if !errors.Is(seriesErr, sql.ErrNoRows) {
 		http.Error(w, "work unavailable", http.StatusInternalServerError)
 		return

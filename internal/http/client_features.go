@@ -24,7 +24,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true,
 			"cast": a.cast != nil,
 			"home": true, "seriesTracks": true, "workPosters": true,
-			"series": true,
+			"series": true, "workSeriesInfo": true,
 		},
 		"home": map[string]any{
 			"endpoint":     "/api/v1/home",
