@@ -23,6 +23,13 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"audioProperties": true, "lyricsText": true, "playlistCreateWithItems": true,
 			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true,
 			"cast": a.cast != nil,
+			"home": true, "seriesTracks": true, "workPosters": true,
+		},
+		"home": map[string]any{
+			"endpoint":     "/api/v1/home",
+			"workFilters":  append([]string{"all"}, homeWorkFilters...),
+			"rotationZone": "UTC+08:00",
+			"playTypes":    []string{"album", "work", "series", "playlist", "track"},
 		},
 		"transcode": map[string]any{
 			"available":   a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"],

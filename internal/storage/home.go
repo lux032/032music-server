@@ -19,7 +19,7 @@ type HomeRoleCount struct {
 }
 
 // HomeWork is one card of the home page's works rail: the work itself, the
-// series it belongs to ("" when none), a cover fallback (the poster is
+// series it belongs to (SeriesID 0 / "" when none), a cover fallback (the poster is
 // preferred by the caller; CoverURL is the first visible linked album's
 // artwork) and the per-role counts of its linked tracks.
 type HomeWork struct {
@@ -29,6 +29,7 @@ type HomeWork struct {
 	Year        int
 	PosterURL   string
 	UpdatedAt   string
+	SeriesID    int64
 	SeriesTitle string
 	CoverURL    string
 	TrackCount  int64
@@ -116,7 +117,7 @@ func (s *Store) HomeWorksByIDs(ctx context.Context, ids []int64) ([]HomeWork, er
 		return nil, nil
 	}
 	placeholders, args := inClause(ids)
-	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT w.id,w.title,w.type,COALESCE(w.year,0),COALESCE(w.poster_url,''),w.updated_at,`+homeTrackCountSQL+` AS track_count,COALESCE((SELECT s.title FROM work_series_members m JOIN work_series s ON s.id=m.series_id WHERE m.work_id=w.id),''),COALESCE((SELECT '/api/v1/artwork/'||art.id FROM artworks art JOIN albums al ON al.id=art.album_id WHERE `+albumVisibleSQL("al.id")+` AND art.album_id IN (SELECT alw.album_id FROM album_works alw WHERE alw.work_id=w.id UNION SELECT t2.album_id FROM work_tracks wt2 JOIN tracks t2 ON t2.id=wt2.track_id WHERE wt2.work_id=w.id AND `+trackVisibleSQL("t2.id")+`) ORDER BY (art.source_type='custom') DESC,art.is_primary DESC,art.id LIMIT 1),'') FROM works w WHERE w.id IN (`+placeholders+`)) WHERE track_count>0`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT w.id,w.title,w.type,COALESCE(w.year,0),COALESCE(w.poster_url,''),w.updated_at,`+homeTrackCountSQL+` AS track_count,COALESCE((SELECT m.series_id FROM work_series_members m WHERE m.work_id=w.id),0),COALESCE((SELECT s.title FROM work_series_members m JOIN work_series s ON s.id=m.series_id WHERE m.work_id=w.id),''),COALESCE((SELECT '/api/v1/artwork/'||art.id FROM artworks art JOIN albums al ON al.id=art.album_id WHERE `+albumVisibleSQL("al.id")+` AND art.album_id IN (SELECT alw.album_id FROM album_works alw WHERE alw.work_id=w.id UNION SELECT t2.album_id FROM work_tracks wt2 JOIN tracks t2 ON t2.id=wt2.track_id WHERE wt2.work_id=w.id AND `+trackVisibleSQL("t2.id")+`) ORDER BY (art.source_type='custom') DESC,art.is_primary DESC,art.id LIMIT 1),'') FROM works w WHERE w.id IN (`+placeholders+`)) WHERE track_count>0`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (s *Store) HomeWorksByIDs(ctx context.Context, ids []int64) ([]HomeWork, er
 	byID := map[int64]HomeWork{}
 	for rows.Next() {
 		var value HomeWork
-		if err := rows.Scan(&value.ID, &value.Title, &value.Type, &value.Year, &value.PosterURL, &value.UpdatedAt, &value.TrackCount, &value.SeriesTitle, &value.CoverURL); err != nil {
+		if err := rows.Scan(&value.ID, &value.Title, &value.Type, &value.Year, &value.PosterURL, &value.UpdatedAt, &value.TrackCount, &value.SeriesID, &value.SeriesTitle, &value.CoverURL); err != nil {
 			return nil, err
 		}
 		byID[value.ID] = value

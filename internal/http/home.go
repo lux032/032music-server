@@ -41,6 +41,8 @@ type homeHeroAlbumView struct {
 	ResumeTrackID int64
 	ResumeMS      int64
 	ResumeLabel   string
+	// Resume is the playback record behind the listening pane (JSON API).
+	Resume *storage.PlaybackRecord
 }
 
 type homeSeriesAlbumView struct {
@@ -242,6 +244,7 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 			view.ResumeTrackID = record.TrackID
 			view.ResumeMS = record.PositionMillis
 			view.ResumeLabel = "从 " + formatDurationMillis(record.PositionMillis) + " 继续"
+			view.Resume = &record
 			hero.Listening = view
 		}
 	} else if err != nil {
