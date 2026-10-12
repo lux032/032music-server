@@ -321,6 +321,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/works/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDeleteWork)))
 	mux.Handle("GET /api/v1/works/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorkTracks)))
 	mux.Handle("GET /api/v1/works/{id}/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIWorkAlbums)))
+	mux.Handle("GET /api/v1/series/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISeriesTracks)))
 	mux.Handle("POST /api/v1/works/{id}/albums", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAddWorkAlbum)))
 	mux.Handle("DELETE /api/v1/works/{id}/albums/{albumId}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRemoveWorkAlbum)))
 	mux.Handle("POST /api/v1/works/{id}/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAddWorkTrack)))
