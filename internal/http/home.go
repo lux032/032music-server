@@ -252,15 +252,8 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 	} else if err != nil {
 		a.logger.Warn("home series spotlight", "error", err)
 	}
-	if album, err := a.store.RandomAlbum(ctx, 0); err == nil {
-		note := "从未播放过"
-		if album.LastPlayedAt != "" {
-			note = "上次播放 " + formatAdminTime(album.LastPlayedAt)
-		}
-		hero.Random = a.homeAlbumSpotlight(ctx, album, note)
-		hero.Random.NotePrefix = "上次播放 "
-		hero.Random.NoteTime = album.LastPlayedAt
-		hero.Random.Focus = "random"
+	if pane, err := a.homeRandomPane(ctx, 0); err == nil {
+		hero.Random = pane
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		a.logger.Warn("home random album", "error", err)
 	}
@@ -306,30 +299,92 @@ func (a *App) homeChronicle(ctx context.Context, year int) (homeChronicleView, e
 	return view, err
 }
 
-func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
-	session, _ := a.sessions.get(r)
-	ctx := r.Context()
+// homeRandomPane picks the “随机重温” album (excluding `exclude` when other
+// albums exist). Shared by the first screen, 换一张 and the JSON API.
+// Returns sql.ErrNoRows for an empty library.
+func (a *App) homeRandomPane(ctx context.Context, exclude int64) (*homeHeroAlbumView, error) {
+	album, err := a.store.RandomAlbum(ctx, exclude)
+	if err != nil {
+		return nil, err
+	}
+	note := "从未播放过"
+	if album.LastPlayedAt != "" {
+		note = "上次播放 " + formatAdminTime(album.LastPlayedAt)
+	}
+	view := a.homeAlbumSpotlight(ctx, album, note)
+	view.NotePrefix = "上次播放 "
+	view.NoteTime = album.LastPlayedAt
+	view.Focus = "random"
+	return view, nil
+}
+
+// homeTabAvailability reports whether the optional focus tabs (最近在听 /
+// 作品聚焦) have content, computed the same way homeHero does.
+func (a *App) homeTabAvailability(ctx context.Context) (listening, series bool) {
+	if unfinished, err := a.store.UnfinishedPlayback(ctx, 1); err == nil {
+		listening = len(unfinished) > 0
+	}
+	if spot, err := a.store.HomeSeriesSpotlight(ctx); err == nil {
+		series = spot != nil
+	}
+	return listening, series
+}
+
+// homeYearBars turns the album year facets (newest first) into the chart
+// bars (oldest first) and returns the default selected year (the newest).
+func homeYearBars(years []storage.YearCount) ([]homeYearBar, int) {
+	if len(years) == 0 {
+		return nil, 0
+	}
+	var maxCount int64
+	for _, year := range years {
+		if year.Count > maxCount {
+			maxCount = year.Count
+		}
+	}
+	selectedYear := years[0].Year
+	bars := make([]homeYearBar, 0, len(years))
+	for i := len(years) - 1; i >= 0; i-- {
+		height := 4
+		if maxCount > 0 {
+			height = int(years[i].Count * 100 / maxCount)
+			if height < 4 {
+				height = 4
+			}
+		}
+		selected := years[i].Year == selectedYear
+		axisClass := ""
+		switch {
+		case selected:
+			axisClass = "on"
+		case years[i].Year%2 != 0:
+			axisClass = "dim"
+		}
+		bars = append(bars, homeYearBar{Year: years[i].Year, Count: years[i].Count, Height: height, Selected: selected, AxisClass: axisClass})
+	}
+	return bars, selectedYear
+}
+
+// homeData builds every section of the home page. It is the single data
+// source of both the HTML page (handleHome) and the JSON API
+// (handleAPIHome); only the statistics query is fatal, every other section
+// degrades to empty. Chrome and Today are page-frame fields left to the
+// HTML caller.
+func (a *App) homeData(ctx context.Context, r *http.Request, csrfToken string) (homePageData, error) {
 	stats, err := a.store.Statistics(ctx)
 	if err != nil {
-		a.logger.Error("query home statistics", "error", err)
-		http.Error(w, "home unavailable", http.StatusInternalServerError)
-		return
+		return homePageData{}, err
 	}
-	data := homePageData{
-		Chrome: a.chromeFor(ctx, session, "home"),
-		Today:  homeToday(),
-		Stats:  stats,
-	}
+	data := homePageData{Stats: stats}
 	if scan := latestScan(a.store, r); scan.FinishedAt != "" {
 		data.LastScan = scan.FinishedAt
 	}
 	if stats.Albums == 0 {
 		data.Empty = true
-		a.render(w, http.StatusOK, "home.html", data)
-		return
+		return data, nil
 	}
 
-	data.Hero = a.homeHero(ctx, session.CSRFToken)
+	data.Hero = a.homeHero(ctx, csrfToken)
 
 	if unfinished, err := a.store.UnfinishedPlayback(ctx, 5); err == nil {
 		for _, record := range unfinished {
@@ -359,31 +414,8 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 		a.logger.Warn("home role tracks", "error", err)
 	}
 	if years, err := a.store.AlbumYearFacets(ctx, storage.Filters{}); err == nil && len(years) > 0 {
-		var maxCount int64
-		for _, year := range years {
-			if year.Count > maxCount {
-				maxCount = year.Count
-			}
-		}
-		selectedYear := years[0].Year
-		for i := len(years) - 1; i >= 0; i-- {
-			height := 4
-			if maxCount > 0 {
-				height = int(years[i].Count * 100 / maxCount)
-				if height < 4 {
-					height = 4
-				}
-			}
-			selected := years[i].Year == selectedYear
-			axisClass := ""
-			switch {
-			case selected:
-				axisClass = "on"
-			case years[i].Year%2 != 0:
-				axisClass = "dim"
-			}
-			data.Years = append(data.Years, homeYearBar{Year: years[i].Year, Count: years[i].Count, Height: height, Selected: selected, AxisClass: axisClass})
-		}
+		var selectedYear int
+		data.Years, selectedYear = homeYearBars(years)
 		if chronicle, err := a.homeChronicle(ctx, selectedYear); err == nil {
 			data.Chronicle = chronicle
 		} else {
@@ -397,6 +429,20 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.logger.Warn("home playlists", "error", err)
 	}
+	return data, nil
+}
+
+func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
+	session, _ := a.sessions.get(r)
+	ctx := r.Context()
+	data, err := a.homeData(ctx, r, session.CSRFToken)
+	if err != nil {
+		a.logger.Error("query home statistics", "error", err)
+		http.Error(w, "home unavailable", http.StatusInternalServerError)
+		return
+	}
+	data.Chrome = a.chromeFor(ctx, session, "home")
+	data.Today = homeToday()
 	a.render(w, http.StatusOK, "home.html", data)
 }
 
@@ -404,7 +450,7 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 // The response is an HTML fragment: the pane's inner markup.
 func (a *App) handleHomeRandomSpotlight(w http.ResponseWriter, r *http.Request) {
 	exclude := parseInt64(r.URL.Query().Get("exclude"))
-	album, err := a.store.RandomAlbum(r.Context(), exclude)
+	view, err := a.homeRandomPane(r.Context(), exclude)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "no album", http.StatusNotFound)
@@ -414,24 +460,9 @@ func (a *App) handleHomeRandomSpotlight(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "home unavailable", http.StatusInternalServerError)
 		return
 	}
-	note := "从未播放过"
-	if album.LastPlayedAt != "" {
-		note = "上次播放 " + formatAdminTime(album.LastPlayedAt)
-	}
-	view := a.homeAlbumSpotlight(r.Context(), album, note)
-	view.NotePrefix = "上次播放 "
-	view.NoteTime = album.LastPlayedAt
-	view.Focus = "random"
 	// The fragment re-renders the whole pane, tabs included, so tab
 	// availability is recomputed here the same way the full page does.
-	listening := false
-	if unfinished, err := a.store.UnfinishedPlayback(r.Context(), 1); err == nil {
-		listening = len(unfinished) > 0
-	}
-	series := false
-	if spot, err := a.store.HomeSeriesSpotlight(r.Context()); err == nil {
-		series = spot != nil
-	}
+	listening, series := a.homeTabAvailability(r.Context())
 	view.Tabs = homeFocusTabs("random", listening, series)
 	session, _ := a.sessions.get(r)
 	view.CSRFToken = session.CSRFToken
