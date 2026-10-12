@@ -15,13 +15,15 @@ import (
 // at its first occurrence (the same rule as the web home's series play).
 // Returns sql.ErrNoRows for an unknown series.
 func (a *App) seriesTracks(ctx context.Context, seriesID int64) ([]storage.WorkTrack, error) {
-	if _, err := a.store.WorkSeriesByID(ctx, seriesID); err != nil {
-		return nil, err
-	}
-	members, err := a.store.SeriesMembers(ctx, seriesID)
+	_, members, err := a.seriesWithMembers(ctx, seriesID)
 	if err != nil {
 		return nil, err
 	}
+	return a.seriesMemberTracks(ctx, members)
+}
+
+// seriesMemberTracks merges the member works' tracks (see seriesTracks).
+func (a *App) seriesMemberTracks(ctx context.Context, members []storage.WorkSeriesMember) ([]storage.WorkTrack, error) {
 	values := make([]storage.WorkTrack, 0)
 	seen := map[int64]bool{}
 	for _, member := range members {

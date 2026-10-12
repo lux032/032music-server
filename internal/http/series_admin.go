@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -250,26 +251,75 @@ type seriesListPageData struct {
 	Pages                     []pageLink
 }
 
-func seriesTypeSpread(counts map[string]int) string {
-	type pair struct {
-		typ   string
-		count int
-	}
-	pairs := make([]pair, 0, len(counts))
+// seriesTypeCount 是系列类型分布中的一项。
+type seriesTypeCount struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
+
+// sortedSeriesTypeCounts 按网页类型分布的顺序排列：数量降序，同量按类型名。
+func sortedSeriesTypeCounts(counts map[string]int) []seriesTypeCount {
+	pairs := make([]seriesTypeCount, 0, len(counts))
 	for typ, count := range counts {
-		pairs = append(pairs, pair{typ, count})
+		pairs = append(pairs, seriesTypeCount{typ, count})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].count != pairs[j].count {
-			return pairs[i].count > pairs[j].count
+		if pairs[i].Count != pairs[j].Count {
+			return pairs[i].Count > pairs[j].Count
 		}
-		return pairs[i].typ < pairs[j].typ
+		return pairs[i].Type < pairs[j].Type
 	})
+	return pairs
+}
+
+func seriesTypeSpread(counts map[string]int) string {
+	pairs := sortedSeriesTypeCounts(counts)
 	parts := make([]string, 0, len(pairs))
 	for _, p := range pairs {
-		parts = append(parts, fmt.Sprintf("%s %d", workTypeLabel(p.typ), p.count))
+		parts = append(parts, fmt.Sprintf("%s %d", workTypeLabel(p.Type), p.Count))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// seriesListEntry 是系列列表一行的数据（网页与 JSON 共用）：系列、类型
+// 分布与代表作（没有代表作或代表作已不存在时为 nil）。
+type seriesListEntry struct {
+	Series         storage.WorkSeries
+	TypeCounts     map[string]int
+	Representative *storage.Work
+}
+
+// seriesListEntries 按网页系列管理页的规则查询一页系列（q 匹配系列名与
+// 成员标题，按系列名排序），并批量取代表作（无 N+1）。返回筛选后的总数。
+func (a *App) seriesListEntries(ctx context.Context, query string, limit, offset int) ([]seriesListEntry, int, error) {
+	rows, total, err := a.store.ListSeriesPage(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	repIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if row.Series.RepresentativeWorkID != 0 {
+			repIDs = append(repIDs, row.Series.RepresentativeWorkID)
+		}
+	}
+	repList, err := a.store.WorksByIDs(ctx, repIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	repWorks := make(map[int64]storage.Work, len(repList))
+	for _, work := range repList {
+		repWorks[work.ID] = work
+	}
+	entries := make([]seriesListEntry, 0, len(rows))
+	for _, row := range rows {
+		entry := seriesListEntry{Series: row.Series, TypeCounts: row.TypeCounts}
+		if work, ok := repWorks[row.Series.RepresentativeWorkID]; ok {
+			work := work
+			entry.Representative = &work
+		}
+		entries = append(entries, entry)
+	}
+	return entries, total, nil
 }
 
 func (a *App) handleAdminSeriesList(w http.ResponseWriter, r *http.Request) {
@@ -280,28 +330,11 @@ func (a *App) handleAdminSeriesList(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	const pageSize = 50
-	rows, total, err := a.store.ListSeriesPage(r.Context(), query, pageSize, (page-1)*pageSize)
+	entries, total, err := a.seriesListEntries(r.Context(), query, pageSize, (page-1)*pageSize)
 	if err != nil {
 		a.logger.Error("series list", "error", err)
 		http.Error(w, "series unavailable", http.StatusInternalServerError)
 		return
-	}
-	// 批量取代表作，解析代表作海报（无 N+1）。
-	repIDs := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		if row.Series.RepresentativeWorkID != 0 {
-			repIDs = append(repIDs, row.Series.RepresentativeWorkID)
-		}
-	}
-	repList, err := a.store.WorksByIDs(r.Context(), repIDs)
-	if err != nil {
-		a.logger.Error("series list representatives", "error", err)
-		http.Error(w, "series unavailable", http.StatusInternalServerError)
-		return
-	}
-	repWorks := make(map[int64]storage.Work, len(repList))
-	for _, work := range repList {
-		repWorks[work.ID] = work
 	}
 	data := seriesListPageData{
 		Chrome:   a.chromeFor(r.Context(), session, "series"),
@@ -311,11 +344,11 @@ func (a *App) handleAdminSeriesList(w http.ResponseWriter, r *http.Request) {
 		PageSize: pageSize,
 		Total:    total,
 	}
-	data.Rows = make([]seriesListRow, 0, len(rows))
-	for _, row := range rows {
-		view := seriesListRow{Series: row.Series, TypeSpread: seriesTypeSpread(row.TypeCounts)}
-		if work, ok := repWorks[row.Series.RepresentativeWorkID]; ok {
-			view.PosterURL = workPosterURL(a.enrichment, work, 360)
+	data.Rows = make([]seriesListRow, 0, len(entries))
+	for _, entry := range entries {
+		view := seriesListRow{Series: entry.Series, TypeSpread: seriesTypeSpread(entry.TypeCounts)}
+		if entry.Representative != nil {
+			view.PosterURL = workPosterURL(a.enrichment, *entry.Representative, 360)
 		}
 		data.Rows = append(data.Rows, view)
 	}
@@ -354,22 +387,30 @@ type seriesDetailPageData struct {
 	Groups []seriesMemberGroup
 }
 
+// seriesWithMembers 读取系列及其成员（成员按 SeriesMembers 的“最早在前”
+// 顺序），网页详情、JSON 详情与系列曲目共用。系列不存在时返回 sql.ErrNoRows。
+func (a *App) seriesWithMembers(ctx context.Context, id int64) (storage.WorkSeries, []storage.WorkSeriesMember, error) {
+	series, err := a.store.WorkSeriesByID(ctx, id)
+	if err != nil {
+		return storage.WorkSeries{}, nil, err
+	}
+	members, err := a.store.SeriesMembers(ctx, id)
+	if err != nil {
+		return storage.WorkSeries{}, nil, err
+	}
+	return series, members, nil
+}
+
 func (a *App) handleAdminSeriesDetail(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	id := parseInt64(r.PathValue("id"))
-	series, err := a.store.WorkSeriesByID(r.Context(), id)
+	series, members, err := a.seriesWithMembers(r.Context(), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.NotFound(w, r)
 		return
 	}
 	if err != nil {
 		a.logger.Error("series detail", "error", err)
-		http.Error(w, "series unavailable", http.StatusInternalServerError)
-		return
-	}
-	members, err := a.store.SeriesMembers(r.Context(), id)
-	if err != nil {
-		a.logger.Error("series members", "error", err)
 		http.Error(w, "series unavailable", http.StatusInternalServerError)
 		return
 	}

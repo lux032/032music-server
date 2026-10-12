@@ -50,6 +50,20 @@ type homeSeriesAlbumView struct {
 	Album     storage.AlbumWork
 }
 
+// appendSeriesAlbums appends a member work's albums to a series album list,
+// keeping each album once at its first occurrence (member order, then the
+// work's own album order). Shared by the home spotlight and the series API.
+func appendSeriesAlbums(out []homeSeriesAlbumView, seen map[int64]bool, workTitle string, albums []storage.AlbumWork) []homeSeriesAlbumView {
+	for _, album := range albums {
+		if seen[album.AlbumID] {
+			continue
+		}
+		seen[album.AlbumID] = true
+		out = append(out, homeSeriesAlbumView{WorkTitle: workTitle, Album: album})
+	}
+	return out
+}
+
 type homeSeriesView struct {
 	Tabs         []homeFocusTab
 	SeriesID     int64
@@ -196,13 +210,7 @@ func homeSeriesViewFrom(spot *storage.HomeSpotlight) *homeSeriesView {
 		if work.Work.Year > maxYear {
 			maxYear = work.Work.Year
 		}
-		for _, album := range work.Albums {
-			if seen[album.AlbumID] {
-				continue
-			}
-			seen[album.AlbumID] = true
-			view.Albums = append(view.Albums, homeSeriesAlbumView{WorkTitle: work.Work.Title, Album: album})
-		}
+		view.Albums = appendSeriesAlbums(view.Albums, seen, work.Work.Title, work.Albums)
 	}
 	view.AlbumCount = len(view.Albums)
 	if len(view.Albums) > 8 {
