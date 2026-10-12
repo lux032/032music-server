@@ -702,13 +702,23 @@ func (a *App) queueWorkPoster(workID int64) {
 // poster has not been cached locally yet (the placeholder icon is shown).
 // size > 0 时附带缩略图尺寸参数。
 func workPosterURL(manager *enrichment.Manager, work storage.Work, size int) string {
+	return workPosterPath(manager, work, "/admin/works/", size)
+}
+
+// workPosterAPIURL is workPosterURL for API clients: the same poster served
+// by the media-token route /api/v1/works/{id}/poster.
+func workPosterAPIURL(manager *enrichment.Manager, work storage.Work, size int) string {
+	return workPosterPath(manager, work, "/api/v1/works/", size)
+}
+
+func workPosterPath(manager *enrichment.Manager, work storage.Work, prefix string, size int) string {
 	if work.PosterURL == "" || manager == nil {
 		return ""
 	}
 	if _, _, err := manager.CachedWorkPoster(work.PosterURL); err != nil {
 		return ""
 	}
-	u := "/admin/works/" + strconv.FormatInt(work.ID, 10) + "/poster?v=" + url.QueryEscape(work.UpdatedAt)
+	u := prefix + strconv.FormatInt(work.ID, 10) + "/poster?v=" + url.QueryEscape(work.UpdatedAt)
 	if size > 0 {
 		u += "&size=" + strconv.Itoa(size)
 	}

@@ -382,6 +382,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/tracks/{id}/stream", a.requireMediaAccess(http.HandlerFunc(a.handleStream)))
 	mux.Handle("GET /api/v1/artwork/{id}", a.requireMediaAccess(http.HandlerFunc(a.handleArtwork)))
 	mux.Handle("GET /api/v1/artists/{id}/image", a.requireMediaAccess(http.HandlerFunc(a.handleArtistImage)))
+	mux.Handle("GET /api/v1/works/{id}/poster", a.requireMediaAccess(http.HandlerFunc(a.handleWorkPoster)))
 	mux.Handle("POST /api/v1/enrichment/run", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIStartEnrichment)))
 	mux.Handle("GET /api/v1/enrichment/jobs", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIEnrichmentRuns)))
 	mux.Handle("GET /api/v1/enrichment/jobs/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIEnrichmentRun)))
