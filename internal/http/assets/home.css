@@ -281,13 +281,14 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 /* ------------------------------------------------------------ works rail */
 .h-works { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(268px, 300px); gap: 14px; overflow-x: auto; padding: 4px 4px 14px; margin-inline: -4px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .h-work {
-  position: relative; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 14px; align-items: center;
+  position: relative; display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 14px; align-items: center;
   border-radius: var(--radius-lg); padding: 12px; background: var(--surface); box-shadow: var(--shadow-xs);
   outline: 1px solid var(--line); outline-offset: -1px;
   transition: box-shadow var(--dur) var(--ease), outline-color var(--dur) var(--ease);
 }
 .h-work:hover { box-shadow: var(--shadow-card-hover); outline-color: transparent; }
-.h-work-art { position: relative; width: 92px; aspect-ratio: 1; border-radius: var(--radius-cover); overflow: hidden; box-shadow: var(--shadow-card); display: grid; place-items: center; color: var(--muted); background: var(--surface-sunken); }
+/* 作品海报是竖版（2:3），不按专辑的方形裁切。 */
+.h-work-art { position: relative; width: 76px; aspect-ratio: 2 / 3; border-radius: var(--radius-cover); overflow: hidden; box-shadow: var(--shadow-card); display: grid; place-items: center; color: var(--muted); background: var(--surface-sunken); }
 .h-work-art > .icon { width: 34%; height: 34%; }
 .h-work-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .h-work-art .h-fab { position: absolute; inset: auto 6px 6px auto; width: 32px; height: 32px; opacity: 0; transition: opacity var(--dur) var(--ease); }
