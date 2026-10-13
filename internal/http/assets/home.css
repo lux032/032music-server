@@ -273,6 +273,10 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 /* ------------------------------------------------------------ duo layout */
 .h-duo { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: clamp(28px, 3.4vw, 52px); }
 .h-duo > .h-section { margin-top: 0; }
+/* left column: 最近播放 (5) above 接着听 (2) */
+.h-duo-main { min-width: 0; }
+.h-duo-main > .h-section:first-child { margin-top: 0; }
+.h-duo-main > .h-section + .h-section { margin-top: 28px; }
 
 /* ------------------------------------------------------------ works rail */
 .h-works { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(268px, 300px); gap: 14px; overflow-x: auto; padding: 4px 4px 14px; margin-inline: -4px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
@@ -405,7 +409,7 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 /* ------------------------------------------------------------ narrow desktop */
 @container app-main (max-width: 1040px) {
   .h-duo { grid-template-columns: minmax(0, 1fr); }
-  .h-duo > .h-section + .h-section { margin-top: 44px; }
+  .h-duo > .h-section + .h-section, .h-duo > .h-duo-main + .h-section { margin-top: 44px; }
   .h-grid.cols-3 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
 @container app-main (max-width: 700px) {

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -122,7 +123,7 @@ func TestHomePageRendering(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"主页", "最新入库", "最近在听", "随机重温", "作品聚焦", "接着听", "最近添加", "按作品漫游", "主题曲与插曲", "编年", "Anime A", "OP Song"} {
+	for _, want := range []string{"主页", "最新入库", "最近在听", "随机重温", "作品聚焦", "最近播放", "接着听", "最近添加", "按作品漫游", "主题曲与插曲", "编年", "Anime A", "OP Song"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("home page missing %q", want)
 		}
@@ -145,6 +146,49 @@ func TestHomePageRendering(t *testing.T) {
 	}
 }
 
+// The duo's left column lists 最近播放 above a short 接着听: played tracks
+// show without a breakpoint, and a track already under 接着听 is not repeated.
+func TestHomePageRecentlyPlayedAboveResume(t *testing.T) {
+	ctx := context.Background()
+	app, store, _ := setupTestApp(t)
+	_, tracks := seedHomeLibrary(t, app, store)
+	cookie := loginCookie(t, app)
+
+	// tracks[0] was played; tracks[1] stopped halfway (接着听).
+	if _, err := store.RecordPlaybackEvent(ctx, storage.PlaybackEventInput{ClientID: "test", ClientKind: "web", SessionID: "session-home-played-0", Seq: 1, Type: "start", TrackID: tracks[0], State: "playing", DurationMillis: 240000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordPlaybackEvent(ctx, storage.PlaybackEventInput{ClientID: "test", ClientKind: "web", SessionID: "session-home-played-1", Seq: 1, Type: "start", TrackID: tracks[1], State: "playing", DurationMillis: 240000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordPlaybackEvent(ctx, storage.PlaybackEventInput{ClientID: "test", ClientKind: "web", SessionID: "session-home-played-1", Seq: 2, Type: "pause", TrackID: tracks[1], PositionMillis: 64000, DurationMillis: 240000}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getHome(t, app, cookie, "/admin/home").Body.String()
+	played := strings.Index(body, `id="s-played"`)
+	resume := strings.Index(body, `id="s-resume"`)
+	if played < 0 || resume < 0 || played > resume {
+		t.Fatalf("最近播放 must render above 接着听 (played=%d resume=%d)", played, resume)
+	}
+	playedHTML, resumeHTML := body[played:resume], body[resume:]
+	if !strings.Contains(playedHTML, fmt.Sprintf(`data-track-id="%d"`, tracks[0])) {
+		t.Error("played track missing from 最近播放")
+	}
+	if strings.Contains(playedHTML, fmt.Sprintf(`data-track-id="%d"`, tracks[1])) {
+		t.Error("track under 接着听 must not repeat in 最近播放")
+	}
+	if strings.Contains(playedHTML, "data-resume-ms") || strings.Contains(playedHTML, "h-meter") {
+		t.Error("最近播放 rows must not carry a breakpoint or progress")
+	}
+	if !strings.Contains(resumeHTML, `data-resume-ms="64000"`) {
+		t.Error("接着听 row lost its breakpoint")
+	}
+	if strings.Contains(body, "首未听完") {
+		t.Error("resume count must not be shown")
+	}
+}
+
 func TestHomePageNoPlaybackHistory(t *testing.T) {
 	app, store, _ := setupTestApp(t)
 	seedHomeLibrary(t, app, store)
@@ -157,8 +201,12 @@ func TestHomePageNoPlaybackHistory(t *testing.T) {
 	if strings.Contains(body, "最近在听") {
 		t.Error("listening tab must be hidden without playback history")
 	}
-	if !strings.Contains(body, "还没有未听完的歌曲") {
-		t.Error("resume empty state missing")
+	// 最近播放 shows its empty state; 接着听 is left out entirely.
+	if !strings.Contains(body, "还没有播放记录") {
+		t.Error("recently played empty state missing")
+	}
+	if strings.Contains(body, `id="s-resume"`) {
+		t.Error("resume section must be hidden without unfinished tracks")
 	}
 }
 

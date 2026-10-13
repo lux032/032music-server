@@ -35,7 +35,7 @@ async function queueState(page) {
   });
 }
 
-test('无播放记录：隐藏“最近在听”页签，接着听显示空态', async ({ page }) => {
+test('无播放记录：隐藏“最近在听”页签，最近播放显示空态，不显示接着听', async ({ page }) => {
   await login(page);
   await page.goto('/admin/playback');
   // 清掉其他 spec（或本文件之前的运行）留下的播放记录。
@@ -44,7 +44,8 @@ test('无播放记录：隐藏“最近在听”页签，接着听显示空态',
   await expect(page.locator('[data-focus-tab="listening"]')).toHaveCount(0);
   await expect(page.locator('.h-hero[data-focus="recent"] [data-focus-tab="recent"]')).toBeVisible();
   await expect(page.locator('.h-rows')).toHaveCount(0);
-  await expect(page.locator('.h-empty-inline', { hasText: '还没有未听完的歌曲' })).toBeVisible();
+  await expect(page.locator('.h-empty-inline', { hasText: '还没有播放记录' })).toBeVisible();
+  await expect(page.locator('#s-resume')).toHaveCount(0);
 });
 
 test('渲染：页头、聚焦卡、各模块与页脚', async ({ page }) => {

@@ -51,15 +51,39 @@
     {{end}}
 
     <div class="h-duo h-section">
+      <div class="h-duo-main">
+      <section class="h-section" aria-labelledby="s-played">
+        <div class="h-section-head">
+          <h2 id="s-played">最近播放</h2>
+          <div class="h-tools"><a class="h-link" href="/admin/playback">播放记录 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
+        </div>
+        {{if .RecentPlayed}}
+        <div class="h-rows" data-track-list>
+          {{range .RecentPlayed}}
+          <article class="h-row" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}"{{with .Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.DurationMillis}}">
+            <button type="button" class="h-row-art row-play-btn" aria-label="播放 {{.Title}}">
+              {{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
+              <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
+            </button>
+            <div class="h-row-main">
+              <span class="h-row-title" title="{{.Title}}">{{.Title}}</span>
+              <span class="h-row-sub">{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></span>
+            </div>
+            <span class="h-row-when">{{formatAdminTime .LastPlayedAt}}</span>
+          </article>
+          {{end}}
+        </div>
+        {{else}}
+        <div class="h-empty-inline"><strong>还没有播放记录</strong><span>播放过的歌曲会出现在这里。</span></div>
+        {{end}}
+      </section>
+      {{if .ResumeShown}}
       <section class="h-section" aria-labelledby="s-resume">
         <div class="h-section-head">
           <h2 id="s-resume">接着听</h2>
-          {{if .Resume}}<span class="h-count">{{len .Resume}} 首未听完</span>{{end}}
-          <div class="h-tools"><a class="h-link" href="/admin/playback">播放记录 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
         </div>
-        {{if .Resume}}
         <div class="h-rows" data-track-list>
-          {{range .Resume}}
+          {{range .ResumeShown}}
           <article class="h-row" data-track-id="{{.Record.Track.ID}}" data-track-title="{{.Record.Track.Title}}" data-track-artist="{{.Record.Track.Artist}}" data-track-album="{{.Record.Track.Album}}" data-track-artwork="{{thumb .Record.Track.ArtworkURL 256}}"{{with .Record.Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Record.Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Record.Track.DurationMillis}}">
             <button type="button" class="h-row-art row-play-btn" data-resume-ms="{{.Record.PositionMillis}}" aria-label="从 {{formatDurationMillis .Record.PositionMillis}} 继续播放 {{.Record.Track.Title}}">
               {{if .Record.Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Record.Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
@@ -74,10 +98,9 @@
           </article>
           {{end}}
         </div>
-        {{else}}
-        <div class="h-empty-inline"><strong>还没有未听完的歌曲</strong><span>开始播放后，中途停下的歌曲会出现在这里，可以从断点继续。</span></div>
-        {{end}}
       </section>
+      {{end}}
+      </div>
       <section class="h-section" aria-labelledby="s-new">
         <div class="h-section-head">
           <h2 id="s-new">最近添加</h2>

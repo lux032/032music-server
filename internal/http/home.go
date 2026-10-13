@@ -146,6 +146,10 @@ type homePageData struct {
 	Hero         homeHeroView
 	Resume       []homeResumeRow
 	RecentAlbums []homeAlbumView
+	// HTML only (set by handleHome, not part of the JSON API): the left
+	// column of the duo is 最近播放 above a short 接着听.
+	RecentPlayed []storage.Track
+	ResumeShown  []homeResumeRow
 	WorksPanel   homeWorksPanel
 	SongsPanel   homeSongsPanel
 	Years        []homeYearBar
@@ -454,7 +458,48 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	data.Chrome = a.chromeFor(ctx, session, "home")
 	data.Today = homeToday()
+	if !data.Empty {
+		data.ResumeShown, data.RecentPlayed = a.homeListeningColumn(ctx, data.Resume)
+	}
 	a.render(w, http.StatusOK, "home.html", data)
+}
+
+const (
+	homeResumeShown      = 2
+	homeRecentPlayedRows = 5
+)
+
+// homeListeningColumn splits the duo's left column into 最近播放 (the most
+// recently played tracks, no progress) above 接着听 (the newest unfinished
+// tracks). Tracks shown under 接着听 are left out of 最近播放 so nothing is
+// listed twice. data.Resume itself stays untouched: the JSON API serves it.
+func (a *App) homeListeningColumn(ctx context.Context, resume []homeResumeRow) ([]homeResumeRow, []storage.Track) {
+	shown := resume
+	if len(shown) > homeResumeShown {
+		shown = shown[:homeResumeShown]
+	}
+	exclude := make(map[int64]bool, len(shown))
+	for _, row := range shown {
+		exclude[row.Record.TrackID] = true
+	}
+	// recentlyPlayed orders never-played tracks last, so over-fetch a little
+	// and skip them along with the excluded ones.
+	tracks, err := a.store.ListTracks(ctx, storage.Filters{Sort: "recentlyPlayed", Limit: homeRecentPlayedRows + homeResumeShown + 8})
+	if err != nil {
+		a.logger.Warn("home recently played rows", "error", err)
+		return shown, nil
+	}
+	played := make([]storage.Track, 0, homeRecentPlayedRows)
+	for _, track := range tracks {
+		if track.LastPlayedAt == "" || exclude[track.ID] {
+			continue
+		}
+		played = append(played, track)
+		if len(played) == homeRecentPlayedRows {
+			break
+		}
+	}
+	return shown, played
 }
 
 // handleHomeRandomSpotlight re-renders the “随机重温” pane for 换一张.
