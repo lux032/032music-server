@@ -153,6 +153,21 @@ The server itself serves HTTP. For public access, put it behind an HTTPS reverse
 - Forwarded addresses must be plain IPs without ports. The server walks `X-Forwarded-For` from right to left only when the connection peer is trusted. This setting currently affects login rate limiting, not TLS termination.
 - Media URLs contain credentials: avoid recording query strings in reverse-proxy access logs.
 
+### Acoustic analysis (optional)
+
+The optional `music-analyzer` container analyses the library locally (styles, moods, instruments, voice/danceability, arousal/valence and an acoustic embedding) for daily mixes and acoustic similarity. It is not deployed by default and the feature is off by default:
+
+```env
+MUSIC_SERVER_ANALYZER_URL=http://music-analyzer:8000
+MUSIC_SERVER_ANALYZER_TOKEN=replace-with-a-random-string
+```
+
+```sh
+docker compose --profile analysis up -d --build
+```
+
+Then turn it on under **Admin → Console → 声学分析**: switching it on starts the first full analysis (about 12–14 hours for 17k tracks on a 4-core NAS; an optional run window is available and it yields to transcodes and scans); afterwards new tracks are analysed after each scan. The sidecar mounts the music directory read-only, publishes no port and does not need AVX. Models come from MTG Essentia (CC BY-NC-SA 4.0, **non-commercial use only**) and are downloaded on first start. See [`analyzer/README.md`](analyzer/README.md) for proxy builds, resources and the API.
+
 ### Backups and upgrades
 
 Back up `.env` and the **entire data directory**, not just `music.db`. The database contains credential overrides and external-service secrets; protect backups accordingly. With SQLite WAL, copying only the database while the server is running may omit recent writes. The simplest consistent backup is made while the service is stopped:
@@ -222,6 +237,8 @@ These are **server process variables**, unless marked “Compose only”. Native
 | `MUSIC_SERVER_WORK_POSTER_BACKFILL` | `true` | Cache missing work posters about 30 seconds after startup, after scans, and after enrichment. `0/false/off/no` disable it; unknown values keep it on with a warning. Manual backfill remains available. |
 | `MUSIC_SERVER_WATCH_INTERVAL` | `60s` | Library watcher poll interval (plain seconds or durations like `5m`, minimum `10s`). A change that stays stable across two polls triggers an incremental scan automatically. Polling (stat only, no file reads) works on Docker Desktop bind mounts and SMB/NFS shares where inotify events never arrive. `0/off` disables it; the startup scan still runs. This is only the default: the "自动入库" (auto import) section on Admin → Console can toggle it and change the interval at runtime without a restart. The admin-page value takes precedence over the environment variable and can be reset to it. |
 | `MUSIC_SERVER_PURGE_MISSING` | `never` | What happens when a scan finds music files were deleted (Navidrome-style). Tracks whose files are gone — and albums/artists left without an available track — are hidden right away from browsing, the client API and sync; putting the files back and rescanning restores them with favorites and play history intact. `never` only hides; `always` permanently deletes them after every scan; `full` only after a full rescan. Permanent deletion also removes the tracks' favorites, play history and playlist entries; a scan that looks like an unmounted volume (more than half the files gone) never purges. This is only the default: the missing-files page (Admin → Console) can change it at runtime or purge manually, and its setting takes precedence. |
+| `MUSIC_SERVER_ANALYZER_URL` | empty | Acoustic analysis sidecar URL, e.g. `http://music-analyzer:8000` (compose `analysis` profile). Empty = not deployed; the feature switch lives on the admin page and is off by default. Must be an http(s) URL without credentials. |
+| `MUSIC_SERVER_ANALYZER_TOKEN` | empty | Shared token for the analyzer; must match the sidecar's `ANALYZER_TOKEN` (compose passes the same variable to both). |
 
 Positive integer cache/concurrency settings fall back to defaults for invalid or nonpositive values. Online metadata settings and service keys are configured in the web interface and stored in SQLite, not in `.env`.
 

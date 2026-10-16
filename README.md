@@ -183,6 +183,22 @@ Sonos 编组只需填任意一台音箱的 IP，服务端会通过拓扑自动�
 - 验证：`curl -H 'Authorization: Bearer YOUR_API_TOKEN' http://localhost:4533/api/v1/cast/devices` 应列出音箱；网页播放栏的投送按钮能看到房间名，即为配置成功。
 - MusicBridge App 由手机直接控制 Sonos，不受上述设置影响；音箱拉流使用 App 中配置的服务器地址。
 
+### 声学分析（可选）
+
+可选的 `music-analyzer` 容器用本地模型分析曲库的风格、情绪、乐器、人声/可舞性、唤醒度/效价与声学向量，为每日推荐和声学相似度提供依据。默认不部署、功能默认关闭：
+
+```env
+# .env：两个容器共用同一个随机 Token
+MUSIC_SERVER_ANALYZER_URL=http://music-analyzer:8000
+MUSIC_SERVER_ANALYZER_TOKEN=请替换为随机字符串
+```
+
+```sh
+docker compose --profile analysis up -d --build
+```
+
+然后在 **管理 → 控制台 → 声学分析** 打开开关：打开即开始首次全量分析（1.7 万首在 4 核 NAS 上约 12–14 小时，可限制运行时间窗，有转码或扫描时自动让路），之后新入库的歌曲在扫描完成后自动分析。分析服务只读挂载音乐目录、不发布端口，不需要 AVX。模型来自 MTG Essentia（CC BY-NC-SA 4.0，**仅限非商业用途**），首次启动时下载。需要代理构建镜像、资源占用与接口说明见 [`analyzer/README.md`](analyzer/README.md)。
+
 ### 备份与升级
 
 备份 `.env` 和**整个数据目录**，不要只备份 `music.db`。数据库含凭据覆盖值和外部服务密钥，应保护备份。SQLite 使用 WAL，运行期间单独复制数据库可能漏掉近期写入；最简单的一致性备份方式是先停服：
@@ -256,6 +272,8 @@ docker compose logs --tail=100 music-server
 | `MUSIC_SERVER_CAST_BASE_URL` | 自动 | Sonos/DLNA 拉取音频与封面所用的局域网地址，如 `http://192.168.1.10:4533`。未设置时：浏览器访问的私网 IP 与音箱同网段则沿用该地址，否则取通往音箱的本机网卡地址 + 监听端口。Docker 桥接网络下建议显式设置。 |
 | `MUSIC_SERVER_CAST_DEVICES` | 空 | 额外探测的投送设备，逗号分隔：Sonos 主机 IP（默认端口 1400）或设备描述 URL。容器内收不到组播时使用。 |
 | `MUSIC_SERVER_CAST_SSDP` | `true` | SSDP 组播发现。`0/false/off/no` 关闭后只使用 `MUSIC_SERVER_CAST_DEVICES`。Docker 中使用组播需 `network_mode: host`。 |
+| `MUSIC_SERVER_ANALYZER_URL` | 空 | 声学分析服务地址，如 `http://music-analyzer:8000`（compose 的 `analysis` profile）。为空表示未部署；功能开关在管理页，默认关闭。须为不含账号密码的 http(s) 地址，否则拒绝启动。 |
+| `MUSIC_SERVER_ANALYZER_TOKEN` | 空 | 访问分析服务的共享 Token，须与分析容器的 `ANALYZER_TOKEN` 一致（compose 已用同一变量传给两个容器）。 |
 
 缓存容量/并发数要求正整数，非法或非正数回退默认值。在线元数据设置和服务密钥通过 Web 管理页配置，保存在 SQLite，不是 `.env` 配置项。
 
@@ -337,6 +355,7 @@ docker compose logs --tail=100 music-server
 | `GET` | `/api/v1/tracks/{id}/transcode.{mp3\|ogg\|flac}` | 转码媒体。 |
 | `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 元数据相似度与路径（JSON 凭据）。 |
 | `POST` | `/api/v1/enrichment/run` | 启动增强；`/api/v1/enrichment/jobs` 和 `/{id}` 查状态，POST `/{id}/cancel` 取消。 |
+| `GET` | `/api/v1/audio-analysis` | 声学分析状态：开关、进度、校准、分析服务信息（`capabilities.features.audioAnalysis` 表示已部署且已开启）。 |
 
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 
