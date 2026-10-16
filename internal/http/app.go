@@ -21,6 +21,7 @@ import (
 
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
+	"github.com/lux032/032music-server/internal/dailymix"
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/scanner"
@@ -68,6 +69,8 @@ type App struct {
 	audioAnalysis *analysis.Service
 	// aiTagging is the AI (OpenAI-compatible) mood/style tagging worker.
 	aiTagging *tagging.Service
+	// dailyMixes generates the daily recommendation mixes (nil hides them).
+	dailyMixes *dailymix.Service
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -183,6 +186,7 @@ type dashboardPageData struct {
 	PurgeMissing   purgeMissingView
 	AudioAnalysis  audioAnalysisView
 	AITagging      aiTaggingView
+	DailyMixes     string
 	Notice         string
 }
 
@@ -327,6 +331,15 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/ai/tagging", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAITaggingStatus)))
 	mux.Handle("GET /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackTags)))
 	mux.Handle("PUT /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIPutTrackTags)))
+	mux.Handle("GET /api/v1/daily-mixes", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDailyMixes)))
+	mux.Handle("GET /api/v1/daily-mixes/settings", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDailyMixSettings)))
+	mux.Handle("PATCH /api/v1/daily-mixes/settings", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIPatchDailyMixSettings)))
+	mux.Handle("GET /api/v1/daily-mixes/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDailyMix)))
+	mux.Handle("PUT /api/v1/daily-mixes/{id}/rating", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRateDailyMix)))
+	mux.Handle("POST /api/v1/daily-mixes/{id}/regenerate", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRegenerateDailyMix)))
+	mux.Handle("POST /api/v1/daily-mixes/{id}/save", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPISaveDailyMix)))
+	mux.Handle("PUT /api/v1/tracks/{id}/recommendation-block", a.requireAPIOrAdmin(a.handleAPIRecommendationBlock(true)))
+	mux.Handle("DELETE /api/v1/tracks/{id}/recommendation-block", a.requireAPIOrAdmin(a.handleAPIRecommendationBlock(false)))
 	mux.Handle("GET /api/v1/home", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHome)))
 	mux.Handle("GET /api/v1/home/spotlight/random", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHomeRandomSpotlight)))
 	mux.Handle("GET /api/v1/home/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHomeWorks)))
@@ -462,6 +475,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+aiTaggingPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAITaggingRetry)))
 	mux.Handle("POST "+aiTaggingPath+"/sample", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSample)))
 	mux.Handle("POST "+aiTaggingPath+"/sample/cancel", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSampleCancel)))
+	mux.Handle("GET "+dailyMixPath, a.requireAdmin(http.HandlerFunc(a.handleDailyMixPage)))
+	mux.Handle("POST "+dailyMixPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveDailyMixSettings)))
+	mux.Handle("POST "+dailyMixPath+"/regenerate", a.requireAdmin(http.HandlerFunc(a.handleRegenerateDailyMixesToday)))
+	mux.Handle("POST "+dailyMixPath+"/{id}/replace", a.requireAdmin(http.HandlerFunc(a.handleAdminReplaceDailyMix)))
+	mux.Handle("POST /admin/tracks/{id}/recommendation-block", a.requireAdmin(http.HandlerFunc(a.handleAdminBlockTrack)))
 	mux.Handle("GET /admin/tracks/{id}/tags", a.requireAdmin(http.HandlerFunc(a.handleTrackTagsPage)))
 	mux.Handle("POST /admin/tracks/{id}/tags", a.requireAdmin(http.HandlerFunc(a.handleSaveTrackTags)))
 	mux.Handle("POST /admin/tracks/{id}/tags/retag", a.requireAdmin(http.HandlerFunc(a.handleRetagTrack)))
@@ -768,6 +786,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PurgeMissing:   a.purgeMissingView(r.Context()),
 		AudioAnalysis:  a.dashboardAudioAnalysisView(r.Context()),
 		AITagging:      a.dashboardAITaggingView(r.Context()),
+		DailyMixes:     a.dashboardDailyMixSummary(r.Context()),
 		Notice:         r.URL.Query().Get("notice"),
 	})
 }

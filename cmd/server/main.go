@@ -12,6 +12,7 @@ import (
 
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
+	"github.com/lux032/032music-server/internal/dailymix"
 	"github.com/lux032/032music-server/internal/enrichment"
 	webhttp "github.com/lux032/032music-server/internal/http"
 	"github.com/lux032/032music-server/internal/lastfm"
@@ -127,6 +128,11 @@ func run() error {
 	})
 	app.SetAITagging(taggingService)
 	taggingService.Start(rootCtx)
+	// Daily mixes: pre-generated at the configured hour (05:00 UTC+8 by default) and
+	// generated on the first request otherwise; titles by the model when configured.
+	dailyMixService := dailymix.New(db, logger, dailymix.Options{})
+	app.SetDailyMixes(dailyMixService)
+	dailyMixService.Start(rootCtx)
 	analysisService.Start(rootCtx)
 	scannerManager.SetOnComplete(func() {
 		enrichmentManager.StartAuto(rootCtx)
@@ -209,6 +215,7 @@ func run() error {
 		lastFMService.Wait()
 		analysisService.Wait()
 		taggingService.Wait()
+		dailyMixService.Wait()
 		app.WaitTranscodes()
 		close(workersDone)
 	}()

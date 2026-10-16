@@ -51,6 +51,11 @@
         <div><strong>AI 打标</strong><span id="at-summary">{{.AITagging.SummaryText}}</span></div>
         <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
       </a>
+      <a href="/admin/daily-mixes" id="daily-mix-card">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>
+        <div><strong>每日推荐</strong><span>{{.DailyMixes}}</span></div>
+        <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
+      </a>
     </section>
 
     <section class="console-grid">
