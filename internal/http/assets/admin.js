@@ -590,3 +590,65 @@ document.addEventListener('click', (event) => {
   document.addEventListener('032:pjax-applied', () => { tick(); });
   schedule();
 })();
+
+// ---------------------------------------------------- AI tagging status poller
+// Same pattern as the acoustic analysis poller: 5 s on the AI tagging page,
+// 15 s for the dashboard card; labels come from buildAITaggingView.
+(function () {
+  'use strict';
+  if (window.__032_ai_tagging_initialized) return;
+  window.__032_ai_tagging_initialized = true;
+  let timer = null;
+
+  const setLine = (id, text) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.hidden = !text;
+  };
+
+  async function refresh() {
+    const root = document.getElementById('ai-tagging-status');
+    const summary = document.getElementById('at-summary');
+    if (!root && !summary) return;
+    try {
+      const response = await fetch('/admin/ai-tagging/status', { credentials: 'same-origin' });
+      if (!response.ok) return;
+      const { view } = await response.json();
+      if (summary) summary.textContent = view.summaryText || '';
+      if (!root) return;
+      root.dataset.tone = view.tone || 'off';
+      const state = document.getElementById('at-state');
+      if (state) state.textContent = view.stateLabel || '';
+      setLine('at-state-detail', view.stateDetail);
+      const bar = document.getElementById('at-progress');
+      if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(view.percent) || 0))}%`;
+      const progress = document.getElementById('at-progress-text');
+      if (progress) progress.textContent = view.progressText || '';
+      setLine('at-current', view.currentText);
+      setLine('at-estimate', view.estimateText);
+      setLine('at-review', view.reviewText);
+      setLine('at-failure', view.failureText);
+      setLine('at-sample', view.sampleText);
+      setLine('at-last-error', view.lastErrorText);
+    } catch (_) { /* keep the last rendered state; retry on the next tick */ }
+  }
+
+  function schedule() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (document.hidden) return;
+    if (document.getElementById('ai-tagging-status')) timer = setTimeout(tick, 5000);
+    else if (document.getElementById('at-summary')) timer = setTimeout(tick, 15000);
+  }
+
+  async function tick() {
+    await refresh();
+    schedule();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (timer) { clearTimeout(timer); timer = null; } } else { tick(); }
+  });
+  document.addEventListener('032:pjax-applied', () => { tick(); });
+  schedule();
+})();

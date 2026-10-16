@@ -26,6 +26,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"home": true, "seriesTracks": true, "workPosters": true,
 			"series": true, "workSeriesInfo": true,
 			"audioAnalysis": a.audioAnalysisEnabled(r.Context()),
+			"trackTags":     a.aiTaggingEnabled(r.Context()),
 		},
 		"home": map[string]any{
 			"endpoint":     "/api/v1/home",

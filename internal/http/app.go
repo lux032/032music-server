@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"runtime/debug"
@@ -24,6 +25,7 @@ import (
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/tagging"
 )
 
 type App struct {
@@ -64,6 +66,8 @@ type App struct {
 	homeRotation *homeRotation
 	// audioAnalysis is the optional acoustic analysis worker (nil hides it).
 	audioAnalysis *analysis.Service
+	// aiTagging is the AI (OpenAI-compatible) mood/style tagging worker.
+	aiTagging *tagging.Service
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -178,6 +182,7 @@ type dashboardPageData struct {
 	LibraryWatch   libraryWatchView
 	PurgeMissing   purgeMissingView
 	AudioAnalysis  audioAnalysisView
+	AITagging      aiTaggingView
 	Notice         string
 }
 
@@ -188,11 +193,17 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	}
 
 	templates, err := template.New("admin").Funcs(template.FuncMap{
-		"albumCard":              albumCardContext,
-		"albumSelectionBar":      albumSelectionBarContext,
-		"artistFavorite":         artistFavoriteContext,
-		"albumKindLabel":         albumKindLabel,
-		"formatDurationMillis":   formatDurationMillis,
+		"albumCard":            albumCardContext,
+		"albumSelectionBar":    albumSelectionBarContext,
+		"artistFavorite":       artistFavoriteContext,
+		"albumKindLabel":       albumKindLabel,
+		"formatDurationMillis": formatDurationMillis,
+		"pct":                  func(v float64) string { return strconv.Itoa(int(math.Round(v*100))) + "%" },
+		"tagLabel":             tagging.TagLabel,
+		"moodNegative": func(id string) bool {
+			t, ok := tagging.MoodByID(id)
+			return ok && t.Negative
+		},
 		"audioSpec":              audioSpecLabel,
 		"albumSpec":              albumSpecLabel,
 		"firstGenre":             firstGenre,
@@ -313,6 +324,9 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/status", a.requireAPIOrAdmin(http.HandlerFunc(a.handleStatus)))
 	mux.Handle("GET /api/v1/capabilities", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCapabilities)))
 	mux.Handle("GET /api/v1/audio-analysis", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAudioAnalysisStatus)))
+	mux.Handle("GET /api/v1/ai/tagging", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAITaggingStatus)))
+	mux.Handle("GET /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackTags)))
+	mux.Handle("PUT /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIPutTrackTags)))
 	mux.Handle("GET /api/v1/home", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHome)))
 	mux.Handle("GET /api/v1/home/spotlight/random", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHomeRandomSpotlight)))
 	mux.Handle("GET /api/v1/home/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHomeWorks)))
@@ -439,6 +453,18 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+audioAnalysisPath+"/pause", a.requireAdmin(a.handleAudioAnalysisPause(true)))
 	mux.Handle("POST "+audioAnalysisPath+"/resume", a.requireAdmin(a.handleAudioAnalysisPause(false)))
 	mux.Handle("POST "+audioAnalysisPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAudioAnalysisRetry)))
+	mux.Handle("GET "+aiTaggingPath, a.requireAdmin(http.HandlerFunc(a.handleAITaggingPage)))
+	mux.Handle("GET "+aiTaggingPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleAITaggingStatus)))
+	mux.Handle("POST "+aiTaggingPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveAITagging)))
+	mux.Handle("POST "+aiTaggingPath+"/test", a.requireAdmin(http.HandlerFunc(a.handleAITaggingTest)))
+	mux.Handle("POST "+aiTaggingPath+"/pause", a.requireAdmin(a.handleAITaggingPause(true)))
+	mux.Handle("POST "+aiTaggingPath+"/resume", a.requireAdmin(a.handleAITaggingPause(false)))
+	mux.Handle("POST "+aiTaggingPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAITaggingRetry)))
+	mux.Handle("POST "+aiTaggingPath+"/sample", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSample)))
+	mux.Handle("POST "+aiTaggingPath+"/sample/cancel", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSampleCancel)))
+	mux.Handle("GET /admin/tracks/{id}/tags", a.requireAdmin(http.HandlerFunc(a.handleTrackTagsPage)))
+	mux.Handle("POST /admin/tracks/{id}/tags", a.requireAdmin(http.HandlerFunc(a.handleSaveTrackTags)))
+	mux.Handle("POST /admin/tracks/{id}/tags/retag", a.requireAdmin(http.HandlerFunc(a.handleRetagTrack)))
 	mux.Handle("POST /admin/library/missing/purge", a.requireAdmin(http.HandlerFunc(a.handlePurgeMissingFiles)))
 	mux.Handle("POST /admin/settings/purge-missing", a.requireAdmin(http.HandlerFunc(a.handleSavePurgeMissing)))
 	mux.Handle("POST /admin/settings/purge-missing/reset", a.requireAdmin(http.HandlerFunc(a.handleResetPurgeMissing)))
@@ -741,6 +767,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		LibraryWatch:   a.libraryWatchView(r.Context()),
 		PurgeMissing:   a.purgeMissingView(r.Context()),
 		AudioAnalysis:  a.dashboardAudioAnalysisView(r.Context()),
+		AITagging:      a.dashboardAITaggingView(r.Context()),
 		Notice:         r.URL.Query().Get("notice"),
 	})
 }

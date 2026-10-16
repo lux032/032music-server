@@ -523,8 +523,7 @@ a.console-stats > *:hover, .console-stats > a:hover { background: var(--bg-soft)
 .console-note p:not(.kicker) { color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.7; }
 .console-note a { font-weight: 600; }
 
-.client-feature-links { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 0 0 26px; }
-@media (max-width: 1280px) { .client-feature-links { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.client-feature-links { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 0 0 26px; }
 .client-feature-links > a {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) 18px;
@@ -3588,3 +3587,47 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .audio-analysis-failure-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .audio-analysis-failure-list li { display: grid; gap: 2px; padding: 10px 0; border-top: 1px solid var(--line); }
 .audio-analysis-failure-list code, .audio-analysis-failure-list small { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+
+/* AI 打标 */
+.ai-tagging-fields { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; }
+.ai-tagging-fields legend { margin-bottom: 6px; color: var(--text); font-weight: 550; }
+.ai-tagging-fields label { display: grid; gap: 4px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.ai-tagging-fields .inline { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.ai-tagging-fields label.ai-inline-check { display: flex; align-items: flex-start; gap: 8px; }
+.ai-tagging-fields label.ai-inline-check input { margin-top: 3px; }
+.ai-tagging-test, .ai-tagging-sample-form, .track-tags-retag { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0 0; }
+.ai-tagging-sample-form label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.ai-tagging-sample-form select { width: auto; }
+.ai-tagging-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin: 6px 0 0; }
+.ai-tagging-metrics div { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.ai-tagging-metrics dt { color: var(--muted); font-size: var(--fs-xs); }
+.ai-tagging-metrics dd { margin: 2px 0 0; color: var(--text); font-size: var(--fs-lg, 1.15rem); font-weight: 600; }
+.ai-tagging-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.ai-tagging-table th, .ai-tagging-table td { padding: 8px 6px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+.ai-tagging-table th { color: var(--muted); font-weight: 550; font-size: var(--fs-xs); }
+.ai-tagging-table td small { display: block; color: var(--muted); font-size: var(--fs-xs); }
+.ai-tagging-table tr.ai-diff td:first-child { box-shadow: inset 3px 0 0 var(--warning, var(--accent)); }
+.ai-tagging-compare summary { cursor: pointer; color: var(--accent); font-size: var(--fs-sm); }
+.ai-tagging-usage { overflow-x: auto; }
+.ai-tagging-recent-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.ai-tagging-recent-list li { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+.ai-tagging-recent-list small { color: var(--muted); font-size: var(--fs-xs); }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft, var(--surface-2)); color: var(--text); font-size: var(--fs-xs); line-height: 1.7; }
+.ai-chip small { color: var(--muted); }
+.ai-chip-style { background: transparent; border: 1px solid var(--line-strong); }
+.ai-chip-negative { background: transparent; border: 1px dashed var(--line-strong); color: var(--muted); }
+.ai-chips-large .ai-chip { font-size: var(--fs-sm); padding: 4px 12px; }
+.ai-raw { display: inline-block; margin: 0 10px 4px 0; color: var(--text-secondary); font-size: var(--fs-xs); }
+.ai-tagging-evidence { display: grid; gap: 10px; margin: 0; }
+.ai-tagging-evidence div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; }
+.ai-tagging-evidence dt { color: var(--muted); font-size: var(--fs-xs); padding-top: 3px; }
+.ai-tagging-evidence dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; }
+.ai-tagging-evidence dd small { color: var(--muted); font-size: var(--fs-xs); }
+@media (max-width: 640px) { .ai-tagging-evidence div { grid-template-columns: 1fr; gap: 4px; } }
+.track-tags-form { display: grid; gap: 14px; margin: 0; }
+.track-tags-form fieldset { margin: 0; padding: 0; border: 0; }
+.track-tags-form legend { margin-bottom: 8px; color: var(--text); font-weight: 550; }
+.track-tags-options { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.track-tags-options label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.track-tags-negative { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }

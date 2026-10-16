@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>AI 标签 · {{.Info.Title}} · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main track-tags-main">
+    <header class="browser-header">
+      <div>
+        <p class="kicker">AI 标签</p>
+        <h1>{{.Info.Title}}</h1>
+        <p class="result-count">{{.Info.Artist}}{{if .Info.Album}} · <a href="/admin/albums/{{.Info.AlbumID}}">{{.Info.Album}}</a>{{end}}{{if .Info.Year}} · {{.Info.Year}}{{end}}</p>
+      </div>
+      <a class="secondary-button" href="{{if .ReturnTo}}{{.ReturnTo}}{{else}}/admin/ai-tagging{{end}}">返回</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card">
+      <p class="kicker">当前生效</p>
+      {{if .Effective}}
+      <span class="ai-chips ai-chips-large">{{range .Effective}}<span class="ai-chip{{if eq .Kind "style"}} ai-chip-style{{end}}{{if .Negative}} ai-chip-negative{{end}}" title="来源：{{if eq .Source "user"}}人工修正{{else if eq .Source "llm"}}AI{{else}}声学{{end}}">{{.Label}}{{if eq .Source "user"}} ✎{{end}}</span>{{end}}</span>
+      <p class="result-count">✎ 为人工修正；虚线框的是内部负面标记（不对外展示，只用于把这首歌排除出正向主题）。</p>
+      {{else}}
+      <p class="result-count">还没有标签。{{if not .Meta}}开启 AI 打标后会自动处理。{{end}}</p>
+      {{end}}
+    </section>
+
+    {{with .Meta}}
+    <section class="feature-card">
+      <p class="kicker">AI 结果</p>
+      <span class="ai-chips">{{range $.LLM}}<span class="ai-chip{{if eq .Kind "style"}} ai-chip-style{{end}}{{if .Negative}} ai-chip-negative{{end}}">{{.Label}} <small>{{if eq .Kind "mood"}}{{.WeightPct}}% · {{end}}把握 {{.ConfPct}}%</small></span>{{end}}</span>
+      <p class="audio-analysis-line">
+        {{if .Energy}}能量 {{.Energy}}/5 · {{end}}{{if eq .Vocal "vocal"}}人声{{else if eq .Vocal "instrumental"}}纯音乐{{else if eq .Vocal "mixed"}}少量人声{{end}}{{if eq .Idol "yes"}} · 偶像{{else if eq .Idol "unsure"}} · 是否偶像不确定{{end}}
+      </p>
+      <p class="audio-analysis-line audio-analysis-meta">模型 <code>{{.Model}}</code>{{if .ReviewedBy}}（已复核）{{end}} · {{formatAdminTime .TaggedAt}} · {{if .UsedAudio}}含声学证据{{else}}无声学证据{{end}} · {{if .UsedLyrics}}含歌词片段{{else}}无歌词{{end}}{{if .PromptTokens}} · 输入 {{.PromptTokens}} / 输出 {{.CompletionTokens}} token{{end}}</p>
+      {{if $.ReviewText}}<p class="audio-analysis-line">需要复核的原因：{{$.ReviewText}}</p>{{end}}
+    </section>
+    {{end}}
+
+    {{with .Evidence}}
+    <section class="feature-card">
+      <p class="kicker">声学证据</p>
+      <dl class="ai-tagging-evidence">
+        <div><dt>风格（词表）</dt><dd>{{range .StyleHints}}<span class="ai-chip ai-chip-style">{{tagLabel "style" .Label}} {{printf "%.2f" .P}}</span>{{end}}{{if .Locked}}<small>锁定：{{range $i, $l := .Locked}}{{if $i}}、{{end}}{{tagLabel "style" $l}}{{end}}</small>{{end}}</dd></div>
+        <div><dt>情绪参考</dt><dd>{{range .MoodHints}}<span class="ai-chip">{{tagLabel "mood" .Label}} {{printf "%.2f" .P}}</span>{{end}}</dd></div>
+        <div><dt>Discogs 风格</dt><dd>{{range .Genres}}<span class="ai-raw">{{.Label}} {{printf "%.2f" .P}}</span>{{end}}</dd></div>
+        <div><dt>情绪/主题</dt><dd>{{range .MoodTheme}}<span class="ai-raw">{{.Label}} {{printf "%.2f" .P}}</span>{{end}}</dd></div>
+        {{if .Instruments}}<div><dt>乐器</dt><dd>{{range .Instruments}}<span class="ai-raw">{{.Label}} {{printf "%.2f" .P}}</span>{{end}}</dd></div>{{end}}
+        <div><dt>唤醒度 / 效价</dt><dd>{{with .Arousal}}{{printf "%.1f" .}}{{else}}—{{end}} / {{with .Valence}}{{printf "%.1f" .}}{{else}}—{{end}}（1–9）· 能量 {{.Energy}}/5</dd></div>
+      </dl>
+    </section>
+    {{end}}
+
+    <section class="feature-card">
+      <p class="kicker">人工修正</p>
+      <form class="track-tags-form" method="post" action="/admin/tracks/{{.Info.TrackID}}/tags">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="returnTo" value="{{.ReturnTo}}">
+        <fieldset>
+          <legend>情绪（1–3 个）</legend>
+          <div class="track-tags-options">{{range .MoodOptions}}<label title="{{.Hint}}"><input type="checkbox" name="mood" value="{{.ID}}" {{if .Checked}}checked{{end}}> {{.Label}}</label>{{end}}</div>
+          <div class="track-tags-options track-tags-negative">{{range .NegOptions}}<label title="{{.Hint}}"><input type="checkbox" name="mood" value="{{.ID}}" {{if .Checked}}checked{{end}}> {{.Label}}（内部）</label>{{end}}</div>
+        </fieldset>
+        <fieldset>
+          <legend>风格（1–3 个）</legend>
+          <div class="track-tags-options">{{range .StyleOptions}}<label title="{{.Hint}}"><input type="checkbox" name="style" value="{{.ID}}" {{if .Checked}}checked{{end}}> {{.Label}}</label>{{end}}</div>
+        </fieldset>
+        <div class="form-actions">
+          {{if .HasUser}}<button class="secondary-button" name="action" value="reset">恢复自动结果</button>{{end}}
+          <button name="action" value="save">保存修正</button>
+        </div>
+      </form>
+      <form class="track-tags-retag" method="post" action="/admin/tracks/{{.Info.TrackID}}/tags/retag">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="returnTo" value="{{.ReturnTo}}">
+        <button class="secondary-button">重新打标</button>
+        <span class="result-count">丢弃本曲的 AI 结果并重新排队（人工修正保留）。</span>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

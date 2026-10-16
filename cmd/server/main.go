@@ -17,6 +17,7 @@ import (
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/tagging"
 	"github.com/lux032/032music-server/internal/upnp"
 )
 
@@ -97,8 +98,13 @@ func run() error {
 	if cfg.AnalyzerURL != "" {
 		analyzerClient = analysis.NewHTTPClient(cfg.AnalyzerURL, cfg.AnalyzerToken)
 	}
+	// AI tagging (OpenAI-compatible model service, configured on the admin page):
+	// off by default; once enabled it tags the whole library, then new tracks as
+	// soon as their acoustic analysis is saved (or right away when analysis is off).
+	var taggingService *tagging.Service
 	analysisService := analysis.New(db, logger, analysis.Options{
-		Client: analyzerClient,
+		Client:     analyzerClient,
+		OnAnalyzed: func() { taggingService.Wake() },
 		Busy: func() string {
 			if app.TranscodesActive() > 0 {
 				return "有转码进行中"
@@ -110,11 +116,23 @@ func run() error {
 		},
 	})
 	app.SetAudioAnalysis(analysisService)
+	taggingService = tagging.New(db, logger, tagging.Options{
+		AudioActive: func(ctx context.Context) bool {
+			if !analysisService.Configured() {
+				return false
+			}
+			settings, err := db.AudioAnalysisSettings(ctx)
+			return err == nil && settings.Enabled
+		},
+	})
+	app.SetAITagging(taggingService)
+	taggingService.Start(rootCtx)
 	analysisService.Start(rootCtx)
 	scannerManager.SetOnComplete(func() {
 		enrichmentManager.StartAuto(rootCtx)
 		app.GCCustomImages(rootCtx)
 		analysisService.Wake()
+		taggingService.Wake()
 	})
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
@@ -190,6 +208,7 @@ func run() error {
 		enrichmentManager.Wait()
 		lastFMService.Wait()
 		analysisService.Wait()
+		taggingService.Wait()
 		app.WaitTranscodes()
 		close(workersDone)
 	}()

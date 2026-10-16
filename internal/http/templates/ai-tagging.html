@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>AI 打标 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main">
+    <header class="browser-header">
+      <div>
+        <h1>AI 打标</h1>
+        <p class="result-count">把声学分析结果、元数据和歌词片段交给大模型，只从固定词表中为每首歌选择情绪与风格，供每日推荐使用。模型不选曲、不改动曲库；结果可在曲目的“AI 标签”页人工修正。</p>
+      </div>
+      <a class="secondary-button" href="/admin">返回控制台</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card audio-analysis-status" id="ai-tagging-status" data-tone="{{.View.Tone}}" aria-live="polite">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">状态</p>
+          <h2 id="at-state">{{.View.StateLabel}}</h2>
+          <p id="at-state-detail" class="result-count"{{if not .View.StateDetail}} hidden{{end}}>{{.View.StateDetail}}</p>
+        </div>
+        {{if and .Status.Configured .Status.Enabled}}
+        <form method="post" action="/admin/ai-tagging/{{if .Status.Paused}}resume{{else}}pause{{end}}">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">{{if .Status.Paused}}继续{{else}}暂停{{end}}</button>
+        </form>
+        {{end}}
+      </div>
+      <div class="progress"><span id="at-progress" style="width:{{.View.Percent}}%"></span></div>
+      <p id="at-progress-text" class="audio-analysis-line">{{.View.ProgressText}}</p>
+      <p id="at-current" class="audio-analysis-line audio-analysis-current"{{if not .View.CurrentText}} hidden{{end}}>{{.View.CurrentText}}</p>
+      <p id="at-estimate" class="audio-analysis-line"{{if not .View.EstimateText}} hidden{{end}}>{{.View.EstimateText}}</p>
+      <p id="at-review" class="audio-analysis-line"{{if not .View.ReviewText}} hidden{{end}}>{{.View.ReviewText}}</p>
+      <p id="at-failure" class="audio-analysis-line"{{if not .View.FailureText}} hidden{{end}}>{{.View.FailureText}}</p>
+      <p id="at-sample" class="audio-analysis-line"{{if not .View.SampleText}} hidden{{end}}>{{.View.SampleText}}</p>
+      <p id="at-last-error" class="audio-analysis-line audio-analysis-error"{{if not .View.LastErrorText}} hidden{{end}}>{{.View.LastErrorText}}</p>
+      {{if .UsageTotal}}<p class="audio-analysis-line audio-analysis-meta">{{.UsageTotal}}</p>{{end}}
+    </section>
+
+    <section class="feature-card audio-analysis-settings">
+      <p class="kicker">设置</p>
+      <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/ai-tagging/settings" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label class="switch"><input type="checkbox" name="enabled" {{if .Status.Enabled}}checked{{end}}> 开启 AI 打标</label>
+        <p class="result-count">默认关闭。{{if .FirstEnabled}}首次开启于 {{formatAdminTime .FirstEnabled}}；{{end}}开启后立即开始首次全量打标，之后新入库或信息变化的歌曲会自动打标。声学分析开启时，每首歌等声学分析完成后再打标；未开启时只用元数据和歌词。关闭只停止打标，已有标签会保留。</p>
+
+        <fieldset class="ai-tagging-fields">
+          <legend>模型服务（OpenAI 兼容接口）</legend>
+          <label>接口地址
+            <input name="base_url" value="{{.BaseURL}}" list="ai-base-urls" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" spellcheck="false">
+          </label>
+          <datalist id="ai-base-urls">
+            <option value="https://generativelanguage.googleapis.com/v1beta/openai">Google Gemini</option>
+            <option value="https://api.openai.com/v1">OpenAI</option>
+            <option value="https://api.deepseek.com/v1">DeepSeek</option>
+            <option value="https://dashscope.aliyuncs.com/compatible-mode/v1">通义千问</option>
+            <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+            <option value="http://127.0.0.1:11434/v1">Ollama（本地）</option>
+          </datalist>
+          <label>API Key
+            <input type="password" name="api_key" value="" placeholder="{{if .KeySet}}已设置（留空保持不变）{{else}}未设置{{end}}" autocomplete="new-password" spellcheck="false">
+          </label>
+          {{if .KeySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_api_key"> 清除已保存的 API Key</label>{{end}}
+          <div class="inline">
+            <label>主模型
+              <input name="model" value="{{.Model}}" placeholder="例如 gemini-2.5-flash-lite" spellcheck="false">
+            </label>
+            <label>复核模型（可选）
+              <input name="review_model" value="{{.ReviewModel}}" placeholder="例如 gemini-2.5-flash" spellcheck="false">
+            </label>
+          </div>
+          <label class="ai-inline-check"><input type="checkbox" name="review_enabled" {{if .ReviewEnabled}}checked{{end}}> 启用复核：主模型把握低、无法判断是否偶像、情绪与唤醒度矛盾时，交给复核模型重新打标（预计 5–15% 的曲目）</label>
+          <label>代理（可选）
+            <input type="password" name="proxy_url" value="" placeholder="{{if .ProxySet}}已设置（留空保持不变）{{else}}例如 http://192.168.1.2:7890；留空使用容器的 HTTP(S)_PROXY{{end}}" autocomplete="new-password" spellcheck="false">
+          </label>
+          {{if .ProxySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_proxy"> 清除已保存的代理</label>{{end}}
+        </fieldset>
+
+        <fieldset class="ai-tagging-fields">
+          <legend>打标</legend>
+          <label class="ai-inline-check"><input type="checkbox" name="include_lyrics" {{if .IncludeLyrics}}checked{{end}}> 发送歌词片段（每首最多约 600 字，情绪判断更准；歌词会发送给模型服务）</label>
+          <div class="inline">
+            <label>每分钟请求数上限
+              <input type="number" name="rpm" min="1" max="10000" value="{{.RPM}}">
+            </label>
+            <label>并发数
+              <input type="number" name="concurrency" min="1" max="16" value="{{.Concurrency}}">
+            </label>
+            <label>思考强度
+              <select name="reasoning_effort">
+                <option value="" {{if eq .Reasoning ""}}selected{{end}}>不发送（模型默认）</option>
+                <option value="none" {{if eq .Reasoning "none"}}selected{{end}}>none（关闭思考）</option>
+                <option value="minimal" {{if eq .Reasoning "minimal"}}selected{{end}}>minimal</option>
+                <option value="low" {{if eq .Reasoning "low"}}selected{{end}}>low</option>
+                <option value="medium" {{if eq .Reasoning "medium"}}selected{{end}}>medium</option>
+                <option value="high" {{if eq .Reasoning "high"}}selected{{end}}>high</option>
+              </select>
+            </label>
+          </div>
+          <p class="result-count">免费额度通常每分钟只允许十几次请求，请按服务商的限额设置；遇到限流会自动退避。思考 token 按输出计费，打标不需要思考，模型支持时建议设为 none。</p>
+        </fieldset>
+        <button class="secondary-button">保存</button>
+      </form>
+      <form class="ai-tagging-test" method="post" action="/admin/ai-tagging/test">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button class="secondary-button"{{if not .Status.Configured}} disabled{{end}}>测试连接</button>
+        <span class="result-count">用一首虚构曲目测试主模型{{if .ReviewModel}}和复核模型{{end}}，检查结构化输出与 token 用量（会产生少量费用）。</span>
+      </form>
+    </section>
+
+    <section class="feature-card ai-tagging-sample">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">抽样对比</p>
+          <h2>主模型够不够用？</h2>
+        </div>
+        {{if and .Sample (or (eq .Sample.Status "pending") (eq .Sample.Status "running"))}}
+        <form method="post" action="/admin/ai-tagging/sample/cancel">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">取消</button>
+        </form>
+        {{end}}
+      </div>
+      <p class="result-count">随机抽取一批曲目，分别用主模型和复核模型打标，统计两者的一致程度并列出结果供抽查。只记录对比结果，不写入标签；会消耗约 2 倍抽样数的请求。</p>
+      <form class="ai-tagging-sample-form" method="post" action="/admin/ai-tagging/sample">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>抽样数量
+          <select name="size">
+            <option value="50">50 首</option>
+            <option value="100">100 首</option>
+            <option value="200" selected>200 首</option>
+          </select>
+        </label>
+        <button class="secondary-button"{{if or (not .Status.Configured) (not .ReviewModel)}} disabled{{end}}>开始抽样对比</button>
+        {{if not .ReviewModel}}<span class="result-count">需要先填写复核模型</span>{{end}}
+      </form>
+      {{with .Comparison}}
+      <dl class="ai-tagging-metrics">
+        <div><dt>可比较</dt><dd>{{.N}} 首{{if .Errors}}（{{.Errors}} 首失败）{{end}}</dd></div>
+        <div><dt>主情绪一致</dt><dd>{{pct .PrimaryMoodAgree}}</dd></div>
+        <div><dt>情绪集合相似度</dt><dd>{{pct .MoodJaccard}}</dd></div>
+        <div><dt>主风格一致</dt><dd>{{pct .PrimaryStyleAgree}}</dd></div>
+        <div><dt>风格集合相似度</dt><dd>{{pct .StyleJaccard}}</dd></div>
+        <div><dt>偶像判定一致</dt><dd>{{pct .IdolAgree}}</dd></div>
+        <div><dt>负面标记一致</dt><dd>{{pct .NegativeAgree}}</dd></div>
+      </dl>
+      <p class="result-count">参考：主情绪一致 ≥ 70%、风格集合相似度 ≥ 60% 时，主模型通常已经够用；明显不一致的曲目可以点开查看两边的结果自行判断。</p>
+      <details class="ai-tagging-compare">
+        <summary>查看逐首对比</summary>
+        <table class="ai-tagging-table">
+          <thead><tr><th>曲目</th><th>{{$.Sample.PrimaryModel}}</th><th>{{$.Sample.ReviewModel}}</th></tr></thead>
+          <tbody>
+            {{range .Rows}}
+            <tr{{if not .Same}} class="ai-diff"{{end}}>
+              <td><a href="/admin/tracks/{{.TrackID}}/tags">{{.Title}}</a><small>{{.Artist}}</small></td>
+              <td>{{with .Primary}}{{template "ai-result" .}}{{else}}<small>{{.Error}}</small>{{end}}</td>
+              <td>{{with .Review}}{{template "ai-result" .}}{{else}}<small>{{.Error}}</small>{{end}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </details>
+      {{end}}
+    </section>
+
+    {{if .Usage}}
+    <section class="feature-card ai-tagging-usage">
+      <p class="kicker">用量</p>
+      <table class="ai-tagging-table">
+        <thead><tr><th>模型</th><th>用途</th><th>请求</th><th>输入</th><th>缓存命中</th><th>输出</th><th>思考</th></tr></thead>
+        <tbody>
+          {{range .Usage}}<tr><td><code>{{.Model}}</code></td><td>{{.Purpose}}</td><td>{{.Requests}}</td><td>{{.Prompt}}</td><td>{{.Cached}}</td><td>{{.Completion}}</td><td>{{.Thinking}}</td></tr>{{end}}
+        </tbody>
+      </table>
+      <p class="result-count">费用 = 输入 × 输入单价 + 输出（含思考）× 输出单价；缓存命中的输入通常有折扣。单价以服务商官网为准。</p>
+    </section>
+    {{end}}
+
+    {{if .Recent}}
+    <section class="feature-card ai-tagging-recent">
+      <p class="kicker">最近结果</p>
+      <ul class="ai-tagging-recent-list">
+        {{range .Recent}}
+        <li>
+          <a href="/admin/tracks/{{.TrackID}}/tags"><strong>{{.Title}}</strong></a>
+          <small>{{.Artist}} · {{.Model}}{{if .ReviewedBy}}（已复核）{{else if .NeedsReview}}（待复核）{{end}}</small>
+          <span class="ai-chips">{{range .Moods}}<span class="ai-chip{{if .Negative}} ai-chip-negative{{end}}" title="占比 {{.WeightPct}}% · 把握 {{.ConfPct}}%">{{.Label}}</span>{{end}}{{range .Styles}}<span class="ai-chip ai-chip-style">{{.Label}}</span>{{end}}</span>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    {{if .Failures}}
+    <section class="feature-card audio-analysis-failures">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">失败</p>
+          <h2>打标失败的曲目</h2>
+        </div>
+        <form method="post" action="/admin/ai-tagging/failures/retry">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">全部重试</button>
+        </form>
+      </div>
+      <ul class="audio-analysis-failure-list">
+        {{range .Failures}}
+        <li>
+          <a href="/admin/tracks/{{.TrackID}}/tags"><strong>{{.Title}}</strong></a>
+          <code>{{.Artist}}</code>
+          <small>{{if .Permanent}}连续失败 {{.Attempts}} 次，信息变化前不再重试{{else}}第 {{.Attempts}} 次失败，{{formatAdminTime .NextRetryAt}} 自动重试{{end}} · {{.LastError}}</small>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    <section class="feature-card audio-analysis-about">
+      <p class="kicker">说明</p>
+      <ul class="audio-analysis-steps">
+        <li>情绪 12 个（热血、励志振奋、元气欢快、冒险旅途、俏皮诙谐、帅气律动、壮阔史诗、浪漫甜蜜、治愈温柔、宁静放松、梦幻空灵、温暖怀旧）加 3 个内部负面标记（伤感、黑暗压抑、孤独，只用于把这类歌排除出正向主题，不展示）；风格 18 个。</li>
+        <li>声学高置信的风格（如管弦乐、电子）模型不能推翻；模型输出一律在服务端校验，词表外的标签会被丢弃。</li>
+        <li>每首约 2,000–2,700 输入 token、约 120 输出 token；系统提示对所有曲目相同，支持前缀缓存的服务商会自动打折。</li>
+        <li>曲目信息（标题、作品、歌词等）变化后会自动重新打标；内容实际没变时不会重复调用模型。人工修正优先，重新打标不会覆盖。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
+
+{{define "ai-result"}}<span class="ai-chips">{{range .Moods}}<span class="ai-chip{{if moodNegative .Tag}} ai-chip-negative{{end}}">{{tagLabel "mood" .Tag}}</span>{{end}}{{range .Styles}}<span class="ai-chip ai-chip-style">{{tagLabel "style" .Tag}}</span>{{end}}{{if eq .Idol "yes"}}<span class="ai-chip">偶像</span>{{end}}</span>{{end}}
