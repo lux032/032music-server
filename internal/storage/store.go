@@ -25,6 +25,8 @@ type Store struct {
 	// skipMigrationTemplate is set on the store that builds the migration
 	// template itself, so it replays the real migrations.
 	skipMigrationTemplate bool
+	// acoustic caches the in-memory acoustic index (acoustic.go).
+	acoustic acousticCache
 }
 
 type Statistics struct {

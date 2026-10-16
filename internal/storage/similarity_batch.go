@@ -211,6 +211,9 @@ func (s *Store) similarityCandidates(ctx context.Context, m similarityMeta, smal
 	return sortedKeys(out), nil
 }
 
+// acousticCandidateCount is how many acoustic neighbours join the candidate set.
+const acousticCandidateCount = 80
+
 type scoredCandidate struct {
 	id      int64
 	score   float64
@@ -229,6 +232,21 @@ func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small
 	if e != nil {
 		return nil, e
 	}
+	// Acoustic neighbours join the metadata candidates (full search only; the path
+	// search re-scores its small candidate sets but does not widen them).
+	acoustic, _ := s.AcousticIndex(ctx)
+	if !small && acoustic.Has(seed.track.ID) {
+		seen := make(map[int64]bool, len(ids))
+		for _, id := range ids {
+			seen[id] = true
+		}
+		for _, n := range acoustic.Neighbors(seed.track.ID, acousticCandidateCount, nil) {
+			if !seen[n.TrackID] {
+				ids = append(ids, n.TrackID)
+			}
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
 	batch, e := s.similarityBatch(ctx, ids)
 	if e != nil {
 		return nil, e
@@ -239,7 +257,7 @@ func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small
 		if m == nil || !m.available || (!nonMain(seed.track.TrackType) && nonMain(m.track.TrackType)) {
 			continue
 		}
-		score, reasons := compareSimilarity(seed, *m)
+		score, reasons := compareSimilarityWith(seed, *m, acoustic)
 		ranked = append(ranked, scoredCandidate{id, score, reasons, m})
 	}
 	sort.Slice(ranked, func(i, j int) bool {

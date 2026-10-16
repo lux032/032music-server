@@ -23,6 +23,9 @@ type similarityFactors struct {
 	artist, credit, genre, era, playlist, work float64
 	sameAlbum                                  bool
 	skipFactor                                 float64
+	// acoustic is the 0–1 acoustic score (AcousticScore); used only when hasAcoustic.
+	acoustic    float64
+	hasAcoustic bool
 }
 
 func clamp(v float64) float64 { return math.Max(0, math.Min(1, v)) }
@@ -46,6 +49,13 @@ func scoreSimilarity(f similarityFactors) (float64, []string) {
 	}
 	if .10*clamp(f.work) >= .01 {
 		reasons = append(reasons, "sameWork")
+	}
+	// Hybrid: when both tracks have been acoustically analysed, 60% metadata + 40% sound.
+	if f.hasAcoustic {
+		score = .6*score + .4*clamp(f.acoustic)
+		if clamp(f.acoustic) >= .5 {
+			reasons = append(reasons, "soundsSimilar")
+		}
 	}
 	if f.sameAlbum {
 		score *= .5
@@ -74,6 +84,11 @@ func jaccard(a, b map[int64]bool) float64 {
 	return float64(n) / float64(len(a)+len(b)-n)
 }
 func compareSimilarity(a, b similarityMeta) (float64, []string) {
+	return compareSimilarityWith(a, b, nil)
+}
+
+// compareSimilarityWith adds the acoustic factor when the snapshot has both tracks.
+func compareSimilarityWith(a, b similarityMeta, acoustic *AcousticSnapshot) (float64, []string) {
 	f := similarityFactors{artist: clamp(float64(overlap(a.primary, b.primary))), credit: clamp(float64(overlap(a.credit, b.credit))), genre: jaccard(a.genre, b.genre), work: clamp(float64(overlap(a.work, b.work))), sameAlbum: a.track.AlbumID == b.track.AlbumID}
 	if a.track.Year > 0 && b.track.Year > 0 {
 		f.era = math.Exp(-math.Abs(float64(a.track.Year-b.track.Year)) / 5)
@@ -83,6 +98,9 @@ func compareSimilarity(a, b similarityMeta) (float64, []string) {
 	// once there is enough evidence (at least 3 recorded outcomes).
 	if total := b.skipCount + b.playCount; total >= 3 {
 		f.skipFactor = 1 - .3*float64(b.skipCount)/float64(total)
+	}
+	if cos, ok := acoustic.Cosine(a.track.ID, b.track.ID); ok {
+		f.acoustic, f.hasAcoustic = AcousticScore(cos), true
 	}
 	return scoreSimilarity(f)
 }
