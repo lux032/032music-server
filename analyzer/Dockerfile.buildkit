@@ -1,0 +1,36 @@
+# 032 Music Server · 声学分析服务（BuildKit secret 版本，用于带凭证的构建代理）
+# 代理 URL 以 secret 挂载到 /run/secrets/build_proxy，只在依赖安装这一步可见，
+# 不进入镜像层、镜像历史或构建参数。用法：
+#   DOCKER_BUILDKIT=1 docker build -f Dockerfile.buildkit --secret id=build_proxy,src=代理文件 .
+# 除依赖安装这一步外，其余内容必须与 Dockerfile 一致（tests/test_dockerfiles.sh 会检查）。
+FROM python:3.12-slim-bookworm
+
+# 非敏感参数，会出现在镜像历史中，不要放凭证
+ARG APT_MIRROR=
+ARG APT_FORCE_IPV4=0
+ARG PIP_INDEX_URL=
+
+RUN --mount=type=secret,id=build_proxy \
+    --mount=type=bind,source=build/install-deps.sh,target=/tmp/build/install-deps.sh \
+    --mount=type=bind,source=requirements.txt,target=/tmp/build/requirements.txt \
+    sh /tmp/build/install-deps.sh
+
+RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin analyzer \
+ && mkdir -p /models /app \
+ && chown analyzer:analyzer /models
+
+WORKDIR /app
+COPY musicanalyzer ./musicanalyzer
+
+ENV PYTHONUNBUFFERED=1 \
+    OMP_NUM_THREADS=2 \
+    ANALYZER_MUSIC_DIR=/music \
+    ANALYZER_MODELS_DIR=/models \
+    ANALYZER_LISTEN=0.0.0.0:8000
+
+USER analyzer
+VOLUME ["/models"]
+EXPOSE 8000
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
+  CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+ENTRYPOINT ["python", "-m", "musicanalyzer.server"]
