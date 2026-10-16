@@ -523,7 +523,8 @@ a.console-stats > *:hover, .console-stats > a:hover { background: var(--bg-soft)
 .console-note p:not(.kicker) { color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.7; }
 .console-note a { font-weight: 600; }
 
-.client-feature-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 0 0 26px; }
+.client-feature-links { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 0 0 26px; }
+@media (max-width: 1280px) { .client-feature-links { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .client-feature-links > a {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) 18px;
@@ -3562,3 +3563,28 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
   .favorites-tabs a { white-space: nowrap; }
   .favorites-toolbar-end { margin-left: 0; }
 }
+
+/* 声学分析页 */
+.audio-analysis-main .feature-card { display: grid; gap: 10px; margin-bottom: 20px; }
+.audio-analysis-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.audio-analysis-head form { margin: 0; }
+.audio-analysis-status { border-left: 3px solid var(--line-strong); }
+.audio-analysis-status[data-tone="busy"] { border-left-color: var(--accent); }
+.audio-analysis-status[data-tone="ok"] { border-left-color: var(--success, var(--accent)); }
+.audio-analysis-status[data-tone="warn"] { border-left-color: var(--warning, var(--danger)); }
+.audio-analysis-status .progress { margin: 4px 0; }
+.audio-analysis-line { margin: 0; color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.6; overflow-wrap: anywhere; }
+.audio-analysis-current { color: var(--text); }
+.audio-analysis-error { color: var(--danger); }
+.audio-analysis-meta { color: var(--muted); font-size: var(--fs-xs); }
+.audio-analysis-form { display: grid; gap: 12px; margin: 0; }
+.audio-analysis-form .switch { width: max-content; color: var(--text); font-weight: 550; }
+.audio-analysis-form button { justify-self: start; }
+.audio-analysis-window { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; color: var(--text-secondary); }
+.audio-analysis-window legend { margin-bottom: 6px; color: var(--text); font-weight: 550; }
+.audio-analysis-window label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.audio-analysis-window input[type="time"] { width: auto; }
+.audio-analysis-steps { display: grid; gap: 6px; margin: 0; padding-left: 20px; color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.6; }
+.audio-analysis-failure-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.audio-analysis-failure-list li { display: grid; gap: 2px; padding: 10px 0; border-top: 1px solid var(--line); }
+.audio-analysis-failure-list code, .audio-analysis-failure-list small { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }

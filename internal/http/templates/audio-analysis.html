@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>声学分析 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main">
+    <header class="browser-header">
+      <div>
+        <h1>声学分析</h1>
+        <p class="result-count">用本地模型“听”一遍曲库：识别风格、情绪、乐器、人声与能量，并计算声学相似度，为每日推荐与相似歌曲提供依据。源文件只读，结果只保存在本服务器。</p>
+      </div>
+      <a class="secondary-button" href="/admin">返回控制台</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    {{if not .Status.Configured}}
+    <section class="feature-card audio-analysis-setup">
+      <p class="kicker">尚未部署</p>
+      <h2>需要先启动分析服务</h2>
+      <p class="result-count">声学分析由独立容器 <code>music-analyzer</code> 完成（源码在仓库 <code>analyzer/</code>）。在 <code>compose.yaml</code> 所在目录：</p>
+      <ol class="audio-analysis-steps">
+        <li>在 <code>.env</code> 中设置 <code>MUSIC_SERVER_ANALYZER_URL=http://music-analyzer:8000</code>，并为 <code>MUSIC_SERVER_ANALYZER_TOKEN</code> 设置一个随机值（两个容器共用）。</li>
+        <li>执行 <code>docker compose --profile analysis up -d --build</code>，首次启动会下载约 53MB 模型。</li>
+        <li>回到本页，打开“声学分析”开关即开始首次全量分析。</li>
+      </ol>
+    </section>
+    {{end}}
+
+    <section class="feature-card audio-analysis-status" id="audio-analysis-status" data-tone="{{.View.Tone}}" aria-live="polite">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">状态</p>
+          <h2 id="aa-state">{{.View.StateLabel}}</h2>
+          <p id="aa-state-detail" class="result-count"{{if not .View.StateDetail}} hidden{{end}}>{{.View.StateDetail}}</p>
+        </div>
+        {{if and .Status.Configured .Status.Enabled}}
+        <form method="post" action="/admin/audio-analysis/{{if .Status.Paused}}resume{{else}}pause{{end}}">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">{{if .Status.Paused}}继续{{else}}暂停{{end}}</button>
+        </form>
+        {{end}}
+      </div>
+      <div class="progress"><span id="aa-progress" style="width:{{.View.Percent}}%"></span></div>
+      <p id="aa-progress-text" class="audio-analysis-line">{{.View.ProgressText}}</p>
+      <p id="aa-current" class="audio-analysis-line audio-analysis-current"{{if not .View.CurrentText}} hidden{{end}}>{{.View.CurrentText}}</p>
+      <p id="aa-eta" class="audio-analysis-line"{{if not .View.ETAText}} hidden{{end}}>{{.View.ETAText}}</p>
+      <p id="aa-calibration" class="audio-analysis-line"{{if not .View.CalibrationTxt}} hidden{{end}}>{{.View.CalibrationTxt}}</p>
+      <p id="aa-failure" class="audio-analysis-line"{{if not .View.FailureText}} hidden{{end}}>{{.View.FailureText}}</p>
+      <p id="aa-last-error" class="audio-analysis-line audio-analysis-error"{{if not .View.LastErrorText}} hidden{{end}}>{{.View.LastErrorText}}</p>
+      <p id="aa-analyzer" class="audio-analysis-line audio-analysis-meta"{{if not .View.AnalyzerText}} hidden{{end}}>{{.View.AnalyzerText}}</p>
+    </section>
+
+    <section class="feature-card audio-analysis-settings">
+      <p class="kicker">设置</p>
+      <form class="audio-analysis-form" method="post" action="/admin/audio-analysis/settings">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label class="switch"><input type="checkbox" name="enabled" {{if .Status.Enabled}}checked{{end}}{{if not .Status.Configured}} disabled{{end}}> 开启声学分析</label>
+        <p class="result-count">默认关闭。{{if .Status.FirstEnabledAt}}首次开启于 {{formatAdminTime .Status.FirstEnabledAt}}；{{end}}开启后立即开始首次全量分析（1.7 万首在 4 核 NAS 上约需 12–14 小时），之后新入库或文件变化的歌曲会在扫描完成后自动分析。关闭只停止分析，已有结果会保留。</p>
+        <fieldset class="audio-analysis-window">
+          <legend>运行时间</legend>
+          <label><input type="radio" name="window" value="all" {{if not .WindowEnabled}}checked{{end}}> 不限</label>
+          <label><input type="radio" name="window" value="custom" {{if .WindowEnabled}}checked{{end}}> 仅在
+            <input type="time" name="window_start" value="{{.WindowStart}}" aria-label="开始时间"> 到
+            <input type="time" name="window_end" value="{{.WindowEnd}}" aria-label="结束时间">（北京时间，可跨午夜）</label>
+        </fieldset>
+        <p class="result-count">无论是否设置时间窗，有实时转码或曲库扫描时都会自动让路，结束后继续。</p>
+        <button class="secondary-button"{{if not .Status.Configured}} disabled{{end}}>保存</button>
+      </form>
+    </section>
+
+    {{if .Failures}}
+    <section class="feature-card audio-analysis-failures">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">失败</p>
+          <h2>无法分析的曲目</h2>
+        </div>
+        <form method="post" action="/admin/audio-analysis/failures/retry">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">全部重试</button>
+        </form>
+      </div>
+      <ul class="audio-analysis-failure-list">
+        {{range .Failures}}
+        <li>
+          <strong>{{.Title}}</strong>
+          <code>{{.RelativePath}}</code>
+          <small>{{if .Permanent}}文件变化前不再重试{{else}}第 {{.Attempts}} 次失败，{{formatAdminTime .NextRetryAt}} 自动重试{{end}} · {{.LastError}}</small>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    <section class="feature-card audio-analysis-about">
+      <p class="kicker">说明</p>
+      <ul class="audio-analysis-steps">
+        <li>每首歌取 3 段 30 秒分析，保存 400 类风格、56 类情绪/主题、40 类乐器、人声/可舞性等指标，以及 1280 维声学向量（每首约 3.8KB，1.7 万首约 65MB）。</li>
+        <li>唤醒度/效价：先用完整模式分析约 300 首作为校准样本，在本服务器拟合回归模型，其余曲目据此计算，省去约 60% 的分析时间。</li>
+        <li>使用 MTG Essentia 预训练模型，许可为 CC BY-NC-SA 4.0，<strong>仅限非商业用途</strong>；模型由分析服务在首次启动时下载。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

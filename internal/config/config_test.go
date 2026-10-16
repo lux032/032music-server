@@ -116,3 +116,38 @@ func TestPurgeMissingFromEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAnalyzerURL(t *testing.T) {
+	base := func(t *testing.T) {
+		t.Setenv("MUSIC_SERVER_DATA_DIR", t.TempDir())
+		t.Setenv("MUSIC_SERVER_MUSIC_DIR", t.TempDir())
+		t.Setenv("MUSIC_SERVER_ADMIN_PASSWORD", "test-password-123")
+		t.Setenv("MUSIC_SERVER_API_TOKEN", "test-api-token-00000000000000")
+		t.Setenv("MUSIC_SERVER_MEDIA_TOKEN", "test-media-token-000000000000")
+	}
+	t.Run("unset means not deployed", func(t *testing.T) {
+		base(t)
+		cfg, err := Load()
+		if err != nil || cfg.AnalyzerURL != "" || cfg.AnalyzerToken != "" {
+			t.Fatalf("cfg=%q/%q err=%v", cfg.AnalyzerURL, cfg.AnalyzerToken, err)
+		}
+	})
+	t.Run("valid url is trimmed", func(t *testing.T) {
+		base(t)
+		t.Setenv("MUSIC_SERVER_ANALYZER_URL", " http://music-analyzer:8000/ ")
+		t.Setenv("MUSIC_SERVER_ANALYZER_TOKEN", " secret ")
+		cfg, err := Load()
+		if err != nil || cfg.AnalyzerURL != "http://music-analyzer:8000" || cfg.AnalyzerToken != "secret" {
+			t.Fatalf("cfg=%q/%q err=%v", cfg.AnalyzerURL, cfg.AnalyzerToken, err)
+		}
+	})
+	for _, bad := range []string{"music-analyzer:8000", "ftp://x", "http://", "http://user:pw@host:8000"} {
+		t.Run("invalid "+bad, func(t *testing.T) {
+			base(t)
+			t.Setenv("MUSIC_SERVER_ANALYZER_URL", bad)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MUSIC_SERVER_ANALYZER_URL") {
+				t.Fatalf("err=%v, want analyzer url error", err)
+			}
+		})
+	}
+}

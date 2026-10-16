@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
+func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": "v1", "apiRevision": 3,
 		"features": map[string]bool{
@@ -25,6 +25,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 			"cast": a.cast != nil,
 			"home": true, "seriesTracks": true, "workPosters": true,
 			"series": true, "workSeriesInfo": true,
+			"audioAnalysis": a.audioAnalysisEnabled(r.Context()),
 		},
 		"home": map[string]any{
 			"endpoint":     "/api/v1/home",

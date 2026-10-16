@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/enrichment"
 	webhttp "github.com/lux032/032music-server/internal/http"
@@ -88,9 +89,32 @@ func run() error {
 	// 缺失文件清理策略：管理页覆盖优先，否则 MUSIC_SERVER_PURGE_MISSING
 	// （默认 never，只隐藏不删除）；每次扫描结束时读取。
 	scannerManager.SetPurgeMissingPolicy(app.PurgeMissingPolicy)
+	// Acoustic analysis (analyzer/ sidecar): off by default; the admin page switch
+	// starts the first full run, afterwards every completed scan wakes the worker
+	// so new or changed files are analysed automatically. It yields to live
+	// transcodes and library scans, which compete for the same CPU and disk.
+	var analyzerClient analysis.Client // stays a nil interface when not deployed
+	if cfg.AnalyzerURL != "" {
+		analyzerClient = analysis.NewHTTPClient(cfg.AnalyzerURL, cfg.AnalyzerToken)
+	}
+	analysisService := analysis.New(db, logger, analysis.Options{
+		Client: analyzerClient,
+		Busy: func() string {
+			if app.TranscodesActive() > 0 {
+				return "有转码进行中"
+			}
+			if scannerManager.Running() {
+				return "曲库扫描中"
+			}
+			return ""
+		},
+	})
+	app.SetAudioAnalysis(analysisService)
+	analysisService.Start(rootCtx)
 	scannerManager.SetOnComplete(func() {
 		enrichmentManager.StartAuto(rootCtx)
 		app.GCCustomImages(rootCtx)
+		analysisService.Wake()
 	})
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
@@ -165,6 +189,7 @@ func run() error {
 		scannerManager.Wait()
 		enrichmentManager.Wait()
 		lastFMService.Wait()
+		analysisService.Wait()
 		app.WaitTranscodes()
 		close(workersDone)
 	}()

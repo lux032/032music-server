@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -70,6 +71,10 @@ type Config struct {
 	// CastSSDP is MUSIC_SERVER_CAST_SSDP (default on): multicast discovery.
 	// Off limits casting to CastDevices.
 	CastSSDP bool
+	// AnalyzerURL 是声学分析服务（analyzer/）的内网地址；空表示未部署，
+	// 管理页只显示部署说明。功能本身由管理页开关控制，默认关闭。
+	AnalyzerURL   string
+	AnalyzerToken string
 	// Warnings 是启动时应告警但不致命的配置问题（如无法识别的开关取值）。
 	Warnings []string
 }
@@ -155,6 +160,8 @@ func Load() (Config, error) {
 		CastBaseURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_CAST_BASE_URL")), "/"),
 		CastDevices:         splitList(os.Getenv("MUSIC_SERVER_CAST_DEVICES")),
 		CastSSDP:            !isOffValue(os.Getenv("MUSIC_SERVER_CAST_SSDP")),
+		AnalyzerURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_ANALYZER_URL")), "/"),
+		AnalyzerToken:       strings.TrimSpace(os.Getenv("MUSIC_SERVER_ANALYZER_TOKEN")),
 	}
 
 	cfg.WorkPosterBackfill = posterBackfill
@@ -226,6 +233,11 @@ func (c Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		problems = append(problems, "MUSIC_SERVER_LOG_LEVEL must be debug, info, warn, or error")
+	}
+	if c.AnalyzerURL != "" {
+		if u, err := url.Parse(c.AnalyzerURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			problems = append(problems, "MUSIC_SERVER_ANALYZER_URL must be an http(s) URL without credentials, e.g. http://music-analyzer:8000")
+		}
 	}
 
 	if len(problems) > 0 {

@@ -78,6 +78,10 @@ func (m *Manager) shouldPurge(ctx context.Context, scanType string) bool {
 
 func (m *Manager) SetOnComplete(callback func()) { m.mu.Lock(); m.onComplete = callback; m.mu.Unlock() }
 
+// Running reports whether a scan or album-work refresh is in progress; background
+// jobs that read audio files (e.g. acoustic analysis) yield while it is true.
+func (m *Manager) Running() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.running }
+
 // SetMetadataReader overrides the per-file metadata reader. Intended for tests
 // in other packages that need to hold a scan in the running state
 // deterministically; must be called before Start.

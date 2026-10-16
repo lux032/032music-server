@@ -27,6 +27,10 @@ services:
       # networking SSDP multicast does not reach the container, so list speakers.
       MUSIC_SERVER_CAST_BASE_URL: "${MUSIC_SERVER_CAST_BASE_URL:-}"
       MUSIC_SERVER_CAST_DEVICES: "${MUSIC_SERVER_CAST_DEVICES:-}"
+      # 声学分析（可选）：启用 analysis profile 后设为 http://music-analyzer:8000，
+      # 两个容器使用同一个 MUSIC_SERVER_ANALYZER_TOKEN。为空表示未部署。
+      MUSIC_SERVER_ANALYZER_URL: "${MUSIC_SERVER_ANALYZER_URL:-}"
+      MUSIC_SERVER_ANALYZER_TOKEN: "${MUSIC_SERVER_ANALYZER_TOKEN:-}"
     volumes:
       - "${MUSIC_SERVER_DATA_PATH:-./data}:/data"
       - "${MUSIC_SERVER_MUSIC_PATH:?set MUSIC_SERVER_MUSIC_PATH in .env}:/music:ro"
@@ -34,3 +38,37 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  # 声学分析服务（可选，默认不启动）：docker compose --profile analysis up -d --build
+  # 只在 compose 内网提供服务，不发布端口；音乐目录只读。模型（MTG Essentia，
+  # CC BY-NC-SA 4.0，仅限非商业）首次启动时下载到 analyzer-models 卷（约 53MB）。
+  # 开关、进度与运行时间窗在 管理 → 控制台 → 声学分析 中设置，默认关闭。
+  music-analyzer:
+    profiles: ["analysis"]
+    # 需要代理才能构建时，可先用 docker build 预先构建同名镜像（见 analyzer/README.md）
+    image: 032music-analyzer:local
+    build:
+      context: ./analyzer
+    container_name: 032music-analyzer
+    restart: unless-stopped
+    init: true
+    environment:
+      ANALYZER_TOKEN: "${MUSIC_SERVER_ANALYZER_TOKEN:-}"
+      ANALYZER_THREADS: "${MUSIC_ANALYZER_THREADS:-2}"
+      ANALYZER_LOG_LEVEL: "${MUSIC_ANALYZER_LOG_LEVEL:-info}"
+      # 首次下载模型需要代理时设置（只用于下载，模型缓存后可去掉）
+      HTTP_PROXY: "${MUSIC_ANALYZER_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${MUSIC_ANALYZER_HTTP_PROXY:-}"
+      NO_PROXY: "${MUSIC_ANALYZER_NO_PROXY:-}"
+    volumes:
+      - "${MUSIC_SERVER_MUSIC_PATH:?set MUSIC_SERVER_MUSIC_PATH in .env}:/music:ro"
+      - analyzer-models:/models
+    cpus: "${MUSIC_ANALYZER_CPUS:-2}"
+    mem_limit: 2g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  analyzer-models:

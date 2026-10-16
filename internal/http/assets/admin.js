@@ -527,3 +527,66 @@ document.addEventListener('click', (event) => {
  const hidden = document.createElement('input');hidden.type='hidden';hidden.name='credit';hidden.value=value;
  const button = document.createElement('button');button.type='button';button.dataset.creditRemove='';button.textContent='移除';label.append(hidden,button);picker.querySelector('[data-credit-selected]').append(label);
 });
+
+// ---------------------------------------------- acoustic analysis status poller
+// Polls /admin/audio-analysis/status every 3 s while the analysis page (or the
+// dashboard card) is on screen and the tab is visible. All labels are built by
+// the server (buildAudioAnalysisView); this only copies them with textContent.
+(function () {
+  'use strict';
+  if (window.__032_audio_analysis_initialized) return;
+  window.__032_audio_analysis_initialized = true;
+  let timer = null;
+
+  const setLine = (id, text) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.hidden = !text;
+  };
+
+  async function refresh() {
+    const root = document.getElementById('audio-analysis-status');
+    const summary = document.getElementById('aa-summary');
+    if (!root && !summary) return;
+    try {
+      const response = await fetch('/admin/audio-analysis/status', { credentials: 'same-origin' });
+      if (!response.ok) return;
+      const { view } = await response.json();
+      if (summary) summary.textContent = view.summaryText || '';
+      if (!root) return;
+      root.dataset.tone = view.tone || 'off';
+      const state = document.getElementById('aa-state');
+      if (state) state.textContent = view.stateLabel || '';
+      setLine('aa-state-detail', view.stateDetail);
+      const bar = document.getElementById('aa-progress');
+      if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(view.percent) || 0))}%`;
+      const progress = document.getElementById('aa-progress-text');
+      if (progress) progress.textContent = view.progressText || '';
+      setLine('aa-current', view.currentText);
+      setLine('aa-eta', view.etaText);
+      setLine('aa-calibration', view.calibrationText);
+      setLine('aa-failure', view.failureText);
+      setLine('aa-last-error', view.lastErrorText);
+      setLine('aa-analyzer', view.analyzerText);
+    } catch (_) { /* keep the last rendered state; retry on the next tick */ }
+  }
+
+  function schedule() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (document.hidden) return;
+    if (document.getElementById('audio-analysis-status')) timer = setTimeout(tick, 3000);
+    else if (document.getElementById('aa-summary')) timer = setTimeout(tick, 15000);
+  }
+
+  async function tick() {
+    await refresh();
+    schedule();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (timer) { clearTimeout(timer); timer = null; } } else { tick(); }
+  });
+  document.addEventListener('032:pjax-applied', () => { tick(); });
+  schedule();
+})();

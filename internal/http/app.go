@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/lastfm"
@@ -61,6 +62,8 @@ type App struct {
 	castState castState
 	// homeRotation freezes the home page's daily works/songs rotation.
 	homeRotation *homeRotation
+	// audioAnalysis is the optional acoustic analysis worker (nil hides it).
+	audioAnalysis *analysis.Service
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -174,6 +177,7 @@ type dashboardPageData struct {
 	Scan           storage.ScanJob
 	LibraryWatch   libraryWatchView
 	PurgeMissing   purgeMissingView
+	AudioAnalysis  audioAnalysisView
 	Notice         string
 }
 
@@ -308,6 +312,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/health", a.handleHealth)
 	mux.Handle("GET /api/v1/status", a.requireAPIOrAdmin(http.HandlerFunc(a.handleStatus)))
 	mux.Handle("GET /api/v1/capabilities", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCapabilities)))
+	mux.Handle("GET /api/v1/audio-analysis", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAudioAnalysisStatus)))
 	mux.Handle("GET /api/v1/home", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHome)))
 	mux.Handle("GET /api/v1/home/spotlight/random", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHomeRandomSpotlight)))
 	mux.Handle("GET /api/v1/home/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIHomeWorks)))
@@ -428,6 +433,12 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/library-watch", a.requireAdmin(http.HandlerFunc(a.handleSaveLibraryWatch)))
 	mux.Handle("POST /admin/settings/library-watch/reset", a.requireAdmin(http.HandlerFunc(a.handleResetLibraryWatch)))
 	mux.Handle("GET /admin/library/missing", a.requireAdmin(http.HandlerFunc(a.handleMissingFilesPage)))
+	mux.Handle("GET "+audioAnalysisPath, a.requireAdmin(http.HandlerFunc(a.handleAudioAnalysisPage)))
+	mux.Handle("GET "+audioAnalysisPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleAudioAnalysisStatus)))
+	mux.Handle("POST "+audioAnalysisPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveAudioAnalysis)))
+	mux.Handle("POST "+audioAnalysisPath+"/pause", a.requireAdmin(a.handleAudioAnalysisPause(true)))
+	mux.Handle("POST "+audioAnalysisPath+"/resume", a.requireAdmin(a.handleAudioAnalysisPause(false)))
+	mux.Handle("POST "+audioAnalysisPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAudioAnalysisRetry)))
 	mux.Handle("POST /admin/library/missing/purge", a.requireAdmin(http.HandlerFunc(a.handlePurgeMissingFiles)))
 	mux.Handle("POST /admin/settings/purge-missing", a.requireAdmin(http.HandlerFunc(a.handleSavePurgeMissing)))
 	mux.Handle("POST /admin/settings/purge-missing/reset", a.requireAdmin(http.HandlerFunc(a.handleResetPurgeMissing)))
@@ -729,6 +740,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Scan:           latestScan(a.store, r),
 		LibraryWatch:   a.libraryWatchView(r.Context()),
 		PurgeMissing:   a.purgeMissingView(r.Context()),
+		AudioAnalysis:  a.dashboardAudioAnalysisView(r.Context()),
 		Notice:         r.URL.Query().Get("notice"),
 	})
 }
