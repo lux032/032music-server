@@ -53,6 +53,9 @@ type Options struct {
 	Now               func() time.Time
 	CalibrationTarget int
 	MinCalibration    int
+	// OnAnalyzed is called (from the worker goroutine) after features are saved or
+	// arousal/valence values are backfilled, so dependent work (AI tagging) can start.
+	OnAnalyzed func()
 }
 
 // Current is the track being analysed right now.
@@ -143,6 +146,9 @@ func New(store *storage.Store, logger *slog.Logger, opts Options) *Service {
 	}
 	if opts.MinCalibration <= 0 {
 		opts.MinCalibration = DefaultMinCalibration
+	}
+	if opts.OnAnalyzed == nil {
+		opts.OnAnalyzed = func() {}
 	}
 	state := StateDisabled
 	if opts.Client == nil {
@@ -411,6 +417,9 @@ func (s *Service) backfill(ctx context.Context, version string, model *regressio
 		s.logger.Error("apply arousal/valence regression", "error", err)
 		return 0
 	}
+	if len(values) > 0 {
+		s.opts.OnAnalyzed()
+	}
 	return len(values)
 }
 
@@ -523,6 +532,7 @@ func (s *Service) analyze(ctx context.Context, c storage.AudioAnalysisCandidate,
 		s.fail(StateError, err)
 		return time.Minute
 	}
+	s.opts.OnAnalyzed()
 	s.mu.Lock()
 	s.processed++
 	if mode == "fast" {
