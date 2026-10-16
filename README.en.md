@@ -170,6 +170,10 @@ Then turn it on under **Admin → Console → 声学分析**: switching it on st
 
 > **QNAP:** keep 032 on Container Station's default `bridge` network; compose-created networks may lose LAN/Internet egress there. Put the analyzer on `bridge` too, publish its port only on the bridge gateway (e.g. `10.0.3.1:18000:8000`) and set `MUSIC_SERVER_ANALYZER_URL=http://10.0.3.1:18000`. Details (Chinese) in [`analyzer/README.md`](analyzer/README.md).
 
+### AI tagging (optional)
+
+Under **Admin → Console → AI 打标**, configure any OpenAI-compatible model service (Gemini, OpenAI, DeepSeek, Qwen, OpenRouter, local Ollama…) with base URL, model and API key. The model combines acoustic evidence, metadata and a lyrics excerpt and may only pick from a fixed vocabulary (12 moods, 18 styles) used by the daily mixes. Off by default; enabling it tags the whole library, then new or changed tracks automatically (after their acoustic analysis when that is enabled). Roughly 2,000–2,700 input and ~120 output tokens per track. An optional review model re-tags uncertain tracks, and a sample comparison runs both models on a batch to compare agreement. API key and proxy are write-only. Per-track tags, evidence and manual corrections live on each song's "AI 标签" page; `GET /api/v1/ai/tagging` and `GET/PUT /api/v1/tracks/{id}/tags` expose them (`capabilities.features.trackTags`).
+
 ### Backups and upgrades
 
 Back up `.env` and the **entire data directory**, not just `music.db`. The database contains credential overrides and external-service secrets; protect backups accordingly. With SQLite WAL, copying only the database while the server is running may omit recent writes. The simplest consistent backup is made while the service is stopped:

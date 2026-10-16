@@ -201,6 +201,16 @@ docker compose --profile analysis up -d --build
 
 > **QNAP 用户**：请保持 032 使用 Container Station 默认的 `bridge` 网络，不要改用 compose 新建的网络（在 QNAP 上可能导致容器连不上局域网代理和外网）。分析服务也使用 bridge，把端口只发布到网关 IP（如 `10.0.3.1:18000:8000`），并设置 `MUSIC_SERVER_ANALYZER_URL=http://10.0.3.1:18000`。详见 [`analyzer/README.md` 的 QNAP 一节](analyzer/README.md#qnapcontainer-station部署注意事项)。
 
+### AI 打标（可选）
+
+在 **管理 → 控制台 → AI 打标** 填写一个 OpenAI 兼容的模型服务（Gemini、OpenAI、DeepSeek、通义千问、OpenRouter、本地 Ollama 等）的接口地址、模型和 API Key，即可让大模型结合声学分析结果、元数据和歌词片段，只从固定词表中为每首歌选择情绪（12 个）与风格（18 个），供每日推荐使用。
+
+- 默认关闭；打开即开始首次全量打标，之后新入库或信息变化的歌曲自动打标（声学分析开启时等每首分析完成后再打标）。内容没变时不会重复调用模型。
+- 每首约 2,000–2,700 输入 token、约 120 输出 token；按 Flash-Lite 一档的常见报价，1.7 万首约几美元（以服务商价格为准）。页面显示累计用量与剩余预估，并可设置每分钟请求数、并发和思考强度（建议 `none`）。
+- 可选“复核模型”：主模型把握低、无法判断是否偶像、情绪与唤醒度矛盾时交给更强的模型重新打标；“抽样对比”可先用两个模型各打一批曲目比较一致程度，再决定是否全量。
+- 默认发送歌词片段（每首最多约 600 字，可关闭）；API Key 与代理只写不读。需要代理访问模型服务时在页面填写（如 `http://192.168.1.2:7890`），或给容器设置 `HTTP(S)_PROXY`。
+- 每首曲目的标签、声学证据和 AI 结果可在歌曲的“AI 标签”页查看和人工修正；人工修正优先，重新打标不会覆盖。
+
 ### 备份与升级
 
 备份 `.env` 和**整个数据目录**，不要只备份 `music.db`。数据库含凭据覆盖值和外部服务密钥，应保护备份。SQLite 使用 WAL，运行期间单独复制数据库可能漏掉近期写入；最简单的一致性备份方式是先停服：
@@ -358,6 +368,8 @@ docker compose logs --tail=100 music-server
 | `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 元数据相似度与路径（JSON 凭据）。 |
 | `POST` | `/api/v1/enrichment/run` | 启动增强；`/api/v1/enrichment/jobs` 和 `/{id}` 查状态，POST `/{id}/cancel` 取消。 |
 | `GET` | `/api/v1/audio-analysis` | 声学分析状态：开关、进度、校准、分析服务信息（`capabilities.features.audioAnalysis` 表示已部署且已开启）。 |
+| `GET` | `/api/v1/ai/tagging` | AI 打标状态：进度、用量、复核与抽样对比（`capabilities.features.trackTags` 表示已配置且已开启）。 |
+| `GET/PUT` | `/api/v1/tracks/{id}/tags` | 曲目的情绪/风格标签（生效结果、各来源与 AI 元信息）；PUT `{"moods":["cheerful"],"styles":["pop"]}` 设置人工修正，空数组清除该类修正。 |
 
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 
