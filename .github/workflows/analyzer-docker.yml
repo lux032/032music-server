@@ -1,0 +1,86 @@
+name: Analyzer Docker
+
+# Builds and publishes the optional acoustic analysis sidecar (analyzer/) as
+# ghcr.io/<owner>/032music-server-analyzer. Models are NOT in the image (they are
+# CC BY-NC-SA and downloaded on first start), so the image is MIT-only code + deps.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "analyzer/**"
+      - ".github/workflows/analyzer-docker.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "analyzer/**"
+      - ".github/workflows/analyzer-docker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: analyzer-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Unit tests (no models needed)
+        working-directory: analyzer
+        run: |
+          pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          sh tests/test_dockerfiles.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-analyzer
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=032music-server-analyzer
+            org.opencontainers.image.description=Optional acoustic analysis sidecar for 032 Music Server (ONNX Runtime, no AVX required). Models are downloaded at runtime (MTG Essentia, CC BY-NC-SA 4.0).
+
+      - name: Build and optionally publish image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./analyzer
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=analyzer
+          cache-to: type=gha,mode=max,scope=analyzer
+          provenance: mode=max
+          sbom: true
