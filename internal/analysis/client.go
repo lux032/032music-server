@@ -107,8 +107,18 @@ type HTTPClient struct {
 }
 
 // NewHTTPClient returns a client; per-request timeouts are applied by context.
+// The sidecar is a LAN/compose-internal service: HTTP(S)_PROXY set for metadata
+// providers must not apply (the proxy cannot resolve compose service names and
+// would see the bearer token), and redirects are never followed.
 func NewHTTPClient(baseURL, token string) *HTTPClient {
-	return &HTTPClient{BaseURL: baseURL, Token: token, HTTP: &http.Client{}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return &HTTPClient{BaseURL: baseURL, Token: token, HTTP: &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}}
 }
 
 func (c *HTTPClient) do(ctx context.Context, method, path string, timeout time.Duration, body, out any) error {

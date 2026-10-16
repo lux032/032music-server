@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -501,5 +502,37 @@ func TestHTTPClient(t *testing.T) {
 	}
 	if _, err := c.Fit(ctx, nil); !errors.As(err, &apiErr) || apiErr.Status != 500 || apiErr.Code != "http_error" {
 		t.Fatalf("non-JSON error body: %v", err)
+	}
+}
+
+func TestHTTPClientIgnoresEnvironmentProxy(t *testing.T) {
+	var proxied bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied = true
+		http.Error(w, "proxy", http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	analyzer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready","analysisVersion":"v1"}`))
+	}))
+	defer analyzer.Close()
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("http_proxy", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	// Use a non-loopback-looking host so ProxyFromEnvironment would apply.
+	client := NewHTTPClient(strings.Replace(analyzer.URL, "127.0.0.1", "localtest.invalid", 1), "tok")
+	transport := client.HTTP.Transport.(*http.Transport)
+	if transport.Proxy != nil {
+		t.Fatal("analyzer client must not use environment proxies")
+	}
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, network, strings.TrimPrefix(analyzer.URL, "http://"))
+	}
+	h, err := client.Health(context.Background())
+	if err != nil || h.Status != "ready" || proxied {
+		t.Fatalf("health=%+v err=%v proxied=%v", h, err, proxied)
 	}
 }
