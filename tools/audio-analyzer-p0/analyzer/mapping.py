@@ -93,9 +93,8 @@ def style_bucket(label: str) -> list[str]:
             out.append("ballad")
         elif style in ("Bubblegum", "Novelty", "Parody"):
             out += ["pop", "denpa"]
-        elif style in ("J-pop", "K-pop"):
-            out += ["pop", "idol"]
         else:
+            # J-pop/K-pop 等一律归为流行；“偶像流行”声学上无法区分，由 LLM 结合元数据判定（P0 反馈：乐队摇滚被误判为偶像）
             out.append("pop")
     elif genre == "Jazz":
         out.append("jazz")
