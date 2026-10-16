@@ -61,6 +61,39 @@ DOCKER_BUILDKIT=1 docker build -t 032music-analyzer:local -f analyzer/Dockerfile
 
 还可以设置的构建参数（非敏感，会写入镜像历史）：`--build-arg APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn`、`--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`、`--build-arg APT_FORCE_IPV4=1`。构建日志中出现 `[build] 代理：已启用` 即表示代理生效（加 `--no-cache` 可强制重新执行该步骤）。
 
+### 预构建镜像
+
+CI 会发布 `ghcr.io/lux032/032music-server-analyzer`（linux/amd64，标签 `latest`、`main`、`sha-<短提交号>`，镜像标签 `org.opencontainers.image.revision` 为完整提交号）。使用预构建镜像就不需要在本机构建：在 compose 中把 `music-analyzer` 的 `build:` 换成 `image: ghcr.io/lux032/032music-server-analyzer:sha-<提交号>`。建议用 `标签@sha256:…` 固定版本。
+
+### QNAP（Container Station）部署注意事项
+
+**在 QNAP 上，不要把 032 和分析服务放到 compose 新建的网络里。** QNAP 默认的 bridge 网络（`10.0.3.0/24`，网关 `10.0.3.1`）由 Container Station 管理，转发和 NAT 规则是完整的。compose 自动创建的 `<项目名>_default` 网络在 QNAP 上可能出现这样的情况：容器连不上局域网里的代理，连外网也不正常。实测现象是：分析服务下载模型时反复出现 `<urlopen error timed out>`，但 Docker 仍显示 healthy，同时 032 的 Bangumi/MusicBrainz 刮削也开始报错；网段并不重叠（`172.29.0.0/22`），换回默认 bridge 后立即恢复。
+
+默认 bridge 网络不支持用服务名互相访问，所以 `http://music-analyzer:8000` 不可用。做法是把分析服务的端口**只发布到 bridge 网关 IP**，032 通过网关访问它：
+
+```yaml
+services:
+  music-server:
+    network_mode: bridge
+    # …其余配置不变
+  music-analyzer:
+    network_mode: bridge
+    ports:
+      - "10.0.3.1:18000:8000"   # 只绑定网关 IP，局域网访问不到；不要写成 "18000:8000"
+    # …其余配置同仓库 compose.yaml
+```
+
+```env
+# .env
+MUSIC_SERVER_ANALYZER_URL=http://10.0.3.1:18000
+```
+
+- 网关 IP 以 `docker network inspect bridge` 中的 `Gateway` 为准，并先确认该 IP 上的 18000 端口没有被占用。
+- 验证连通：`docker exec 032music-server wget -qO- http://10.0.3.1:18000/health` 应返回 `"status": "ready"`；在 NAS 宿主机上访问 `http://<NAS局域网IP>:18000/health` 应连接失败。
+- 如果分析服务需要代理下载模型，代理地址填局域网 IP（例如 `MUSIC_ANALYZER_HTTP_PROXY=http://<代理主机局域网IP>:<端口>`）。模型下载完成后会缓存在卷里，以后启动不再需要代理。
+- 不建议用 `network_mode: service:music-server` 共享网络：032 重启后，分析容器会断网，必须手动重启它。
+- 判断模型是否就绪要看日志里的 `analyzer ready`，或 `/health` 返回的 `status`。Docker 的 healthy 只表示 HTTP 服务在运行，不代表模型已经加载完成。
+
 ## 资源占用（J4125 实测）
 
 | 项 | 数值 |

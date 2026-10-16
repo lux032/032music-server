@@ -168,6 +168,8 @@ docker compose --profile analysis up -d --build
 
 Then turn it on under **Admin → Console → 声学分析**: switching it on starts the first full analysis (about 12–14 hours for 17k tracks on a 4-core NAS; an optional run window is available and it yields to transcodes and scans); afterwards new tracks are analysed after each scan. The sidecar mounts the music directory read-only, publishes no port and does not need AVX. Models come from MTG Essentia (CC BY-NC-SA 4.0, **non-commercial use only**) and are downloaded on first start. See [`analyzer/README.md`](analyzer/README.md) for proxy builds, resources and the API.
 
+> **QNAP:** keep 032 on Container Station's default `bridge` network; compose-created networks may lose LAN/Internet egress there. Put the analyzer on `bridge` too, publish its port only on the bridge gateway (e.g. `10.0.3.1:18000:8000`) and set `MUSIC_SERVER_ANALYZER_URL=http://10.0.3.1:18000`. Details (Chinese) in [`analyzer/README.md`](analyzer/README.md).
+
 ### Backups and upgrades
 
 Back up `.env` and the **entire data directory**, not just `music.db`. The database contains credential overrides and external-service secrets; protect backups accordingly. With SQLite WAL, copying only the database while the server is running may omit recent writes. The simplest consistent backup is made while the service is stopped:

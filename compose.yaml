@@ -43,6 +43,8 @@ services:
   # 只在 compose 内网提供服务，不发布端口；音乐目录只读。模型（MTG Essentia，
   # CC BY-NC-SA 4.0，仅限非商业）首次启动时下载到 analyzer-models 卷（约 53MB）。
   # 开关、进度与运行时间窗在 管理 → 控制台 → 声学分析 中设置，默认关闭。
+  # QNAP：两个服务都用 network_mode: bridge，分析服务端口只发布到网关 IP，
+  # 详见 analyzer/README.md 的 QNAP 一节。
   music-analyzer:
     profiles: ["analysis"]
     # 需要代理才能构建时，可先用 docker build 预先构建同名镜像（见 analyzer/README.md）

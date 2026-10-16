@@ -197,7 +197,9 @@ MUSIC_SERVER_ANALYZER_TOKEN=请替换为随机字符串
 docker compose --profile analysis up -d --build
 ```
 
-然后在 **管理 → 控制台 → 声学分析** 打开开关：打开即开始首次全量分析（1.7 万首在 4 核 NAS 上约 12–14 小时，可限制运行时间窗，有转码或扫描时自动让路），之后新入库的歌曲在扫描完成后自动分析。分析服务只读挂载音乐目录、不发布端口，不需要 AVX。模型来自 MTG Essentia（CC BY-NC-SA 4.0，**仅限非商业用途**），首次启动时下载。需要代理构建镜像、资源占用与接口说明见 [`analyzer/README.md`](analyzer/README.md)。
+然后在 **管理 → 控制台 → 声学分析** 打开开关：打开即开始首次全量分析（1.7 万首在 4 核 NAS 上约 12–14 小时，可限制运行时间窗，有转码或扫描时自动让路），之后新入库的歌曲在扫描完成后自动分析。分析服务只读挂载音乐目录、不发布端口，不需要 AVX。模型来自 MTG Essentia（CC BY-NC-SA 4.0，**仅限非商业用途**），首次启动时下载。需要代理构建镜像、预构建镜像、资源占用与接口说明见 [`analyzer/README.md`](analyzer/README.md)。
+
+> **QNAP 用户**：请保持 032 使用 Container Station 默认的 `bridge` 网络，不要改用 compose 新建的网络（在 QNAP 上可能导致容器连不上局域网代理和外网）。分析服务也使用 bridge，把端口只发布到网关 IP（如 `10.0.3.1:18000:8000`），并设置 `MUSIC_SERVER_ANALYZER_URL=http://10.0.3.1:18000`。详见 [`analyzer/README.md` 的 QNAP 一节](analyzer/README.md#qnapcontainer-station部署注意事项)。
 
 ### 备份与升级
 
