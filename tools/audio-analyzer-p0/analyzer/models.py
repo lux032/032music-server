@@ -13,6 +13,28 @@ import urllib.request
 from dataclasses import dataclass, field
 
 BASE = "https://essentia.upf.edu/models"
+PROXY_SECRET = "/run/secrets/proxy_url"
+_opener: urllib.request.OpenerDirector | None = None
+
+
+def _build_opener() -> urllib.request.OpenerDirector:
+    """Proxy from the mounted secret file (may carry credentials), else urllib's default
+    handling of HTTP(S)_PROXY / NO_PROXY. The proxy address is never logged."""
+    global _opener
+    if _opener is not None:
+        return _opener
+    url = ""
+    if os.path.isfile(PROXY_SECRET):
+        with open(PROXY_SECRET, encoding="utf-8") as fh:
+            url = fh.readline().strip()
+    if url:
+        _opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": url, "https": url}))
+        print("[models] 代理：已启用（secret 文件；地址不打印）", file=sys.stderr, flush=True)
+    else:
+        _opener = urllib.request.build_opener()
+        if urllib.request.getproxies().get("https"):
+            print("[models] 代理：已启用（环境变量；地址不打印）", file=sys.stderr, flush=True)
+    return _opener
 
 
 @dataclass
@@ -57,7 +79,7 @@ SPECS: list[ModelSpec] = [
 def _download(url: str, dest: str) -> None:
     tmp = dest + ".part"
     req = urllib.request.Request(url, headers={"User-Agent": "032music-audio-analyzer-p0"})
-    with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as fh:
+    with _build_opener().open(req, timeout=120) as resp, open(tmp, "wb") as fh:
         while True:
             chunk = resp.read(1 << 20)
             if not chunk:

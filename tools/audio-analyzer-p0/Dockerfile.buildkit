@@ -1,0 +1,28 @@
+# 032 Music Server · 声学分析 P0 验证镜像（BuildKit secret 版本，用于带凭证的代理）
+# 需要 BuildKit（Docker 23+ 默认启用；Docker 20.10 需 DOCKER_BUILDKIT=1）。
+# 代理 URL 以 secret 挂载到 /run/secrets/build_proxy，只在下面这一步 RUN 中可见，
+# 不进入镜像层、镜像历史或构建参数。用法：
+#   DOCKER_BUILDKIT=1 docker build -f Dockerfile.buildkit --secret id=build_proxy,src=代理文件 .
+# 除依赖安装这一步外，其余内容必须与 Dockerfile 保持一致（tests/test_build_scripts.sh 会检查）。
+FROM python:3.12-slim-bookworm
+
+# 以下均为非敏感参数，会出现在镜像历史中，不要放凭证
+ARG INSTALL_GPU=0
+ARG APT_MIRROR=
+ARG APT_FORCE_IPV4=0
+ARG PIP_INDEX_URL=
+
+RUN --mount=type=secret,id=build_proxy \
+    --mount=type=bind,source=build/install-deps.sh,target=/tmp/build/install-deps.sh \
+    --mount=type=bind,source=requirements.txt,target=/tmp/build/requirements.txt \
+    sh /tmp/build/install-deps.sh
+
+WORKDIR /app
+COPY analyzer ./analyzer
+COPY bench.py .
+
+ENV PYTHONUNBUFFERED=1 \
+    OMP_NUM_THREADS=2
+
+VOLUME ["/models", "/out"]
+ENTRYPOINT ["python", "/app/bench.py"]
