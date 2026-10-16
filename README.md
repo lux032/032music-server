@@ -211,6 +211,16 @@ docker compose --profile analysis up -d --build
 - 默认发送歌词片段（每首最多约 600 字，可关闭）；API Key 与代理只写不读。需要代理访问模型服务时在页面填写（如 `http://192.168.1.2:7890`），或给容器设置 `HTTP(S)_PROXY`。
 - 每首曲目的标签、声学证据和 AI 结果可在歌曲的“AI 标签”页查看和人工修正；人工修正优先，重新打标不会覆盖。
 
+### 每日推荐
+
+每天按情绪与风格生成几个歌单（默认 5 个 × 25 首，每天 05:00 预生成，首次打开时也会生成），依据 AI 打标的情绪/风格、声学特征和播放记录：
+
+- 主题约三分之二为情绪/风格（如“治愈温柔”“钢琴”“热血 × 摇滚”），其余为作品漫游、创作者、歌手电台和“好久不见”；按主题的历史评价做 Thompson 抽样并参考近期偏好，用过的主题冷却 7 天、相邻两天不用同一情绪，每周保留一个冷门主题。
+- 选曲：熟悉/探索默认 70/30，同一歌手最多 3 首、同一专辑最多 2 首、当天各歌单之间不重复、每单 60–120 分钟；按能量起伏排序，开头放熟悉的歌。伤感类曲目默认不进入歌单。
+- 已配置 AI 模型服务时，模型只从服务端算好的候选主题中挑选并起标题（每天约 1 次请求），不选曲；未配置时使用模板标题。
+- 在 **管理 → 控制台 → 每日推荐** 可预览今天的歌单及每首歌的入选原因、调整设置、换一个或重新生成。网页主页与 App 的展示在后续版本加入。
+- 声学分析完成后，“相似曲目”也会结合听感（声学 embedding）与元数据。
+
 ### 备份与升级
 
 备份 `.env` 和**整个数据目录**，不要只备份 `music.db`。数据库含凭据覆盖值和外部服务密钥，应保护备份。SQLite 使用 WAL，运行期间单独复制数据库可能漏掉近期写入；最简单的一致性备份方式是先停服：
@@ -370,6 +380,13 @@ docker compose logs --tail=100 music-server
 | `GET` | `/api/v1/audio-analysis` | 声学分析状态：开关、进度、校准、分析服务信息（`capabilities.features.audioAnalysis` 表示已部署且已开启）。 |
 | `GET` | `/api/v1/ai/tagging` | AI 打标状态：进度、用量、复核与抽样对比（`capabilities.features.trackTags` 表示已配置且已开启）。 |
 | `GET/PUT` | `/api/v1/tracks/{id}/tags` | 曲目的情绪/风格标签（生效结果、各来源与 AI 元信息）；PUT `{"moods":["cheerful"],"styles":["pop"]}` 设置人工修正，空数组清除该类修正。 |
+| `GET` | `/api/v1/daily-mixes` | 今天的每日推荐（`status`：`ready` / `generating`（202，稍后重试）/ `not_ready` / `disabled`；每项含标题、简介、主题标签、曲数、时长、最多 4 张封面、评价）。`capabilities.features.dailyMixes` 表示已开启。 |
+| `GET` | `/api/v1/daily-mixes/{id}` | 歌单详情与曲目（`bucket`：familiar / explore；`blocked` 表示已设为不再推荐）。 |
+| `PUT` | `/api/v1/daily-mixes/{id}/rating` | `{"value":1}` 赞、`{"value":-1,"reasons":["theme"]}` 踩（原因：`repetitive`、`theme`、`tracks`、`flow`、`mismatch`）、`{"value":0}` 撤销。 |
+| `POST` | `/api/v1/daily-mixes/{id}/regenerate` | 换一个：同一位置换成新主题；每天次数用完返回 429。 |
+| `POST` | `/api/v1/daily-mixes/{id}/save` | 另存为普通歌单（可选 `{"name":"…"}`）。 |
+| `PUT/DELETE` | `/api/v1/tracks/{id}/recommendation-block` | 不再推荐 / 恢复推荐。 |
+| `GET/PATCH` | `/api/v1/daily-mixes/settings` | 每日推荐设置（`enabled`、`mixCount` 1–8、`trackCount` 10–60、`explorePercent` 20–60、`pregenerateHour`、`regenerateLimit`、`allowSad`、`llmTitles`）。 |
 
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 
