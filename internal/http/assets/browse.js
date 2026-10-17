@@ -16,6 +16,12 @@
     const url = new URL(location.href);
     if (value) url.searchParams.set(name, value);
     else url.searchParams.delete(name);
+    if (name === 'sort') {
+      // A new sort starts in its natural direction (an explicit empty order
+      // also forgets the remembered one) and a random sort gets a new seed.
+      url.searchParams.set('order', '');
+      url.searchParams.delete('seed');
+    }
     url.searchParams.delete('page');
     url.searchParams.delete('offset');
     url.searchParams.delete('notice');
@@ -71,6 +77,7 @@
     control.querySelector('.filter-trigger').setAttribute('aria-expanded', 'true');
     const input = control.querySelector('[role="combobox"]');
     if (input) { input.setAttribute('aria-expanded', 'true'); input.focus(); options(control); }
+    else if (!control.querySelector('[role="listbox"]')) control.querySelector('.filter-popover input:not([type="hidden"])')?.focus();
     else setActive(control, control.querySelector('[role="option"]'));
   }
   async function options(control) {
@@ -164,6 +171,8 @@
     if (control.querySelector('.filter-popover').hidden) return;
     if (e.key === 'Escape') { e.preventDefault(); close(control, true); return; }
     const list = control.querySelector('[role="listbox"]');
+    // Form popovers (year range) keep native keyboard behaviour.
+    if (!list) return;
     if (e.key === 'Enter' && e.target.matches('[role="combobox"]')) {
       e.preventDefault();
       if (list.dataset.ready === 'true') {

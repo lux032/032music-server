@@ -111,6 +111,17 @@ func (a *App) handleAPIWorkTracks(w http.ResponseWriter, r *http.Request) {
 	apiResult(w, values, err)
 }
 
+// handleAPITrackWorks lists the works a track belongs to (C11): clients use
+// it to mark work and series cards that contain the playing track.
+func (a *App) handleAPITrackWorks(w http.ResponseWriter, r *http.Request) {
+	values, err := a.store.WorksForTrack(r.Context(), parseInt64(r.PathValue("id")))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeAPIError(w, http.StatusNotFound, "not_found", "Track not found.")
+		return
+	}
+	apiResult(w, values, err)
+}
+
 func (a *App) handleAPIAddWorkTrack(w http.ResponseWriter, r *http.Request) {
 	var input storage.WorkTrackInput
 	if !decode(w, r, &input) {

@@ -144,6 +144,9 @@ type Track struct {
 	TrackExtras
 	Artists []Artist      `json:"artists,omitempty"`
 	Credits []TrackCredit `json:"credits,omitempty"`
+	// AlbumArtists are the credited artists of the track's album; only the
+	// browse API fills them (AttachTrackAlbumArtistRefs).
+	AlbumArtists []ArtistRef `json:"albumArtists,omitempty"`
 }
 
 type Filters struct {
@@ -155,6 +158,14 @@ type Filters struct {
 	Year, Limit, Offset                   int
 	HideInstrumental, Favorite            bool
 	favoriteOrder                         bool
+	// Order overrides the natural direction of Sort ("asc"/"desc"; empty
+	// keeps the historical order). Seed fixes the permutation of
+	// Sort=="random". YearFrom/YearTo bound the album release year (tracks
+	// use Focus.YearFrom/YearTo). Only the browse API and the web lists set
+	// these; the legacy JSON list endpoints never parse them.
+	Order            string
+	Seed             int64
+	YearFrom, YearTo int
 }
 
 func (s *Store) LibraryByRoot(ctx context.Context, root string) (Library, error) {
@@ -594,14 +605,7 @@ func (s *Store) CleanupOrphans(ctx context.Context) error {
 func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	limit, offset := page(f)
 	role := normalizeArtistRole(f.ArtistRole)
-	order := "name COLLATE NOCASE"
-	if f.Sort == "albums" {
-		order = "album_count DESC, name COLLATE NOCASE"
-	} else if f.Sort == "tracks" {
-		order = "track_count DESC, name COLLATE NOCASE"
-	} else if f.favoriteOrder {
-		order = "ar.favorited_at DESC, ar.id DESC"
-	}
+	order := artistOrder(f)
 	where, args := artistWhere(f, role)
 	args = append(args, limit, offset)
 	trackCount := "(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id AND " + trackVisibleSQL("ta.track_id") + ")"
@@ -887,18 +891,7 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 		return nil, canonicalErr
 	}
 	limit, offset := page(f)
-	order := "COALESCE(a.user_title,a.title),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),t.id"
-	if f.Sort == "title" {
-		order = "COALESCE(t.user_title,t.title) COLLATE NOCASE,t.id"
-	} else if f.Sort == "year" {
-		order = "COALESCE(a.user_release_year,a.release_year,0) DESC," + order
-	} else if f.Sort == "date" {
-		order = albumReleaseDateSort + " DESC," + order
-	} else if f.Sort == "recentlyPlayed" {
-		order = "COALESCE(pp.last_played_at,'') DESC," + order
-	} else if f.Sort == "plays" {
-		order = "COALESCE(pp.play_count,0) DESC,COALESCE(pp.last_played_at,'') DESC," + order
-	}
+	order := trackOrder(f)
 	where, args := trackWhere(f)
 	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),`+effectiveTrackTypeSQL+`,COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)

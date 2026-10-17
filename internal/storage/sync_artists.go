@@ -170,6 +170,27 @@ func (s *Store) AttachAlbumArtistRefs(ctx context.Context, albums []Album) error
 	return nil
 }
 
+// AttachTrackAlbumArtistRefs fills Track.AlbumArtists (the album credits) for
+// the browse API, one batch query per page.
+func (s *Store) AttachTrackAlbumArtistRefs(ctx context.Context, tracks []Track) error {
+	ids := make([]int64, 0, len(tracks))
+	seen := make(map[int64]bool, len(tracks))
+	for i := range tracks {
+		if !seen[tracks[i].AlbumID] {
+			seen[tracks[i].AlbumID] = true
+			ids = append(ids, tracks[i].AlbumID)
+		}
+	}
+	refs, err := s.albumArtistRefs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range tracks {
+		tracks[i].AlbumArtists = nonNilRefs(refs[tracks[i].AlbumID])
+	}
+	return nil
+}
+
 func nonNilRefs(refs []ArtistRef) []ArtistRef {
 	if refs == nil {
 		return []ArtistRef{}

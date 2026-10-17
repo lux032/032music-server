@@ -61,6 +61,15 @@ func albumWhere(f Filters) (string, []any) {
 		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
 		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+albumHasEffectiveGenre+"))")
 	args = append(args, f.ArtistID, f.ArtistID, f.ArtistID, f.Year, f.Year, f.Genre, f.Genre)
+	// Release-year range (browse API and web album list); undated albums never match a bound.
+	if f.YearFrom > 0 {
+		clauses = append(clauses, "COALESCE(a.user_release_year,a.release_year)>=?")
+		args = append(args, f.YearFrom)
+	}
+	if f.YearTo > 0 {
+		clauses = append(clauses, "COALESCE(a.user_release_year,a.release_year)<=?")
+		args = append(args, f.YearTo)
+	}
 	return strings.Join(clauses, " AND "), args
 }
 
@@ -71,27 +80,6 @@ func albumWhere(f Filters) (string, []any) {
 // 2004/05/12), so they are unified to '-'. A bare year sorts after the full
 // dates of that year under DESC, undated albums sort last.
 const albumReleaseDateSort = "REPLACE(REPLACE(COALESCE(NULLIF(a.user_release_date,''),CASE WHEN a.user_release_year IS NOT NULL AND substr(COALESCE(a.release_date,''),1,4)<>CAST(a.user_release_year AS TEXT) THEN CAST(a.user_release_year AS TEXT) END,NULLIF(a.release_date,''),CAST(a.release_year AS TEXT),''),'.','-'),'/','-')"
-
-// albumOrder returns a stable ORDER BY for album browsing. An explicit sort
-// wins; with an active letter index and no explicit sort the historical
-// reading-title order applies. a.id always terminates the key so pagination
-// is stable.
-func albumOrder(f Filters) string {
-	switch f.Sort {
-	case "year":
-		return "COALESCE(a.user_release_year,a.release_year,0) DESC,a.sort_title,a.id"
-	case "date":
-		return albumReleaseDateSort + " DESC,a.sort_title,a.id"
-	case "added":
-		return "a.added_at DESC,a.id"
-	case "recentlyPlayed":
-		return "COALESCE((SELECT MAX(pp.last_played_at) FROM tracks pt JOIN playback_progress pp ON pp.track_id=pt.id WHERE pt.album_id=a.id),'') DESC,a.sort_title,a.id"
-	}
-	if f.Index != "" {
-		return "COALESCE(NULLIF(a.reading_title,''),a.sort_title) COLLATE NOCASE,a.id"
-	}
-	return "a.sort_title COLLATE NOCASE,a.id"
-}
 
 // trackWhere builds the WHERE clause shared by ListTracks and CountTracks.
 // Artist predicates preserve API any-role behavior unless PerformerOnly is set, and respect

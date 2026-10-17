@@ -25,6 +25,11 @@ type libraryPageData struct {
 	Section, Query, Genre, Sort, Index, Notice, ReturnTo string
 	ArtistRole, ArtistRoleLabel, ClearPath               string
 	Year                                                 int
+	// Order is the explicit sort direction (asc/desc, empty = natural).
+	// OrderToggleURL flips it, ReshuffleURL draws a new random order.
+	Order, OrderToggleURL, ReshuffleURL string
+	// YearFrom/YearTo bound the album release year (albums page).
+	YearFrom, YearTo int
 	ArtistID, AlbumID                                    int64
 	Artists                                              []storage.Artist
 	Albums                                               []storage.Album
@@ -238,7 +243,7 @@ func (a *App) pageBase(r *http.Request, section string) (libraryPageData, error)
 func filterQuery(r *http.Request) url.Values {
 	source := r.URL.Query()
 	values := url.Values{}
-	for _, name := range []string{"q", "artist", "album", "year", "genre", "sort", "index"} {
+	for _, name := range append([]string{"q", "artist", "album", "year", "genre", "sort", "order", "seed", "index"}, albumRangeNames(r)...) {
 		if value := source.Get(name); value != "" && value != "0" {
 			values.Set(name, value)
 		}
@@ -265,12 +270,82 @@ func searchFields(r *http.Request) []queryField {
 	values := filterQuery(r)
 	values.Del("q")
 	fields := make([]queryField, 0, len(values))
-	for _, name := range append([]string{"artist", "album", "year", "genre", "sort", "index"}, trackFocusNames...) {
+	for _, name := range append(append([]string{"artist", "album", "year", "genre", "sort", "order", "seed", "index"}, albumRangeNames(r)...), trackFocusNames...) {
 		for _, value := range values[name] {
 			fields = append(fields, queryField{Name: name, Value: value})
 		}
 	}
 	return fields
+}
+
+// albumRangeNames are the album page's year range parameters; the tracks
+// page carries yearFrom/yearTo as track focus parameters instead.
+func albumRangeNames(r *http.Request) []string {
+	if r.URL.Path == "/admin/albums" {
+		return []string{"yearFrom", "yearTo"}
+	}
+	return nil
+}
+
+// orderLinks fills the direction toggle and the reshuffle link of a list
+// page. A random sort has no direction, only a new shuffle.
+func orderLinks(r *http.Request, data *libraryPageData) {
+	q := r.URL.Query()
+	data.Order = q.Get("order")
+	base := filterQuery(r)
+	link := func(values url.Values) string {
+		if encoded := values.Encode(); encoded != "" {
+			return r.URL.Path + "?" + encoded
+		}
+		return r.URL.Path
+	}
+	if q.Get("sort") == "random" {
+		base.Del("seed")
+		data.ReshuffleURL = link(base)
+		return
+	}
+	next := "desc"
+	if data.Order == "desc" || (data.Order == "" && naturalDescending(q.Get("sort"))) {
+		next = "asc"
+	}
+	base.Set("order", next)
+	data.OrderToggleURL = link(base)
+}
+
+// naturalDescending reports whether a page's sort runs newest/most first
+// without an explicit direction (mirrors the storage sort specs).
+func naturalDescending(sortKey string) bool {
+	switch sortKey {
+	case "year", "date", "added", "plays", "recentlyPlayed", "albums", "tracks":
+		return true
+	}
+	return false
+}
+
+// OrderLabel names the effective direction for the toggle button.
+func (data libraryPageData) OrderLabel() string {
+	desc := data.Order == "desc" || (data.Order == "" && naturalDescending(data.Sort))
+	switch data.Sort {
+	case "year", "date", "added", "recentlyPlayed":
+		if desc {
+			return "从新到旧"
+		}
+		return "从旧到新"
+	case "plays", "albums", "tracks":
+		if desc {
+			return "从多到少"
+		}
+		return "从少到多"
+	case "duration":
+		if desc {
+			return "从长到短"
+		}
+		return "从短到长"
+	}
+	if desc {
+		return "Z → A"
+	}
+	return "A → Z"
 }
 
 func firstGenre(genres string) string {
@@ -332,6 +407,10 @@ func librarySortLabel(value string) string {
 		return "专辑关联数量"
 	case "tracks":
 		return "单曲关联数量"
+	case "duration":
+		return "时长"
+	case "random":
+		return "随机"
 	default:
 		return value
 	}
@@ -383,6 +462,14 @@ func filterTags(r *http.Request, path string) []filterTag {
 	}
 	if value := base.Get("genre"); value != "" {
 		add("genre", "流派："+value)
+	}
+	if r.URL.Path == "/admin/albums" {
+		if value := base.Get("yearFrom"); value != "" {
+			add("yearFrom", "起始年份："+value)
+		}
+		if value := base.Get("yearTo"); value != "" {
+			add("yearTo", "结束年份："+value)
+		}
 	}
 	if value := base.Get("index"); value != "" {
 		add("index", "首字母："+value)
@@ -593,9 +680,10 @@ func (a *App) handleTrackArtistsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, label string) {
-	rememberSort(w, r, "artists-"+role)
+	rememberBrowseOrder(w, r, "artists-"+role)
 	data, err := a.pageBase(r, "artists")
 	f := filters(r)
+	browseOrderFilters(r, &f)
 	f.PerformerOnly = true
 	f.ArtistRole = role
 	f.Favorite = false // The favorite query parameter belongs to the public artists API.
@@ -605,6 +693,7 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	data.IndexLinks = indexLinks(r, data.ClearPath)
 	data.FilterTags = filterTags(r, data.ClearPath)
 	data.ClearPath = clearPathFor(r, data.ClearPath)
+	orderLinks(r, &data)
 	applyPage(r, &f, 60)
 	if err == nil {
 		data.Artists, err = a.store.ListArtists(r.Context(), f)
@@ -618,11 +707,18 @@ func (a *App) handleArtistsByRole(w http.ResponseWriter, r *http.Request, role, 
 	a.renderLibrary(w, data, err)
 }
 func (a *App) handleAlbumsPage(w http.ResponseWriter, r *http.Request) {
-	rememberSort(w, r, "albums")
+	rememberBrowseOrder(w, r, "albums")
 	data, err := a.pageBase(r, "albums")
 	data.AlbumCols = albumGridCols(r)
 	f := filters(r)
 	f.PerformerOnly = true
+	browseOrderFilters(r, &f)
+	if invalid := parseYearRange(r, &f); len(invalid) > 0 {
+		f.YearFrom, f.YearTo = 0, 0
+		data.Notice = "已忽略无效筛选：" + strings.Join(invalid, ", ")
+	}
+	data.YearFrom, data.YearTo = f.YearFrom, f.YearTo
+	orderLinks(r, &data)
 	if f.ArtistID > 0 {
 		if id, e := a.store.CanonicalArtistID(r.Context(), f.ArtistID); e == nil {
 			f.ArtistID = id
@@ -687,10 +783,12 @@ func hasAdditionalTrackFilters(r *http.Request) bool {
 }
 
 func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
-	rememberSort(w, r, "tracks")
+	rememberBrowseOrder(w, r, "tracks")
 	data, err := a.pageBase(r, "tracks")
 	f := filters(r)
 	f.PerformerOnly = true
+	browseOrderFilters(r, &f)
+	orderLinks(r, &data)
 	if f.ArtistID > 0 {
 		if id, e := a.store.CanonicalArtistID(r.Context(), f.ArtistID); e == nil {
 			f.ArtistID = id
@@ -709,6 +807,7 @@ func (a *App) handleTracksPage(w http.ResponseWriter, r *http.Request) {
 	if len(invalid) > 0 {
 		data.Notice = "已忽略无效筛选：" + strings.Join(invalid, ", ")
 	}
+	data.YearFrom, data.YearTo = f.Focus.YearFrom, f.Focus.YearTo
 	data.FocusGroups = trackFocusGroups(r.URL.Query(), data.Years)
 	for _, c := range f.Focus.Credits {
 		v := c.Role + ":" + strconv.FormatInt(c.ArtistID, 10)
@@ -898,6 +997,7 @@ func (a *App) validCSRF(r *http.Request) bool {
 
 func (a *App) handleAPIArtists(w http.ResponseWriter, r *http.Request) {
 	f := filters(r)
+	legacyAPISort(&f, "albums", "tracks")
 	limit, offset := pageValues(r)
 	f.Limit, f.Offset = limit, offset
 	values, err := a.store.ListArtists(r.Context(), f)
@@ -914,6 +1014,7 @@ func (a *App) handleAPIArtists(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) handleAPIAlbums(w http.ResponseWriter, r *http.Request) {
 	f := filters(r)
+	legacyAPISort(&f, "year", "date", "added", "recentlyPlayed")
 	if f.Limit <= 0 {
 		f.Limit = 48
 	}
@@ -959,6 +1060,7 @@ func (a *App) handleAPIAlbum(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) handleAPITracks(w http.ResponseWriter, r *http.Request) {
 	f := filters(r)
+	legacyAPISort(&f, "title", "year", "date", "recentlyPlayed", "plays")
 	var invalid []string
 	f.Focus, invalid = parseTrackFocus(r.URL.Query())
 	if len(invalid) > 0 {

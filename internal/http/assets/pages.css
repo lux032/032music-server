@@ -1065,6 +1065,14 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .filter-popover [role="option"]:hover, .filter-popover [role="option"]:focus-visible { color: var(--accent); background: var(--accent-soft); }
 .filter-clear { margin-left: auto; color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
 .filter-clear:hover { color: var(--accent); }
+/* 排序方向切换与“换一批”：与筛选触发器同高的次要按钮。 */
+.order-toggle { display: inline-flex; align-items: center; min-height: 38px; border: 1px solid var(--line); border-radius: 11px; padding: 7px 12px; color: var(--text-secondary); background: var(--surface); font-weight: 500; white-space: nowrap; }
+.order-toggle:link, .order-toggle:visited { color: var(--text-secondary); }
+.order-toggle:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.year-range-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+.year-range-form label { display: grid; gap: 4px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.year-range-form input { margin: 0; }
+.year-range-form button { grid-column: 1 / -1; }
 .filter-tags { margin: 0 0 14px; }
 .filter-tag { padding: 3px 9px; background: var(--bg-soft); }
 .index-bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; white-space: nowrap; margin: 0 0 20px; border: 0; padding: 0 0 4px; }

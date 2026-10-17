@@ -21,6 +21,8 @@
 |---|---|---|
 | `GET` | `/api/v1/status`、`/api/v1/capabilities` | 状态、统计、功能、媒体规则与可用编码器。 |
 | `GET` | `/api/v1/artists`、`/api/v1/albums`、`/api/v1/tracks` | 浏览/搜索，对应 `/{id}` 获取详情。 |
+| `GET` | `/api/v1/browse/albums`、`/api/v1/browse/tracks`、`/api/v1/browse/artists` | 带排序方向、种子随机和歌手引用的列表（`capabilities.features.browse`），见下文“浏览接口”。 |
+| `GET` | `/api/v1/tracks/{id}/works` | 曲目所属的作品（`capabilities.features.trackWorks`）：`{"items":[{id,title,translatedTitle,type,role,season,seriesId}]}`，是 `/works/{id}/tracks` 的反向：直接关联或专辑关联都算，每部作品一条（`role`/`season` 取优先级最高的关联：手动 > Bangumi > 自动 > 专辑）；`seriesId` 仅在作品属于系列时出现；未知曲目 404。 |
 | `PATCH` | `/api/v1/artists/{id}`、`/api/v1/albums/{id}`、`/api/v1/tracks/{id}` | 保存人工元数据覆盖。 |
 | `GET` | `/api/v1/sync/albums`、`/api/v1/sync/tracks`、`/api/v1/sync/artists` | 游标曲库同步；专辑与曲目附带 `artists: [{id,name}]` 歌手引用，歌手同步只含演唱者（专辑歌手或曲目主唱）。 |
 | `GET` | `/api/v1/artists/{id}/tracks` | 歌手单曲分页列表（演唱或专辑歌手），`sort=album\|plays\|recent\|title\|added\|duration`，`order=asc\|desc` 覆盖默认方向；非法值返回 400。 |
@@ -53,6 +55,18 @@
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 
 普通列表返回 `{"items":[],"total":0,"limit":100,"offset":0}`，单页最多 500 条；同步接口使用独立游标响应。浏览参数包括 `q`、`artist`、`album`、`year`、`genre`、`sort`、`limit`、`offset`，适用性取决于资源。歌手列表支持 `role=album|track|all`、`favorite=true`；歌曲支持 `hideInstrumental=true`，`sort` 支持 `title`、`year`、`date`、`plays`（播放次数）、`recentlyPlayed`（最近播放）。支持假名变体匹配，罗马音搜索需标签提供 reading/sort 字段。相似推荐基于元数据，**不是声学分析**。
+
+### 浏览接口
+
+`/api/v1/browse/{albums|tracks|artists}` 接受对应旧列表的全部筛选参数（歌曲含 `hideInstrumental`、`yearFrom`/`yearTo` 等焦点筛选），返回同样的 `{items,total,limit,offset}`，另有：
+
+- `sort`：专辑 `title`、`year`、`date`、`added`、`recentlyPlayed`、`random`；歌曲 `album`、`title`、`year`、`date`、`recentlyPlayed`、`plays`、`added`、`duration`、`random`；歌手 `name`、`albums`、`tracks`、`random`。非法值返回 400 `invalid_filter`。
+- `order=asc|desc`：覆盖主排序键的默认方向（年份、日期、加入时间、最近播放、播放次数、专辑数、曲目数默认降序，其余升序）；同值时的次级顺序不变。无年份、无日期、未播放的条目在两个方向都排在最后。
+- `sort=random&seed=<整数>`：同一个 seed 的各页结果稳定、不重不漏；不带 seed 时每次请求重新洗牌。random 忽略 `order`。
+- 专辑 `yearFrom`/`yearTo`：发行年份区间（含边界，无年份的专辑不匹配任何边界）；反向区间返回 400。
+- 歌手引用：专辑带 `artists: [{id,name}]`，歌曲另带专辑歌手 `albumArtists: [{id,name}]`（专辑没有署名歌手时省略）。
+
+旧的 `/albums`、`/tracks`、`/artists` 行为不变：不认识的 `sort`（如 `random`、`duration`）仍按默认顺序，`order`/`seed`/专辑 `yearFrom` 被忽略。
 
 歌手详情 `/api/v1/artists/{id}` 不再内嵌全部单曲：返回 `topTracks`、`topTracksArePopular` 与 `tracksTotal`：有播放记录时 `topTracks` 为播放次数最多的至多 10 首（未播放过的歌不计入，按播放次数、最近播放时间排序），`topTracksArePopular=true`；歌手的歌都没播放过时兜底为专辑顺序的前 10 首，`topTracksArePopular=false`（web 歌手页同理），完整列表通过 `/api/v1/artists/{id}/tracks` 分页获取。单曲排序默认方向：`album`（年份→专辑→碟号→曲号）、`title`、`duration` 升序；`plays`、`recent`、`added` 降序；`recent` 中未播放过的歌始终排在最后；同值时按专辑顺序。
 

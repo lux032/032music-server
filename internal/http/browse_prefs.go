@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"math/rand/v2"
 	"net/http"
 	"slices"
 	"strconv"
+
+	"github.com/lux032/032music-server/internal/storage"
 )
 
 // Browse preferences (sort order, album grid density) are remembered in
@@ -16,10 +19,10 @@ const browsePrefMaxAge = 365 * 24 * 60 * 60
 // also the cookie suffix.
 var librarySortOptions = map[string][]string{
 	"credits":       {"name", "tracks"},
-	"albums":        {"title", "year", "date", "added"},
-	"tracks":        {"title", "year", "date", "plays", "recentlyPlayed"},
-	"artists-album": {"name", "albums"},
-	"artists-track": {"name", "tracks"},
+	"albums":        {"title", "year", "date", "added", "random"},
+	"tracks":        {"title", "year", "date", "plays", "recentlyPlayed", "added", "duration", "random"},
+	"artists-album": {"name", "albums", "random"},
+	"artists-track": {"name", "tracks", "random"},
 	"works":         {"title", "year", "updated"},
 }
 
@@ -92,14 +95,84 @@ func rememberSort(w http.ResponseWriter, r *http.Request, page string) {
 	r.URL.RawQuery = q.Encode()
 }
 
-// clearPathFor returns the "clear all conditions" link. When a sort order is
-// active it carries an explicit empty sort so the remembered order is reset as
-// well instead of being restored on the bare path.
+// clearPathFor returns the "clear all conditions" link. When a sort or a
+// sort direction is active it carries explicit empty values so the remembered
+// preferences are reset as well instead of being restored on the bare path.
 func clearPathFor(r *http.Request, path string) string {
-	if r.URL.Query().Get("sort") != "" {
+	q := r.URL.Query()
+	switch {
+	case q.Get("sort") != "" && q.Get("order") != "":
+		return path + "?order=&sort="
+	case q.Get("sort") != "":
 		return path + "?sort="
+	case q.Get("order") != "":
+		return path + "?order="
 	}
 	return path
+}
+
+func orderCookieName(page string) string { return "032_order_" + page }
+
+// rememberOrder is rememberSort for the sort direction (order=asc|desc):
+// an explicit value is remembered, an explicit empty "order=" restores the
+// sort's natural direction and forgets the preference, and a request without
+// order gets the remembered one written into its URL. Pages that do not list
+// sort directions (credits, works) never call it.
+func rememberOrder(w http.ResponseWriter, r *http.Request, page string) {
+	name := orderCookieName(page)
+	q := r.URL.Query()
+	if q.Has("order") {
+		value := q.Get("order")
+		if value == "asc" || value == "desc" {
+			http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/admin", MaxAge: browsePrefMaxAge, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+			return
+		}
+		if value == "" {
+			http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/admin", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		}
+		q.Del("order")
+		r.URL.RawQuery = q.Encode()
+		return
+	}
+	cookie, err := r.Cookie(name)
+	if err != nil || (cookie.Value != "asc" && cookie.Value != "desc") {
+		return
+	}
+	q.Set("order", cookie.Value)
+	r.URL.RawQuery = q.Encode()
+}
+
+// ensureRandomSeed gives a random sort a seed in the request URL, so every
+// pagination link and returnTo of this shuffle shows the same permutation.
+// A new shuffle ("换一批") is the same URL without seed.
+func ensureRandomSeed(r *http.Request) {
+	q := r.URL.Query()
+	if q.Get("sort") != "random" {
+		return
+	}
+	if _, err := strconv.ParseInt(q.Get("seed"), 10, 64); err == nil {
+		return
+	}
+	q.Set("seed", strconv.FormatInt(rand.Int64N(1<<31), 10))
+	r.URL.RawQuery = q.Encode()
+}
+
+// rememberBrowseOrder applies the remembered sort, direction and random seed
+// of a library list page.
+func rememberBrowseOrder(w http.ResponseWriter, r *http.Request, page string) {
+	rememberSort(w, r, page)
+	rememberOrder(w, r, page)
+	ensureRandomSeed(r)
+}
+
+// browseOrderFilters reads the direction and seed that rememberBrowseOrder
+// left in the URL.
+func browseOrderFilters(r *http.Request, f *storage.Filters) {
+	q := r.URL.Query()
+	if order := q.Get("order"); storage.ValidBrowseOrder(order) && f.Sort != "random" {
+		f.Order = order
+	}
+	f.Seed, _ = strconv.ParseInt(q.Get("seed"), 10, 64)
 }
 
 const (

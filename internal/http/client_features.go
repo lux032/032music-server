@@ -24,7 +24,9 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"transcode": a.transcoder.available["mp3"] || a.transcoder.available["ogg"] || a.transcoder.available["flac"], "artworkThumbnails": true, "similarTracks": true, "trackPath": true,
 			"cast": a.cast != nil,
 			"home": true, "seriesTracks": true, "workPosters": true,
-			"series": true, "workSeriesInfo": true,
+			"series": true, "workSeriesInfo": true, "trackWorks": true,
+			// /api/v1/browse/{albums,tracks,artists}: order, seeded random, album year range, artist refs.
+			"browse":        true,
 			"audioAnalysis": a.audioAnalysisEnabled(r.Context()),
 			"trackTags":     a.aiTaggingEnabled(r.Context()),
 			"dailyMixes":    a.dailyMixesEnabled(r.Context()),
