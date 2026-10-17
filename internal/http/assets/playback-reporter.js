@@ -49,6 +49,17 @@ const SNAPSHOT_KEY = '032_playback_session_v1';
 const BLOCK_KEY = '032_playback_block_v1';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
+// Playback context (features.playbackContext): where a play came from, sent on a
+// fresh start only — a resumed chain inherits it server-side.
+export function normalizePlaybackContext(context) {
+  if (!context || context.type !== 'dailyMix') return null;
+  const id = Number(context.id);
+  const position = Number(context.position);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  if (!Number.isInteger(position) || position < 0 || position > 999) return null;
+  return { type: 'dailyMix', id, position };
+}
+
 function safeWindowStorage(kind) {
   try { return window[kind]; } catch (_) { return null; }
 }
@@ -148,6 +159,7 @@ export function createPlaybackReporter(options = {}) {
       hasPlayed: initialState === 'playing',
       started: false, ended: false, superseded: false,
       endDelivered: false, endGivenUp: false, missingRecoveryDone: false,
+      context: null,
     };
   }
 
@@ -235,6 +247,7 @@ export function createPlaybackReporter(options = {}) {
     if (job.type === 'start') {
       body.state = job.state;
       if (job.resumeFrom) body.resumedFromSessionId = job.resumeFrom;
+      else if (sess.context) body.context = sess.context;
     } else if (job.type === 'heartbeat') {
       body.state = sess.state;
     } else if (job.type === 'end') {
@@ -339,6 +352,7 @@ export function createPlaybackReporter(options = {}) {
       sess.endDelivered = true;
       if (job.recoveryDepth < 1 && job.priorState === 'playing' && pastCountThreshold(job.positionMillis, job.durationMillis)) {
         const recovery = newSession(sess.trackId, null, 'playing');
+        recovery.context = sess.context;
         const startJob = makeJob(recovery, 'start', { state: 'playing', positionMillis: job.positionMillis, durationMillis: job.durationMillis, recoveryDepth: job.recoveryDepth + 1 });
         const endJob = makeJob(recovery, 'end', { endReason: job.endReason, positionMillis: job.positionMillis, durationMillis: job.durationMillis, recoveryDepth: job.recoveryDepth + 1 });
         queue.unshift(endJob);
@@ -459,6 +473,7 @@ export function createPlaybackReporter(options = {}) {
       endSession(previous, opts.reason || 'replaced');
     }
     session = newSession(trackId, null, opts.initialState || 'buffering');
+    session.context = normalizePlaybackContext(opts.context);
     enqueue(session, 'start', {
       state: session.state,
       positionMillis: opts.positionMillis,
@@ -488,6 +503,8 @@ export function createPlaybackReporter(options = {}) {
     const snapshot = readSnapshot();
     const resumeFrom = snapshot && snapshot.trackId === trackId ? snapshot.sessionId : null;
     session = newSession(trackId, resumeFrom, opts.initialState || 'paused');
+    // A resumed chain keeps its context server-side; a fresh chain carries the queue's.
+    if (!resumeFrom) session.context = normalizePlaybackContext(opts.context);
     // Resuming a chain carries the persisted play evidence forward.
     if (resumeFrom && snapshot.hasPlayed) session.hasPlayed = true;
     enqueue(session, 'start', {

@@ -104,7 +104,24 @@ type PlaybackEventInput struct {
 	DurationMillis       int64  `json:"durationMillis"`
 	EndReason            string `json:"endReason,omitempty"`
 	ResumedFromSessionID string `json:"resumedFromSessionId,omitempty"`
+	// Context attributes a start to a recommendation (features.playbackContext):
+	// only start events may carry it; a resumed session inherits its
+	// predecessor's context when the start has none.
+	Context *PlaybackContext `json:"context,omitempty"`
 }
+
+// PlaybackContext is where a play came from (docs/daily-mix-design.md §7.1).
+type PlaybackContext struct {
+	Type     string `json:"type"`
+	ID       int64  `json:"id"`
+	Position int    `json:"position"`
+}
+
+// PlaybackContextTypes lists the accepted context types (capabilities).
+var PlaybackContextTypes = []string{"dailyMix"}
+
+// maxPlaybackContextPosition bounds the position inside a mix.
+const maxPlaybackContextPosition = 999
 
 type PlaybackEventResult struct {
 	Applied        bool   `json:"applied"`
@@ -182,6 +199,20 @@ func validatePlaybackEvent(input *PlaybackEventInput) error {
 	}
 	if input.Type != "start" && input.ResumedFromSessionID != "" {
 		return errors.New("resumedFromSessionId is only valid for start events")
+	}
+	if input.Context != nil {
+		if input.Type != "start" {
+			return errors.New("context is only valid for start events")
+		}
+		if input.Context.Type != "dailyMix" {
+			return errors.New("context.type must be dailyMix")
+		}
+		if input.Context.ID <= 0 {
+			return errors.New("context.id must be positive")
+		}
+		if input.Context.Position < 0 || input.Context.Position > maxPlaybackContextPosition {
+			return fmt.Errorf("context.position must be between 0 and %d", maxPlaybackContextPosition)
+		}
 	}
 	if input.ResumedFromSessionID != "" && (len(input.ResumedFromSessionID) < 8 || len(input.ResumedFromSessionID) > 64 || !playbackIDPattern.MatchString(input.ResumedFromSessionID)) {
 		return errors.New("resumedFromSessionId must be 8-64 bytes of [A-Za-z0-9-]")
@@ -492,8 +523,22 @@ func (s *Store) startPlaybackSessionTx(ctx context.Context, tx *sql.Tx, input Pl
 	if input.ResumedFromSessionID != "" {
 		resumedFrom = input.ResumedFromSessionID
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO playback_sessions(session_id,client_id,client_kind,track_id,state,seq,position_ms,duration_ms,initial_position_ms,started_at,last_heartbeat_at,chain_id,resumed_from) VALUES(?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?)`,
-		input.SessionID, input.ClientID, input.ClientKind, input.TrackID, input.State, input.Seq, input.PositionMillis, input.DurationMillis, input.PositionMillis, chainID, resumedFrom); err != nil {
+	var ctxType, ctxID, ctxPosition any
+	if input.Context != nil {
+		ctxType, ctxID, ctxPosition = input.Context.Type, input.Context.ID, input.Context.Position
+	} else if input.ResumedFromSessionID != "" {
+		// A resume continues the same listen: it keeps the predecessor's context.
+		var t sql.NullString
+		var id, pos sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT context_type,context_id,context_position FROM playback_sessions WHERE session_id=?`, input.ResumedFromSessionID).Scan(&t, &id, &pos); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return PlaybackEventResult{}, err
+		}
+		if t.Valid {
+			ctxType, ctxID, ctxPosition = t.String, id.Int64, pos.Int64
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO playback_sessions(session_id,client_id,client_kind,track_id,state,seq,position_ms,duration_ms,initial_position_ms,started_at,last_heartbeat_at,chain_id,resumed_from,context_type,context_id,context_position) VALUES(?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?,?,?)`,
+		input.SessionID, input.ClientID, input.ClientKind, input.TrackID, input.State, input.Seq, input.PositionMillis, input.DurationMillis, input.PositionMillis, chainID, resumedFrom, ctxType, ctxID, ctxPosition); err != nil {
 		if isPrimaryKeyConstraint(err) {
 			return PlaybackEventResult{}, errSessionCreatedConcurrently
 		}

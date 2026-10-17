@@ -262,7 +262,7 @@ func TestDailyMixWebPages(t *testing.T) {
 	}
 	id := strconv.FormatInt(mixes[0].ID, 10)
 	detail := getWithCookie(handler, "/admin/daily-mixes/"+id, cookie).Body.String()
-	for _, want := range []string{mixes[0].Title, "播放全部", "data-track-list", "喜欢", "不喜欢…", "换一个", "今天还可以换 3 次", "另存为歌单", "不再推荐", "今天的其他推荐", `name="reason" value="theme"`} {
+	for _, want := range []string{mixes[0].Title, "播放全部", "data-track-list", "喜欢", "不喜欢…", "换一个", "今天还可以换 3 次", "另存为歌单", "不再推荐", "今天的其他推荐", `name="reason" value="theme"`, `data-context-type="dailyMix" data-context-id="` + id + `" data-context-position="0"`} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail missing %q", want)
 		}

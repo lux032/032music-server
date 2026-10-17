@@ -12,7 +12,7 @@ test.beforeAll(() => {
   // The reporter is a pure-logic ES module; Playwright transpiles specs to
   // CJS, so load it through a tiny CommonJS shim (no DOM involved).
   const src = fs.readFileSync(path.resolve(__dirname, '../../internal/http/assets/playback-reporter.js'), 'utf8');
-  const shim = src.replace(/export function createPlaybackReporter/, 'function createPlaybackReporter')
+  const shim = src.replace(/export function /g, 'function ')
     + '\nmodule.exports = { createPlaybackReporter };\n';
   const shimPath = path.join(os.tmpdir(), `032-playback-reporter-${process.pid}.cjs`);
   fs.writeFileSync(shimPath, shim);
@@ -111,6 +111,20 @@ test('start precedes heartbeat, seq strictly monotonic, clientId persisted', asy
   expect(new Set(seqs).size).toBe(seqs.length);
   expect(h.byType('resume')[0].seq).toBeGreaterThan(2);
   expect(h.byType('pause')[0].seq).toBeGreaterThan(h.byType('resume')[0].seq);
+});
+
+test('a fresh start carries the daily mix context; resumes and other plays do not', async () => {
+  const h = makeHarness({ snapshot: { sessionId: 'old-session-1', trackId: 5, hasPlayed: true } });
+  h.reporter.restore(5, { context: { type: 'dailyMix', id: 3, position: 1 } });
+  await h.flush();
+  expect(h.sent[0].body.resumedFromSessionId).toBe('old-session-1');
+  expect(h.sent[0].body.context).toBeUndefined(); // the server inherits it along the chain
+  h.reporter.play(12, { context: { type: 'dailyMix', id: 3, position: 2 } });
+  await h.flush();
+  expect(h.byType('start').at(-1)).toMatchObject({ trackId: 12, context: { type: 'dailyMix', id: 3, position: 2 } });
+  h.reporter.play(13, { context: { type: 'album', id: 9, position: 0 } });
+  await h.flush();
+  expect(h.byType('start').at(-1).context).toBeUndefined();
 });
 
 test('heartbeat is never sent before the session start lands', async () => {

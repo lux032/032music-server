@@ -1,6 +1,6 @@
 # 每日推荐歌单（Daily Mix）设计草案 v2
 
-- 状态：**草案 v2**；P0–P4 已实施（见第 13.4–13.8 节）
+- 状态：**草案 v2**；P0–P6 已实施（见第 13.4–13.9 节）
 - 范围：032 Music Server 负责打标、生成与反馈；MusicBridge App 和 Web 负责展示和收集反馈
 - 前提：服务端是单用户模型
 - v1 → v2 变更：首版就接入 LLM；以**情绪/风格**为主轴；去掉年代主题；新增曲目打标层；完整设计播放行为反馈；App 和 Web 都做；Web 主页左栏调整
@@ -398,3 +398,16 @@ LLM 打标的输入增加声学证据：风格 top-5、情绪 top-5（含概率�
 **验证**：HTTP 测试覆盖主页生成与布局（今日推荐 + 最近播放、无接着听）、歌单页各状态、评分/撤销、另存、不再推荐返回、换一个计次与替换后只读、管理页链接。
 
 **下一步（P5）**：App 主页横幅、详情与反馈；`/api/v1/home` 增加 `dailyMixes` 区块。
+
+### 13.9 P6 实施记录（播放上下文与隐式反馈，已合入 main）
+| 组件 | 位置 | 要点 |
+|---|---|---|
+| 迁移 050 | `050_playback_context.sql` | `playback_sessions.context_type/id/position/processed`；`tracks.favorited_at`；`rec_track_affinity`、`rec_tag_affinity`、`daily_mix_play_tracks`、`daily_mix_play_stats` |
+| 协议 | `storage/playback_sessions.go`、`http/client_features.go` | start 可带 `context`（只允许 start，type 仅 dailyMix，position 0–999）；续播 start 不带时继承前序会话的上下文；capabilities 声明 `features.playbackContext` 与 `playback.contextTypes` |
+| 汇总 | `storage/rec_feedback.go`、`dailymix/service.go` | 每小时（以及每天生成前）处理已结束、未处理的带上下文会话。单曲信号按 7.2 节计算，“播放中收藏”用 `favorited_at` 判断（会话开始到结束后 5 分钟内）。按（歌单, 曲目）累计，同时更新曲目、标签亲和度（30 天半衰期）。歌单级信号按 7.3 节，以差值写入主题 α/β（先减去已计入的量，保证幂等） |
+| 使用 | `dailymix/select.go`、`profile.go` | 入选权重 × exp(0.3·亲和度)，限制在 0.5–1.6；主题偏好 × (1 + 0.05·标签亲和度)，限制在 0.85–1.2（有下限，几次跳过不会排除某个情绪）；探索比例下限 20% 不变。GeneratorVersion 4 |
+| 管理页 | `/admin/daily-mixes` | 每个歌单显示“播放反馈：已播 / 完播 / 秒切 / 满意度 / 主题 α、β 增量”；曲目表多一列反馈系数；最近一次生成显示有反馈的曲目数 |
+| Web | `player-core.js`、`playback-reporter.js`、`queue.js` | 从每日歌单（首页封面、详情页列表）开始的队列带上下文；“下一首播放 / 加入队列”插入别的队列时去掉上下文 |
+| App | MusicBridge | 每日歌单的曲目带上下文，只在服务器声明能力时发送 |
+
+**与设计的差异**：处理进度用每个会话的 `context_processed` 标记，没有用 `processed_until` 水位。过期会话的 `ended_at` 取最后一次心跳的时间，可能早于水位，用标记不会漏算。

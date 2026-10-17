@@ -20,6 +20,21 @@ type Profile struct {
 	moodShare map[string]float64 // listened share / library share, per tag
 	styleLift map[string]float64
 	artists   map[int64]float64
+	// tagAffinity is the decayed implicit feedback per tag ("mood:x" / "style:x").
+	tagAffinity map[string]float64
+}
+
+// SetTagAffinity attaches the tag affinities from daily mix plays.
+func (p *Profile) SetTagAffinity(tags map[string]float64) { p.tagAffinity = tags }
+
+// tagFeedback maps a tag affinity onto a lift factor with a floor (design §7.5: a few
+// skips never exclude a mood or style; only 👎 “theme” starts a long cooldown).
+func (p *Profile) tagFeedback(kind, tag string) float64 {
+	if tag == "" {
+		return 1
+	}
+	v := p.tagAffinity[kind+":"+tag]
+	return math.Max(0.85, math.Min(1.2, 1+0.05*v))
 }
 
 const profileHalfLife = 30 * 24 * time.Hour
@@ -114,11 +129,11 @@ func (p *Profile) Lift(th *Theme) float64 {
 	l := 1.0
 	switch th.Type {
 	case TypeMood, TypeRediscover:
-		l = p.mood(th.Mood)
+		l = p.mood(th.Mood) * p.tagFeedback("mood", th.Mood)
 	case TypeStyle:
-		l = p.style(th.Style)
+		l = p.style(th.Style) * p.tagFeedback("style", th.Style)
 	case TypeMoodStyle:
-		l = math.Sqrt(p.mood(th.Mood) * p.style(th.Style))
+		l = math.Sqrt(p.mood(th.Mood)*p.style(th.Style)) * math.Sqrt(p.tagFeedback("mood", th.Mood)*p.tagFeedback("style", th.Style))
 	default:
 		var w float64
 		for _, c := range th.Pool {

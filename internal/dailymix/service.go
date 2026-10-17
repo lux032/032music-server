@@ -53,9 +53,11 @@ type Service struct {
 	failedAt map[string]time.Time
 	lastRun  *RunInfo
 	lastErr  string
-	replace  sync.Mutex
-	wake     chan struct{}
-	wg       sync.WaitGroup
+	// lastFeedback is when implicit playback feedback was last folded in.
+	lastFeedback time.Time
+	replace      sync.Mutex
+	wake         chan struct{}
+	wg           sync.WaitGroup
 }
 
 func New(store *storage.Store, logger *slog.Logger, opts Options) *Service {
@@ -110,11 +112,44 @@ func (s *Service) Wake() {
 	}
 }
 
+// feedbackInterval is how often implicit playback feedback is aggregated (§7.4).
+const feedbackInterval = time.Hour
+
+// ProcessFeedback folds ended daily-mix plays into the feedback tables. force runs it
+// regardless of the hourly cadence (before a generation).
+func (s *Service) ProcessFeedback(ctx context.Context, force bool) {
+	s.mu.Lock()
+	due := force || s.opts.Now().Sub(s.lastFeedback) >= feedbackInterval
+	if due {
+		s.lastFeedback = s.opts.Now()
+	}
+	s.mu.Unlock()
+	if !due {
+		return
+	}
+	for i := 0; i < 20; i++ { // bounded: 20 × 2000 sessions per pass
+		run, err := s.store.ProcessPlaybackFeedback(ctx, s.opts.Now())
+		if err != nil {
+			if ctx.Err() == nil {
+				s.logger.Warn("daily mix feedback aggregation failed", "error", err)
+			}
+			return
+		}
+		if run.Sessions > 0 {
+			s.logger.Debug("daily mix feedback aggregated", "sessions", run.Sessions, "mixes", run.Mixes)
+		}
+		if run.Sessions < 2000 {
+			return
+		}
+	}
+}
+
 func (s *Service) tick(ctx context.Context) {
 	set, err := s.store.DailyMixSettings(ctx)
 	if err != nil || !set.Enabled {
 		return
 	}
+	s.ProcessFeedback(ctx, false)
 	day := Day(s.opts.Now(), set.PregenerateHour)
 	mixes, err := s.store.DailyMixes(ctx, day)
 	if err != nil || len(mixes) > 0 || s.coolingDown(day) {
@@ -158,6 +193,7 @@ func (s *Service) start(day string) chan struct{} {
 }
 
 func (s *Service) generate(ctx context.Context, day string) error {
+	s.ProcessFeedback(ctx, true)
 	set, err := s.store.DailyMixSettings(ctx)
 	if err != nil {
 		return err

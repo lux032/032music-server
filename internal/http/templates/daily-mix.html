@@ -37,7 +37,7 @@
         <div class="section-title"><h2>歌曲</h2><span>{{len .Tracks}} 首</span></div>
         <div class="playlist-track-list dm-track-list" data-track-list>
           {{range .Tracks}}
-          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .Track}}" data-track-duration-ms="{{.DurationMillis}}"{{if .Blocked}} class="dm-blocked"{{end}}>
+          <article data-track-id="{{.ID}}" data-context-type="dailyMix" data-context-id="{{$.Mix.ID}}" data-context-position="{{.Index}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .Track}}" data-track-duration-ms="{{.DurationMillis}}"{{if .Blocked}} class="dm-blocked"{{end}}>
             <span class="drag-position playable-number">
               <span class="num-text">{{.Position}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>

@@ -51,6 +51,7 @@
           <h2><a href="/admin/daily-mixes/{{.Mix.ID}}">{{.Mix.Title}}</a></h2>
           <p class="result-count">{{.Mix.Description}}</p>
           <p class="audio-analysis-line">{{.Mix.TrackCount}} 首 · {{.Duration}} · 熟悉 {{.Familiar}} / 探索 {{.Explore}}{{if .ByVia}} · {{.ByVia}}{{end}}</p>
+          {{if .PlayLine}}<p class="audio-analysis-line">{{.PlayLine}}</p>{{end}}
           <p class="audio-analysis-line audio-analysis-meta">主题「{{.Plan.Label}}」候选 {{.Plan.Pool}} 首（本主题 {{.Plan.Direct}} 首，其余为相邻标签或听感相近；熟悉 {{.Plan.Familiar}} / 探索 {{.Plan.Explore}}）· 抽样 {{printf "%.2f" .Plan.Sample}} × 偏好 {{printf "%.2f" .Plan.Lift}} = {{printf "%.2f" .Plan.Score}}{{if ne .Mix.Rating 0}} · 评价 {{if eq .Mix.Rating 1}}👍{{else}}👎{{end}}{{end}}</p>
         </div>
         <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/replace">
@@ -62,7 +63,7 @@
         <summary>曲目与入选原因</summary>
         <div class="ai-tagging-usage">
         <table class="ai-tagging-table">
-          <thead><tr><th>#</th><th>曲目</th><th>分组</th><th title="1–9：有声学分析时为唤醒度，否则由模型给的能量换算；歌单按它先升后落排序">起伏</th><th>入选</th><th>相关 × 偏好 × 新鲜</th><th>标签</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>曲目</th><th>分组</th><th title="1–9：有声学分析时为唤醒度，否则由模型给的能量换算；歌单按它先升后落排序">起伏</th><th>入选</th><th>相关 × 偏好 × 新鲜（× 反馈）</th><th>标签</th><th></th></tr></thead>
           <tbody>
           {{range .Tracks}}
           <tr{{if .Blocked}} class="ai-diff"{{end}}>
@@ -71,7 +72,7 @@
             <td>{{if eq .Bucket "familiar"}}熟悉{{else}}探索{{end}}</td>
             <td>{{if .Reason.Level}}{{printf "%.1f" .Reason.Level}}{{else}}{{.Reason.Energy}}{{end}}</td>
             <td>{{.ViaLabel}}</td>
-            <td>{{printf "%.2f" .Reason.Relevance}} × {{printf "%.2f" .Reason.Preference}} × {{printf "%.2f" .Reason.Novelty}}</td>
+            <td>{{printf "%.2f" .Reason.Relevance}} × {{printf "%.2f" .Reason.Preference}} × {{printf "%.2f" .Reason.Novelty}}{{if .Reason.Feedback}} × <span title="之前在每日推荐里的播放反馈（完播加分、秒切减分）">{{printf "%.2f" .Reason.Feedback}}</span>{{end}}</td>
             <td><span class="ai-chips">{{range .Moods}}<span class="ai-chip{{if .Negative}} ai-chip-negative{{end}}">{{.Label}}</span>{{end}}{{range .Styles}}<span class="ai-chip ai-chip-style">{{.Label}}</span>{{end}}</span>{{if eq .TagSource "audio"}}<small>仅声学</small>{{end}}</td>
             <td>
               <form method="post" action="/admin/tracks/{{.TrackID}}/recommendation-block">

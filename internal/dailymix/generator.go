@@ -14,7 +14,7 @@ import (
 )
 
 // GeneratorVersion is stored with every mix; bump it when the algorithm changes.
-const GeneratorVersion = 3
+const GeneratorVersion = 4
 
 // Zone is the day boundary zone (UTC+8, like the home rotation).
 var Zone = time.FixedZone("UTC+8", 8*60*60)
@@ -64,6 +64,7 @@ type RunInfo struct {
 	Tagged       int       `json:"tagged"`     // with effective tags
 	Acoustic     int       `json:"acoustic"`   // with embeddings
 	Candidates   int       `json:"candidates"` // feasible themes
+	Feedback     int       `json:"feedback"`   // tracks with implicit feedback from daily mix plays
 	Eligible     int       `json:"eligible"`   // after cooldowns
 	Mixes        int       `json:"mixes"`
 	LLM          string    `json:"llm"`
@@ -93,6 +94,7 @@ type prepared struct {
 	stats    map[string]storage.ThemeStat
 	recent   []storage.ThemeUse
 	recentMx map[int64]string
+	affinity storage.RecAffinities
 	info     RunInfo
 }
 
@@ -121,6 +123,11 @@ func (g *Generator) prepare(ctx context.Context, now time.Time, day string, set 
 		return nil, err
 	}
 	p.profile = BuildProfile(now, p.tracks, sessions)
+	if p.affinity, err = g.Store.RecAffinities(ctx, now); err != nil {
+		return nil, err
+	}
+	p.profile.SetTagAffinity(p.affinity.Tags)
+	p.info.Feedback = len(p.affinity.Tracks)
 	p.info.ProfileMood, p.info.ProfileStyle = p.profile.Summary(4)
 	b := &builder{tracks: p.tracks, allowSad: set.AllowSad, length: set.TrackCount, acoustic: p.acoustic, profile: p.profile, today: day,
 		names: func(kind string, ids []int64) map[int64]string {
@@ -156,7 +163,7 @@ func (g *Generator) prepare(ctx context.Context, now time.Time, day string, set 
 
 func (p *prepared) env(now time.Time, day string, set storage.DailyMixSettings) *selectEnv {
 	return &selectEnv{now: now, day: day, explore: float64(set.ExplorePercent) / 100, length: set.TrackCount, recentMix: p.recentMx,
-		usedToday: map[int64]bool{}, usedTitles: map[string]bool{}, acoustic: p.acoustic, profile: p.profile, allowSad: set.AllowSad}
+		usedToday: map[int64]bool{}, usedTitles: map[string]bool{}, acoustic: p.acoustic, profile: p.profile, allowSad: set.AllowSad, affinity: p.affinity.Tracks}
 }
 
 func toMix(c Chosen, slot int, picks []Pick) storage.NewDailyMix {

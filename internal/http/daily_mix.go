@@ -422,6 +422,8 @@ type dailyMixView struct {
 	Familiar  int
 	Explore   int
 	ByVia     string
+	// PlayLine summarises listening from this mix (implicit feedback, design §7).
+	PlayLine string
 }
 
 type dailyMixHistoryView struct {
@@ -451,6 +453,24 @@ type dailyMixPageData struct {
 
 var viaLabels = map[string]string{"tag": "标签命中", "adjacent": "相邻标签", "acoustic": "听感相近", "work": "作品", "composer": "创作者", "artist": "歌手本人", "similar": "听感相近", "bridge": "熟悉开场"}
 
+// mixPlayLine is “播放反馈：已播 8/25 · 完播 6 · 秒切 1 · 满意度 0.62 · 主题 α +0.16”.
+func mixPlayLine(st storage.MixPlayStats) string {
+	parts := []string{fmt.Sprintf("已播 %d/%d", st.Played, st.Length), fmt.Sprintf("完播 %d", st.Completes), fmt.Sprintf("秒切 %d", st.QuickSkips)}
+	if st.EarlyQuick > 0 {
+		parts = append(parts, fmt.Sprintf("前 5 首秒切 %d", st.EarlyQuick))
+	}
+	if st.Played > 0 {
+		parts = append(parts, fmt.Sprintf("满意度 %.2f", st.Satisfaction))
+	}
+	if st.Alpha > 0 {
+		parts = append(parts, fmt.Sprintf("主题 α +%.2f", st.Alpha))
+	}
+	if st.Beta > 0 {
+		parts = append(parts, fmt.Sprintf("主题 β +%.2f", st.Beta))
+	}
+	return "播放反馈：" + strings.Join(parts, " · ")
+}
+
 func formatMixDuration(ms int64) string {
 	d := time.Duration(ms) * time.Millisecond
 	h, m := int(d.Hours()), int(d.Minutes())%60
@@ -462,6 +482,14 @@ func formatMixDuration(ms int64) string {
 
 func (a *App) dailyMixViews(ctx context.Context, mixes []storage.DailyMix) ([]dailyMixView, error) {
 	list, err := a.dailyMixesJSON(ctx, mixes)
+	if err != nil {
+		return nil, err
+	}
+	mixIDs := make([]int64, len(mixes))
+	for i, m := range mixes {
+		mixIDs[i] = m.ID
+	}
+	plays, err := a.store.DailyMixPlayStats(ctx, mixIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -513,6 +541,9 @@ func (a *App) dailyMixViews(ctx context.Context, mixes []storage.DailyMix) ([]da
 			}
 		}
 		v.ByVia = strings.Join(vias, " · ")
+		if st, ok := plays[m.ID]; ok {
+			v.PlayLine = mixPlayLine(st)
+		}
 		out = append(out, v)
 	}
 	return out, nil
@@ -565,6 +596,9 @@ func (a *App) handleDailyMixPage(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("最近一次：%s %s（推荐日 %s），用时 %.1f 秒", run.StartedAt.In(homeZone).Format("01-02 15:04"), kind, run.Day, float64(run.Millis)/1000),
 			fmt.Sprintf("可播放曲目 %d 首，其中有标签 %d 首、有声学特征 %d 首；可用主题 %d 个，冷却后可选 %d 个，生成 %d 个歌单", run.Tracks, run.Tagged, run.Acoustic, run.Candidates, run.Eligible, run.Mixes),
 			"标题："+run.LLM)
+		if run.Feedback > 0 {
+			data.RunLines = append(data.RunLines, fmt.Sprintf("播放反馈：%d 首曲目有来自每日推荐的播放记录，已按完播 / 跳过调整入选权重", run.Feedback))
+		}
 		if len(run.ProfileMood) > 0 || len(run.ProfileStyle) > 0 {
 			data.RunLines = append(data.RunLines, "近期偏好：情绪 "+orDash(strings.Join(run.ProfileMood, "、"))+"；风格 "+orDash(strings.Join(run.ProfileStyle, "、")))
 		}
@@ -746,6 +780,7 @@ var dailyMixReasonLabels = []struct{ Code, Label string }{
 
 type dailyMixDetailTrack struct {
 	storage.Track
+	Index    int // 0-based position in the mix (playback context)
 	Position int
 	Explore  bool
 	Blocked  bool
@@ -816,7 +851,7 @@ func (a *App) handleDailyMixDetail(w http.ResponseWriter, r *http.Request) {
 	data := dailyMixDetailData{Chrome: a.chromeFor(ctx, session, "home"), Notice: r.URL.Query().Get("notice"), Mix: list[0], Sub: mixSubtitle(list[0]),
 		Current: m.Status == "active" && m.Day == day, Replaced: m.Status == "replaced", ReturnTo: "/admin/daily-mixes/" + strconv.FormatInt(m.ID, 10)}
 	for i, it := range items {
-		data.Tracks = append(data.Tracks, dailyMixDetailTrack{Track: tracks[i], Position: it.Position + 1, Explore: it.Bucket == "explore", Blocked: blocked[it.TrackID]})
+		data.Tracks = append(data.Tracks, dailyMixDetailTrack{Track: tracks[i], Index: it.Position, Position: it.Position + 1, Explore: it.Bucket == "explore", Blocked: blocked[it.TrackID]})
 	}
 	chosen := map[string]bool{}
 	for _, c := range splitReasons(m.RatingReasons) {

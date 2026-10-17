@@ -58,7 +58,12 @@ func updateFavorite(ctx context.Context, db retryDB, table string, id int64, fav
 	if favorite {
 		value = 1
 	}
-	result, err := db.ExecContext(ctx, "UPDATE "+table+" SET is_favorite=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", value, id)
+	query := "UPDATE " + table + " SET is_favorite=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?"
+	if table == "tracks" {
+		// favorited_at dates the favourite (implicit feedback: “favourited while playing”).
+		query = "UPDATE tracks SET favorited_at=CASE WHEN ?1=1 AND is_favorite=0 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') WHEN ?1=1 THEN favorited_at ELSE NULL END,is_favorite=?1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?2"
+	}
+	result, err := db.ExecContext(ctx, query, value, id)
 	if err != nil {
 		return err
 	}

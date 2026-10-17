@@ -285,3 +285,28 @@ func TestCapabilitiesPlaybackSessions(t *testing.T) {
 		t.Fatalf("counting capabilities: %+v", body.Playback)
 	}
 }
+
+func TestPlaybackEventsContext(t *testing.T) {
+	app, _, token, trackID := setupPlaybackEventsApp(t)
+	handler := app.Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	caps := httptest.NewRecorder()
+	handler.ServeHTTP(caps, req)
+	if !strings.Contains(caps.Body.String(), `"playbackContext":true`) || !strings.Contains(caps.Body.String(), `"contextTypes":["dailyMix"]`) {
+		t.Fatalf("capabilities must advertise playbackContext: %s", caps.Body.String())
+	}
+	withContext := func(body, ctx string) string { return strings.TrimSuffix(body, `}`) + `,"context":` + ctx + `}` }
+	start := withContext(eventBody("session-http-ctx", 1, "start", "playing", trackID, 0, 240000), `{"type":"dailyMix","id":7,"position":2}`)
+	if rec := postEvent(t, handler, token, start); rec.Code != http.StatusOK {
+		t.Fatalf("start with context: %d %s", rec.Code, rec.Body.String())
+	}
+	hb := withContext(eventBody("session-http-ctx", 2, "heartbeat", "playing", trackID, 1000, 240000), `{"type":"dailyMix","id":7,"position":2}`)
+	if rec := postEvent(t, handler, token, hb); rec.Code != http.StatusBadRequest || errorCode(t, rec) != "invalid_request" {
+		t.Fatalf("context on heartbeat: %d %s", rec.Code, rec.Body.String())
+	}
+	bad := withContext(eventBody("session-http-ctx2", 1, "start", "playing", trackID, 0, 240000), `{"type":"dailyMix","id":7,"position":2,"extra":1}`)
+	if rec := postEvent(t, handler, token, bad); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown context field must be rejected: %d", rec.Code)
+	}
+}

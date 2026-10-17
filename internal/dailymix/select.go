@@ -31,6 +31,8 @@ type selectEnv struct {
 	acoustic   *storage.AcousticSnapshot
 	profile    *Profile
 	allowSad   bool
+	// affinity is the decayed implicit feedback per track (plays from daily mixes).
+	affinity map[int64]float64
 }
 
 // Pick is one selected track with its explanation.
@@ -51,6 +53,15 @@ type Reason struct {
 	// when analysed (continuous, far finer than the model's five energy levels, which
 	// cluster at 3–4), else the energy mapped onto 1–9.
 	Level float64 `json:"level"`
+	// Feedback is the weight factor from earlier plays in daily mixes (1 = none).
+	Feedback float64 `json:"fb,omitempty"`
+}
+
+// feedbackFactor maps a track's affinity onto a selection weight: one quick skip
+// (−1) ≈ ×0.74, a completed play (+1) ≈ ×1.35; bounded so a few skips never ban a
+// track and a few plays never pin it.
+func feedbackFactor(score float64) float64 {
+	return math.Max(0.5, math.Min(1.6, math.Exp(0.3*score)))
 }
 
 // level returns the ordering intensity of a track (see Reason.Level).
@@ -125,6 +136,10 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 		}
 		r := Reason{Via: c.Via, Relevance: round2(c.Rel), Preference: round2(preference(t)), Novelty: round2(e.novelty(t)), Energy: Energy(t), Level: level(t)}
 		w := c.Rel * c.Rel * r.Preference * r.Novelty
+		if score, ok := e.affinity[t.ID]; ok {
+			r.Feedback = round2(feedbackFactor(score))
+			w *= r.Feedback
+		}
 		switch t.Version {
 		case "live":
 			w *= 0.35

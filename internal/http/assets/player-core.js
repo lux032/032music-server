@@ -71,7 +71,7 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
       // be audible. An unpaused-but-still-buffering element restores as
       // buffering so it cannot fabricate hasPlayed.
       const state = s.audio.paused ? 'paused' : (s.audio.readyState >= 3 ? 'playing' : 'buffering');
-      reporter.restore(parseInt(track.id, 10), { initialState: state });
+      reporter.restore(parseInt(track.id, 10), { initialState: state, context: track.context });
     });
     return reporter;
   }
@@ -85,7 +85,7 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
     // restore(), not play(): the same track resumes its persisted chain
     // (undo-clear / stopped sessions stay resumable) instead of opening a
     // silent no-resume chain at a high position that would count again.
-    if (track) reporter.restore(parseInt(track.id, 10), { initialState: 'buffering' });
+    if (track) reporter.restore(parseInt(track.id, 10), { initialState: 'buffering', context: track.context });
   }
 
   export function setupAudioElement() {
@@ -296,7 +296,7 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
     // track's own duration — never the old audio element's leftovers
     // (P1-2: the server derives initial position, Last.fm startedAt and a
     // library-unknown duration from this payload).
-    if (reporter) reporter.play(parseInt(track.id, 10), { reason: endReason || 'replaced', positionMillis: 0, durationMillis: track.durationMs || 0 });
+    if (reporter) reporter.play(parseInt(track.id, 10), { reason: endReason || 'replaced', positionMillis: 0, durationMillis: track.durationMs || 0, context: track.context });
 
     updatePlayerMetaUI(track);
     loadLyrics(track.id);
@@ -359,7 +359,7 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
       // (unified with P1-2), never a silent high-position resume read.
       const track = s.queue[s.currentIndex];
       if (reporter && reporter.isBlocked() && track) {
-        reporter.play(parseInt(track.id, 10), { positionMillis: 0, durationMillis: track.durationMs || 0 });
+        reporter.play(parseInt(track.id, 10), { positionMillis: 0, durationMillis: track.durationMs || 0, context: track.context });
         s.audio.currentTime = 0;
       }
       const token = s.playToken;
@@ -445,7 +445,7 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
     if (s.loopMode === 'one') {
       // Same-track loop replay is a new play: fresh session, position 0.
       s.audio.currentTime = 0;
-      if (reporter && currentTrack) reporter.play(parseInt(currentTrack.id, 10), { positionMillis: 0, durationMillis: currentTrack.durationMs || 0 });
+      if (reporter && currentTrack) reporter.play(parseInt(currentTrack.id, 10), { positionMillis: 0, durationMillis: currentTrack.durationMs || 0, context: currentTrack.context });
       s.audio.play().catch(console.warn);
     } else if (s.shuffleOn && s.queue.length > 1) {
       playRandomNext();
@@ -455,7 +455,7 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
       // List loop: wrap to the start (a one-track queue simply replays).
       if (s.queue.length === 1) {
         s.audio.currentTime = 0;
-        if (reporter && currentTrack) reporter.play(parseInt(currentTrack.id, 10), { positionMillis: 0, durationMillis: currentTrack.durationMs || 0 });
+        if (reporter && currentTrack) reporter.play(parseInt(currentTrack.id, 10), { positionMillis: 0, durationMillis: currentTrack.durationMs || 0, context: currentTrack.context });
         s.audio.play().catch(console.warn);
       } else {
         playTrackAtIndex(0);
@@ -624,7 +624,8 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
               reporter.restore(parseInt(track.id, 10), {
                 initialState: state.isPlaying ? 'buffering' : 'paused',
                 positionMillis: Math.max(0, Math.floor((state.currentTime || 0) * 1000)),
-                durationMillis: track.durationMs || 0
+                durationMillis: track.durationMs || 0,
+                context: track.context
               });
             }
             if (state.volume !== undefined) {

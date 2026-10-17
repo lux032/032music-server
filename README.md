@@ -409,6 +409,7 @@ docker compose logs --tail=100 music-server
 - `endReason`：`completed`（断点归零）、`skipped`、`stopped`、`replaced`、`error`、`client_closed`。
 - 心跳节奏：playing/buffering 每 15 秒（租约 90 秒），paused 每 60 秒（租约 10 分钟）。超过租约会话失效，历史显示“已中断”，不算跳过/完成。
 - 续播定义：refresh、restoreState、BFCache 恢复、进程重启后恢复同一首歌都属于续播——客户端持久化最近一个 sessionId+trackId，start 必须携带 `resumedFromSessionId`。只有明确切歌或循环重播才是不带 resume 的新播放（新会话）。start 网络超时后必须用同一个 sessionId 重发（服务端视为幂等重放）。
+- 播放上下文（`features.playbackContext`，`playback.contextTypes: ["dailyMix"]`）：从每日推荐歌单的播放队列开始的播放，start 可带 `context: {"type":"dailyMix","id":<歌单 ID>,"position":<0 起的序号>}`；只允许出现在 start 上，续播会话不必重复携带，服务端沿续播链继承。服务器未声明该能力时不要发送（未知字段返回 400）。带上下文的会话结束后每小时汇总一次，用于调整之后的每日推荐。
 - 响应 200 `{"applied":bool,"state":"…","positionMillis":…,"counted":bool}`；`seq` 过旧或终态后的迟到事件返回 `applied:false`（不续租、不改断点），终态不可复活。
 - 错误：`404 session_not_found`（未知/已清空会话：若歌曲确实播放过且已过计数门槛，以 state playing、最终位置补 start 并以原 endReason end，恢复这次播放；没播放过绝不能伪装 playing；否则丢弃，下次播放重新开始）；`409 session_expired`（已过期并被固化：串行处理，仅开一个 resume 会话——以当前位置 start 并携带 `resumedFromSessionId`；迟到的 end 先以最终位置 start resume，再以原 endReason end。补发的恢复 start 用 state playing 是因为恢复对象确实播放过）；`409 session_owner_mismatch` / `session_conflict` / `resume_invalid`（前序不存在/异 client/异 track，或以 completed/skipped/replaced 结束；同 client 同 track 的活跃前序不算错误：服务端在同事务内将其以 replaced 取代并接受续播。收到 resume_invalid 禁止静默退化为不带 resume 的高位置新 start——那是新播放，会重新计数）。
 - `end(completed)` 必须携带真实最终位置（≈时长），绝不能发 0；断点归 0 由服务端处理。

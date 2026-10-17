@@ -28,6 +28,8 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"audioAnalysis": a.audioAnalysisEnabled(r.Context()),
 			"trackTags":     a.aiTaggingEnabled(r.Context()),
 			"dailyMixes":    a.dailyMixesEnabled(r.Context()),
+			// Playback sessions accept a start context (daily mix attribution, §7.1).
+			"playbackContext": true,
 		},
 		"home": map[string]any{
 			"endpoint":     "/api/v1/home",
@@ -49,6 +51,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// Playback sessions (plan C, apiRevision 3). The legacy timeline
 			// and scrobble endpoints were removed and answer 410.
 			"endpoint":            "/api/v1/playback/events",
+			"contextTypes":        storage.PlaybackContextTypes,
 			"removedEndpoints":    []string{"/api/v1/playback/timeline", "/api/v1/playback/scrobble"},
 			"authentication":      []string{"apiToken", "mediaToken", "session"},
 			"queryParameter":      "mediaToken",

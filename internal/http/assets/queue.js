@@ -318,6 +318,8 @@ import { mediaTime } from './cast.js';
   // tracks start playing at once (current behaviour), and the toast says so.
   function queueTracks(tracks, mode, label) {
     if (!tracks.length) return;
+    // Only plays from a mix's own queue count for that mix (design §7.1).
+    tracks = tracks.map(withoutContext);
     const count = tracks.length > 1 ? `（${tracks.length} 首）` : '';
     if (!s.queue.length || s.currentIndex < 0) {
       s.queue = tracks.slice();
@@ -356,6 +358,11 @@ import { mediaTime } from './cast.js';
       const container = el.getAttribute('data-track-container') || el.querySelector('.format-pill')?.textContent.trim() || '';
       const spec = el.getAttribute('data-track-spec') || '';
       const durationMs = parseInt(el.getAttribute('data-track-duration-ms') || '0', 10) || 0;
+      // Daily mix rows carry their playback context (attribution of the play).
+      const contextId = parseInt(el.getAttribute('data-context-id') || '0', 10);
+      const context = el.getAttribute('data-context-type') === 'dailyMix' && contextId > 0
+        ? { type: 'dailyMix', id: contextId, position: parseInt(el.getAttribute('data-context-position') || '0', 10) || 0 }
+        : undefined;
 
       tracks.push({
         id: id,
@@ -366,7 +373,8 @@ import { mediaTime } from './cast.js';
         container: container,
         spec: spec,
         durationMs: durationMs,
-        streamUrl: `/api/v1/tracks/${id}/stream`
+        streamUrl: `/api/v1/tracks/${id}/stream`,
+        context
       });
     });
 
@@ -377,9 +385,17 @@ import { mediaTime } from './cast.js';
   // playback queue without replacing it: mode 'next' puts it right after the
   // current track, 'append' puts it at the end. When nothing is queued yet,
   // the track starts playing immediately so the button never feels dead.
+  function withoutContext(track) {
+    if (!track || !track.context) return track;
+    const copy = { ...track };
+    delete copy.context;
+    return copy;
+  }
+
   function queueTrackFromPage(trackId, mode) {
-    const track = extractAllTracksFromPage().find(t => String(t.id) === String(trackId));
-    if (!track) return;
+    const found = extractAllTracksFromPage().find(t => String(t.id) === String(trackId));
+    if (!found) return;
+    const track = withoutContext(found);
     if (s.queue.length === 0 || s.currentIndex === -1) {
       s.queue.push(track);
       playTrackAtIndex(s.queue.length - 1);
@@ -447,13 +463,15 @@ import { mediaTime } from './cast.js';
       if (response.status === 401) { window.location.assign('/admin/login?next=' + encodeURIComponent(location.pathname + location.search)); return; }
       if (!response.ok) throw new Error('mix');
       const payload = await response.json();
+      const contextMixId = parseInt((payload.mix && payload.mix.id) || mixId, 10);
       const tracks = (payload.tracks || []).filter(item => item.track && !item.track.missing).map(item => {
         const track = item.track;
         return {
           id: String(track.id), title: track.title, artist: track.artist, album: track.album || '',
           artwork: artworkForSize(track.artworkUrl || '', 256),
           container: track.container, spec: audioSpec(track), durationMs: track.durationMillis,
-          streamUrl: `/api/v1/tracks/${track.id}/stream`
+          streamUrl: `/api/v1/tracks/${track.id}/stream`,
+          context: contextMixId > 0 ? { type: 'dailyMix', id: contextMixId, position: item.position || 0 } : undefined
         };
       });
       if (!tracks.length) { showToast('这个歌单没有可播放的歌曲'); return; }
