@@ -198,6 +198,7 @@ type aiTaggingPageData struct {
 	View          aiTaggingView
 	BaseURL       string
 	Model         string
+	FallbackModel string
 	ReviewModel   string
 	ReviewEnabled bool
 	KeySet        bool
@@ -247,7 +248,7 @@ func (a *App) handleAITaggingPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := aiTaggingPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: r.URL.Query().Get("notice"), Status: snap, View: buildAITaggingView(snap),
-		BaseURL: st.BaseURL, Model: st.Model, ReviewModel: st.ReviewModel, ReviewEnabled: st.ReviewEnabled, KeySet: st.APIKey != "", ProxySet: st.ProxyURL != "",
+		BaseURL: st.BaseURL, Model: st.Model, FallbackModel: st.FallbackModel, ReviewModel: st.ReviewModel, ReviewEnabled: st.ReviewEnabled, KeySet: st.APIKey != "", ProxySet: st.ProxyURL != "",
 		Reasoning: st.ReasoningEffort, IncludeLyrics: st.IncludeLyrics, RPM: st.RequestsPerMinute, Concurrency: st.Concurrency, FirstEnabled: st.FirstEnabledAt}
 	usage, err := a.store.AIUsageTotals(ctx, "")
 	if err != nil {
@@ -323,6 +324,7 @@ func (a *App) handleSaveAITagging(w http.ResponseWriter, r *http.Request) {
 	next := current
 	next.BaseURL = strings.TrimRight(strings.TrimSpace(r.FormValue("base_url")), "/")
 	next.Model = strings.TrimSpace(r.FormValue("model"))
+	next.FallbackModel = strings.TrimSpace(r.FormValue("fallback_model"))
 	next.ReviewModel = strings.TrimSpace(r.FormValue("review_model"))
 	next.ReviewEnabled = r.FormValue("review_enabled") != ""
 	next.IncludeLyrics = r.FormValue("include_lyrics") != ""

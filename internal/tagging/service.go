@@ -504,6 +504,14 @@ func (s *Service) tagOne(ctx context.Context, chat Chat, st storage.AISettings, 
 		model, purpose = st.ReviewModel, "review"
 	}
 	res, usage, err := s.call(ctx, chat, st, model, purpose, p)
+	// The quality-review model remains independent from availability fallback.
+	if !review && ShouldFallback(ctx, model, st.FallbackModel, err) {
+		s.logger.Warn("AI primary unavailable; trying fallback", "model", model, "fallback", st.FallbackModel)
+		model = strings.TrimSpace(st.FallbackModel)
+		var extra storage.AIUsage
+		res, extra, err = s.call(ctx, chat, st, model, purpose, p)
+		usage.Add(extra)
+	}
 	if err != nil {
 		return s.callFailed(ctx, c, err)
 	}
@@ -523,7 +531,7 @@ func (s *Service) tagOne(ctx context.Context, chat Chat, st storage.AISettings, 
 			var le *LLMError
 			if errors.As(err2, &le) && isGlobal(le.Kind) {
 				// 主模型结果先保存（标记待复核），整体问题交给上层退避。
-				if serr := s.save(ctx, c, p, res, reasons, st.Model, "", usage); serr != nil {
+				if serr := s.save(ctx, c, p, res, reasons, model, "", usage); serr != nil {
 					return serr
 				}
 				return err2

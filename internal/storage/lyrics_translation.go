@@ -12,8 +12,9 @@ import (
 
 // LyricsTranslationSettings 是歌词翻译的开关与模型。接口地址与 API Key 复用 AISettings。
 type LyricsTranslationSettings struct {
-	Enabled bool
-	Model   string // 空表示使用 AI 打标的主模型
+	Enabled       bool
+	Model         string // 空表示使用 AI 打标的主模型
+	FallbackModel string // 空表示不回退；不继承打标后备模型
 }
 
 // EffectiveTranslationModel 返回实际使用的模型：翻译模型优先，否则打标主模型。
@@ -32,7 +33,7 @@ func TranslationConfigured(ai AISettings, tr LyricsTranslationSettings) bool {
 func (s *Store) LyricsTranslationSettings(ctx context.Context) (LyricsTranslationSettings, error) {
 	var v LyricsTranslationSettings
 	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT translation_enabled, translation_model FROM ai_settings WHERE id = 1`).Scan(&enabled, &v.Model)
+	err := s.db.QueryRowContext(ctx, `SELECT translation_enabled, translation_model, translation_fallback_model FROM ai_settings WHERE id = 1`).Scan(&enabled, &v.Model, &v.FallbackModel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -40,11 +41,11 @@ func (s *Store) LyricsTranslationSettings(ctx context.Context) (LyricsTranslatio
 	return v, err
 }
 
-// SaveLyricsTranslationSettings 只写翻译的两列，不影响 AI 打标设置。
+// SaveLyricsTranslationSettings 只写翻译设置，不影响 AI 打标设置。
 func (s *Store) SaveLyricsTranslationSettings(ctx context.Context, v LyricsTranslationSettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_settings(id, translation_enabled, translation_model) VALUES (1, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET translation_enabled = excluded.translation_enabled, translation_model = excluded.translation_model,
-			updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`, boolInt(v.Enabled), strings.TrimSpace(v.Model))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_settings(id, translation_enabled, translation_model, translation_fallback_model) VALUES (1, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET translation_enabled = excluded.translation_enabled, translation_model = excluded.translation_model, translation_fallback_model = excluded.translation_fallback_model,
+			updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`, boolInt(v.Enabled), strings.TrimSpace(v.Model), strings.TrimSpace(v.FallbackModel))
 	return err
 }
 

@@ -15,6 +15,7 @@ type AISettings struct {
 	BaseURL           string
 	APIKey            string
 	Model             string
+	FallbackModel     string
 	ReviewModel       string
 	ReviewEnabled     bool
 	ProxyURL          string
@@ -47,9 +48,9 @@ func (s *Store) AISettings(ctx context.Context) (AISettings, error) {
 	v := DefaultAISettings()
 	var reviewEnabled, enabled, paused, lyrics int
 	var first sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT base_url, api_key, model, review_model, review_enabled, proxy_url, reasoning_effort,
+	err := s.db.QueryRowContext(ctx, `SELECT base_url, api_key, model, fallback_model, review_model, review_enabled, proxy_url, reasoning_effort,
 		tagging_enabled, tagging_paused, include_lyrics, requests_per_minute, concurrency, first_enabled_at, updated_at FROM ai_settings WHERE id = 1`).
-		Scan(&v.BaseURL, &v.APIKey, &v.Model, &v.ReviewModel, &reviewEnabled, &v.ProxyURL, &v.ReasoningEffort,
+		Scan(&v.BaseURL, &v.APIKey, &v.Model, &v.FallbackModel, &v.ReviewModel, &reviewEnabled, &v.ProxyURL, &v.ReasoningEffort,
 			&enabled, &paused, &lyrics, &v.RequestsPerMinute, &v.Concurrency, &first, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
@@ -72,16 +73,16 @@ func (s *Store) SaveAISettings(ctx context.Context, v AISettings) error {
 	if v.RequestsPerMinute < 1 || v.RequestsPerMinute > 10000 || v.Concurrency < 1 || v.Concurrency > 16 {
 		return errors.New("invalid rate limit or concurrency")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_settings(id, base_url, api_key, model, review_model, review_enabled, proxy_url, reasoning_effort,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_settings(id, base_url, api_key, model, fallback_model, review_model, review_enabled, proxy_url, reasoning_effort,
 		tagging_enabled, tagging_paused, include_lyrics, requests_per_minute, concurrency, first_enabled_at)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END)
 		ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url, api_key = excluded.api_key, model = excluded.model,
-			review_model = excluded.review_model, review_enabled = excluded.review_enabled, proxy_url = excluded.proxy_url,
+			fallback_model = excluded.fallback_model, review_model = excluded.review_model, review_enabled = excluded.review_enabled, proxy_url = excluded.proxy_url,
 			reasoning_effort = excluded.reasoning_effort, tagging_enabled = excluded.tagging_enabled, tagging_paused = excluded.tagging_paused,
 			include_lyrics = excluded.include_lyrics, requests_per_minute = excluded.requests_per_minute, concurrency = excluded.concurrency,
 			first_enabled_at = COALESCE(ai_settings.first_enabled_at, excluded.first_enabled_at),
 			updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-		strings.TrimSpace(v.BaseURL), v.APIKey, strings.TrimSpace(v.Model), strings.TrimSpace(v.ReviewModel), boolInt(v.ReviewEnabled),
+		strings.TrimSpace(v.BaseURL), v.APIKey, strings.TrimSpace(v.Model), strings.TrimSpace(v.FallbackModel), strings.TrimSpace(v.ReviewModel), boolInt(v.ReviewEnabled),
 		strings.TrimSpace(v.ProxyURL), v.ReasoningEffort, boolInt(v.TaggingEnabled), boolInt(v.TaggingPaused), boolInt(v.IncludeLyrics),
 		v.RequestsPerMinute, v.Concurrency, boolInt(v.TaggingEnabled))
 	return err

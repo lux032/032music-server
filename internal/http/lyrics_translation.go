@@ -89,17 +89,46 @@ func (a *App) runLyricsTranslation(ctx context.Context, ai storage.AISettings, m
 	if err != nil {
 		return v, err
 	}
-	res, err := lyricstrans.Translate(ctx, chat, model, ai.ReasoningEffort, v.TargetLanguage, v.SourceLines)
-	if res.Usage.Requests > 0 {
-		if uerr := a.store.AddAIUsage(ctx, time.Now(), model, "translate", res.Usage); uerr != nil {
-			a.logger.Error("record lyrics translation usage", "error", uerr)
+	tr, err := a.store.LyricsTranslationSettings(ctx)
+	if err != nil {
+		return v, err
+	}
+	fallback := strings.TrimSpace(tr.FallbackModel)
+	call := func(name string, timeout time.Duration) (lyricstrans.Result, error) {
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		res, callErr := lyricstrans.Translate(callCtx, chat, name, ai.ReasoningEffort, v.TargetLanguage, v.SourceLines)
+		if res.Usage.Requests > 0 {
+			if uerr := a.store.AddAIUsage(ctx, time.Now(), name, "translate", res.Usage); uerr != nil {
+				a.logger.Error("record lyrics translation usage", "error", uerr)
+			}
 		}
+		if errors.Is(callErr, context.DeadlineExceeded) && ctx.Err() == nil {
+			callErr = &tagging.LLMError{Kind: tagging.KindNetwork, Message: "翻译模型请求超时"}
+		}
+		return res, callErr
+	}
+	// Reserve half of the overall deadline for fallback after a primary timeout.
+	primaryTimeout := lyricsTranslationTimeout
+	if fallback != "" && fallback != model {
+		if deadline, ok := ctx.Deadline(); ok {
+			primaryTimeout = time.Until(deadline)
+		}
+		primaryTimeout /= 2
+	}
+	res, err := call(model, primaryTimeout)
+	total := res.Usage
+	if tagging.ShouldFallback(ctx, model, fallback, err) {
+		a.logger.Warn("translation primary unavailable; trying fallback", "model", model, "fallback", fallback)
+		model = fallback
+		res, err = call(model, lyricsTranslationTimeout)
+		total.Add(res.Usage)
 	}
 	if err != nil {
 		return v, err
 	}
 	v.TranslatedLines, v.Model = res.Lines, model
-	v.PromptTokens, v.CompletionTokens = res.Usage.PromptTokens, res.Usage.CompletionTokens
+	v.PromptTokens, v.CompletionTokens = total.PromptTokens, total.CompletionTokens
 	if v.ID, err = a.store.SaveLyricsTranslation(ctx, v); err != nil {
 		return v, err
 	}
@@ -208,22 +237,23 @@ func translationResponse(v storage.LyricsTranslation, cached bool) lyricsTransla
 
 type lyricsTranslationPageData struct {
 	Chrome
-	Notice       string
-	Enabled      bool
-	Model        string
-	TaggingModel string
-	Configured   bool // base URL + key set (models aside)
-	Effective    string
-	Query        string
-	Language     string
-	Languages    []string
-	Items        []storage.LyricsTranslation
-	Total        int64
-	Page         int
-	Pages        int
-	PrevURL      string
-	NextURL      string
-	ReturnURL    string
+	Notice        string
+	Enabled       bool
+	Model         string
+	TaggingModel  string
+	FallbackModel string
+	Configured    bool // base URL + key set (models aside)
+	Effective     string
+	Query         string
+	Language      string
+	Languages     []string
+	Items         []storage.LyricsTranslation
+	Total         int64
+	Page          int
+	Pages         int
+	PrevURL       string
+	NextURL       string
+	ReturnURL     string
 }
 
 func (a *App) handleLyricsTranslationsPage(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +270,7 @@ func (a *App) handleLyricsTranslationsPage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	q := r.URL.Query()
-	data := lyricsTranslationPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: q.Get("notice"), Enabled: tr.Enabled, Model: tr.Model,
+	data := lyricsTranslationPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: q.Get("notice"), Enabled: tr.Enabled, Model: tr.Model, FallbackModel: tr.FallbackModel,
 		TaggingModel: ai.Model, Configured: strings.TrimSpace(ai.BaseURL) != "" && ai.APIKey != "", Effective: storage.EffectiveTranslationModel(ai, tr),
 		Query: strings.TrimSpace(q.Get("q")), Language: q.Get("lang")}
 	data.Page, _ = strconv.Atoi(q.Get("page"))
@@ -284,7 +314,7 @@ func (a *App) handleSaveLyricsTranslationSettings(w http.ResponseWriter, r *http
 		return
 	}
 	ctx := r.Context()
-	next := storage.LyricsTranslationSettings{Enabled: r.FormValue("enabled") != "", Model: strings.TrimSpace(r.FormValue("model"))}
+	next := storage.LyricsTranslationSettings{Enabled: r.FormValue("enabled") != "", Model: strings.TrimSpace(r.FormValue("model")), FallbackModel: strings.TrimSpace(r.FormValue("fallback_model"))}
 	ai, err := a.store.AISettings(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -70,6 +70,10 @@
             <label>主模型
               <input name="model" value="{{.Model}}" placeholder="例如 gemini-2.5-flash-lite" spellcheck="false">
             </label>
+            <label>后备模型（可选）
+              <input name="fallback_model" value="{{.FallbackModel}}" placeholder="留空不回退，复用同一接口" spellcheck="false">
+              <small>主模型连接失败、超时、限流、配额耗尽或不可用时自动回退；不替代复核模型。</small>
+            </label>
             <label>复核模型（可选）
               <input name="review_model" value="{{.ReviewModel}}" placeholder="例如 gemini-2.5-flash" spellcheck="false">
             </label>

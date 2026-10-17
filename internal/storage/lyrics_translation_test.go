@@ -55,7 +55,8 @@ func TestMigration052KeepsAISettingsAndUsage(t *testing.T) {
 	}
 	defer s.Close()
 	migrateBefore(t, ctx, s, "052_")
-	if err := s.SaveAISettings(ctx, AISettings{BaseURL: "https://x.test/v1", APIKey: "sk", Model: "lite", TaggingEnabled: true, RequestsPerMinute: 60, Concurrency: 4}); err != nil {
+	// Seed the historical schema directly: current setters require newer columns.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_settings(id,base_url,api_key,model,tagging_enabled,requests_per_minute,concurrency) VALUES(1,'https://x.test/v1','sk','lite',1,60,4)`); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
