@@ -52,6 +52,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// and scrobble endpoints were removed and answer 410.
 			"endpoint":            "/api/v1/playback/events",
 			"contextTypes":        storage.PlaybackContextTypes,
+			"clientKinds":         storage.PlaybackClientKinds,
 			"removedEndpoints":    []string{"/api/v1/playback/timeline", "/api/v1/playback/scrobble"},
 			"authentication":      []string{"apiToken", "mediaToken", "session"},
 			"queryParameter":      "mediaToken",

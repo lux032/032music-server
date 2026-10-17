@@ -66,6 +66,7 @@
 {"clientId":"device-abc","clientKind":"android","sessionId":"7c9e…","seq":1,"type":"start","trackId":12,"state":"playing","positionMillis":0,"durationMillis":240000}
 ```
 
+- `clientKind`：`web`、`android`、`desktop`（桌面客户端，如 032musicplayer），见 `capabilities.playback.clientKinds`；同一会话内不可变。
 - `type`：`start`（必须携带真实初始 `state`：`playing`/`buffering`/`paused`）、`heartbeat`（同样携带真实 state）、`pause`/`buffering`/`resume`（state 由类型推导，不要发送）、`seek`（保留当前 state，仅更新位置）、`end`（必须携带 `endReason`）。
 - `endReason`：`completed`（断点归零）、`skipped`、`stopped`、`replaced`、`error`、`client_closed`。
 - 心跳节奏：playing/buffering 每 15 秒（租约 90 秒），paused 每 60 秒（租约 10 分钟）。超过租约会话失效，历史显示“已中断”，不算跳过/完成。

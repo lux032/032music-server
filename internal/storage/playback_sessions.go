@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 
 	"modernc.org/sqlite"
@@ -120,6 +121,10 @@ type PlaybackContext struct {
 // PlaybackContextTypes lists the accepted context types (capabilities).
 var PlaybackContextTypes = []string{"dailyMix"}
 
+// PlaybackClientKinds are the accepted clientKind values (migration 051 adds
+// desktop for 032musicplayer). Kept in sync with the playback_sessions CHECK.
+var PlaybackClientKinds = []string{"web", "android", "desktop"}
+
 // maxPlaybackContextPosition bounds the position inside a mix.
 const maxPlaybackContextPosition = 999
 
@@ -154,8 +159,8 @@ func validatePlaybackEvent(input *PlaybackEventInput) error {
 	if len(input.ClientID) == 0 || len(input.ClientID) > 64 || !playbackIDPattern.MatchString(input.ClientID) {
 		return errors.New("clientId must be 1-64 bytes of [A-Za-z0-9-]")
 	}
-	if input.ClientKind != "web" && input.ClientKind != "android" {
-		return errors.New("clientKind must be web or android")
+	if !slices.Contains(PlaybackClientKinds, input.ClientKind) {
+		return errors.New("clientKind must be web, android or desktop")
 	}
 	if len(input.SessionID) < 8 || len(input.SessionID) > 64 || !playbackIDPattern.MatchString(input.SessionID) {
 		return errors.New("sessionId must be 8-64 bytes of [A-Za-z0-9-]")
