@@ -14,7 +14,7 @@ import (
 )
 
 // GeneratorVersion is stored with every mix; bump it when the algorithm changes.
-const GeneratorVersion = 1
+const GeneratorVersion = 2
 
 // Zone is the day boundary zone (UTC+8, like the home rotation).
 var Zone = time.FixedZone("UTC+8", 8*60*60)
@@ -43,6 +43,7 @@ type Plan struct {
 	Style    string         `json:"style,omitempty"`
 	RefID    int64          `json:"refId,omitempty"`
 	Pool     int            `json:"pool"`
+	Direct   int            `json:"direct"`
 	Familiar int            `json:"familiar"`
 	Explore  int            `json:"explore"`
 	Sample   float64        `json:"sample"`
@@ -160,7 +161,7 @@ func (p *prepared) env(now time.Time, day string, set storage.DailyMixSettings) 
 
 func toMix(c Chosen, slot int, picks []Pick) storage.NewDailyMix {
 	th := c.Theme
-	plan := Plan{ThemeID: th.ID(), Label: th.Label(), Mood: th.Mood, Style: th.Style, RefID: th.RefID, Pool: len(th.Pool), Familiar: th.Familiar, Explore: th.Explore,
+	plan := Plan{ThemeID: th.ID(), Label: th.Label(), Mood: th.Mood, Style: th.Style, RefID: th.RefID, Pool: len(th.Pool), Direct: th.Direct, Familiar: th.Familiar, Explore: th.Explore,
 		Sample: round2(c.Sample), Lift: round2(th.Lift), Score: round2(c.Score), Cold: c.Forced, ByVia: map[string]int{}}
 	m := storage.NewDailyMix{Slot: slot, ThemeType: th.Type, ThemeKey: th.Key, Title: c.Title, Description: c.Description, TitleSource: c.TitleSource,
 		GeneratorVersion: GeneratorVersion, CooldownDays: 7}

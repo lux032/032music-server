@@ -80,8 +80,9 @@ type Theme struct {
 	RefID int64
 	Name  string // display name of the work / artist / composer
 	Pool  []Candidate
-	// Familiar/Explore count the pool by bucket.
-	Familiar, Explore int
+	// Familiar/Explore count the pool by bucket; Direct counts the theme's own tracks
+	// (not neighbours).
+	Familiar, Explore, Direct int
 	// Lift is the listening-profile lift of the theme (1 = average).
 	Lift float64
 }
@@ -275,6 +276,15 @@ func minPool(typ string, length int) int {
 
 const minRel = 0.35
 
+// minStyleRel: a style counts as a direct hit only with confidence ≥ 0.6 (the model's
+// second and third styles are often fillers; NAS data: rock 5178 tags, 2933 ≥ 0.65).
+const minStyleRel = 0.6
+
+// genericShare: a style carried by more than this share of the library (pop ≈ 49%,
+// electronic ≈ 36% on the NAS) is too broad to be a theme on its own or to widen
+// another theme's pool; it still appears in mood × style combinations.
+const genericShare = 0.30
+
 type builder struct {
 	tracks   []*storage.RecTrack
 	allowSad bool
@@ -283,6 +293,47 @@ type builder struct {
 	names    func(kind string, ids []int64) map[int64]string
 	profile  *Profile
 	today    string
+	generic  map[string]bool
+}
+
+// computeGeneric marks the styles that are too broad (see genericShare).
+func (b *builder) computeGeneric() {
+	b.generic = map[string]bool{}
+	if len(b.tracks) == 0 {
+		return
+	}
+	for _, st := range tagging.Styles {
+		n := 0
+		for _, t := range b.tracks {
+			if styleRel(t, st.ID) >= minStyleRel {
+				n++
+			}
+		}
+		if float64(n)/float64(len(b.tracks)) > genericShare {
+			b.generic[st.ID] = true
+		}
+	}
+}
+
+// capAdjacent keeps at most as many neighbours (adjacent tags) as direct hits, the
+// strongest first, so a theme's pool stays about the theme.
+func capAdjacent(pool []Candidate) []Candidate {
+	direct := countVia(pool, "tag")
+	var adj, out []Candidate
+	for _, c := range pool {
+		if c.Via == "adjacent" {
+			adj = append(adj, c)
+		} else {
+			out = append(out, c)
+		}
+	}
+	if len(adj) <= direct {
+		return pool
+	}
+	sort.Slice(adj, func(i, j int) bool {
+		return adj[i].Rel > adj[j].Rel || (adj[i].Rel == adj[j].Rel && adj[i].T.ID < adj[j].T.ID)
+	})
+	return append(out, adj[:direct]...)
 }
 
 func (b *builder) moodPool(mood string, withAdjacent bool) []Candidate {
@@ -306,7 +357,7 @@ func (b *builder) moodPool(mood string, withAdjacent bool) []Candidate {
 			out = append(out, Candidate{t, 0.45 * best, "adjacent"})
 		}
 	}
-	return out
+	return capAdjacent(out)
 }
 
 func (b *builder) stylePool(style string, withAdjacent bool) []Candidate {
@@ -315,7 +366,7 @@ func (b *builder) stylePool(style string, withAdjacent bool) []Candidate {
 		if mildlySad(t, b.allowSad) {
 			continue
 		}
-		if r := styleRel(t, style); r >= minRel {
+		if r := styleRel(t, style); r >= minStyleRel {
 			out = append(out, Candidate{t, r, "tag"})
 			continue
 		}
@@ -324,13 +375,15 @@ func (b *builder) stylePool(style string, withAdjacent bool) []Candidate {
 		}
 		var best float64
 		for _, adj := range adjacentStyles[style] {
-			best = math.Max(best, styleRel(t, adj))
+			if !b.generic[adj] {
+				best = math.Max(best, styleRel(t, adj))
+			}
 		}
-		if best >= 0.7 {
+		if best >= 0.75 {
 			out = append(out, Candidate{t, 0.4 * best, "adjacent"})
 		}
 	}
-	return out
+	return capAdjacent(out)
 }
 
 // expandAcoustic adds untagged (or audio-only tagged) tracks that sound like the core
@@ -396,12 +449,14 @@ func (b *builder) add(out *[]*Theme, th *Theme) {
 		return
 	}
 	th.Familiar, th.Explore = countBuckets(th.Pool)
+	th.Direct = countVia(th.Pool, "tag") + countVia(th.Pool, "work") + countVia(th.Pool, "composer") + countVia(th.Pool, "artist")
 	th.Lift = b.profile.Lift(th)
 	*out = append(*out, th)
 }
 
 // Candidates computes every feasible theme for the day.
 func (b *builder) Candidates() []*Theme {
+	b.computeGeneric()
 	var out []*Theme
 	for _, m := range tagging.Moods {
 		if m.Negative {
@@ -416,6 +471,9 @@ func (b *builder) Candidates() []*Theme {
 		}
 	}
 	for _, st := range tagging.Styles {
+		if b.generic[st.ID] {
+			continue
+		}
 		pool := b.stylePool(st.ID, true)
 		if countVia(pool, "tag") >= minPool(TypeStyle, b.length)/2 {
 			pool = b.expandAcoustic(pool, b.length)
@@ -434,7 +492,7 @@ func (b *builder) Candidates() []*Theme {
 					continue
 				}
 				mr, sr := moodRel(t, m.ID), styleRel(t, st.ID)
-				if mr >= minRel && sr >= minRel {
+				if mr >= minRel && sr >= minStyleRel {
 					pool = append(pool, Candidate{t, math.Sqrt(mr * sr), "tag"})
 				}
 			}

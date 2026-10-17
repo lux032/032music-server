@@ -113,6 +113,12 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 		}
 		r := Reason{Via: c.Via, Relevance: round2(c.Rel), Preference: round2(preference(t)), Novelty: round2(e.novelty(t)), Energy: Energy(t)}
 		w := c.Rel * c.Rel * r.Preference * r.Novelty
+		switch t.Version {
+		case "live":
+			w *= 0.35
+		case "remix":
+			w *= 0.75
+		}
 		bucket := "explore"
 		if familiar(t) {
 			bucket = "familiar"
@@ -193,33 +199,46 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 	}
 	famRest := take(fam, familiarN)
 	expRest := take(exp, exploreN)
-	// Keep the exploration floor with neighbours when the direct hits are all familiar.
-	got := 0
-	for _, w := range chosen {
-		if w.bucket == "explore" {
-			got++
-		}
-	}
-	if got < exploreN {
-		var exploreExtra, others []weighted
-		for _, w := range extra {
-			if w.bucket == "explore" {
-				exploreExtra = append(exploreExtra, w)
-			} else {
-				others = append(others, w)
+	count := func(bucket string) int {
+		n := 0
+		for _, w := range chosen {
+			if w.bucket == bucket {
+				n++
 			}
 		}
-		exploreExtra = take(exploreExtra, exploreN-got)
-		extra = append(others, exploreExtra...)
-		byKey(extra)
+		return n
 	}
-	// Fill shortfalls from the other bucket, then from the neighbours (keeping the
-	// exploration floor where possible).
-	if short := length - len(chosen); short > 0 {
-		expRest = take(expRest, short)
+	split := func(list []weighted, bucket string) (match, rest []weighted) {
+		for _, w := range list {
+			if w.bucket == bucket {
+				match = append(match, w)
+			} else {
+				rest = append(rest, w)
+			}
+		}
+		return
 	}
+	// Each bucket's shortfall is first filled from the theme's neighbours (adjacent
+	// tags, sound-alikes) of the same bucket, so the familiar/explore split holds even
+	// when the theme's own tracks are mostly unheard (or mostly familiar).
+	for _, bucket := range []string{"familiar", "explore"} {
+		want := familiarN
+		if bucket == "explore" {
+			want = exploreN
+		}
+		if short := want - count(bucket); short > 0 {
+			match, rest := split(extra, bucket)
+			match = take(match, short)
+			extra = append(rest, match...)
+			byKey(extra)
+		}
+	}
+	// Then the other bucket's own tracks, then any neighbour.
 	if short := length - len(chosen); short > 0 {
 		famRest = take(famRest, short)
+	}
+	if short := length - len(chosen); short > 0 {
+		expRest = take(expRest, short)
 	}
 	if short := length - len(chosen); short > 0 {
 		extra = take(extra, short)

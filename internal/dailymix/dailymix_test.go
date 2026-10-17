@@ -175,7 +175,7 @@ func TestBuildConstraintsAndDeterminism(t *testing.T) {
 		env.recentMix[p.T.ID] = "2026-10-15"
 	}
 	overlap := 0
-	for _, p := range env.build(th, seeded("x")) {
+	for _, p := range env.build(th, seeded("next day")) {
 		if env.recentMix[p.T.ID] != "" {
 			overlap++
 		}
@@ -287,5 +287,87 @@ func TestRankCooldowns(t *testing.T) {
 	}
 	if good < 1900 {
 		t.Fatalf("beta: %d/%d", good, bad)
+	}
+}
+
+func TestGenericStylesAndFamiliarFill(t *testing.T) {
+	tracks := synthLibrary(900)
+	// Make "pop" generic: 40% of the library carries it confidently.
+	for i, tr := range tracks {
+		if i%5 < 2 {
+			tr.Styles["pop"] = storage.RecTag{Weight: 0.5, Confidence: 0.9, Source: "llm"}
+		}
+		// Second styles below 0.6 confidence are not direct hits.
+		if i%7 == 0 {
+			tr.Styles["jazz"] = storage.RecTag{Weight: 0.5, Confidence: 0.5, Source: "llm"}
+		}
+	}
+	b := testBuilder(tracks, 25)
+	byID := map[string]*Theme{}
+	for _, c := range b.Candidates() {
+		byID[c.ID()] = c
+	}
+	if byID["style:pop"] != nil || !b.generic["pop"] {
+		t.Fatal("a generic style is not a theme of its own")
+	}
+	if byID["style:jazz"] != nil {
+		t.Fatal("low-confidence styles are not direct hits")
+	}
+	for _, th := range byID {
+		if th.Type == TypeStyle || th.Type == TypeMood {
+			if adj := countVia(th.Pool, "adjacent"); adj > th.Direct {
+				t.Fatalf("%s: %d neighbours > %d direct", th.ID(), adj, th.Direct)
+			}
+		}
+	}
+	// A theme whose own tracks are all unheard still gets familiar tracks from its
+	// neighbours: mark every healing track unheard, neighbours stay familiar.
+	for _, tr := range tracks {
+		if _, ok := tr.Moods["healing"]; ok {
+			tr.PlayCount, tr.Favorite, tr.InPlaylist = 0, false, false
+		}
+	}
+	b = testBuilder(tracks, 25)
+	var th *Theme
+	for _, c := range b.Candidates() {
+		if c.ID() == "mood:healing" {
+			th = c
+		}
+	}
+	env := &selectEnv{now: testNow, day: "2026-10-16", explore: 0.3, length: 25, recentMix: map[int64]string{}, usedToday: map[int64]bool{}, usedTitles: map[string]bool{}, profile: b.profile}
+	fam := 0
+	for _, p := range env.build(th, seeded("f")) {
+		if p.Bucket == "familiar" {
+			fam++
+		}
+	}
+	if fam < 15 {
+		t.Fatalf("familiar = %d", fam)
+	}
+}
+
+func TestVersionsWeighedDown(t *testing.T) {
+	tracks := synthLibrary(900)
+	for i, tr := range tracks {
+		if (i/6)%2 == 0 { // half of every mood
+			tr.Version = "live"
+		}
+	}
+	b := testBuilder(tracks, 25)
+	env := &selectEnv{now: testNow, day: "2026-10-16", explore: 0.3, length: 25, recentMix: map[int64]string{}, usedToday: map[int64]bool{}, usedTitles: map[string]bool{}, profile: b.profile}
+	live, total := 0, 0
+	for _, c := range b.Candidates() {
+		if c.Type != TypeMood {
+			continue
+		}
+		for _, p := range env.build(c, seeded(c.ID())) {
+			total++
+			if p.T.Version == "live" {
+				live++
+			}
+		}
+	}
+	if total == 0 || float64(live)/float64(total) > 0.42 {
+		t.Fatalf("live share %d/%d", live, total)
 	}
 }

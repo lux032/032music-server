@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -91,7 +92,8 @@ type RecTrack struct {
 	ID          int64
 	AlbumID     int64
 	Title       string
-	TitleKey    string // normalised title + primary artists, for de-duplication
+	TitleKey    string // base title (versions stripped) + primary artists, for de-duplication
+	Version     string // "", "live", "remix" or "nonmain" (from the title)
 	ArtistIDs   []int64
 	ArtistNames []string
 	Composers   []int64
@@ -113,8 +115,56 @@ type RecTrack struct {
 	Blocked     bool
 }
 
-// NonMain reports instrumentals, TV sizes, drama tracks etc.
-func (t *RecTrack) NonMain() bool { return nonMain(t.TrackType) }
+// NonMain reports instrumentals, TV sizes, drama tracks etc. (by type or by title:
+// 40 TV-size tracks on the NAS carry the marker only in the title).
+func (t *RecTrack) NonMain() bool { return nonMain(t.TrackType) || t.Version == "nonmain" }
+
+var (
+	nonMainTitle = regexp.MustCompile(`(?i)(tv[\s._-]*(size|ver|edit)|short[\s._-]*(ver|size|edit)|off[\s._-]*vocal|instrumental|karaoke|カラオケ|オフボーカル|インスト|伴奏|纯音乐版)`)
+	liveTitle    = regexp.MustCompile(`(?i)(\blive\b|ライブ|演唱会|武道館|\bunplugged\b)`)
+	remixTitle   = regexp.MustCompile(`(?i)(remix|\bmix\b|リミックス|\bedit\b|\bver\.?\b|version|バージョン|アレンジ|arrange)`)
+	versionCut   = regexp.MustCompile(`\s*[-~～(（\[【「].*$`)
+)
+
+// titleVersion classifies a title: "nonmain", "live", "remix" (other versions) or "".
+func titleVersion(title string) string {
+	if nonMainTitle.MatchString(title) {
+		return "nonmain"
+	}
+	// Live/remix only count in the decoration (" -… Live -", "(… Remix)"), so songs
+	// titled "Live and Learn" stay originals.
+	deco := versionCut.FindString(normalizedTitleKeepDeco(title))
+	switch {
+	case liveTitle.MatchString(deco):
+		return "live"
+	case remixTitle.MatchString(deco):
+		return "remix"
+	}
+	return ""
+}
+
+// normalizedTitleKeepDeco lower-cases and folds full-width characters but keeps
+// every decoration.
+func normalizedTitleKeepDeco(title string) string {
+	var b strings.Builder
+	for _, r := range title {
+		if r >= 0xff01 && r <= 0xff5e {
+			r -= 0xfee0
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
+}
+
+// baseTitle drops version decorations (" -TV Size-", "(Live)", "～ver.～"…) so the
+// versions of one song share a key.
+func baseTitle(title string) string {
+	n := normalizedTitle(title)
+	if cut := strings.TrimSpace(versionCut.ReplaceAllString(n, "")); cut != "" {
+		return cut
+	}
+	return n
+}
 
 // RecLibrary loads every playable track (available audio file, positive duration).
 func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
@@ -234,7 +284,8 @@ func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 	}
 	for i := range out {
 		t := &out[i]
-		t.TitleKey = normalizedTitle(t.Title) + "\x00" + fmt.Sprint(t.ArtistIDs)
+		t.TitleKey = baseTitle(t.Title) + "\x00" + fmt.Sprint(t.ArtistIDs)
+		t.Version = titleVersion(t.Title)
 	}
 	return out, nil
 }

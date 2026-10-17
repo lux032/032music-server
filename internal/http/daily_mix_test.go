@@ -27,7 +27,7 @@ func dailyMixTestApp(t *testing.T) (*App, *storage.Store, http.Handler, *http.Co
 	}
 	lib, _ := store.LibraryByRoot(ctx, "/music")
 	moods := []string{"healing", "hotblooded", "cheerful", "relaxed", "epic"}
-	styles := []string{"pop", "rock", "piano"}
+	styles := []string{"pop", "rock", "piano", "orchestral", "jazz"}
 	for i := 0; i < 360; i++ {
 		if err := store.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: fmt.Sprintf("A%03d/%02d.flac", i/4, i%4), FileSize: int64(1000 + i), ModifiedAtNS: 1,
 			Metadata: metadata.AudioMetadata{Title: fmt.Sprintf("Song %d", i), Album: fmt.Sprintf("Album %d", i/4), Artists: []string{fmt.Sprintf("Artist %d", i%45)},
@@ -43,7 +43,7 @@ func dailyMixTestApp(t *testing.T) (*App, *storage.Store, http.Handler, *http.Co
 		meta := storage.TrackTagMeta{TrackID: tr.ID, SourceStamp: "s", InputHash: "h", VocabVersion: 1, PromptVersion: 1, Model: "m", Energy: i%5 + 1}
 		if err := store.SaveTrackTagResult(ctx, meta, []storage.TrackTag{
 			{Kind: "mood", Tag: moods[i%5], Weight: 1, Confidence: 0.9, Source: "llm"},
-			{Kind: "style", Tag: styles[(i/5)%3], Weight: 1, Confidence: 0.8, Source: "llm"}}, nil); err != nil {
+			{Kind: "style", Tag: styles[(i/5)%5], Weight: 1, Confidence: 0.8, Source: "llm"}}, nil); err != nil {
 			t.Fatal(err)
 		}
 		if i%3 == 0 {

@@ -34,7 +34,7 @@ func storeLibrary(t *testing.T, n int) (*storage.Store, []int64) {
 	}
 	lib, _ := s.LibraryByRoot(ctx, "/music")
 	moods := []string{"healing", "hotblooded", "cheerful", "relaxed", "epic"}
-	styles := []string{"pop", "rock", "piano"}
+	styles := []string{"pop", "rock", "piano", "orchestral", "jazz"}
 	for i := 0; i < n; i++ {
 		if err = s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: fmt.Sprintf("A%03d/%02d.flac", i/4, i%4), FileSize: int64(1000 + i), ModifiedAtNS: 1,
 			Metadata: metadata.AudioMetadata{Title: fmt.Sprintf("Song %d", i), Album: fmt.Sprintf("Album %d", i/4), Artists: []string{fmt.Sprintf("Artist %d", i%50)},
