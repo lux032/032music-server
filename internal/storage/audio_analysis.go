@@ -293,7 +293,7 @@ func (s *Store) RecordAudioAnalysisFailure(ctx context.Context, c AudioAnalysisC
 	if len(message) > 500 {
 		message = message[:500]
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -487,7 +487,7 @@ func (s *Store) ApplyAudioAVRegression(ctx context.Context, version string, mode
 	if len(values) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}

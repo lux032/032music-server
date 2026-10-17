@@ -190,8 +190,6 @@ func (g *Generator) GenerateDay(ctx context.Context, now time.Time, day string, 
 	}
 	info := &p.info
 	info.Kind = "day"
-	defer func() { info.Millis = time.Since(start).Milliseconds() }()
-
 	rng := seeded("plan", day)
 	ranked := rank(p.cands, planInput{day: day, stats: p.stats, recent: p.recent, excludeID: map[string]bool{}, excludeMood: map[string]bool{}, excludeStyle: map[string]bool{}}, rng)
 	info.Eligible = len(ranked)
@@ -290,6 +288,7 @@ func (g *Generator) GenerateDay(ctx context.Context, now time.Time, day string, 
 		}
 	}
 	info.Mixes = len(mixes)
+	info.Millis = time.Since(start).Milliseconds()
 	if len(mixes) == 0 {
 		return nil, *info, ErrNotReady
 	}
@@ -308,7 +307,6 @@ func (g *Generator) GenerateReplacement(ctx context.Context, now time.Time, old 
 	}
 	info := &p.info
 	info.Kind = "replace"
-	defer func() { info.Millis = time.Since(start).Milliseconds() }()
 	in := planInput{day: day, stats: p.stats, recent: p.recent, excludeID: map[string]bool{}, excludeMood: map[string]bool{}, excludeStyle: map[string]bool{}}
 	for _, u := range p.recent {
 		if u.Day == day {
@@ -377,8 +375,10 @@ func (g *Generator) GenerateReplacement(ctx context.Context, now time.Time, old 
 			}
 		}
 		info.Mixes = 1
+		info.Millis = time.Since(start).Milliseconds()
 		return toMix(c, old.Slot, picks), *info, nil
 	}
+	info.Millis = time.Since(start).Milliseconds()
 	return storage.NewDailyMix{}, *info, ErrNotReady
 }
 

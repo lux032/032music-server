@@ -504,7 +504,7 @@ var ErrDailyMixesExist = errors.New("daily mixes already generated for this day"
 // SaveDailyMixes stores a day's mixes. Fails with ErrDailyMixesExist when the day
 // already has active mixes (two generators raced).
 func (s *Store) SaveDailyMixes(ctx context.Context, day string, mixes []NewDailyMix) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -530,7 +530,7 @@ func (s *Store) SaveDailyMixes(ctx context.Context, day string, mixes []NewDaily
 
 // ReplaceDailyMix marks the active mix replaced and stores its successor in the same slot.
 func (s *Store) ReplaceDailyMix(ctx context.Context, oldID int64, m NewDailyMix) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -732,7 +732,7 @@ func (s *Store) RateDailyMix(ctx context.Context, id int64, value int, reasons [
 	if value != -1 && len(clean) > 0 {
 		return DailyMix{}, errors.New("reasons are only accepted with a dislike")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return DailyMix{}, err
 	}

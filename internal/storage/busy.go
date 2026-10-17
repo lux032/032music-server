@@ -79,3 +79,20 @@ func (r retryDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, err
 	})
 	return tx, err
 }
+
+// beginWrite starts a transaction that takes the write lock up front (a no-op
+// write as its first statement). A deferred transaction that reads first and writes
+// later fails with SQLITE_BUSY_SNAPSHOT (517) when another connection commits in
+// between — busy_timeout cannot help then. Taking the lock first lets the busy
+// handler wait instead.
+func (s *Store) beginWrite(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE schema_migrations SET version = version WHERE 0`); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}

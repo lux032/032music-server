@@ -249,8 +249,28 @@ func TestPlanWithModelValidation(t *testing.T) {
 	// Unknown id → server choice with whatever titles were valid.
 	chat.reply = reply([3]string{"mood:made_up", "x", ""}, [3]string{fallback[0].Theme.ID(), "好标题", "好简介"})
 	got, res = planWithModel(context.Background(), chat, storage.AISettings{Model: "m"}, list, append([]Chosen(nil), fallback...), "", 2, 1, "2026-10-16", p, nil)
-	if got[0].Theme != fallback[0].Theme || got[0].Title != "好标题" || !strings.Contains(res.Note, "不符合约束") {
+	if got[0].Theme != fallback[0].Theme || got[0].Title != "好标题" || !strings.Contains(res.Note, "编造或未知的主题") || !strings.Contains(res.Note, "补齐") || len(got) != 3 {
 		t.Fatalf("fallback = %+v %s", got[0], res.Note)
+	}
+	// The same mood twice: the second is dropped and replaced, keeping the first.
+	var sameMood []Ranked
+	for _, r := range ranked {
+		if r.Theme.Mood == fallback[0].Theme.Mood && r.Theme != fallback[0].Theme {
+			sameMood = append(sameMood, r)
+		}
+	}
+	if fallback[0].Theme.Mood != "" && len(sameMood) > 0 {
+		byID := map[string]bool{}
+		for _, r := range list {
+			byID[r.Theme.ID()] = true
+		}
+		if byID[sameMood[0].Theme.ID()] {
+			chat.reply = reply([3]string{fallback[0].Theme.ID(), "第一", ""}, [3]string{sameMood[0].Theme.ID(), "第二", ""}, [3]string{fallback[2].Theme.ID(), "第三", ""})
+			got, res = planWithModel(context.Background(), chat, storage.AISettings{Model: "m"}, list, append([]Chosen(nil), fallback...), "", 2, 1, "2026-10-16", p, nil)
+			if len(got) != 3 || !strings.Contains(res.Note, "情绪或风格重复") {
+				t.Fatalf("same mood: %d %s", len(got), res.Note)
+			}
+		}
 	}
 	// Garbage → templates.
 	chat.reply = "not json"

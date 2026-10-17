@@ -442,7 +442,7 @@ func (s *Store) SetUserTrackTags(ctx context.Context, trackID int64, kind string
 	if kind != "mood" && kind != "style" {
 		return fmt.Errorf("invalid tag kind %q", kind)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
