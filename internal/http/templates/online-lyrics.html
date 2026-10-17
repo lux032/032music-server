@@ -21,6 +21,22 @@
     <section class="feature-card">
       <div class="audio-analysis-head">
         <div>
+          <p class="kicker">排查</p>
+          <h2>某首歌没有歌词？</h2>
+          <p class="result-count">查看服务端用来搜索的歌名、艺人、时长，以及网易云、LRCLIB 各自返回了什么、为什么没有选中。</p>
+        </div>
+      </div>
+      <form class="ai-tagging-sample-form" method="get" action="/admin/online-lyrics/diagnose">
+        <label>曲目
+          <input type="search" name="q" placeholder="曲名、艺人或曲目 ID" required>
+        </label>
+        <button class="secondary-button">诊断</button>
+      </form>
+    </section>
+
+    <section class="feature-card">
+      <div class="audio-analysis-head">
+        <div>
           <p class="kicker">缓存</p>
           <h2>已找到 {{index .Counts "found"}} 首 · 未找到 {{index .Counts "not_found"}} 首 · 已清除 {{index .Counts "suppressed"}} 首</h2>
         </div>
@@ -57,7 +73,7 @@
             {{range .Items}}
             <tr>
               <td><input type="checkbox" name="id" value="{{.TrackID}}" aria-label="选择 {{.Title}}"></td>
-              <td><strong>{{.Title}}</strong><small>{{.Artist}}</small></td>
+              <td><a href="/admin/online-lyrics/diagnose?q={{.TrackID}}"><strong>{{.Title}}</strong></a><small>{{.Artist}}</small></td>
               <td>{{.StatusLabel}}{{if and .Manual (eq .Status "found")}}（手动）{{end}}{{if eq .Status "not_found"}}<small>{{formatAdminTime .RetryAfter}} 后重试</small>{{end}}</td>
               <td>{{if eq .Status "found"}}{{.RemoteTitle}}<small>{{.RemoteArtist}} · {{.SourceName}} · {{.Lines}} 行{{if .Synced}} · 逐行同步{{else}} · 无时间轴{{end}}</small>{{else}}<small>—</small>{{end}}</td>
               <td>{{formatAdminTime .UpdatedAt}}</td>

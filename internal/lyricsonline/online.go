@@ -38,6 +38,10 @@ var ErrNotFound = errors.New("no matching lyrics found online")
 // ErrNoLyrics means the requested remote song has no lyrics (or is instrumental).
 var ErrNoLyrics = errors.New("remote song has no lyrics")
 
+// ErrIncomplete means nothing matched but some source failed (network, rate
+// limit): the miss may be wrong, so it should only be remembered briefly.
+var ErrIncomplete = errors.New("online lyrics lookup incomplete")
+
 // Query describes the local track.
 type Query struct {
 	Title      string
@@ -56,6 +60,8 @@ type Candidate struct {
 	DurationMs int64   `json:"durationMs,omitempty"`
 	Synced     *bool   `json:"synced"`
 	Score      float64 `json:"score"`
+	// Accepted: good enough to be used automatically.
+	Accepted bool `json:"-"`
 	// lrc is set when the search response already carries the lyrics (LRCLIB).
 	lrc string
 }
@@ -116,17 +122,66 @@ func (c *Client) ValidSource(id string) bool {
 	return ok
 }
 
+// ProviderReport is what one source answered during a lookup.
+type ProviderReport struct {
+	Source    string
+	Results   int
+	Err       error
+	ElapsedMs int64
+}
+
+// Report explains one lookup (for logs and the admin diagnosis page).
+type Report struct {
+	Providers  []ProviderReport
+	Candidates []Candidate // every result, best first; Accepted marks usable ones
+	Downloads  []string    // "source:id -> outcome", in the order tried
+}
+
+// Failed lists the sources that failed ("netease: HTTP 503").
+func (r Report) Failed() []string {
+	var out []string
+	for _, p := range r.Providers {
+		if p.Err != nil {
+			out = append(out, p.Source+": "+p.Err.Error())
+		}
+	}
+	return out
+}
+
+// Summary is a one-line description for logs.
+func (r Report) Summary() string {
+	parts := make([]string, 0, len(r.Providers)+4)
+	for _, p := range r.Providers {
+		if p.Err != nil {
+			parts = append(parts, fmt.Sprintf("%s=error(%v) %dms", p.Source, p.Err, p.ElapsedMs))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s=%d %dms", p.Source, p.Results, p.ElapsedMs))
+		}
+	}
+	for i, c := range r.Candidates {
+		if i == 3 {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("#%d %s:%s %q/%q %dms score=%.2f ok=%v", i+1, c.Source, c.ID, c.Title, c.Artist, c.DurationMs, c.Score, c.Accepted))
+	}
+	if len(r.Downloads) > 0 {
+		parts = append(parts, "downloads: "+strings.Join(r.Downloads, "; "))
+	}
+	return strings.Join(parts, " | ")
+}
+
 // Search queries every provider concurrently and returns all candidates
 // ranked best first. It fails only when every provider failed.
 func (c *Client) Search(ctx context.Context, q Query) ([]Candidate, error) {
-	all, _, err := c.search(ctx, q)
+	all, _, _, err := c.search(ctx, q)
 	return all, err
 }
 
-func (c *Client) search(ctx context.Context, q Query) (all, accepted []Candidate, err error) {
+func (c *Client) search(ctx context.Context, q Query) (all, accepted []Candidate, report Report, err error) {
 	type result struct {
-		cands []Candidate
-		err   error
+		cands   []Candidate
+		err     error
+		elapsed time.Duration
 	}
 	results := make([]result, len(c.providers))
 	var wg sync.WaitGroup
@@ -134,25 +189,29 @@ func (c *Client) search(ctx context.Context, q Query) (all, accepted []Candidate
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			cands, err := p.Search(ctx, q)
-			results[i] = result{cands, err}
+			results[i] = result{cands, err, time.Since(start)}
 		}()
 	}
 	wg.Wait()
 	var merged []Candidate
 	var errs []error
 	for i, r := range results {
+		id := c.providers[i].ID()
+		report.Providers = append(report.Providers, ProviderReport{Source: id, Results: len(r.cands), Err: r.err, ElapsedMs: r.elapsed.Milliseconds()})
 		if r.err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", c.providers[i].ID(), r.err))
+			errs = append(errs, fmt.Errorf("%s: %w", id, r.err))
 			continue
 		}
 		merged = append(merged, r.cands...)
 	}
 	if len(c.providers) > 0 && len(errs) == len(c.providers) {
-		return nil, nil, errors.Join(errs...)
+		return nil, nil, report, errors.Join(errs...)
 	}
 	all, accepted = Rank(q, merged)
-	return all, accepted, nil
+	report.Candidates = all
+	return all, accepted, report, nil
 }
 
 // Get downloads one remote song's lyrics.
@@ -172,15 +231,25 @@ const maxDownloads = 3
 // ErrNotFound when the sources answered but nothing usable matched; any other
 // error is transient (network, rate limit) and should not be cached.
 func (c *Client) Best(ctx context.Context, q Query) (Lyrics, Candidate, error) {
-	_, accepted, err := c.search(ctx, q)
+	l, cand, _, err := c.Lookup(ctx, q)
+	return l, cand, err
+}
+
+// Lookup is Best plus a report of what every source answered. Errors:
+// ErrNotFound (cacheable miss), ErrIncomplete wrapping the source errors when
+// some source failed and nothing matched, or the error of a failed download.
+func (c *Client) Lookup(ctx context.Context, q Query) (Lyrics, Candidate, Report, error) {
+	_, accepted, report, err := c.search(ctx, q)
 	if err != nil {
-		return Lyrics{}, Candidate{}, err
+		return Lyrics{}, Candidate{}, report, err
 	}
 	var lastErr error
 	tries := 0
 	for _, cand := range accepted {
+		key := cand.Source + ":" + cand.ID
 		if cand.lrc != "" {
-			return Lyrics{Source: cand.Source, ID: cand.ID, Title: cand.Title, Artist: cand.Artist, LRC: cand.lrc}, cand, nil
+			report.Downloads = append(report.Downloads, key+" -> lyrics in search result")
+			return Lyrics{Source: cand.Source, ID: cand.ID, Title: cand.Title, Artist: cand.Artist, LRC: cand.lrc}, cand, report, nil
 		}
 		if tries == maxDownloads {
 			break
@@ -188,16 +257,21 @@ func (c *Client) Best(ctx context.Context, q Query) (Lyrics, Candidate, error) {
 		tries++
 		l, err := c.Get(ctx, cand.Source, cand.ID)
 		if err == nil {
-			return l, cand, nil
+			report.Downloads = append(report.Downloads, key+" -> ok")
+			return l, cand, report, nil
 		}
+		report.Downloads = append(report.Downloads, key+" -> "+err.Error())
 		if !errors.Is(err, ErrNoLyrics) {
 			lastErr = err
 		}
 	}
 	if lastErr != nil {
-		return Lyrics{}, Candidate{}, lastErr
+		return Lyrics{}, Candidate{}, report, lastErr
 	}
-	return Lyrics{}, Candidate{}, ErrNotFound
+	if failed := report.Failed(); len(failed) > 0 {
+		return Lyrics{}, Candidate{}, report, fmt.Errorf("%w (%s)", ErrIncomplete, strings.Join(failed, "; "))
+	}
+	return Lyrics{}, Candidate{}, report, ErrNotFound
 }
 
 // usable reports whether text contains lyrics (not empty, not a "pure music" placeholder).

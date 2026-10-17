@@ -104,6 +104,17 @@ func TitleSim(a, b string) float64 {
 
 var artistSep = regexp.MustCompile(`(?i)\s*(?:,|、|&|/|／|;|＆|×|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\band\b|・)\s*`)
 
+// PrimaryArtist is the first artist of a joined artist string ("A, B feat. C" -> "A").
+// Searching with every artist often finds nothing; matching still compares them all.
+func PrimaryArtist(a string) string {
+	for _, part := range artistSep.Split(a, -1) {
+		if p := strings.TrimSpace(part); p != "" {
+			return p
+		}
+	}
+	return strings.TrimSpace(a)
+}
+
 // ArtistSim is the best similarity between any artist of a and any artist of b.
 func ArtistSim(a, b string) float64 {
 	best := stringSim(a, b)
@@ -160,6 +171,7 @@ func Rank(q Query, cands []Candidate) (all, accepted []Candidate) {
 	for i := range all {
 		var ok bool
 		all[i].Score, ok = Score(q, all[i])
+		all[i].Accepted = ok
 		okBy[i] = ok
 	}
 	for i := range all {

@@ -29,6 +29,9 @@ const (
 	onlineLyricsRetry = 12 * time.Hour
 	// onlineLyricsTimeout bounds one automatic online lookup (all sources).
 	onlineLyricsTimeout = 20 * time.Second
+	// onlineLyricsIncompleteRetry: nothing matched while a source was failing,
+	// so the miss may be wrong; retry soon without searching on every play.
+	onlineLyricsIncompleteRetry = 30 * time.Minute
 )
 
 // SetOnlineLyrics enables NetEase / LRCLIB lookups for tracks without local lyrics.
@@ -118,14 +121,20 @@ func (a *App) resolveLyrics(ctx context.Context, trackID int64) (resolvedLyrics,
 		case storage.OnlineLyricsFound:
 			return fromOnlineRow(row), nil
 		case storage.OnlineLyricsSuppressed:
+			a.logger.Debug("online lyrics skipped: cleared by a client", "trackId", trackID)
 			return resolvedLyrics{}, errNoLyrics
 		case storage.OnlineLyricsNotFound:
 			if retry, err := time.Parse(time.RFC3339Nano, row.RetryAfter); err == nil && time.Now().Before(retry) {
+				a.logger.Debug("online lyrics skipped: remembered miss", "trackId", trackID, "retryAfter", row.RetryAfter)
 				return resolvedLyrics{}, errNoLyrics
 			}
 		}
 	}
-	if a.onlineLyrics == nil || info.Instrumental() {
+	if a.onlineLyrics == nil {
+		return resolvedLyrics{}, errNoLyrics
+	}
+	if info.Instrumental() {
+		a.logger.Info("online lyrics skipped: instrumental track", "trackId", trackID, "title", info.Title, "trackType", info.TrackType)
 		return resolvedLyrics{}, errNoLyrics
 	}
 	return a.lyricsFlights.do("track:"+strconv.FormatInt(trackID, 10), func() (resolvedLyrics, error) {
@@ -136,26 +145,57 @@ func (a *App) resolveLyrics(ctx context.Context, trackID int64) (resolvedLyrics,
 	})
 }
 
+func lyricsQueryFor(info storage.LyricsTrackInfo) lyricsonline.Query {
+	return lyricsonline.Query{Title: info.Title, Artist: info.Artist, Album: info.Album, DurationMs: info.DurationMs}
+}
+
 func (a *App) fetchOnlineLyrics(ctx context.Context, info storage.LyricsTrackInfo) (resolvedLyrics, error) {
-	q := lyricsonline.Query{Title: info.Title, Artist: info.Artist, Album: info.Album, DurationMs: info.DurationMs}
-	found, cand, err := a.onlineLyrics.Best(ctx, q)
-	if errors.Is(err, lyricsonline.ErrNotFound) {
+	res, _, err := a.lookupOnlineLyrics(ctx, info, true)
+	return res, err
+}
+
+// lookupOnlineLyrics searches online, logs the outcome and, when save is set,
+// caches it (found, or a miss remembered for onlineLyricsRetry /
+// onlineLyricsIncompleteRetry). The report explains what each source answered.
+func (a *App) lookupOnlineLyrics(ctx context.Context, info storage.LyricsTrackInfo, save bool) (resolvedLyrics, lyricsonline.Report, error) {
+	start := time.Now()
+	found, cand, report, err := a.onlineLyrics.Lookup(ctx, lyricsQueryFor(info))
+	logArgs := []any{"trackId", info.TrackID, "title", info.Title, "artist", info.Artist, "durationMs", info.DurationMs,
+		"elapsedMs", time.Since(start).Milliseconds(), "report", report.Summary()}
+	switch {
+	case errors.Is(err, lyricsonline.ErrNotFound):
+		a.logger.Info("online lyrics not found", logArgs...)
+		if !save {
+			return resolvedLyrics{}, report, errNoLyrics
+		}
 		if err := a.store.SaveOnlineLyricsNotFound(ctx, info.TrackID, time.Now().Add(onlineLyricsRetry)); err != nil {
 			a.logger.Error("save online lyrics miss", "trackId", info.TrackID, "error", err)
 		}
-		return resolvedLyrics{}, errNoLyrics
-	}
-	if err != nil {
+		return resolvedLyrics{}, report, errNoLyrics
+	case errors.Is(err, lyricsonline.ErrIncomplete):
+		a.logger.Warn("online lyrics lookup incomplete", append(logArgs, "error", err)...)
+		if !save {
+			return resolvedLyrics{}, report, errNoLyrics
+		}
+		if err := a.store.SaveOnlineLyricsNotFound(ctx, info.TrackID, time.Now().Add(onlineLyricsIncompleteRetry)); err != nil {
+			a.logger.Error("save online lyrics miss", "trackId", info.TrackID, "error", err)
+		}
+		return resolvedLyrics{}, report, errNoLyrics
+	case err != nil:
 		// Network / rate limit: not cached, the next request tries again.
-		a.logger.Warn("online lyrics lookup failed", "trackId", info.TrackID, "error", err)
-		return resolvedLyrics{}, errNoLyrics
+		a.logger.Warn("online lyrics lookup failed", append(logArgs, "error", err)...)
+		return resolvedLyrics{}, report, errNoLyrics
 	}
+	a.logger.Info("online lyrics found", append(logArgs, "source", found.Source, "remoteId", found.ID)...)
 	row := storage.OnlineLyrics{TrackID: info.TrackID, Source: found.Source, RemoteID: found.ID, RemoteTitle: cand.Title,
 		RemoteArtist: cand.Artist, Lyrics: found.LRC, TranslationLyrics: found.TranslationLRC}
+	if !save {
+		return fromOnlineRow(row), report, nil
+	}
 	if err := a.store.SaveOnlineLyricsFound(ctx, row); err != nil {
 		a.logger.Error("save online lyrics", "trackId", info.TrackID, "error", err)
 	}
-	return fromOnlineRow(row), nil
+	return fromOnlineRow(row), report, nil
 }
 
 type apiLyricsResponse struct {

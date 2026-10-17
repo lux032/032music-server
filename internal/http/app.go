@@ -497,6 +497,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+aiTaggingPath+"/sample/cancel", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSampleCancel)))
 	mux.Handle("GET "+onlineLyricsPath, a.requireAdmin(http.HandlerFunc(a.handleOnlineLyricsPage)))
 	mux.Handle("POST "+onlineLyricsPath+"/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteOnlineLyrics)))
+	mux.Handle("GET "+onlineLyricsPath+"/diagnose", a.requireAdmin(http.HandlerFunc(a.handleOnlineLyricsDiagnose)))
+	mux.Handle("POST "+onlineLyricsPath+"/diagnose", a.requireAdmin(http.HandlerFunc(a.handleOnlineLyricsDiagnose)))
 	mux.Handle("POST "+onlineLyricsPath+"/clear-misses", a.requireAdmin(http.HandlerFunc(a.handleClearOnlineLyricsMisses)))
 	mux.Handle("GET "+lyricsTranslationPath, a.requireAdmin(http.HandlerFunc(a.handleLyricsTranslationsPage)))
 	mux.Handle("POST "+lyricsTranslationPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveLyricsTranslationSettings)))

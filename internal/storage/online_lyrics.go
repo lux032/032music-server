@@ -55,6 +55,28 @@ func (s *Store) LyricsTrackInfo(ctx context.Context, trackID int64) (LyricsTrack
 	return v, err
 }
 
+// FindLyricsTracks finds tracks by (effective) title or artist for the lyrics diagnosis page.
+func (s *Store) FindLyricsTracks(ctx context.Context, query string, limit int) ([]LyricsTrackInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id, COALESCE(t.user_title, t.title), `+trackArtistSQL+`, COALESCE(a.user_title, a.title),
+		COALESCE(t.duration_ms, 0), `+effectiveTrackTypeSQL+`
+		FROM tracks t JOIN albums a ON a.id = t.album_id
+		WHERE COALESCE(t.user_title, t.title) LIKE '%'||?||'%' OR `+trackArtistSQL+` LIKE '%'||?||'%'
+		ORDER BY COALESCE(t.user_title, t.title), t.id LIMIT ?`, query, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LyricsTrackInfo
+	for rows.Next() {
+		var v LyricsTrackInfo
+		if err := rows.Scan(&v.TrackID, &v.Title, &v.Artist, &v.Album, &v.DurationMs, &v.TrackType); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 const onlineLyricsColumns = `o.track_id, COALESCE(t.user_title, t.title), ` + trackArtistSQL + `, o.status, o.manual, o.source, o.remote_id,
 	o.remote_title, o.remote_artist, o.lyrics, o.translation_lyrics, COALESCE(o.retry_after, ''), o.updated_at
 	FROM online_lyrics o JOIN tracks t ON t.id = o.track_id JOIN albums a ON a.id = t.album_id`

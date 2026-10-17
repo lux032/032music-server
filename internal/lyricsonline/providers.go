@@ -64,10 +64,20 @@ func (n *NetEase) base() string {
 var neteaseHeaders = map[string]string{"Referer": "https://music.163.com/"}
 
 func (n *NetEase) Search(ctx context.Context, q Query) ([]Candidate, error) {
-	term := strings.TrimSpace(q.Title + " " + q.Artist)
+	artist := PrimaryArtist(q.Artist)
+	term := strings.TrimSpace(q.Title + " " + artist)
 	if term == "" {
 		return nil, nil
 	}
+	out, err := n.search(ctx, term)
+	if err == nil && len(out) == 0 && artist != "" && strings.TrimSpace(q.Title) != "" {
+		// Artist spelled differently on NetEase: retry with the title only.
+		out, err = n.search(ctx, strings.TrimSpace(q.Title))
+	}
+	return out, err
+}
+
+func (n *NetEase) search(ctx context.Context, term string) ([]Candidate, error) {
 	var resp struct {
 		Code   int `json:"code"`
 		Result struct {
@@ -181,8 +191,8 @@ func (l *LRCLIB) Search(ctx context.Context, q Query) ([]Candidate, error) {
 		return nil, nil
 	}
 	params := url.Values{"track_name": {q.Title}}
-	if q.Artist != "" {
-		params.Set("artist_name", q.Artist)
+	if artist := PrimaryArtist(q.Artist); artist != "" {
+		params.Set("artist_name", artist)
 	}
 	var tracks []lrclibTrack
 	if _, err := getJSON(ctx, l.HTTP, l.base()+"/api/search?"+params.Encode(), nil, &tracks); err != nil {
