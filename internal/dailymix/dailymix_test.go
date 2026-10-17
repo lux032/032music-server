@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -369,5 +370,60 @@ func TestVersionsWeighedDown(t *testing.T) {
 	}
 	if total == 0 || float64(live)/float64(total) > 0.42 {
 		t.Fatalf("live share %d/%d", live, total)
+	}
+}
+
+func TestFamiliarFloorAndArousalOrder(t *testing.T) {
+	tracks := synthLibrary(900)
+	for i, tr := range tracks {
+		a := 1 + float64(i%81)/10 // continuous 1.0–9.0
+		tr.Arousal = &a
+		tr.Energy = 4 // the model's levels cluster
+		if _, ok := tr.Moods["cheerful"]; ok {
+			tr.PlayCount, tr.Favorite, tr.InPlaylist = 0, false, false
+		}
+	}
+	b := testBuilder(tracks, 25)
+	var th *Theme
+	for _, c := range b.Candidates() {
+		if c.ID() == "mood_style:cheerful+pop" || (th == nil && c.Type == TypeMoodStyle && c.Mood == "cheerful") {
+			th = c
+		}
+	}
+	if th == nil || th.Familiar != 0 || len(th.Bridge) == 0 {
+		t.Fatalf("theme = %+v", th)
+	}
+	env := &selectEnv{now: testNow, day: "2026-10-16", explore: 0.3, length: 25, recentMix: map[int64]string{}, usedToday: map[int64]bool{}, usedTitles: map[string]bool{}, profile: b.profile}
+	picks := env.build(th, seeded("floor"))
+	fam := 0
+	for _, p := range picks {
+		if p.Bucket == "familiar" {
+			fam++
+			if p.Reason.Via != "bridge" {
+				t.Fatalf("familiar via %s", p.Reason.Via)
+			}
+		}
+	}
+	if fam != 4 || picks[0].Bucket != "familiar" || picks[1].Bucket != "familiar" {
+		t.Fatalf("familiar floor = %d, openers %s/%s", fam, picks[0].Bucket, picks[1].Bucket)
+	}
+	// Ordering follows the continuous arousal: rises to a peak, then falls.
+	peak := 0
+	for i, p := range picks {
+		if p.Reason.Level > picks[peak].Reason.Level {
+			peak = i
+		}
+	}
+	if peak < len(picks)/3 || peak > len(picks)-3 || picks[0].Reason.Level >= picks[peak].Reason.Level-2 {
+		t.Fatalf("arc: peak at %d, start %.1f, peak %.1f", peak, picks[0].Reason.Level, picks[peak].Reason.Level)
+	}
+	big := 0
+	for i := 1; i < len(picks); i++ {
+		if math.Abs(picks[i].Reason.Level-picks[i-1].Reason.Level) > 3 {
+			big++
+		}
+	}
+	if big > 2 {
+		t.Fatalf("%d big jumps", big)
 	}
 }

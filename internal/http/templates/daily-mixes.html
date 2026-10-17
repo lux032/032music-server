@@ -62,14 +62,14 @@
         <summary>曲目与入选原因</summary>
         <div class="ai-tagging-usage">
         <table class="ai-tagging-table">
-          <thead><tr><th>#</th><th>曲目</th><th>分组</th><th>能量</th><th>入选</th><th>相关 × 偏好 × 新鲜</th><th>标签</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>曲目</th><th>分组</th><th title="1–9：有声学分析时为唤醒度，否则由模型给的能量换算；歌单按它先升后落排序">起伏</th><th>入选</th><th>相关 × 偏好 × 新鲜</th><th>标签</th><th></th></tr></thead>
           <tbody>
           {{range .Tracks}}
           <tr{{if .Blocked}} class="ai-diff"{{end}}>
             <td>{{.Position}}</td>
             <td><a href="/admin/tracks/{{.TrackID}}/tags?returnTo=/admin/daily-mixes"><strong>{{.Title}}</strong></a><small>{{.Artist}}</small></td>
             <td>{{if eq .Bucket "familiar"}}熟悉{{else}}探索{{end}}</td>
-            <td>{{.Reason.Energy}}</td>
+            <td>{{if .Reason.Level}}{{printf "%.1f" .Reason.Level}}{{else}}{{.Reason.Energy}}{{end}}</td>
             <td>{{.ViaLabel}}</td>
             <td>{{printf "%.2f" .Reason.Relevance}} × {{printf "%.2f" .Reason.Preference}} × {{printf "%.2f" .Reason.Novelty}}</td>
             <td><span class="ai-chips">{{range .Moods}}<span class="ai-chip{{if .Negative}} ai-chip-negative{{end}}">{{.Label}}</span>{{end}}{{range .Styles}}<span class="ai-chip ai-chip-style">{{.Label}}</span>{{end}}</span>{{if eq .TagSource "audio"}}<small>仅声学</small>{{end}}</td>

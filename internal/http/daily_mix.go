@@ -449,7 +449,7 @@ type dailyMixPageData struct {
 	HourOptions      []int
 }
 
-var viaLabels = map[string]string{"tag": "标签命中", "adjacent": "相邻标签", "acoustic": "听感相近", "work": "作品", "composer": "创作者", "artist": "歌手本人", "similar": "听感相近"}
+var viaLabels = map[string]string{"tag": "标签命中", "adjacent": "相邻标签", "acoustic": "听感相近", "work": "作品", "composer": "创作者", "artist": "歌手本人", "similar": "听感相近", "bridge": "熟悉开场"}
 
 func formatMixDuration(ms int64) string {
 	d := time.Duration(ms) * time.Millisecond
@@ -507,7 +507,7 @@ func (a *App) dailyMixViews(ctx context.Context, mixes []storage.DailyMix) ([]da
 			}
 			v.Tracks = append(v.Tracks, tv)
 		}
-		for _, via := range []string{"tag", "work", "composer", "artist", "similar", "adjacent", "acoustic"} {
+		for _, via := range []string{"tag", "work", "composer", "artist", "similar", "adjacent", "acoustic", "bridge"} {
 			if n := v.Plan.ByVia[via]; n > 0 {
 				vias = append(vias, fmt.Sprintf("%s %d", viaLabels[via], n))
 			}

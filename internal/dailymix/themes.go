@@ -83,6 +83,10 @@ type Theme struct {
 	// Familiar/Explore count the pool by bucket; Direct counts the theme's own tracks
 	// (not neighbours).
 	Familiar, Explore, Direct int
+	// Bridge: familiar tracks close to the theme but outside its pool (same mood any
+	// style, same style any mood, adjacent tags), used only to give a mix of mostly
+	// unheard tracks a few familiar openers.
+	Bridge []Candidate
 	// Lift is the listening-profile lift of the theme (1 = average).
 	Lift float64
 }
@@ -433,6 +437,67 @@ func (b *builder) expandAcoustic(pool []Candidate, limit int) []Candidate {
 	return pool
 }
 
+// bridgeNeed is the familiar floor of a mix: 4 for 25 tracks.
+func bridgeNeed(length int) int { return max(3, length/6) }
+
+func (b *builder) bridge(th *Theme) []Candidate {
+	in := make(map[int64]bool, len(th.Pool))
+	for _, c := range th.Pool {
+		in[c.T.ID] = true
+	}
+	var moods, styles []string
+	if th.Mood != "" {
+		moods = append([]string{th.Mood}, adjacentMoods[th.Mood]...)
+	}
+	if th.Style != "" {
+		styles = append(styles, th.Style)
+		for _, s := range adjacentStyles[th.Style] {
+			if !b.generic[s] {
+				styles = append(styles, s)
+			}
+		}
+	}
+	var out []Candidate
+	for _, t := range b.tracks {
+		if in[t.ID] || !familiar(t) || mildlySad(t, b.allowSad) {
+			continue
+		}
+		var mr, sr float64
+		for i, m := range moods {
+			f := 1.0
+			if i > 0 {
+				f = 0.6
+			}
+			mr = math.Max(mr, f*moodRel(t, m))
+		}
+		for i, st := range styles {
+			f := 1.0
+			if i > 0 {
+				f = 0.6
+			}
+			if r := styleRel(t, st); r >= minStyleRel {
+				sr = math.Max(sr, f*r)
+			}
+		}
+		// mood × style: either half is enough; single mood/style: the adjacent tags.
+		r := math.Max(mr, sr)
+		if th.Mood != "" && th.Style != "" && mr > 0 && sr > 0 {
+			r = math.Sqrt(mr * sr)
+		}
+		if r >= minRel {
+			out = append(out, Candidate{t, 0.5 * r, "bridge"})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, c := out[i].Rel*preference(out[i].T), out[j].Rel*preference(out[j].T)
+		return a > c || (a == c && out[i].T.ID < out[j].T.ID)
+	})
+	if len(out) > 60 {
+		out = out[:60]
+	}
+	return out
+}
+
 func countBuckets(pool []Candidate) (fam, exp int) {
 	for _, c := range pool {
 		if familiar(c.T) {
@@ -451,6 +516,9 @@ func (b *builder) add(out *[]*Theme, th *Theme) {
 	th.Familiar, th.Explore = countBuckets(th.Pool)
 	th.Direct = countVia(th.Pool, "tag") + countVia(th.Pool, "work") + countVia(th.Pool, "composer") + countVia(th.Pool, "artist")
 	th.Lift = b.profile.Lift(th)
+	if Core(th.Type) && th.Familiar < bridgeNeed(b.length) {
+		th.Bridge = b.bridge(th)
+	}
 	*out = append(*out, th)
 }
 

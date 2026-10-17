@@ -14,7 +14,7 @@ import (
 )
 
 // GeneratorVersion is stored with every mix; bump it when the algorithm changes.
-const GeneratorVersion = 2
+const GeneratorVersion = 3
 
 // Zone is the day boundary zone (UTC+8, like the home rotation).
 var Zone = time.FixedZone("UTC+8", 8*60*60)

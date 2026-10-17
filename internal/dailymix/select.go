@@ -47,6 +47,18 @@ type Reason struct {
 	Preference float64 `json:"pref"`
 	Novelty    float64 `json:"nov"`
 	Energy     int     `json:"energy"`
+	// Level is the ordering intensity on the 1–9 arousal scale: the acoustic arousal
+	// when analysed (continuous, far finer than the model's five energy levels, which
+	// cluster at 3–4), else the energy mapped onto 1–9.
+	Level float64 `json:"level"`
+}
+
+// level returns the ordering intensity of a track (see Reason.Level).
+func level(t *storage.RecTrack) float64 {
+	if t.Arousal != nil && *t.Arousal > 0 {
+		return round2(math.Max(1, math.Min(9, *t.Arousal)))
+	}
+	return float64(2*Energy(t) - 1)
 }
 
 func (r Reason) JSON() string {
@@ -111,7 +123,7 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 		if e.usedToday[t.ID] || e.usedTitles[t.TitleKey] {
 			continue
 		}
-		r := Reason{Via: c.Via, Relevance: round2(c.Rel), Preference: round2(preference(t)), Novelty: round2(e.novelty(t)), Energy: Energy(t)}
+		r := Reason{Via: c.Via, Relevance: round2(c.Rel), Preference: round2(preference(t)), Novelty: round2(e.novelty(t)), Energy: Energy(t), Level: level(t)}
 		w := c.Rel * c.Rel * r.Preference * r.Novelty
 		switch t.Version {
 		case "live":
@@ -233,6 +245,23 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 			byKey(extra)
 		}
 	}
+	// Familiar floor: a few familiar tracks close to the theme open a mix whose own
+	// tracks are (almost) all unheard, e.g. the weekly cold theme.
+	if need := min(familiarN, bridgeNeed(length)) - count("familiar"); need > 0 && len(th.Bridge) > 0 {
+		var bridge []weighted
+		for _, c := range th.Bridge {
+			t := c.T
+			if e.usedToday[t.ID] || e.usedTitles[t.TitleKey] {
+				continue
+			}
+			r := Reason{Via: c.Via, Relevance: round2(c.Rel), Preference: round2(preference(t)), Novelty: round2(e.novelty(t)), Energy: Energy(t), Level: level(t)}
+			if w := c.Rel * r.Preference * r.Novelty; w > 0 {
+				bridge = append(bridge, weighted{c, math.Pow(rng.Float64(), 1/w), "familiar", r})
+			}
+		}
+		byKey(bridge)
+		take(bridge, need)
+	}
 	// Then the other bucket's own tracks, then any neighbour.
 	if short := length - len(chosen); short > 0 {
 		famRest = take(famRest, short)
@@ -270,11 +299,51 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 // the rules: familiar openers, no artist back to back, exploration and mildly sad
 // tracks away from the ends.
 func (e *selectEnv) order(picks []Pick, th *Theme) []Pick {
+	// The two calmest familiar tracks open the mix; the arc is built from the rest
+	// (so a few familiar tracks in a mostly unheard mix do not get swapped in from
+	// the peak).
+	var openers []Pick
+	if len(picks) >= 6 {
+		fam := []int{}
+		for i, p := range picks {
+			if p.Bucket == "familiar" {
+				fam = append(fam, i)
+			}
+		}
+		sort.SliceStable(fam, func(a, b int) bool { return picks[fam[a]].Reason.Level < picks[fam[b]].Reason.Level })
+		second := -1
+		for k := 1; k < len(fam); k++ {
+			if !sharesArtist(picks[fam[0]].T, picks[fam[k]].T) {
+				second = fam[k]
+				break
+			}
+		}
+		if second >= 0 {
+			skip := map[int]bool{fam[0]: true, second: true}
+			openers = []Pick{picks[fam[0]], picks[second]}
+			rest := make([]Pick, 0, len(picks)-2)
+			for i, p := range picks {
+				if !skip[i] {
+					rest = append(rest, p)
+				}
+			}
+			picks = rest
+		}
+	}
+	seq := e.arrange(picks)
+	if len(openers) == 0 {
+		return seq
+	}
+	return e.fixRules(append(openers, seq...), 2)
+}
+
+// arrange builds the energy arc of picks.
+func (e *selectEnv) arrange(picks []Pick) []Pick {
 	n := len(picks)
 	sorted := append([]Pick(nil), picks...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].Reason.Energy != sorted[j].Reason.Energy {
-			return sorted[i].Reason.Energy < sorted[j].Reason.Energy
+		if sorted[i].Reason.Level != sorted[j].Reason.Level {
+			return sorted[i].Reason.Level < sorted[j].Reason.Level
 		}
 		if sorted[i].Reason.Preference != sorted[j].Reason.Preference {
 			return sorted[i].Reason.Preference > sorted[j].Reason.Preference
@@ -293,18 +362,19 @@ func (e *selectEnv) order(picks []Pick, th *Theme) []Pick {
 		fall[i], fall[j] = fall[j], fall[i]
 	}
 	seq := append(e.chainRuns(rise), e.chainRuns(fall)...)
+	return e.fixRules(seq, 0)
+}
 
-	shares := func(a, b *storage.RecTrack) bool {
-		for _, x := range a.ArtistIDs {
-			for _, y := range b.ArtistIDs {
-				if x == y {
-					return true
-				}
-			}
-		}
-		return false
-	}
+// fixRules swaps tracks of near-equal intensity to satisfy the ordering rules;
+// positions before keep are left alone.
+func (e *selectEnv) fixRules(seq []Pick, keep int) []Pick {
+	n := len(seq)
+
+	shares := sharesArtist
 	bad := func(i int) bool {
+		if i < keep {
+			return false
+		}
 		p := seq[i]
 		frac := float64(i) / float64(max(1, n-1))
 		switch {
@@ -319,9 +389,8 @@ func (e *selectEnv) order(picks []Pick, th *Theme) []Pick {
 		}
 		return false
 	}
-	near := func(a, b Pick, tol int) bool {
-		d := a.Reason.Energy - b.Reason.Energy
-		return d >= -tol && d <= tol
+	near := func(a, b Pick, tol float64) bool {
+		return math.Abs(a.Reason.Level-b.Reason.Level) <= tol
 	}
 	for pass := 0; pass < 3; pass++ {
 		changed := false
@@ -330,10 +399,10 @@ func (e *selectEnv) order(picks []Pick, th *Theme) []Pick {
 				continue
 			}
 			fixed := false
-			for _, tol := range []int{1, 2} {
+			for _, tol := range []float64{0.75, 1.5, 3, 9} {
 				for d := 1; d < n && !fixed; d++ {
 					for _, j := range []int{i + d, i - d} {
-						if j < 0 || j >= n || !near(seq[i], seq[j], tol) {
+						if j < keep || j >= n || !near(seq[i], seq[j], tol) {
 							continue
 						}
 						seq[i], seq[j] = seq[j], seq[i]
@@ -358,8 +427,8 @@ func (e *selectEnv) order(picks []Pick, th *Theme) []Pick {
 	return seq
 }
 
-// chainRuns reorders each run of equal energy greedily by acoustic similarity to
-// the previous track (when embeddings exist).
+// chainRuns reorders each run of near-equal intensity (within 0.6 on the 1–9 scale)
+// greedily by acoustic similarity to the previous track (when embeddings exist).
 func (e *selectEnv) chainRuns(list []Pick) []Pick {
 	if e.acoustic.Len() == 0 || len(list) < 3 {
 		return list
@@ -367,7 +436,7 @@ func (e *selectEnv) chainRuns(list []Pick) []Pick {
 	out := make([]Pick, 0, len(list))
 	for start := 0; start < len(list); {
 		end := start
-		for end < len(list) && list[end].Reason.Energy == list[start].Reason.Energy {
+		for end < len(list) && list[end].Reason.Level-list[start].Reason.Level <= 0.6 {
 			end++
 		}
 		run := append([]Pick(nil), list[start:end]...)
@@ -388,6 +457,17 @@ func (e *selectEnv) chainRuns(list []Pick) []Pick {
 		start = end
 	}
 	return out
+}
+
+func sharesArtist(a, b *storage.RecTrack) bool {
+	for _, x := range a.ArtistIDs {
+		for _, y := range b.ArtistIDs {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
