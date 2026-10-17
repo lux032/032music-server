@@ -736,3 +736,199 @@ func (a *App) dashboardDailyMixSummary(ctx context.Context) string {
 	}
 	return fmt.Sprintf("今天 %d 个：%s", len(mixes), strings.Join(titles, "、"))
 }
+
+// ---------------------------------------------------------------- web detail page
+
+// dailyMixReasonLabels names the 👎 reasons (design §6).
+var dailyMixReasonLabels = []struct{ Code, Label string }{
+	{"repetitive", "太重复"}, {"theme", "不喜欢这个主题"}, {"tracks", "歌不好听"}, {"flow", "风格太跳"}, {"mismatch", "歌和主题不符"},
+}
+
+type dailyMixDetailTrack struct {
+	storage.Track
+	Position int
+	Explore  bool
+	Blocked  bool
+}
+
+type dailyMixReasonOption struct {
+	Code, Label string
+	Checked     bool
+}
+
+type dailyMixDetailData struct {
+	Chrome
+	Notice           string
+	Mix              dailyMixJSON
+	Sub              string
+	Tracks           []dailyMixDetailTrack
+	Current          bool // one of today's active mixes
+	Replaced         bool
+	ReplacementsLeft int
+	Reasons          []dailyMixReasonOption
+	ReasonText       string
+	Others           []homeMixRow
+	ReturnTo         string
+}
+
+func (a *App) handleDailyMixDetail(w http.ResponseWriter, r *http.Request) {
+	session, _ := a.sessions.get(r)
+	ctx := r.Context()
+	id, ok := positiveID(r.PathValue("id"))
+	if !ok || a.dailyMixes == nil {
+		http.NotFound(w, r)
+		return
+	}
+	m, err := a.store.DailyMixByID(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		a.renderAdminFeatureError(w, "home", err)
+		return
+	}
+	list, err := a.dailyMixesJSON(ctx, []storage.DailyMix{m})
+	if err != nil {
+		a.renderAdminFeatureError(w, "home", err)
+		return
+	}
+	items, err := a.store.DailyMixItems(ctx, m.ID)
+	if err != nil {
+		a.renderAdminFeatureError(w, "home", err)
+		return
+	}
+	ids := make([]int64, len(items))
+	for i, it := range items {
+		ids[i] = it.TrackID
+	}
+	tracks, err := a.store.TracksByIDs(ctx, ids)
+	if err != nil {
+		a.renderAdminFeatureError(w, "home", err)
+		return
+	}
+	blocked, err := a.store.RecommendationBlocks(ctx, ids)
+	if err != nil {
+		a.renderAdminFeatureError(w, "home", err)
+		return
+	}
+	day, set, _ := a.dailyMixes.CurrentDay(ctx)
+	data := dailyMixDetailData{Chrome: a.chromeFor(ctx, session, "home"), Notice: r.URL.Query().Get("notice"), Mix: list[0], Sub: mixSubtitle(list[0]),
+		Current: m.Status == "active" && m.Day == day, Replaced: m.Status == "replaced", ReturnTo: "/admin/daily-mixes/" + strconv.FormatInt(m.ID, 10)}
+	for i, it := range items {
+		data.Tracks = append(data.Tracks, dailyMixDetailTrack{Track: tracks[i], Position: it.Position + 1, Explore: it.Bucket == "explore", Blocked: blocked[it.TrackID]})
+	}
+	chosen := map[string]bool{}
+	for _, c := range splitReasons(m.RatingReasons) {
+		chosen[c] = true
+	}
+	var labels []string
+	for _, o := range dailyMixReasonLabels {
+		data.Reasons = append(data.Reasons, dailyMixReasonOption{Code: o.Code, Label: o.Label, Checked: chosen[o.Code]})
+		if chosen[o.Code] {
+			labels = append(labels, o.Label)
+		}
+	}
+	data.ReasonText = strings.Join(labels, "、")
+	if data.Current {
+		data.ReplacementsLeft, _ = a.dailyMixes.ReplacementsLeft(ctx, day, set)
+		if today, err := a.store.DailyMixes(ctx, day); err == nil {
+			others, err := a.dailyMixesJSON(ctx, today)
+			if err == nil {
+				for _, o := range others {
+					if o.ID != m.ID {
+						data.Others = append(data.Others, homeMixRow{ID: o.ID, Title: o.Title, Sub: mixSubtitle(o), Covers: o.CoverURLs})
+					}
+				}
+			}
+		}
+	}
+	a.render(w, http.StatusOK, "daily-mix.html", data)
+}
+
+func (a *App) dailyMixFormID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return 0, false
+	}
+	id, ok := positiveID(r.PathValue("id"))
+	if !ok || a.dailyMixes == nil {
+		http.NotFound(w, r)
+		return 0, false
+	}
+	return id, true
+}
+
+func (a *App) handleRateDailyMixForm(w http.ResponseWriter, r *http.Request) {
+	id, ok := a.dailyMixFormID(w, r)
+	if !ok {
+		return
+	}
+	back := "/admin/daily-mixes/" + strconv.FormatInt(id, 10)
+	value, err := strconv.Atoi(r.FormValue("value"))
+	if err != nil {
+		redirectWithNotice(w, r, back, "评价无效")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		redirectWithNotice(w, r, back, "评价无效")
+		return
+	}
+	reasons := r.Form["reason"]
+	if value != -1 {
+		reasons = nil
+	}
+	if _, err := a.store.RateDailyMix(r.Context(), id, value, reasons, time.Now()); err != nil {
+		redirectWithNotice(w, r, back, "评价失败："+err.Error())
+		return
+	}
+	msg := map[int]string{1: "已标记喜欢，之后会多推荐这类主题", -1: "已记录，之后会少推荐这类主题", 0: "已撤销评价"}[value]
+	if value == -1 {
+		for _, c := range reasons {
+			if c == "theme" {
+				msg = "已记录：这个主题 45 天内不再出现"
+			}
+		}
+	}
+	redirectWithNotice(w, r, back, msg)
+}
+
+func (a *App) handleRegenerateDailyMixForm(w http.ResponseWriter, r *http.Request) {
+	id, ok := a.dailyMixFormID(w, r)
+	if !ok {
+		return
+	}
+	back := "/admin/daily-mixes/" + strconv.FormatInt(id, 10)
+	next, _, err := a.dailyMixes.Replace(r.Context(), id, false)
+	switch {
+	case errors.Is(err, dailymix.ErrReplaceLimit):
+		redirectWithNotice(w, r, back, "今天换一个的次数已用完")
+	case errors.Is(err, dailymix.ErrNotActive):
+		redirectWithNotice(w, r, back, "这个歌单已被替换或不是今天的歌单")
+	case errors.Is(err, dailymix.ErrNotReady):
+		redirectWithNotice(w, r, back, "暂时没有可替换的主题")
+	case err != nil:
+		redirectWithNotice(w, r, back, "换一个失败："+err.Error())
+	default:
+		redirectWithNotice(w, r, "/admin/daily-mixes/"+strconv.FormatInt(next.ID, 10), "已换成「"+next.Title+"」")
+	}
+}
+
+func (a *App) handleSaveDailyMixForm(w http.ResponseWriter, r *http.Request) {
+	id, ok := a.dailyMixFormID(w, r)
+	if !ok {
+		return
+	}
+	back := "/admin/daily-mixes/" + strconv.FormatInt(id, 10)
+	m, err := a.store.DailyMixByID(r.Context(), id)
+	if err != nil {
+		redirectWithNotice(w, r, back, "保存失败："+err.Error())
+		return
+	}
+	p, err := a.store.SaveDailyMixAsPlaylist(r.Context(), id, m.Title+" · "+m.Day, m.Description)
+	if err != nil {
+		redirectWithNotice(w, r, back, "保存失败："+err.Error())
+		return
+	}
+	redirectWithNotice(w, r, "/admin/playlists/"+strconv.FormatInt(p.ID, 10), "已另存为歌单「"+p.Name+"」")
+}

@@ -3644,3 +3644,31 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .daily-mix-main .link-button { min-height: 0; padding: 0; border: 0; color: var(--accent); background: none; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
 .daily-mix-main .link-button:hover { text-decoration: underline; background: none; }
 @media (max-width: 640px) { .daily-mix-head { grid-template-columns: 72px minmax(0, 1fr); } .daily-mix-covers { width: 72px; height: 72px; } .daily-mix-head form { grid-column: 1 / -1; } }
+
+/* 每日推荐详情 */
+.dm-covers { display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); padding: 0; }
+.dm-covers img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dm-covers.single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.dm-covers.single img:not(:first-child) { display: none; }
+.dm-tags { margin: 0 0 10px; }
+.dm-new { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong-text, var(--accent)); font-size: var(--fs-xs); font-weight: 500; vertical-align: 1px; }
+.dm-track-list > article.dm-blocked .feature-track-copy { opacity: 0.5; }
+.dm-block-btn { min-height: 0; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
+.dm-block-btn:hover, .dm-block-btn.is-on { border-color: var(--accent-line, var(--accent)); color: var(--accent-strong-text, var(--accent)); }
+.dm-feedback { display: grid; gap: 12px; }
+.dm-feedback h2 { margin: 0; }
+.dm-rate { display: flex; gap: 8px; }
+.dm-rate form { margin: 0; }
+.dm-rate-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer; list-style: none; width: fit-content; }
+.dm-rate-btn::-webkit-details-marker { display: none; }
+.dm-rate-btn .icon { width: 16px; height: 16px; }
+.dm-rate-btn:hover { border-color: var(--accent-line, var(--accent)); color: var(--text); }
+.dm-rate-btn.is-on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong-text, var(--accent)); }
+.dm-reasons { display: grid; gap: 6px; margin-top: 10px; }
+.dm-reasons label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.dm-reasons button { justify-self: start; margin-top: 4px; }
+.dm-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; }
+.dm-action .secondary-button { display: inline-flex; align-items: center; gap: 6px; }
+.dm-action .icon { width: 16px; height: 16px; }
+.dm-others .h-row { grid-template-columns: 48px minmax(0, 1fr); min-height: 60px; }
+.dm-others .h-row-art { width: 48px; height: 48px; }

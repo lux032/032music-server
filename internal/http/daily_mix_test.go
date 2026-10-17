@@ -239,3 +239,84 @@ func TestDailyMixAdminPage(t *testing.T) {
 		t.Fatal("purpose label")
 	}
 }
+
+func TestDailyMixWebPages(t *testing.T) {
+	app, store, handler, cookie := dailyMixTestApp(t)
+	ctx := context.Background()
+	page := getWithCookie(handler, "/", cookie)
+	if page.Code == http.StatusFound || page.Code == http.StatusSeeOther {
+		page = getWithCookie(handler, page.Header().Get("Location"), cookie)
+	}
+	body := page.Body.String()
+	mixes, _ := store.DailyMixes(ctx, "2026-10-16")
+	if len(mixes) != 5 {
+		t.Fatalf("home should generate the mixes: %d (status %d)", len(mixes), page.Code)
+	}
+	for _, want := range []string{"今日推荐", `data-play-daily-mix="` + strconv.FormatInt(mixes[0].ID, 10) + `"`, mixes[0].Title, "最近播放"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home missing %q", want)
+		}
+	}
+	if strings.Contains(body, `id="s-resume"`) {
+		t.Fatal("接着听 is replaced by today's mixes")
+	}
+	id := strconv.FormatInt(mixes[0].ID, 10)
+	detail := getWithCookie(handler, "/admin/daily-mixes/"+id, cookie).Body.String()
+	for _, want := range []string{mixes[0].Title, "播放全部", "data-track-list", "喜欢", "不喜欢…", "换一个", "今天还可以换 3 次", "另存为歌单", "不再推荐", "今天的其他推荐", `name="reason" value="theme"`} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail missing %q", want)
+		}
+	}
+	if rec := getWithCookie(handler, "/admin/daily-mixes/999999", cookie); rec.Code != 404 {
+		t.Fatalf("missing mix = %d", rec.Code)
+	}
+	// Dislike with reasons, then undo.
+	rec := postSecurity(t, app, handler, cookie, "/admin/daily-mixes/"+id+"/rating", url.Values{"value": {"-1"}, "reason": {"theme", "flow"}})
+	if loc, _ := url.QueryUnescape(rec.Header().Get("Location")); !strings.Contains(loc, "45 天内不再出现") {
+		t.Fatalf("dislike = %s", loc)
+	}
+	if m, _ := store.DailyMixByID(ctx, mixes[0].ID); m.Rating != -1 || m.RatingReasons != "theme,flow" {
+		t.Fatalf("rating = %+v", m)
+	}
+	if detail = getWithCookie(handler, "/admin/daily-mixes/"+id, cookie).Body.String(); !strings.Contains(detail, "已记录：不喜欢这个主题、风格太跳") {
+		t.Fatal("dislike state")
+	}
+	postSecurity(t, app, handler, cookie, "/admin/daily-mixes/"+id+"/rating", url.Values{"value": {"0"}})
+	if m, _ := store.DailyMixByID(ctx, mixes[0].ID); m.Rating != 0 {
+		t.Fatal("undo")
+	}
+	postSecurity(t, app, handler, cookie, "/admin/daily-mixes/"+id+"/rating", url.Values{"value": {"1"}, "reason": {"theme"}})
+	if m, _ := store.DailyMixByID(ctx, mixes[0].ID); m.Rating != 1 || m.RatingReasons != "" {
+		t.Fatal("like ignores reasons")
+	}
+	// Save as playlist → playlist page.
+	rec = postSecurity(t, app, handler, cookie, "/admin/daily-mixes/"+id+"/save", nil)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/admin/playlists/") {
+		t.Fatalf("save = %s", loc)
+	}
+	// Block from the detail page returns to it.
+	items, _ := store.DailyMixItems(ctx, mixes[0].ID)
+	rec = postSecurity(t, app, handler, cookie, "/admin/tracks/"+strconv.FormatInt(items[0].TrackID, 10)+"/recommendation-block", url.Values{"blocked": {"1"}, "return": {"/admin/daily-mixes/" + id}})
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/admin/daily-mixes/"+id+"?") {
+		t.Fatalf("block = %s", loc)
+	}
+	if detail = getWithCookie(handler, "/admin/daily-mixes/"+id, cookie).Body.String(); !strings.Contains(detail, "已不再推荐") {
+		t.Fatal("blocked state")
+	}
+	// Replace counts against the daily budget and lands on the new mix.
+	rec = postSecurity(t, app, handler, cookie, "/admin/daily-mixes/"+id+"/regenerate", nil)
+	loc, _ := url.QueryUnescape(rec.Header().Get("Location"))
+	if !strings.Contains(loc, "已换成") || strings.HasPrefix(loc, "/admin/daily-mixes/"+id+"?") {
+		t.Fatalf("regenerate = %s", loc)
+	}
+	if n, _ := store.ReplacementsOn(ctx, "2026-10-16"); n != 1 {
+		t.Fatal("budget")
+	}
+	old := getWithCookie(handler, "/admin/daily-mixes/"+id, cookie).Body.String()
+	if !strings.Contains(old, "已被替换") || strings.Contains(old, "今天还可以换") {
+		t.Fatal("a replaced mix has no replace button")
+	}
+	if !strings.Contains(getWithCookie(handler, "/admin/daily-mixes", cookie).Body.String(), `href="/admin/daily-mixes/`) {
+		t.Fatal("admin preview links to the detail page")
+	}
+}

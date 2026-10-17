@@ -479,12 +479,20 @@ func (b *builder) bridge(th *Theme) []Candidate {
 				sr = math.Max(sr, f*r)
 			}
 		}
-		// mood × style: either half is enough; single mood/style: the adjacent tags.
+		// mood × style: both halves best; the mood alone next (the mood is what a
+		// listener hears); the style alone only as a last resort.
 		r := math.Max(mr, sr)
-		if th.Mood != "" && th.Style != "" && mr > 0 && sr > 0 {
-			r = math.Sqrt(mr * sr)
+		if th.Mood != "" && th.Style != "" {
+			switch {
+			case mr > 0 && sr > 0:
+				r = math.Sqrt(mr * sr)
+			case mr > 0:
+				r = 0.8 * mr
+			default:
+				r = 0.4 * sr
+			}
 		}
-		if r >= minRel {
+		if r >= 0.3 {
 			out = append(out, Candidate{t, 0.5 * r, "bridge"})
 		}
 	}
@@ -554,6 +562,9 @@ func (b *builder) Candidates() []*Theme {
 			continue
 		}
 		for _, st := range tagging.Styles {
+			if b.generic[st.ID] {
+				continue // “cheerful × pop” is just “cheerful” with a quarter of the library
+			}
 			var pool []Candidate
 			for _, t := range b.tracks {
 				if mildlySad(t, b.allowSad) && !lowEnergyMoods[m.ID] {

@@ -67,6 +67,13 @@ import { mediaTime } from './cast.js';
         if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
         return;
       }
+      const mixBtn = e.target.closest('[data-play-daily-mix]');
+      if (mixBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        playDailyMix(mixBtn.getAttribute('data-play-daily-mix'), mixBtn.closest('.h-mix-row'));
+        return;
+      }
       const pageAlbumsBtn = e.target.closest('[data-play-albums-page], [data-shuffle-albums-page]');
       if (pageAlbumsBtn) {
         e.preventDefault();
@@ -426,6 +433,36 @@ import { mediaTime } from './cast.js';
     } catch (error) {
       showToast('专辑加载失败，请检查网络后重试');
       return null;
+    }
+  }
+
+  // playDailyMix loads a daily mix (home page row) and plays it from the top.
+  const loadingMixes = new Set();
+  async function playDailyMix(mixId, row) {
+    if (!mixId || loadingMixes.has(mixId)) return;
+    loadingMixes.add(mixId);
+    if (row) { row.setAttribute('aria-busy', 'true'); row.classList.add('is-loading'); }
+    try {
+      const response = await fetch(`/api/v1/daily-mixes/${encodeURIComponent(mixId)}`, { credentials: 'same-origin' });
+      if (response.status === 401) { window.location.assign('/admin/login?next=' + encodeURIComponent(location.pathname + location.search)); return; }
+      if (!response.ok) throw new Error('mix');
+      const payload = await response.json();
+      const tracks = (payload.tracks || []).filter(item => item.track && !item.track.missing).map(item => {
+        const track = item.track;
+        return {
+          id: String(track.id), title: track.title, artist: track.artist, album: track.album || '',
+          artwork: artworkForSize(track.artworkUrl || '', 256),
+          container: track.container, spec: audioSpec(track), durationMs: track.durationMillis,
+          streamUrl: `/api/v1/tracks/${track.id}/stream`
+        };
+      });
+      if (!tracks.length) { showToast('这个歌单没有可播放的歌曲'); return; }
+      replaceQueue(tracks, 0, `「${payload.mix?.title || '今日推荐'}」`);
+    } catch (_) {
+      showToast('歌单加载失败，请检查网络后重试');
+    } finally {
+      loadingMixes.delete(mixId);
+      if (row) { row.removeAttribute('aria-busy'); row.classList.remove('is-loading'); }
     }
   }
 

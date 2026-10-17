@@ -430,3 +430,15 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
   .h-hero-swap { animation: none; }
   .h-fan img, .h-cover img { transition: none; }
 }
+
+/* ------------------------------------------------------------ daily mixes */
+.h-mix-covers { display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); width: 100%; height: 100%; }
+.h-mix-covers img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.h-mix-covers.single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.h-mix-covers.single img:not(:first-child) { display: none; }
+.h-mix-row .h-row-title { text-decoration: none; }
+.h-mix-row .h-row-title:hover { color: var(--accent-strong-text); }
+.h-mix-open { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); }
+.h-mix-open:hover { color: var(--accent-strong-text); background: var(--surface-sunken); }
+.h-mix-open .icon { width: 16px; height: 16px; }
+.h-mix-row.is-loading { opacity: 0.6; }

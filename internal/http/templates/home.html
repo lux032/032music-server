@@ -52,6 +52,33 @@
 
     <div class="h-duo h-section">
       <div class="h-duo-main">
+      {{if .DailyMixes}}
+      <section class="h-section" aria-labelledby="s-mixes">
+        <div class="h-section-head">
+          <h2 id="s-mixes">今日推荐</h2>
+        </div>
+        <div class="h-rows">
+          {{range .DailyMixes}}
+          <article class="h-row h-mix-row" data-daily-mix-id="{{.ID}}">
+            <button type="button" class="h-row-art h-mix-art" data-play-daily-mix="{{.ID}}" aria-label="播放 {{.Title}}">
+              <span class="h-mix-covers{{if lt (len .Covers) 4}} single{{end}}">{{range .Covers}}<img class="fade-img" src="{{thumb . 128}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</span>
+              <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
+            </button>
+            <div class="h-row-main">
+              <a class="h-row-title" href="/admin/daily-mixes/{{.ID}}" title="{{.Title}}">{{.Title}}</a>
+              <span class="h-row-sub">{{.Sub}}</span>
+            </div>
+            <a class="h-mix-open" href="/admin/daily-mixes/{{.ID}}" aria-label="查看 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+          </article>
+          {{end}}
+        </div>
+      </section>
+      {{else if eq .DailyMixesStatus "generating"}}
+      <section class="h-section" aria-labelledby="s-mixes">
+        <div class="h-section-head"><h2 id="s-mixes">今日推荐</h2></div>
+        <div class="h-empty-inline"><strong>正在生成今天的推荐</strong><span>稍后刷新页面即可看到。</span></div>
+      </section>
+      {{end}}
       <section class="h-section" aria-labelledby="s-played">
         <div class="h-section-head">
           <h2 id="s-played">最近播放</h2>

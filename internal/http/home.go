@@ -150,14 +150,18 @@ type homePageData struct {
 	// column of the duo is 最近播放 above a short 接着听.
 	RecentPlayed []storage.Track
 	ResumeShown  []homeResumeRow
-	WorksPanel   homeWorksPanel
-	SongsPanel   homeSongsPanel
-	Years        []homeYearBar
-	Chronicle    homeChronicleView
-	Playlists    []storage.Playlist
-	Stats        storage.Statistics
-	WorksCount   int64
-	LastScan     string
+	// DailyMixes are today's mixes above 最近播放 (design §10.1); when shown,
+	// 接着听 is dropped and 最近播放 fills the remaining rows (at least 2).
+	DailyMixes       []homeMixRow
+	DailyMixesStatus string
+	WorksPanel       homeWorksPanel
+	SongsPanel       homeSongsPanel
+	Years            []homeYearBar
+	Chronicle        homeChronicleView
+	Playlists        []storage.Playlist
+	Stats            storage.Statistics
+	WorksCount       int64
+	LastScan         string
 }
 
 // homeToday renders the header date, e.g. "10月11日 星期五".
@@ -459,7 +463,12 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 	data.Chrome = a.chromeFor(ctx, session, "home")
 	data.Today = homeToday()
 	if !data.Empty {
-		data.ResumeShown, data.RecentPlayed = a.homeListeningColumn(ctx, data.Resume)
+		data.DailyMixes, data.DailyMixesStatus = a.homeDailyMixes(ctx)
+		if len(data.DailyMixes) > 0 {
+			_, data.RecentPlayed = a.homeListeningColumn(ctx, nil, max(homeMinRecentRows, homeColumnRows-len(data.DailyMixes)))
+		} else {
+			data.ResumeShown, data.RecentPlayed = a.homeListeningColumn(ctx, data.Resume, homeRecentPlayedRows)
+		}
 	}
 	a.render(w, http.StatusOK, "home.html", data)
 }
@@ -467,13 +476,66 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 const (
 	homeResumeShown      = 2
 	homeRecentPlayedRows = 5
+	// With today's mixes the left column keeps 7 rows: N mixes, then at least 2
+	// recently played tracks.
+	homeColumnRows    = 7
+	homeMinRecentRows = 2
+	// homeDailyMixWait bounds how long the home page waits for a first generation
+	// of the day; after that the page shows “正在生成” and the mixes appear on the
+	// next visit.
+	homeDailyMixWait = 1500 * time.Millisecond
 )
+
+// homeMixRow is one daily mix row of the home page.
+type homeMixRow struct {
+	ID     int64
+	Title  string
+	Sub    string
+	Covers []string
+}
+
+func (a *App) homeDailyMixes(ctx context.Context) ([]homeMixRow, string) {
+	if a.dailyMixes == nil {
+		return nil, ""
+	}
+	status, _, mixes, err := a.dailyMixes.Today(ctx, homeDailyMixWait)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.logger.Warn("home daily mixes", "error", err)
+		}
+		return nil, ""
+	}
+	list, err := a.dailyMixesJSON(ctx, mixes)
+	if err != nil {
+		a.logger.Warn("home daily mixes", "error", err)
+		return nil, ""
+	}
+	rows := make([]homeMixRow, 0, len(list))
+	for _, m := range list {
+		rows = append(rows, homeMixRow{ID: m.ID, Title: m.Title, Sub: mixSubtitle(m), Covers: m.CoverURLs})
+	}
+	return rows, status
+}
+
+// mixSubtitle is “情绪 · 风格 · 25 首 · 1 小时 32 分” (theme labels for work /
+// artist themes).
+func mixSubtitle(m dailyMixJSON) string {
+	var parts []string
+	for _, t := range m.Tags {
+		parts = append(parts, t.Label)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, m.ThemeTypeLabel)
+	}
+	parts = append(parts, fmt.Sprintf("%d 首", m.TrackCount), formatMixDuration(m.DurationMillis))
+	return strings.Join(parts, " · ")
+}
 
 // homeListeningColumn splits the duo's left column into 最近播放 (the most
 // recently played tracks, no progress) above 接着听 (the newest unfinished
 // tracks). Tracks shown under 接着听 are left out of 最近播放 so nothing is
 // listed twice. data.Resume itself stays untouched: the JSON API serves it.
-func (a *App) homeListeningColumn(ctx context.Context, resume []homeResumeRow) ([]homeResumeRow, []storage.Track) {
+func (a *App) homeListeningColumn(ctx context.Context, resume []homeResumeRow, rows int) ([]homeResumeRow, []storage.Track) {
 	shown := resume
 	if len(shown) > homeResumeShown {
 		shown = shown[:homeResumeShown]
@@ -484,18 +546,18 @@ func (a *App) homeListeningColumn(ctx context.Context, resume []homeResumeRow) (
 	}
 	// recentlyPlayed orders never-played tracks last, so over-fetch a little
 	// and skip them along with the excluded ones.
-	tracks, err := a.store.ListTracks(ctx, storage.Filters{Sort: "recentlyPlayed", Limit: homeRecentPlayedRows + homeResumeShown + 8})
+	tracks, err := a.store.ListTracks(ctx, storage.Filters{Sort: "recentlyPlayed", Limit: rows + homeResumeShown + 8})
 	if err != nil {
 		a.logger.Warn("home recently played rows", "error", err)
 		return shown, nil
 	}
-	played := make([]storage.Track, 0, homeRecentPlayedRows)
+	played := make([]storage.Track, 0, rows)
 	for _, track := range tracks {
 		if track.LastPlayedAt == "" || exclude[track.ID] {
 			continue
 		}
 		played = append(played, track)
-		if len(played) == homeRecentPlayedRows {
+		if len(played) == rows {
 			break
 		}
 	}

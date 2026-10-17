@@ -447,3 +447,30 @@ func TestFamiliarFloorAndArousalOrder(t *testing.T) {
 		t.Fatalf("%d big jumps", big)
 	}
 }
+
+func TestGenericCombosAndMoodFirstBridge(t *testing.T) {
+	tracks := synthLibrary(900)
+	for i, tr := range tracks {
+		if i%5 < 2 {
+			tr.Styles["pop"] = storage.RecTag{Weight: 0.5, Confidence: 0.9, Source: "llm"}
+		}
+	}
+	b := testBuilder(tracks, 25)
+	for _, c := range b.Candidates() {
+		if c.Style == "pop" {
+			t.Fatalf("generic style in %s", c.ID())
+		}
+	}
+	// Bridge for a mood × style theme: a familiar track with the mood but another
+	// style ranks above one with only the style.
+	moodOnly := &storage.RecTrack{ID: 99001, PlayCount: 5, ArtistIDs: []int64{1}, Moods: map[string]storage.RecTag{"relaxed": {Weight: 1, Confidence: 0.9, Source: "llm"}},
+		Styles: map[string]storage.RecTag{"jazz": {Weight: 1, Confidence: 0.9, Source: "llm"}}}
+	styleOnly := &storage.RecTrack{ID: 99002, PlayCount: 5, ArtistIDs: []int64{2}, Moods: map[string]storage.RecTag{"hotblooded": {Weight: 1, Confidence: 0.9, Source: "llm"}},
+		Styles: map[string]storage.RecTag{"rock": {Weight: 1, Confidence: 0.9, Source: "llm"}}}
+	b2 := testBuilder([]*storage.RecTrack{moodOnly, styleOnly}, 25)
+	b2.computeGeneric()
+	got := b2.bridge(&Theme{Type: TypeMoodStyle, Mood: "relaxed", Style: "rock"})
+	if len(got) != 2 || got[0].T.ID != 99001 || got[0].Rel <= got[1].Rel {
+		t.Fatalf("bridge = %+v", got)
+	}
+}

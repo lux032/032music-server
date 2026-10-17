@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>{{.Mix.Title}} · 今日推荐 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main playlist-detail-main daily-mix-detail" data-daily-mix-id="{{.Mix.ID}}">
+    <nav class="detail-toolbar" aria-label="页面导航">
+      <a class="back-button" href="/admin" data-history-back>
+        <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
+        <span class="back-button-label">返回主页</span>
+      </a>
+      <span class="detail-context">{{if .Current}}今日推荐{{else}}{{.Mix.Day}} 的推荐{{if .Replaced}} · 已被替换{{end}}{{end}}</span>
+    </nav>
+    <header class="playlist-heading playlist-hero">
+      <div class="playlist-cover large dm-covers{{if lt (len .Mix.CoverURLs) 4}} single{{end}}" aria-hidden="true">{{range .Mix.CoverURLs}}<img class="fade-img" src="{{thumb . 256}}" alt="" decoding="async">{{else}}<svg class="icon"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>{{end}}</div>
+      <div>
+        <p class="kicker">{{.Mix.ThemeTypeLabel}}</p>
+        <h1>{{.Mix.Title}}</h1>
+        {{if .Mix.Description}}<p>{{.Mix.Description}}</p>{{end}}
+        {{if .Mix.Tags}}<span class="ai-chips dm-tags">{{range .Mix.Tags}}<span class="ai-chip{{if eq .Kind "style"}} ai-chip-style{{end}}">{{.Label}}</span>{{end}}</span>{{end}}
+        <div class="playlist-selection">
+          <button type="button" data-play-all>播放全部</button>
+          <button type="button" data-play-shuffle>随机播放</button>
+          <button type="button" data-queue-all>加入播放队列</button>
+        </div>
+        <span class="result-count">{{.Sub}}</span>
+      </div>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <div class="playlist-layout">
+      <section>
+        <div class="section-title"><h2>歌曲</h2><span>{{len .Tracks}} 首</span></div>
+        <div class="playlist-track-list dm-track-list" data-track-list>
+          {{range .Tracks}}
+          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .Track}}" data-track-duration-ms="{{.DurationMillis}}"{{if .Blocked}} class="dm-blocked"{{end}}>
+            <span class="drag-position playable-number">
+              <span class="num-text">{{.Position}}</span>
+              <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+            </span>
+            <div class="feature-track-copy">
+              <strong>{{.Title}}{{if .Explore}} <span class="dm-new" title="你还没怎么听过的歌">新发现</span>{{end}}</strong>{{if .Missing}}<span class="missing-track">文件缺失</span>{{end}}
+              <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
+            </div>
+            <span class="track-format">{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}</span>
+            <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
+            <div class="track-actions">
+              <form method="post" action="/admin/tracks/{{.ID}}/recommendation-block">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="return" value="{{$.ReturnTo}}">
+                {{if .Blocked}}<input type="hidden" name="blocked" value="0"><button class="dm-block-btn is-on" title="恢复推荐这首歌" aria-label="恢复推荐 {{.Title}}">已不再推荐</button>
+                {{else}}<input type="hidden" name="blocked" value="1"><button class="dm-block-btn" title="以后不再推荐这首歌" aria-label="不再推荐 {{.Title}}">不再推荐</button>{{end}}
+              </form>
+            </div>
+          </article>
+          {{end}}
+        </div>
+      </section>
+      <aside class="playlist-tools">
+        <section class="feature-card dm-feedback">
+          <h2>这个歌单怎么样？</h2>
+          <div class="dm-rate">
+            <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/rating">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="value" value="{{if eq .Mix.Rating 1}}0{{else}}1{{end}}">
+              <button class="dm-rate-btn{{if eq .Mix.Rating 1}} is-on{{end}}" aria-pressed="{{if eq .Mix.Rating 1}}true{{else}}false{{end}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-thumb-up"></use></svg> 喜欢</button>
+            </form>
+            {{if eq .Mix.Rating -1}}
+            <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/rating">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="value" value="0">
+              <button class="dm-rate-btn is-on" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-thumb-down"></use></svg> 不喜欢</button>
+            </form>
+            {{end}}
+          </div>
+          {{if eq .Mix.Rating -1}}<p class="result-count">已记录：{{if .ReasonText}}{{.ReasonText}}{{else}}不喜欢{{end}}。再点一次可撤销。</p>{{end}}
+          <details class="dm-dislike"{{if eq .Mix.Rating -1}} hidden{{end}}>
+            <summary class="dm-rate-btn"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-thumb-down"></use></svg> 不喜欢…</summary>
+            <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/rating" class="dm-reasons">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="value" value="-1">
+              <p class="result-count">哪里不满意？（可多选，也可不选）</p>
+              {{range .Reasons}}<label><input type="checkbox" name="reason" value="{{.Code}}"{{if .Checked}} checked{{end}}> {{.Label}}</label>{{end}}
+              <button class="secondary-button">提交</button>
+            </form>
+          </details>
+          {{if .Current}}
+          <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/regenerate" class="dm-action">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button class="secondary-button"{{if eq .ReplacementsLeft 0}} disabled{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-refresh"></use></svg> 换一个</button>
+            <span class="result-count">{{if .ReplacementsLeft}}今天还可以换 {{.ReplacementsLeft}} 次{{else}}今天的次数已用完{{end}}</span>
+          </form>
+          {{end}}
+          <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/save" class="dm-action">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button class="secondary-button"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-plus"></use></svg> {{if .Mix.SavedPlaylistID}}再存一份为歌单{{else}}另存为歌单{{end}}</button>
+            {{if .Mix.SavedPlaylistID}}<a class="result-count" href="/admin/playlists/{{.Mix.SavedPlaylistID}}">查看已保存的歌单</a>{{end}}
+          </form>
+          <p class="result-count">“不再推荐”和评价从下一次生成开始生效。</p>
+        </section>
+        {{if .Others}}
+        <section class="feature-card">
+          <h2>今天的其他推荐</h2>
+          <div class="h-rows dm-others">
+            {{range .Others}}
+            <article class="h-row h-mix-row" data-daily-mix-id="{{.ID}}">
+              <button type="button" class="h-row-art h-mix-art" data-play-daily-mix="{{.ID}}" aria-label="播放 {{.Title}}">
+                <span class="h-mix-covers{{if lt (len .Covers) 4}} single{{end}}">{{range .Covers}}<img class="fade-img" src="{{thumb . 128}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</span>
+                <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
+              </button>
+              <div class="h-row-main">
+                <a class="h-row-title" href="/admin/daily-mixes/{{.ID}}" title="{{.Title}}">{{.Title}}</a>
+                <span class="h-row-sub">{{.Sub}}</span>
+              </div>
+            </article>
+            {{end}}
+          </div>
+        </section>
+        {{end}}
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

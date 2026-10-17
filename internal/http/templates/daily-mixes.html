@@ -48,7 +48,7 @@
         <div class="daily-mix-covers" aria-hidden="true">{{range .JSON.CoverURLs}}<img src="{{.}}" alt="" loading="lazy">{{end}}</div>
         <div class="daily-mix-title">
           <p class="kicker">{{.TypeLabel}}{{if .Plan.Cold}} · 冷门主题{{end}} · {{if eq .Mix.TitleSource "llm"}}模型起名{{else}}模板标题{{end}}{{if .Mix.Generation}} · 第 {{.Mix.Generation}} 次替换{{end}}</p>
-          <h2>{{.Mix.Title}}</h2>
+          <h2><a href="/admin/daily-mixes/{{.Mix.ID}}">{{.Mix.Title}}</a></h2>
           <p class="result-count">{{.Mix.Description}}</p>
           <p class="audio-analysis-line">{{.Mix.TrackCount}} 首 · {{.Duration}} · 熟悉 {{.Familiar}} / 探索 {{.Explore}}{{if .ByVia}} · {{.ByVia}}{{end}}</p>
           <p class="audio-analysis-line audio-analysis-meta">主题「{{.Plan.Label}}」候选 {{.Plan.Pool}} 首（本主题 {{.Plan.Direct}} 首，其余为相邻标签或听感相近；熟悉 {{.Plan.Familiar}} / 探索 {{.Plan.Explore}}）· 抽样 {{printf "%.2f" .Plan.Sample}} × 偏好 {{printf "%.2f" .Plan.Lift}} = {{printf "%.2f" .Plan.Score}}{{if ne .Mix.Rating 0}} · 评价 {{if eq .Mix.Rating 1}}👍{{else}}👎{{end}}{{end}}</p>
