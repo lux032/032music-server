@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// playlistDurationSQL sums track durations of playlist p (alias required).
+const playlistDurationSQL = `COALESCE((SELECT SUM(dt.duration_ms) FROM playlist_items dpi JOIN tracks dt ON dt.id=dpi.track_id WHERE dpi.playlist_id=p.id),0)`
+
 type Playlist struct {
 	Revision         int64  `json:"revision"`
 	HasCustomArtwork bool   `json:"hasCustomArtwork"`
@@ -16,6 +19,7 @@ type Playlist struct {
 	Name             string `json:"name"`
 	Description      string `json:"description"`
 	ItemCount        int64  `json:"itemCount"`
+	DurationMillis   int64  `json:"durationMillis"`
 	ArtworkURL       string `json:"artworkUrl,omitempty"`
 	CreatedAt        string `json:"createdAt"`
 	UpdatedAt        string `json:"updatedAt"`
@@ -218,7 +222,7 @@ func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlis
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM playlists`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id GROUP BY p.id ORDER BY p.updated_at DESC,p.id DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),`+playlistDurationSQL+`,COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id GROUP BY p.id ORDER BY p.updated_at DESC,p.id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -226,7 +230,7 @@ func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlis
 	result := make([]Playlist, 0)
 	for rows.Next() {
 		var value Playlist
-		if err := rows.Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt, &value.Revision, &value.HasCustomArtwork); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.DurationMillis, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt, &value.Revision, &value.HasCustomArtwork); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, value)
@@ -236,7 +240,7 @@ func (s *Store) ListPlaylists(ctx context.Context, limit, offset int) ([]Playlis
 
 func (s *Store) PlaylistByID(ctx context.Context, id int64) (Playlist, error) {
 	var value Playlist
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id WHERE p.id=? GROUP BY p.id`, id).Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt, &value.Revision, &value.HasCustomArtwork)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.name,p.description,COUNT(pi.track_id),`+playlistDurationSQL+`,COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p LEFT JOIN playlist_items pi ON pi.playlist_id=p.id WHERE p.id=? GROUP BY p.id`, id).Scan(&value.ID, &value.Name, &value.Description, &value.ItemCount, &value.DurationMillis, &value.ArtworkURL, &value.CreatedAt, &value.UpdatedAt, &value.Revision, &value.HasCustomArtwork)
 	return value, err
 }
 

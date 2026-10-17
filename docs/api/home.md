@@ -208,7 +208,7 @@ JSON 路由和 HTML 路由共用同一套数据构建（`homeData` / `homeRandom
     "selectedYear": 2023,
     "result": { "year": 2023, "total": 40, "albums": [{ "id": 412 }] }
   },
-  "playlists": [{ "id": 3, "name": "通勤", "description": "", "itemCount": 52, "artworkUrl": "/api/v1/playlists/3/artwork?v=ab12", "revision": 9, "hasCustomArtwork": false, "createdAt": "…", "updatedAt": "…" }],
+  "playlists": [{ "id": 3, "name": "通勤", "description": "", "itemCount": 52, "durationMillis": 12345000, "artworkUrl": "/api/v1/playlists/3/artwork?v=ab12", "revision": 9, "hasCustomArtwork": false, "createdAt": "…", "updatedAt": "…" }],
   "stats": { "albums": 812, "tracks": 10342, "works": 87, "lastScanAt": "2026-10-11T20:00:00.000Z", "pendingReviewCount": 3 }
 }
 ```

@@ -281,6 +281,9 @@ func TestAPIHomeStructure(t *testing.T) {
 	if len(home.Playlists) != 1 || home.Playlists[0].Name != "通勤" || home.Playlists[0].ItemCount != 3 {
 		t.Fatalf("playlists: %+v", home.Playlists)
 	}
+	if detail, err := store.PlaylistDetail(context.Background(), home.Playlists[0].ID); err != nil || home.Playlists[0].DurationMillis == 0 || home.Playlists[0].DurationMillis != tracksDuration(detail.Tracks) {
+		t.Fatalf("playlist duration: %+v (%v)", home.Playlists[0], err)
+	}
 	if home.Stats.Albums != 1 || home.Stats.Tracks != 3 || home.Stats.Works != 2 {
 		t.Fatalf("stats: %+v", home.Stats)
 	}

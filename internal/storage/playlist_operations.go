@@ -41,11 +41,11 @@ func playlistWriteTx(ctx context.Context, s *Store) (*sql.Tx, error) {
 	return tx, nil
 }
 
-const playlistSelect = `SELECT p.id,p.name,p.description,(SELECT COUNT(*) FROM playlist_items WHERE playlist_id=p.id),COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p WHERE p.id=?`
+const playlistSelect = `SELECT p.id,p.name,p.description,(SELECT COUNT(*) FROM playlist_items WHERE playlist_id=p.id),` + playlistDurationSQL + `,COALESCE((SELECT '/api/v1/playlists/'||p.id||'/artwork?v='||substr(content_hash,1,16) FROM playlist_custom_images WHERE playlist_id=p.id),(SELECT '/api/v1/artwork/'||aw.id FROM playlist_items first JOIN tracks t ON t.id=first.track_id JOIN artworks aw ON aw.album_id=t.album_id WHERE first.playlist_id=p.id ORDER BY first.position,(aw.source_type='custom') DESC,aw.is_primary DESC,aw.id LIMIT 1),''),p.created_at,p.updated_at,p.revision,EXISTS(SELECT 1 FROM playlist_custom_images WHERE playlist_id=p.id) FROM playlists p WHERE p.id=?`
 
 func playlistByIDTx(ctx context.Context, tx *sql.Tx, id int64) (Playlist, error) {
 	var p Playlist
-	err := tx.QueryRowContext(ctx, playlistSelect, id).Scan(&p.ID, &p.Name, &p.Description, &p.ItemCount, &p.ArtworkURL, &p.CreatedAt, &p.UpdatedAt, &p.Revision, &p.HasCustomArtwork)
+	err := tx.QueryRowContext(ctx, playlistSelect, id).Scan(&p.ID, &p.Name, &p.Description, &p.ItemCount, &p.DurationMillis, &p.ArtworkURL, &p.CreatedAt, &p.UpdatedAt, &p.Revision, &p.HasCustomArtwork)
 	return p, err
 }
 func playlistIDsTx(ctx context.Context, tx *sql.Tx, id int64) ([]int64, error) {
