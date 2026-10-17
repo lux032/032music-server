@@ -196,7 +196,10 @@ func TestDailyMixAdminPage(t *testing.T) {
 			t.Fatalf("page missing %q", want)
 		}
 	}
-	if dash := getWithCookie(handler, "/admin", cookie).Body.String(); !strings.Contains(dash, `href="/admin/daily-mixes"`) || !strings.Contains(dash, "今天 5 个") {
+	if !strings.Contains(page, `data-nav="daily-mixes" class="active"`) {
+		t.Fatal("sidebar entry must be active on the page")
+	}
+	if dash := getWithCookie(handler, "/admin", cookie).Body.String(); strings.Count(dash, `href="/admin/daily-mixes"`) < 3 || !strings.Contains(dash, "今天 5 个") {
 		t.Fatal("dashboard card")
 	}
 	// Admin replace does not use the daily budget.

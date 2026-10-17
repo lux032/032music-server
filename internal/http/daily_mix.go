@@ -530,7 +530,7 @@ func (a *App) handleDailyMixPage(w http.ResponseWriter, r *http.Request) {
 		a.renderAdminFeatureError(w, "console", err)
 		return
 	}
-	data := dailyMixPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: r.URL.Query().Get("notice"), Settings: set, Day: day,
+	data := dailyMixPageData{Chrome: a.chromeFor(ctx, session, "daily-mixes"), Notice: r.URL.Query().Get("notice"), Settings: set, Day: day,
 		Snapshot: a.dailyMixes.Snapshot(ctx), MixCountOptions: []int{1, 2, 3, 4, 5, 6, 7, 8}}
 	for h := 0; h < 24; h++ {
 		data.HourOptions = append(data.HourOptions, h)
