@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>在线歌词 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main online-lyrics-main">
+    <header class="browser-header">
+      <div>
+        <h1>在线歌词</h1>
+        <p class="result-count">歌曲没有本地歌词（同目录 .lrc、内嵌歌词）时，服务端在首次请求时从网易云、LRCLIB 搜索匹配并缓存；没找到的 12 小时后再试。客户端里手动选择的歌词优先于本地歌词，对所有设备生效。</p>
+      </div>
+      <a class="secondary-button" href="/admin">返回控制台</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+    {{if not .Enabled}}<div class="toast" role="status">在线歌词未启用，只使用本地歌词。</div>{{end}}
+
+    <section class="feature-card">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">缓存</p>
+          <h2>已找到 {{index .Counts "found"}} 首 · 未找到 {{index .Counts "not_found"}} 首 · 已清除 {{index .Counts "suppressed"}} 首</h2>
+        </div>
+        {{if index .Counts "not_found"}}
+        <form method="post" action="/admin/online-lyrics/clear-misses">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">立即重试全部“未找到”</button>
+        </form>
+        {{end}}
+      </div>
+      <form class="ai-tagging-sample-form" method="get" action="/admin/online-lyrics">
+        <label>搜索
+          <input type="search" name="q" value="{{.Query}}" placeholder="曲名、艺人或匹配到的歌名">
+        </label>
+        <label>状态
+          <select name="status">
+            <option value="">全部</option>
+            <option value="found" {{if eq .Status "found"}}selected{{end}}>已找到</option>
+            <option value="manual" {{if eq .Status "manual"}}selected{{end}}>手动选择</option>
+            <option value="not_found" {{if eq .Status "not_found"}}selected{{end}}>未找到</option>
+            <option value="suppressed" {{if eq .Status "suppressed"}}selected{{end}}>已清除</option>
+          </select>
+        </label>
+        <button class="secondary-button">筛选</button>
+      </form>
+
+      {{if .Items}}
+      <form method="post" action="/admin/online-lyrics/delete">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="return" value="{{.ReturnURL}}">
+        <table class="ai-tagging-table">
+          <thead><tr><th><input type="checkbox" aria-label="全选" data-check-all></th><th>曲目</th><th>状态</th><th>匹配结果</th><th>更新时间</th></tr></thead>
+          <tbody>
+            {{range .Items}}
+            <tr>
+              <td><input type="checkbox" name="id" value="{{.TrackID}}" aria-label="选择 {{.Title}}"></td>
+              <td><strong>{{.Title}}</strong><small>{{.Artist}}</small></td>
+              <td>{{.StatusLabel}}{{if and .Manual (eq .Status "found")}}（手动）{{end}}{{if eq .Status "not_found"}}<small>{{formatAdminTime .RetryAfter}} 后重试</small>{{end}}</td>
+              <td>{{if eq .Status "found"}}{{.RemoteTitle}}<small>{{.RemoteArtist}} · {{.SourceName}} · {{.Lines}} 行{{if .Synced}} · 逐行同步{{else}} · 无时间轴{{end}}</small>{{else}}<small>—</small>{{end}}</td>
+              <td>{{formatAdminTime .UpdatedAt}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <p><button class="secondary-button danger-button">删除选中</button> <span class="result-count">删除后这些歌曲下次播放时会重新自动匹配（手动选择和“已清除”也会恢复为自动）。</span></p>
+      </form>
+      {{else}}
+      <p class="result-count">{{if or .Query .Status}}没有符合条件的记录。{{else}}还没有在线歌词缓存。客户端播放没有本地歌词的歌曲时会自动生成。{{end}}</p>
+      {{end}}
+
+      {{if gt .Pages 1}}
+      <nav class="pagination" aria-label="分页">
+        {{if .PrevURL}}<a href="{{.PrevURL}}">上一页</a>{{else}}<span>上一页</span>{{end}}
+        <div><span>{{.Page}} / {{.Pages}}</span></div>
+        {{if .NextURL}}<a href="{{.NextURL}}">下一页</a>{{else}}<span>下一页</span>{{end}}
+      </nav>
+      {{end}}
+    </section>
+  </main>
+</body>
+</html>

@@ -96,6 +96,13 @@
     if (closer) closer.closest('dialog')?.close();
   });
 
+  // Select-all checkbox: toggles every input[name=id] in its form.
+  document.addEventListener('change', (e) => {
+    const all = e.target;
+    if (!(all instanceof HTMLInputElement) || !all.hasAttribute('data-check-all') || !all.form) return;
+    for (const box of all.form.querySelectorAll('input[name=id]')) box.checked = all.checked;
+  });
+
   // ------------------------------------------- adaptive scan/status polling
   const statusMap = {
     never: '尚未扫描',

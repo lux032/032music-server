@@ -51,6 +51,16 @@
         <div><strong>AI 打标</strong><span id="at-summary">{{.AITagging.SummaryText}}</span></div>
         <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
       </a>
+      <a href="/admin/online-lyrics" id="online-lyrics-card">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+        <div><strong>在线歌词</strong><span>{{.OnlineLyrics}}</span></div>
+        <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
+      </a>
+      <a href="/admin/lyrics-translations" id="lyrics-translation-card">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-sparkle"></use></svg>
+        <div><strong>歌词翻译</strong><span>{{.Translation}}</span></div>
+        <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
+      </a>
       <a href="/admin/daily-mixes" id="daily-mix-card">
         <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>
         <div><strong>每日推荐</strong><span>{{.DailyMixes}}</span></div>

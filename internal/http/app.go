@@ -24,6 +24,7 @@ import (
 	"github.com/lux032/032music-server/internal/dailymix"
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/lastfm"
+	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
@@ -71,6 +72,14 @@ type App struct {
 	aiTagging *tagging.Service
 	// dailyMixes generates the daily recommendation mixes (nil hides them).
 	dailyMixes *dailymix.Service
+	// newTranslationChat creates the lyrics translation model client (nil: OpenAI-compatible HTTP client).
+	newTranslationChat translationChatFactory
+	// translationFlights dedupes concurrent translations of the same lyrics.
+	translationFlights flightGroup[storage.LyricsTranslation]
+	// onlineLyrics fetches lyrics from NetEase / LRCLIB (nil: local lyrics only).
+	onlineLyrics *lyricsonline.Client
+	// lyricsFlights dedupes concurrent online lookups of the same track.
+	lyricsFlights flightGroup[resolvedLyrics]
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -187,6 +196,8 @@ type dashboardPageData struct {
 	AudioAnalysis  audioAnalysisView
 	AITagging      aiTaggingView
 	DailyMixes     string
+	Translation    string
+	OnlineLyrics   string
 	Notice         string
 }
 
@@ -421,6 +432,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/playback/history", a.requireAPIOrAdmin(http.HandlerFunc(a.handleClearPlaybackHistory)))
 	mux.Handle("GET /api/v1/tracks/{id}/lyrics.lrc", a.requireMediaAccess(http.HandlerFunc(a.handleAPITrackLyricsText)))
 	mux.Handle("GET /api/v1/tracks/{id}/lyrics", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackLyrics)))
+	mux.Handle("POST /api/v1/tracks/{id}/lyrics/translation", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPILyricsTranslation)))
+	mux.Handle("PUT /api/v1/tracks/{id}/lyrics/source", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIBindLyrics)))
+	mux.Handle("DELETE /api/v1/tracks/{id}/lyrics/source", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIClearLyrics)))
+	mux.Handle("GET /api/v1/lyrics/search", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPILyricsSearch)))
+	mux.Handle("GET /api/v1/lyrics/remote/{source}/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIRemoteLyrics)))
 	for _, format := range []string{"mp3", "ogg", "flac"} {
 		mux.Handle("GET /api/v1/tracks/{id}/transcode."+format, a.requireMediaAccess(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleTranscode(w, r, format) })))
 	}
@@ -479,6 +495,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+aiTaggingPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAITaggingRetry)))
 	mux.Handle("POST "+aiTaggingPath+"/sample", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSample)))
 	mux.Handle("POST "+aiTaggingPath+"/sample/cancel", a.requireAdmin(http.HandlerFunc(a.handleAITaggingSampleCancel)))
+	mux.Handle("GET "+onlineLyricsPath, a.requireAdmin(http.HandlerFunc(a.handleOnlineLyricsPage)))
+	mux.Handle("POST "+onlineLyricsPath+"/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteOnlineLyrics)))
+	mux.Handle("POST "+onlineLyricsPath+"/clear-misses", a.requireAdmin(http.HandlerFunc(a.handleClearOnlineLyricsMisses)))
+	mux.Handle("GET "+lyricsTranslationPath, a.requireAdmin(http.HandlerFunc(a.handleLyricsTranslationsPage)))
+	mux.Handle("POST "+lyricsTranslationPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveLyricsTranslationSettings)))
+	mux.Handle("POST "+lyricsTranslationPath+"/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteLyricsTranslations)))
+	mux.Handle("GET "+lyricsTranslationPath+"/{id}", a.requireAdmin(http.HandlerFunc(a.handleLyricsTranslationDetail)))
+	mux.Handle("POST "+lyricsTranslationPath+"/{id}/retranslate", a.requireAdmin(http.HandlerFunc(a.handleRetranslateLyrics)))
 	mux.Handle("GET "+dailyMixPath, a.requireAdmin(http.HandlerFunc(a.handleDailyMixPage)))
 	mux.Handle("POST "+dailyMixPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveDailyMixSettings)))
 	mux.Handle("POST "+dailyMixPath+"/regenerate", a.requireAdmin(http.HandlerFunc(a.handleRegenerateDailyMixesToday)))
@@ -795,6 +819,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		AudioAnalysis:  a.dashboardAudioAnalysisView(r.Context()),
 		AITagging:      a.dashboardAITaggingView(r.Context()),
 		DailyMixes:     a.dashboardDailyMixSummary(r.Context()),
+		Translation:    a.dashboardLyricsTranslationSummary(r.Context()),
+		OnlineLyrics:   a.dashboardOnlineLyricsSummary(r.Context()),
 		Notice:         r.URL.Query().Get("notice"),
 	})
 }

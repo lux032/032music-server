@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>歌词翻译 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main lyrics-translation-main">
+    <header class="browser-header">
+      <div>
+        <h1>歌词翻译</h1>
+        <p class="result-count">客户端请求翻译时，由服务端调用大模型逐行翻译歌词并缓存；同一首歌、同一语言、同样的歌词再次请求时直接返回缓存，不再调用模型。</p>
+      </div>
+      <a class="secondary-button" href="/admin">返回控制台</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card audio-analysis-settings">
+      <p class="kicker">设置</p>
+      <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/lyrics-translations/settings" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label class="switch"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 开启歌词翻译</label>
+        <p class="result-count">开启后客户端才会显示翻译开关。关闭只停止新的翻译请求，已缓存的翻译会保留。</p>
+        <fieldset class="ai-tagging-fields">
+          <legend>模型</legend>
+          <label>翻译模型
+            <input name="model" value="{{.Model}}" placeholder="{{if .TaggingModel}}留空使用打标主模型 {{.TaggingModel}}{{else}}例如 gemini-2.5-flash、deepseek-chat{{end}}" spellcheck="false">
+          </label>
+          <p class="result-count">
+            接口地址、API Key、代理和思考强度与 <a href="/admin/ai-tagging">AI 打标</a> 共用{{if not .Configured}}，<strong>目前尚未填写</strong>{{end}}。
+            {{if .Effective}}当前使用：<code>{{.Effective}}</code>。{{end}}歌词会发送给模型服务；用量计入 AI 打标页的“歌词翻译”。
+          </p>
+        </fieldset>
+        <button class="secondary-button">保存</button>
+      </form>
+    </section>
+
+    <section class="feature-card">
+      <div class="audio-analysis-head">
+        <div>
+          <p class="kicker">已缓存</p>
+          <h2>{{.Total}} 条翻译</h2>
+        </div>
+      </div>
+      <form class="ai-tagging-sample-form" method="get" action="/admin/lyrics-translations">
+        <label>搜索
+          <input type="search" name="q" value="{{.Query}}" placeholder="曲名或艺人">
+        </label>
+        {{if .Languages}}
+        <label>语言
+          <select name="lang">
+            <option value="">全部</option>
+            {{range .Languages}}<option value="{{.}}" {{if eq . $.Language}}selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        </label>
+        {{end}}
+        <button class="secondary-button">筛选</button>
+      </form>
+
+      {{if .Items}}
+      <form method="post" action="/admin/lyrics-translations/delete" id="lyrics-translation-bulk">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="return" value="{{.ReturnURL}}">
+        <table class="ai-tagging-table">
+          <thead><tr><th><input type="checkbox" aria-label="全选" data-check-all></th><th>曲目</th><th>语言</th><th>行数</th><th>模型</th><th>更新时间</th></tr></thead>
+          <tbody>
+            {{range .Items}}
+            <tr>
+              <td><input type="checkbox" name="id" value="{{.ID}}" aria-label="选择 {{.Title}}"></td>
+              <td><a href="/admin/lyrics-translations/{{.ID}}"><strong>{{.Title}}</strong></a><small>{{.Artist}}</small></td>
+              <td><code>{{.TargetLanguage}}</code></td>
+              <td>{{len .SourceLines}}</td>
+              <td><code>{{.Model}}</code></td>
+              <td>{{formatAdminTime .UpdatedAt}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <p><button class="secondary-button danger-button">删除选中</button> <span class="result-count">删除后客户端下次请求时会重新翻译。</span></p>
+      </form>
+      {{else}}
+      <p class="result-count">{{if or .Query .Language}}没有符合条件的翻译。{{else}}还没有翻译。开启后，在客户端播放歌曲并点击“翻译”即可生成。{{end}}</p>
+      {{end}}
+
+      {{if gt .Pages 1}}
+      <nav class="pagination" aria-label="分页">
+        {{if .PrevURL}}<a href="{{.PrevURL}}">上一页</a>{{else}}<span>上一页</span>{{end}}
+        <div><span>{{.Page}} / {{.Pages}}</span></div>
+        {{if .NextURL}}<a href="{{.NextURL}}">下一页</a>{{else}}<span>下一页</span>{{end}}
+      </nav>
+      {{end}}
+    </section>
+  </main>
+</body>
+</html>

@@ -29,7 +29,11 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"browse":        true,
 			"audioAnalysis": a.audioAnalysisEnabled(r.Context()),
 			"trackTags":     a.aiTaggingEnabled(r.Context()),
-			"dailyMixes":    a.dailyMixesEnabled(r.Context()),
+			// POST /api/v1/tracks/{id}/lyrics/translation; clients show their translate switch only when true.
+			"lyricsTranslation": a.lyricsTranslationEnabled(r.Context()),
+			// /lyrics also looks up NetEase / LRCLIB; /lyrics/search, /lyrics/remote and PUT/DELETE /lyrics/source.
+			"lyricsOnline": a.onlineLyrics != nil,
+			"dailyMixes":   a.dailyMixesEnabled(r.Context()),
 			// Playback sessions accept a start context (daily mix attribution, §7.1).
 			"playbackContext": true,
 		},

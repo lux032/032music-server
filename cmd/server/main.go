@@ -16,6 +16,7 @@ import (
 	"github.com/lux032/032music-server/internal/enrichment"
 	webhttp "github.com/lux032/032music-server/internal/http"
 	"github.com/lux032/032music-server/internal/lastfm"
+	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
@@ -127,6 +128,8 @@ func run() error {
 		},
 	})
 	app.SetAITagging(taggingService)
+	// Online lyrics (NetEase, LRCLIB) for tracks without local lyrics; HTTP(S)_PROXY applies.
+	app.SetOnlineLyrics(lyricsonline.New())
 	taggingService.Start(rootCtx)
 	// Daily mixes: pre-generated at the configured hour (05:00 UTC+8 by default) and
 	// generated on the first request otherwise; titles by the model when configured.

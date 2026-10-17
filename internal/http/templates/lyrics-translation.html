@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>{{.Item.Title}} · 歌词翻译 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main lyrics-translation-main">
+    <header class="browser-header">
+      <div>
+        <h1>{{.Item.Title}}</h1>
+        <p class="result-count">{{.Item.Artist}} · {{.LanguageName}} · {{len .Item.SourceLines}} 行 · <code>{{.Item.Model}}</code> · 更新于 {{formatAdminTime .Item.UpdatedAt}}</p>
+      </div>
+      <a class="secondary-button" href="/admin/lyrics-translations">返回列表</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card">
+      <p class="kicker">重新翻译</p>
+      <form class="ai-tagging-sample-form" method="post" action="/admin/lyrics-translations/{{.Item.ID}}/retranslate" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>模型
+          <input name="model" value="{{.DefaultModel}}" list="lyrics-translation-models" spellcheck="false" required>
+        </label>
+        <datalist id="lyrics-translation-models">{{range .Models}}<option value="{{.}}">{{end}}</datalist>
+        <button class="secondary-button"{{if not .Configured}} disabled{{end}}>重新翻译</button>
+        <span class="result-count">{{if .Configured}}用保存的原文重新翻译并覆盖当前结果，可能需要几十秒。{{else}}需要先在 <a href="/admin/ai-tagging">AI 打标</a> 页填写接口地址和 API Key。{{end}}</span>
+      </form>
+      <form method="post" action="/admin/lyrics-translations/delete">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="id" value="{{.Item.ID}}">
+        <input type="hidden" name="return" value="/admin/lyrics-translations">
+        <button class="secondary-button danger-button">删除这条翻译</button>
+      </form>
+    </section>
+
+    <section class="feature-card">
+      <p class="kicker">对照</p>
+      <table class="ai-tagging-table">
+        <thead><tr><th>原文</th><th>译文</th></tr></thead>
+        <tbody>
+          {{range .Rows}}<tr><td>{{.Source}}</td><td>{{.Translated}}</td></tr>{{end}}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

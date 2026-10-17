@@ -35,8 +35,12 @@
 | `PUT` | `/api/v1/playlists/{id}/items` | 使用 `{"trackIds":[12,34]}` 替换有序内容。 |
 | `POST` | `/api/v1/playback/events` | 播放会话事件上报（计数/跳过/断点均由服务端派生）。 |
 | `GET/DELETE` | `/api/v1/playback/history` | 读取/清空历史和断点位置。 |
-| `GET` | `/api/v1/tracks/{id}/lyrics` | 结构化歌词（JSON 凭据）。 |
+| `GET` | `/api/v1/tracks/{id}/lyrics` | 结构化歌词（JSON 凭据）`{synced, lines[], source, sourceName, manual, remoteTitle?, remoteArtist?}`。查找顺序：客户端手动选择 > 同目录 `.lrc` > 内嵌歌词 > 在线歌词缓存 > 在线搜索（网易云、LRCLIB，首次请求时抓取并缓存，没找到的 12 小时内不再搜索；纯音乐不搜索）。`source` 为 `file` / `embedded` / `netease` / `lrclib`。能力位 `features.lyricsOnline` 表示开启了在线歌词。 |
 | `GET` | `/api/v1/tracks/{id}/lyrics.lrc`、`/api/v1/tracks/{id}/stream` | 原始歌词/音频（媒体凭据）。 |
+| `POST` | `/api/v1/tracks/{id}/lyrics/translation` | 歌词逐行翻译（JSON 凭据）。请求 `{targetLanguage}`（如 `zh-Hans`），原文取自上面的歌词接口；返回与其 `lines` 等长的 `lines[]`、`model`、`cached`、`source`（`ai` 或 `netease`）。歌词来自网易云且目标语言为简体中文时直接使用网易云自带翻译；否则需要服务端开启 AI 翻译（能力位 `features.lyricsTranslation`），未开启返回 409 `translation_disabled`，模型出错返回 502 `translation_failed`。 |
+| `GET` | `/api/v1/lyrics/search?name=&artist=&durationMs=` | 在线歌词搜索（JSON 凭据），返回 `{results: [{source, id, name, artist, album?, durationMs?, synced, score}]}`，`score` 0 为最佳。 |
+| `GET` | `/api/v1/lyrics/remote/{source}/{id}` | 预览一条搜索结果的歌词，格式同歌词接口。 |
+| `PUT` / `DELETE` | `/api/v1/tracks/{id}/lyrics/source` | `PUT {source, id}`：手动选择这首歌的在线歌词（优先于本地歌词，对所有客户端生效）；`DELETE`：清除在线歌词并停止自动搜索（本地歌词不受影响），返回 204。 |
 | `GET` | `/api/v1/artwork/{id}`、`/api/v1/artists/{id}/image` | 图片，可传 `size` 获取缩略图。 |
 | `GET` | `/api/v1/tracks/{id}/transcode.{mp3\|ogg\|flac}` | 转码媒体。 |
 | `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 元数据相似度与路径（JSON 凭据）。 |
