@@ -44,6 +44,8 @@ type lyricsDiagnosePageData struct {
 	// Local: which local lyrics exist ("同目录 .lrc", "内嵌歌词", "" for none).
 	Local      string
 	LocalLines int
+	// LocalSynced: the local lyrics have timestamps (otherwise online is still searched).
+	LocalSynced bool
 	// LocalPreview: the first local lines, to spot empty or wrong lyrics that hide online lyrics.
 	LocalPreview []string
 	LocalErr     string
@@ -128,6 +130,7 @@ func (a *App) fillLyricsDiagnosis(ctx context.Context, data *lyricsDiagnosePageD
 	case err == nil:
 		data.Local = lyricsSourceName(local.Source)
 		data.LocalLines = len(local.Result.Lines)
+		data.LocalSynced = local.Result.Synced
 		for i, l := range local.Result.Lines {
 			if i == 5 {
 				break
@@ -159,23 +162,41 @@ func lyricsDecision(d *lyricsDiagnosePageData, enabled bool) string {
 	switch {
 	case row != nil && row.Manual && row.Status == storage.OnlineLyricsFound:
 		return "使用客户端手动选择的在线歌词。"
-	case d.Local != "":
-		return "使用本地歌词（" + d.Local + "），不会在线搜索。"
+	case d.Local != "" && d.LocalSynced:
+		return "使用本地歌词（" + d.Local + "，有时间轴），不会在线搜索。"
 	case d.LocalErr != "":
 		return "读取本地歌词出错：" + d.LocalErr
+	}
+	// Local lyrics without timestamps are only a fallback for what online gives.
+	fallback := "返回“没有歌词”"
+	localNote := ""
+	if d.Local != "" {
+		fallback = "使用本地歌词（" + d.Local + "，无时间轴）"
+		localNote = "本地歌词（" + d.Local + "）没有时间轴："
+	}
+	switch {
 	case row != nil && row.Status == storage.OnlineLyricsFound:
-		return "使用已缓存的在线歌词。"
+		if d.Local != "" && !parseLyricsText(row.Lyrics).Synced {
+			return localNote + "已缓存的在线歌词也没有时间轴，" + fallback + "。"
+		}
+		return localNote + "使用已缓存的在线歌词。"
 	case row != nil && row.Status == storage.OnlineLyricsSuppressed:
-		return "客户端清除过在线歌词，不再自动搜索（删除这条记录或在客户端重新选择可恢复）。"
+		return localNote + "客户端清除过在线歌词，不再自动搜索，" + fallback + "（删除这条记录或在客户端重新选择可恢复）。"
 	case row != nil && row.Status == storage.OnlineLyricsNotFound:
 		if retry, err := time.Parse(time.RFC3339Nano, row.RetryAfter); err == nil && time.Now().Before(retry) {
-			return "之前在线没找到，" + retry.Local().Format("01-02 15:04") + " 之前不会再搜索，播放时直接返回“没有歌词”。"
+			return localNote + "之前在线没找到，" + retry.Local().Format("01-02 15:04") + " 之前不会再搜索，播放时" + fallback + "。"
+		}
+		if d.Local != "" {
+			return localNote + "之前在线没找到，已过重试时间：下次播放先返回本地歌词，同时在后台重新搜索。"
 		}
 		return "之前在线没找到，已过重试时间：下次播放会重新搜索。"
 	case !enabled:
-		return "在线歌词未启用。"
+		return "在线歌词未启用，" + fallback + "。"
 	case d.Instrumental:
-		return "曲目类型为纯音乐 / 伴奏（" + d.Track.TrackType + "），不会在线搜索。类型来自标题、文件夹名或 AI 打标，判断错了可在曲目编辑里改回普通。"
+		return "曲目类型为纯音乐 / 伴奏（" + d.Track.TrackType + "），不会在线搜索，" + fallback + "。类型来自标题、文件夹名或 AI 打标，判断错了可在曲目编辑里改回普通。"
+	}
+	if d.Local != "" {
+		return localNote + "没有缓存：下次播放先返回本地歌词，同时在后台在线搜索；找到有时间轴的在线歌词后，从再下一次播放起替换。"
 	}
 	return "没有缓存：下次播放时会在线搜索。"
 }

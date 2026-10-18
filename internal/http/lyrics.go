@@ -65,8 +65,10 @@ func fromOnlineRow(row storage.OnlineLyrics) resolvedLyrics {
 		RemoteTitle: row.RemoteTitle, RemoteArtist: row.RemoteArtist, TranslationLRC: row.TranslationLyrics}
 }
 
-// localLyrics reads the sidecar .lrc, then the embedded tag. errNoLyrics when neither has lyrics.
+// localLyrics picks between the sidecar .lrc and the embedded tag: synced
+// beats unsynced, then the sidecar beats the tag. errNoLyrics when neither has lyrics.
 func (a *App) localLyrics(ctx context.Context, trackID int64) (resolvedLyrics, error) {
+	var sidecar *resolvedLyrics
 	audioPath, err := a.store.AudioFilePath(ctx, trackID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return resolvedLyrics{}, err
@@ -80,7 +82,10 @@ func (a *App) localLyrics(ctx context.Context, trackID int64) (resolvedLyrics, e
 			if readErr == nil {
 				raw := string(normalizeLyricsBOM(content))
 				if result := lyrics.ParseLRC(raw); len(result.Lines) > 0 {
-					return resolvedLyrics{Result: result, Raw: raw, Source: lyricsSourceFile}, nil
+					sidecar = &resolvedLyrics{Result: result, Raw: raw, Source: lyricsSourceFile}
+					if result.Synced {
+						return *sidecar, nil
+					}
 				}
 			}
 		}
@@ -90,15 +95,24 @@ func (a *App) localLyrics(ctx context.Context, trackID int64) (resolvedLyrics, e
 		return resolvedLyrics{}, err
 	}
 	embedded = string(normalizeLyricsBOM([]byte(embedded)))
-	if strings.TrimSpace(embedded) == "" {
-		return resolvedLyrics{}, errNoLyrics
+	if strings.TrimSpace(embedded) != "" {
+		if res := parseLyricsText(embedded); res.Synced || sidecar == nil {
+			return resolvedLyrics{Result: res, Raw: embedded, Source: lyricsSourceEmbedded}, nil
+		}
 	}
-	return resolvedLyrics{Result: parseLyricsText(embedded), Raw: embedded, Source: lyricsSourceEmbedded}, nil
+	if sidecar != nil {
+		return *sidecar, nil
+	}
+	return resolvedLyrics{}, errNoLyrics
 }
 
-// resolveLyrics returns a track's lyrics: a user's manual choice, then local
-// lyrics (sidecar .lrc, embedded tag), then the online cache, then a fresh
-// online lookup (cached, misses remembered for onlineLyricsRetry).
+// resolveLyrics returns a track's lyrics: a user's manual choice, then synced
+// local lyrics (sidecar .lrc, embedded tag), then the online cache, then a
+// fresh online lookup (cached, misses remembered for onlineLyricsRetry).
+// Local lyrics without timestamps do not stop the online lookup: they are
+// returned right away while the lookup runs in the background, and synced
+// online lyrics replace them from the next request on. Unsynced online lyrics
+// never replace local ones.
 // Errors: sql.ErrNoRows (no such track), errExternalLRCTooLarge, errNoLyrics.
 func (a *App) resolveLyrics(ctx context.Context, trackID int64) (resolvedLyrics, error) {
 	info, err := a.store.LyricsTrackInfo(ctx, trackID)
@@ -113,32 +127,73 @@ func (a *App) resolveLyrics(ctx context.Context, trackID int64) (resolvedLyrics,
 	if hasRow && row.Manual && row.Status == storage.OnlineLyricsFound {
 		return fromOnlineRow(row), nil
 	}
-	if local, err := a.localLyrics(ctx, trackID); !errors.Is(err, errNoLyrics) {
-		return local, err
+	local, err := a.localLyrics(ctx, trackID)
+	if err != nil && !errors.Is(err, errNoLyrics) {
+		return resolvedLyrics{}, err
+	}
+	hasLocal := err == nil
+	if hasLocal && local.Result.Synced {
+		return local, nil
+	}
+	// pick prefers online lyrics only when they are synced or nothing local exists.
+	pick := func(online resolvedLyrics) resolvedLyrics {
+		if hasLocal && !online.Result.Synced {
+			return local
+		}
+		return online
+	}
+	orLocal := func() (resolvedLyrics, error) {
+		if hasLocal {
+			return local, nil
+		}
+		return resolvedLyrics{}, errNoLyrics
 	}
 	if hasRow {
 		switch row.Status {
 		case storage.OnlineLyricsFound:
-			return fromOnlineRow(row), nil
+			return pick(fromOnlineRow(row)), nil
 		case storage.OnlineLyricsSuppressed:
 			a.logger.Debug("online lyrics skipped: cleared by a client", "trackId", trackID)
-			return resolvedLyrics{}, errNoLyrics
+			return orLocal()
 		case storage.OnlineLyricsNotFound:
 			if retry, err := time.Parse(time.RFC3339Nano, row.RetryAfter); err == nil && time.Now().Before(retry) {
 				a.logger.Debug("online lyrics skipped: remembered miss", "trackId", trackID, "retryAfter", row.RetryAfter)
-				return resolvedLyrics{}, errNoLyrics
+				return orLocal()
 			}
 		}
 	}
 	if a.onlineLyrics == nil {
-		return resolvedLyrics{}, errNoLyrics
+		return orLocal()
 	}
 	if info.Instrumental() {
 		a.logger.Info("online lyrics skipped: instrumental track", "trackId", trackID, "title", info.Title, "trackType", info.TrackType)
-		return resolvedLyrics{}, errNoLyrics
+		return orLocal()
 	}
-	return a.lyricsFlights.do("track:"+strconv.FormatInt(trackID, 10), func() (resolvedLyrics, error) {
-		// Finish (and cache) even when the client skips to the next song.
+	if hasLocal {
+		// Do not make the client wait for lyrics it can already show.
+		a.logger.Info("local lyrics have no timestamps, searching online in the background", "trackId", trackID, "localSource", local.Source)
+		a.lyricsBackground.Add(1)
+		go func() {
+			defer a.lyricsBackground.Done()
+			_, _ = a.sharedOnlineLookup(ctx, info)
+		}()
+		return local, nil
+	}
+	online, err := a.sharedOnlineLookup(ctx, info)
+	if err != nil {
+		if errors.Is(err, errNoLyrics) {
+			return orLocal()
+		}
+		return resolvedLyrics{}, err
+	}
+	return pick(online), nil
+}
+
+// sharedOnlineLookup runs one online lookup per track at a time (concurrent
+// callers share it). It finishes and caches even when ctx is canceled, e.g.
+// when the client skips to the next song.
+func (a *App) sharedOnlineLookup(ctx context.Context, info storage.LyricsTrackInfo) (resolvedLyrics, error) {
+	return a.lyricsFlights.do("track:"+strconv.FormatInt(info.TrackID, 10), func() (resolvedLyrics, error) {
 		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), onlineLyricsTimeout)
 		defer cancel()
 		return a.fetchOnlineLyrics(fetchCtx, info)

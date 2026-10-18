@@ -22,7 +22,9 @@ const (
 	strongTitleSim     = 0.9
 	strongDurationDiff = 2000
 	// Among accepted candidates a synced one wins over a slightly better
-	// unsynced one.
+	// unsynced one: known-unsynced candidates are ranked as if their score
+	// were syncedPreference worse, unknown ones (NetEase, decided only after
+	// download) half of that. Equal effective scores prefer synced.
 	syncedPreference = 0.1
 )
 
@@ -180,20 +182,29 @@ func Rank(q Query, cands []Candidate) (all, accepted []Candidate) {
 		}
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Score < all[j].Score })
+	// A total order (effective score, then sync tier, then score) so the sort is well defined.
 	sort.SliceStable(accepted, func(i, j int) bool {
 		a, b := accepted[i], accepted[j]
-		as, bs := a.Synced != nil && *a.Synced, b.Synced != nil && *b.Synced
-		if as != bs && abs(a.Score-b.Score) <= syncedPreference {
-			return as
+		ta, tb := syncTier(a), syncTier(b)
+		ea, eb := a.Score+float64(ta)*syncedPreference/2, b.Score+float64(tb)*syncedPreference/2
+		if ea != eb {
+			return ea < eb
+		}
+		if ta != tb {
+			return ta < tb
 		}
 		return a.Score < b.Score
 	})
 	return all, accepted
 }
 
-func abs(v float64) float64 {
-	if v < 0 {
-		return -v
+// syncTier: 0 known synced, 1 unknown, 2 known unsynced.
+func syncTier(c Candidate) int {
+	switch {
+	case c.Synced == nil:
+		return 1
+	case *c.Synced:
+		return 0
 	}
-	return v
+	return 2
 }

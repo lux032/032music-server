@@ -74,6 +74,8 @@ func lyricsTestApp(t *testing.T, title, embedded string) (*App, *storage.Store, 
 		t.Fatalf("tracks = %v %v", tracks, err)
 	}
 	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	// Background online lookups must finish before the store is closed.
+	t.Cleanup(app.WaitBackgroundLyrics)
 	handler := app.Handler()
 	return app, store, handler, mustLogin(t, handler, "admin", testAdminPassword), tracks.Items[0].ID
 }

@@ -80,6 +80,9 @@ type App struct {
 	onlineLyrics *lyricsonline.Client
 	// lyricsFlights dedupes concurrent online lookups of the same track.
 	lyricsFlights flightGroup[resolvedLyrics]
+	// lyricsBackground tracks online lookups started for tracks that already
+	// returned unsynced local lyrics (waited for on shutdown).
+	lyricsBackground sync.WaitGroup
 }
 
 // SetLastFM attaches the Last.fm scrobbling service.
@@ -332,6 +335,9 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 
 func (a *App) CancelTranscodes() { a.transcoder.CancelAll() }
 func (a *App) WaitTranscodes()   { a.transcoder.Wait() }
+
+// WaitBackgroundLyrics waits for background online lyrics lookups to finish saving.
+func (a *App) WaitBackgroundLyrics() { a.lyricsBackground.Wait() }
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()

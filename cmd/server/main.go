@@ -220,6 +220,7 @@ func run() error {
 		taggingService.Wait()
 		dailyMixService.Wait()
 		app.WaitTranscodes()
+		app.WaitBackgroundLyrics()
 		close(workersDone)
 	}()
 	select {

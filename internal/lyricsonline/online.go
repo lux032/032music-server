@@ -235,7 +235,10 @@ func (c *Client) Best(ctx context.Context, q Query) (Lyrics, Candidate, error) {
 	return l, cand, err
 }
 
-// Lookup is Best plus a report of what every source answered. Errors:
+// Lookup is Best plus a report of what every source answered. Accepted
+// candidates are tried best first; lyrics without timestamps are kept only as
+// a fallback while later candidates (within maxDownloads) may still be synced.
+// Errors:
 // ErrNotFound (cacheable miss), ErrIncomplete wrapping the source errors when
 // some source failed and nothing matched, or the error of a failed download.
 func (c *Client) Lookup(ctx context.Context, q Query) (Lyrics, Candidate, Report, error) {
@@ -244,26 +247,42 @@ func (c *Client) Lookup(ctx context.Context, q Query) (Lyrics, Candidate, Report
 		return Lyrics{}, Candidate{}, report, err
 	}
 	var lastErr error
+	var fallback *Lyrics
+	var fallbackCand Candidate
 	tries := 0
 	for _, cand := range accepted {
 		key := cand.Source + ":" + cand.ID
+		var l Lyrics
 		if cand.lrc != "" {
+			l = Lyrics{Source: cand.Source, ID: cand.ID, Title: cand.Title, Artist: cand.Artist, LRC: cand.lrc}
 			report.Downloads = append(report.Downloads, key+" -> lyrics in search result")
-			return Lyrics{Source: cand.Source, ID: cand.ID, Title: cand.Title, Artist: cand.Artist, LRC: cand.lrc}, cand, report, nil
-		}
-		if tries == maxDownloads {
-			break
-		}
-		tries++
-		l, err := c.Get(ctx, cand.Source, cand.ID)
-		if err == nil {
+		} else {
+			if tries == maxDownloads {
+				continue // later candidates may still carry lyrics in the search result
+			}
+			tries++
+			var err error
+			if l, err = c.Get(ctx, cand.Source, cand.ID); err != nil {
+				report.Downloads = append(report.Downloads, key+" -> "+err.Error())
+				if !errors.Is(err, ErrNoLyrics) {
+					lastErr = err
+				}
+				continue
+			}
 			report.Downloads = append(report.Downloads, key+" -> ok")
+		}
+		synced := lyrics.ParseLRC(l.LRC).Synced
+		cand.Synced = &synced
+		if synced {
 			return l, cand, report, nil
 		}
-		report.Downloads = append(report.Downloads, key+" -> "+err.Error())
-		if !errors.Is(err, ErrNoLyrics) {
-			lastErr = err
+		report.Downloads[len(report.Downloads)-1] += " (no timestamps, kept as fallback)"
+		if fallback == nil {
+			fallback, fallbackCand = &l, cand
 		}
+	}
+	if fallback != nil {
+		return *fallback, fallbackCand, report, nil
 	}
 	if lastErr != nil {
 		return Lyrics{}, Candidate{}, report, lastErr
