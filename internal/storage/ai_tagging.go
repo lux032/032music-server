@@ -90,16 +90,35 @@ func (s *Store) SaveAISettings(ctx context.Context, v AISettings) error {
 
 // ---------------------------------------------------------------- candidates
 
-// taggingBase 列出可打标的曲目（有可用音频文件）及其 source_stamp。stamp 覆盖曲目、专辑、
-// 作品关联与声学特征（含唤醒度/效价）的变化；任一变化即需要重新打标。
+// taggingAlbumArtistSQL / taggingGenresSQL 同时用于打标输入（TaggingTrackInfo）与 stamp，保证两者一致。
+const taggingAlbumArtistSQL = `COALESCE(a.user_performed_by, a.performed_by, (SELECT GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ') FROM album_artists aa JOIN artists ar ON ar.id = aa.artist_id WHERE aa.album_id = a.id), '')`
+
+const taggingGenresSQL = `COALESCE((SELECT GROUP_CONCAT(gx.name, ',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id = ox.genre_id WHERE ox.track_id = t.id),
+			(SELECT GROUP_CONCAT(gx.name, ',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id = rx.genre_id WHERE rx.track_id = t.id), '')`
+
+// taggingStampSQL 只由会进入打标输入的内容组成（标题、艺术家、专辑、年份、时长、类型、流派、
+// 制作人员、音频文件指纹（内嵌歌词随文件变化）、是否有外置 .lrc、声学特征、作品关联）。
+// 外置 .lrc 只记录有无：只修改已有 .lrc 的内容不会触发（数据库不保存其修改时间）。不使用 tracks/albums 的
+// updated_at：收藏、更换封面等与歌曲内容无关的操作也会刷新它们，不应触发重新打标。
+// 修改此表达式时需要新增迁移，把已有 track_tag_meta / ai_tagging_failures 的旧 stamp 换算过来。
+const taggingStampSQL = `COALESCE(t.user_title, t.title) || '|' || ` + trackArtistSQL + ` || '|' ||
+		COALESCE(a.user_title, a.title) || '|' || ` + taggingAlbumArtistSQL + ` || '|' || COALESCE(a.user_release_year, a.release_year, 0) || '|' ||
+		(SELECT COUNT(*) FROM tracks t2 WHERE t2.album_id = a.id) || '|' ||
+		(COALESCE(t.duration_ms, 0) / 1000) || '|' || ` + effectiveTrackTypeSQL + ` || '|' || ` + taggingGenresSQL + ` || '|' ||
+		COALESCE(t.user_composer, t.composer, '') || '|' || COALESCE(t.lyricist, '') || '|' || COALESCE(t.arranger, '') || '|' || LENGTH(COALESCE(t.lyrics, '')) || '|' ||
+		(SELECT COALESCE(MAX(af.modified_at_ns), 0) || ':' || COALESCE(SUM(af.file_size), 0) || ':' || COALESCE(MAX(af.has_external_lrc), 0)
+			FROM audio_files af WHERE af.track_id = t.id AND af.status = 'available') || '|' ||
+		COALESCE(f.analysis_version || ':' || f.file_fingerprint || ':' || COALESCE(printf('%.2f/%.2f', f.arousal, f.valence), '-'), 'noaudio') || '|' ||
+		(SELECT COUNT(*) || ':' || COALESCE(MAX(wt.created_at), '') FROM work_tracks wt WHERE wt.track_id = t.id) || '|' ||
+		(SELECT COUNT(*) || ':' || COALESCE(MAX(aw.updated_at), '') FROM album_works aw WHERE aw.album_id = t.album_id)`
+
+// taggingBase 列出可打标的曲目（有可用音频文件）及其 source_stamp（见 taggingStampSQL）；
+// stamp 变化即需要重新检查（输入哈希不变时只更新 stamp，不调用模型）。
 // ready：声学分析开启时，需要已有声学特征（且该版本有回归模型时唤醒度已回填），或声学分析已永久失败；
 // 声学分析未开启时直接 ready（只用元数据和歌词）。参数：audioActive(0/1)。
 const taggingBase = `WITH base AS (
 	SELECT t.id AS track_id, t.added_at AS added_at,
-		t.updated_at || '|' || a.updated_at || '|' ||
-		COALESCE(f.analysis_version || ':' || f.file_fingerprint || ':' || COALESCE(printf('%.2f/%.2f', f.arousal, f.valence), '-'), 'noaudio') || '|' ||
-		(SELECT COUNT(*) || ':' || COALESCE(MAX(wt.created_at), '') FROM work_tracks wt WHERE wt.track_id = t.id) || '|' ||
-		(SELECT COUNT(*) || ':' || COALESCE(MAX(aw.updated_at), '') FROM album_works aw WHERE aw.album_id = t.album_id) AS stamp,
+		` + taggingStampSQL + ` AS stamp,
 		CASE WHEN ? = 0
 			OR (f.track_id IS NOT NULL AND NOT (f.arousal IS NULL AND EXISTS (SELECT 1 FROM audio_av_models m WHERE m.analysis_version = f.analysis_version AND m.active = 1)))
 			OR EXISTS (SELECT 1 FROM audio_analysis_failures x WHERE x.track_id = t.id AND x.permanent = 1)
@@ -227,10 +246,9 @@ func (s *Store) TaggingTrackInfo(ctx context.Context, trackID int64) (TaggingTra
 	var genres string
 	var year sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT t.id, a.id, COALESCE(t.user_title, t.title), `+trackArtistSQL+`, COALESCE(a.user_title, a.title),
-		COALESCE(a.user_performed_by, a.performed_by, (SELECT GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ') FROM album_artists aa JOIN artists ar ON ar.id = aa.artist_id WHERE aa.album_id = a.id), ''),
+		`+taggingAlbumArtistSQL+`,
 		COALESCE(a.user_release_year, a.release_year), COALESCE(t.duration_ms, 0), `+effectiveTrackTypeSQL+`,
-		COALESCE((SELECT GROUP_CONCAT(gx.name, ',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id = ox.genre_id WHERE ox.track_id = t.id),
-			(SELECT GROUP_CONCAT(gx.name, ',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id = rx.genre_id WHERE rx.track_id = t.id), ''),
+		`+taggingGenresSQL+`,
 		COALESCE(t.user_composer, t.composer, ''), COALESCE(t.lyricist, ''), COALESCE(t.arranger, ''), COALESCE(t.lyrics, ''),
 		(SELECT COUNT(*) FROM tracks t2 WHERE t2.album_id = a.id)
 		FROM tracks t JOIN albums a ON a.id = t.album_id WHERE t.id = ?`, trackID).
@@ -860,4 +878,27 @@ func FormatTokenCount(n int64) string {
 		return strconv.FormatFloat(float64(n)/10000, 'f', 1, 64) + " 万"
 	}
 	return strconv.FormatInt(n, 10)
+}
+
+// ---------------------------------------------------------------- stamp upgrade
+
+// legacyTaggingStampV1SQL 是迁移 055 之前的 stamp（基于 tracks/albums.updated_at）。仅用于一次性换算。
+const legacyTaggingStampV1SQL = `t.updated_at || '|' || a.updated_at || '|' ||
+		COALESCE(f.analysis_version || ':' || f.file_fingerprint || ':' || COALESCE(printf('%.2f/%.2f', f.arousal, f.valence), '-'), 'noaudio') || '|' ||
+		(SELECT COUNT(*) || ':' || COALESCE(MAX(wt.created_at), '') FROM work_tracks wt WHERE wt.track_id = t.id) || '|' ||
+		(SELECT COUNT(*) || ':' || COALESCE(MAX(aw.updated_at), '') FROM album_works aw WHERE aw.album_id = t.album_id)`
+
+// upgradeTaggingStampsV2 把仍与旧 stamp 一致（即打标结果为最新）的记录换算为新 stamp，避免更换 stamp
+// 公式后全库重新排队；旧 stamp 已过期的记录保持不变，照常重新检查。
+func upgradeTaggingStampsV2(ctx context.Context, tx *sql.Tx) error {
+	for _, table := range []string{"track_tag_meta", "ai_tagging_failures"} {
+		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET source_stamp = s.new_stamp FROM (
+			SELECT t.id AS track_id, `+legacyTaggingStampV1SQL+` AS old_stamp, `+taggingStampSQL+` AS new_stamp
+			FROM `+table+` x JOIN tracks t ON t.id = x.track_id JOIN albums a ON a.id = t.album_id
+			LEFT JOIN track_audio_features f ON f.track_id = t.id) s
+			WHERE s.track_id = `+table+`.track_id AND s.old_stamp = `+table+`.source_stamp AND s.new_stamp IS NOT NULL`); err != nil {
+			return fmt.Errorf("upgrade %s stamps: %w", table, err)
+		}
+	}
+	return nil
 }

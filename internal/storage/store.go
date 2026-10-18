@@ -232,6 +232,12 @@ func (s *Store) applyMigration(ctx context.Context, conn *sql.Conn, version int,
 		transaction.Rollback()
 		return fmt.Errorf("apply migration %d: %w", version, err)
 	}
+	if step := migrationGoSteps[version]; step != nil {
+		if err := step(ctx, transaction); err != nil {
+			transaction.Rollback()
+			return fmt.Errorf("apply migration %d: %w", version, err)
+		}
+	}
 	if _, err := transaction.ExecContext(ctx,
 		"INSERT INTO schema_migrations(version, name) VALUES (?, ?)", version, name,
 	); err != nil {
@@ -242,6 +248,11 @@ func (s *Store) applyMigration(ctx context.Context, conn *sql.Conn, version int,
 		return fmt.Errorf("commit migration %d: %w", version, err)
 	}
 	return nil
+}
+
+// migrationGoSteps 是需要复用 Go 常量（SQL 片段）的迁移步骤，在同编号 SQL 脚本之后、同一事务内执行。
+var migrationGoSteps = map[int]func(context.Context, *sql.Tx) error{
+	55: upgradeTaggingStampsV2,
 }
 
 func columnExists(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
