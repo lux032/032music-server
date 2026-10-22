@@ -97,7 +97,9 @@ func TestTranslateFallsBackToJSONObject(t *testing.T) {
 		t.Fatalf("formats = %q, %q", chat.reqs[0].Format, chat.reqs[1].Format)
 	}
 
-	authErr := func(tagging.ChatRequest) (string, error) { return "", &tagging.LLMError{Kind: tagging.KindAuth, Status: 401, Message: "bad key"} }
+	authErr := func(tagging.ChatRequest) (string, error) {
+		return "", &tagging.LLMError{Kind: tagging.KindAuth, Status: 401, Message: "bad key"}
+	}
 	chat = &scriptedChat{replies: []func(tagging.ChatRequest) (string, error){authErr}}
 	if _, err := Translate(context.Background(), chat, "m", "", "en", []string{"a"}); err == nil || len(chat.reqs) != 1 {
 		t.Fatalf("auth errors must not be retried: %v %d", err, len(chat.reqs))

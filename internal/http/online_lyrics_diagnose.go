@@ -49,8 +49,8 @@ type lyricsDiagnosePageData struct {
 	// LocalPreview: the first local lines, to spot empty or wrong lyrics that hide online lyrics.
 	LocalPreview []string
 	LocalErr     string
-	Row       *storage.OnlineLyrics
-	RowStatus string
+	Row          *storage.OnlineLyrics
+	RowStatus    string
 	// Decision explains what GET /tracks/{id}/lyrics does for this track right now.
 	Decision string
 

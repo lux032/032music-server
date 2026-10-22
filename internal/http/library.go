@@ -29,40 +29,40 @@ type libraryPageData struct {
 	// OrderToggleURL flips it, ReshuffleURL draws a new random order.
 	Order, OrderToggleURL, ReshuffleURL string
 	// YearFrom/YearTo bound the album release year (albums page).
-	YearFrom, YearTo int
-	ArtistID, AlbumID                                    int64
-	Artists                                              []storage.Artist
-	Albums                                               []storage.Album
-	Tracks                                               []storage.Track
-	Genres                                               []string
-	Years                                                []int
+	YearFrom, YearTo  int
+	ArtistID, AlbumID int64
+	Artists           []storage.Artist
+	Albums            []storage.Album
+	Tracks            []storage.Track
+	Genres            []string
+	Years             []int
 	// YearFacets, when set, replaces Years in the album year filter with the
 	// years present in the current result set (plus their album counts).
-	YearFacets []storage.YearCount
-	AlbumDetail                                          *storage.Album
-	AlbumCapsules                                        []AlbumWorkCapsule
-	HiddenCapsuleCount                                   int
-	TrackTieups                                          map[int64][]TrackTieupView
-	InspectorWorks                                       []AlbumInspectorWork
-	AlbumLevelWorks                                      []storage.AlbumLevelWorkView
-	PendingAlbumCandidates                               int
-	PendingTrackCandidates                               int
-	PendingReviewTotal                                   int
-	PendingReviewTab                                     string
-	CanSearchBangumi                                     bool
-	BangumiSearchBlockReason                             string
-	Total                                                int64
-	TotalLabel                                           string
-	Page, PageCount, PageSize                            int
-	PrevURL, NextURL                                     string
-	Pages                                                []pageLink
-	SearchFields                                         []queryField
-	IndexLinks                                           []indexLink
-	KanaIndex                                            bool
-	AlbumCols                                            int
-	FocusGroups                                          []focusGroup
-	FocusCredits                                         []queryField
-	FilterTags                                           []filterTag
+	YearFacets                []storage.YearCount
+	AlbumDetail               *storage.Album
+	AlbumCapsules             []AlbumWorkCapsule
+	HiddenCapsuleCount        int
+	TrackTieups               map[int64][]TrackTieupView
+	InspectorWorks            []AlbumInspectorWork
+	AlbumLevelWorks           []storage.AlbumLevelWorkView
+	PendingAlbumCandidates    int
+	PendingTrackCandidates    int
+	PendingReviewTotal        int
+	PendingReviewTab          string
+	CanSearchBangumi          bool
+	BangumiSearchBlockReason  string
+	Total                     int64
+	TotalLabel                string
+	Page, PageCount, PageSize int
+	PrevURL, NextURL          string
+	Pages                     []pageLink
+	SearchFields              []queryField
+	IndexLinks                []indexLink
+	KanaIndex                 bool
+	AlbumCols                 int
+	FocusGroups               []focusGroup
+	FocusCredits              []queryField
+	FilterTags                []filterTag
 }
 
 type AlbumWorkCapsule struct {

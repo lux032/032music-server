@@ -6,10 +6,10 @@ import (
 )
 
 type SyncAlbum struct {
-	ID           int64  `json:"id"`
-	Title        string `json:"title"`
-	Artist       string `json:"artist"`
-	Year         int    `json:"year"`
+	ID     int64  `json:"id"`
+	Title  string `json:"title"`
+	Artist string `json:"artist"`
+	Year   int    `json:"year"`
 	// ReleaseDate 是生效发行日期（手动 > 标签日期 > 年份），分隔符统一为 '-'，
 	// 可能只有年份（"2004"）或年月；与网页端“发行日期”排序同源。
 	ReleaseDate  string `json:"releaseDate,omitempty"`
