@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/lux032/032music-server/internal/dailymixzone"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
 )
@@ -17,7 +18,7 @@ import (
 const GeneratorVersion = 4
 
 // Zone is the day boundary zone (UTC+8, like the home rotation).
-var Zone = time.FixedZone("UTC+8", 8*60*60)
+var Zone = dailymixzone.Zone
 
 // Day returns the recommendation day: the UTC+8 date, switching at the
 // pregeneration hour (before 05:00 you still get yesterday's mixes).

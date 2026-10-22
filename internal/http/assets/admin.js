@@ -9,7 +9,7 @@
 
   // ------------------------------------------------- sidebar admin group
   const GROUP_KEY = '032_admin_group';
-  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'series', 'enrichment', 'merges', 'settings', 'security'];
+  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'series', 'enrichment', 'merges', 'settings', 'security', 'backups'];
 
   function applyGroupState() {
     const group = document.getElementById('sidebar-admin-group');
@@ -658,4 +658,45 @@ document.addEventListener('click', (event) => {
   });
   document.addEventListener('032:pjax-applied', () => { tick(); });
   schedule();
+})();
+
+// 大文件快照必须走 fetch + CSRF 头，不能由服务器预解析 multipart 表单。
+document.addEventListener('submit', async (event) => {
+  const form = event.target.closest('[data-backup-upload]');
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button');
+  const status = form.querySelector('[data-backup-upload-status]');
+  button.disabled = true;
+  status.textContent = '正在上传并校验，请勿关闭页面…';
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST', body: new FormData(form),
+      headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(body);
+    location.assign(JSON.parse(body).location);
+  } catch (error) {
+    status.textContent = `上传失败：${error.message}`;
+    button.disabled = false;
+  }
+});
+
+// 等待优雅停机后轮询健康接口；无守护进程时页面保留手动启动提示。
+(() => {
+  function pollRestart() {
+    if (!document.querySelector('[data-backup-restarting]')) return;
+    setTimeout(async function check() {
+      try {
+        const response = await fetch('/api/v1/health', { cache: 'no-store' });
+        if (response.ok) { location.href = '/admin/backups'; return; }
+        if (response.status === 503 && (await response.text()).trim() === 'manual recovery required') { location.href = '/'; return; }
+      } catch (_) { /* 重启期间连接中断是预期行为。 */ }
+      setTimeout(check, 1500);
+    }, 3000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pollRestart);
+  else pollRestart();
+  document.addEventListener('032:pjax-applied', pollRestart);
 })();

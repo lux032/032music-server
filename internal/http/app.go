@@ -31,6 +31,8 @@ import (
 )
 
 type App struct {
+	backups        *storage.Backups
+	RequestRestart func()
 	// config keeps the raw environment values; effective (possibly
 	// admin-overridden) credentials are read from credentials.
 	config      config.Config
@@ -471,6 +473,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/login", a.handleLoginPage)
 	mux.HandleFunc("POST /admin/login", a.handleLogin)
 	mux.Handle("POST /admin/logout", a.requireAdmin(http.HandlerFunc(a.handleLogout)))
+	a.registerBackupRoutes(mux)
 	mux.Handle("GET /admin", a.requireAdmin(http.HandlerFunc(a.handleDashboard)))
 	mux.Handle("GET /admin/home", a.requireAdmin(http.HandlerFunc(a.handleHome)))
 	mux.Handle("GET /admin/home/spotlight/random", a.requireAdmin(http.HandlerFunc(a.handleHomeRandomSpotlight)))

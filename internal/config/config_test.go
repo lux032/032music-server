@@ -151,3 +151,12 @@ func TestLoadAnalyzerURL(t *testing.T) {
 		})
 	}
 }
+
+func TestBackupTimeValidation(t *testing.T) {
+	for _, v := range []string{"2:30", "24:00", "02:60", "not-time"} {
+		cfg := Config{BackupTime: v}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("accepted invalid backup time %q", v)
+		}
+	}
+}

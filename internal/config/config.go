@@ -15,23 +15,27 @@ import (
 )
 
 type Config struct {
-	ListenAddress      string
-	DataDirectory      string
-	DatabasePath       string
-	MusicDirectory     string
-	LibraryName        string
-	AdminUsername      string
-	AdminPassword      string
-	APIToken           string
-	MediaToken         string
-	CookieSecure       bool
-	LogLevel           string
-	FFmpegPath         string
-	TranscodeLiveMax   int
-	TranscodeCacheJobs int
-	TranscodeCacheMB   int
-	ThumbCacheMB       int
-	DevMode            bool
+	BackupEnabled                                            bool
+	BackupTime                                               string
+	BackupKeepDaily, BackupKeepPreupgrade, BackupUploadMaxMB int
+	BackupSkipPreupgrade                                     bool
+	ListenAddress                                            string
+	DataDirectory                                            string
+	DatabasePath                                             string
+	MusicDirectory                                           string
+	LibraryName                                              string
+	AdminUsername                                            string
+	AdminPassword                                            string
+	APIToken                                                 string
+	MediaToken                                               string
+	CookieSecure                                             bool
+	LogLevel                                                 string
+	FFmpegPath                                               string
+	TranscodeLiveMax                                         int
+	TranscodeCacheJobs                                       int
+	TranscodeCacheMB                                         int
+	ThumbCacheMB                                             int
+	DevMode                                                  bool
 	// MediaTokenGenerated is true when no MEDIA_TOKEN was configured and a
 	// random one was generated for this process. Media URLs change on every
 	// restart in that state; main should log a loud warning.
@@ -137,31 +141,37 @@ func Load() (Config, error) {
 	posterBackfill, posterBackfillWarning := posterBackfillFromEnv(os.Getenv("MUSIC_SERVER_WORK_POSTER_BACKFILL"))
 
 	cfg := Config{
-		ListenAddress:       envOrDefault("MUSIC_SERVER_ADDRESS", ":4533"),
-		DataDirectory:       dataDirectory,
-		DatabasePath:        envOrDefault("MUSIC_SERVER_DATABASE_PATH", filepath.Join(dataDirectory, "music.db")),
-		MusicDirectory:      envOrDefault("MUSIC_SERVER_MUSIC_DIR", "/music"),
-		LibraryName:         envOrDefault("MUSIC_SERVER_LIBRARY_NAME", "Music"),
-		AdminUsername:       envOrDefault("MUSIC_SERVER_ADMIN_USERNAME", "admin"),
-		AdminPassword:       os.Getenv("MUSIC_SERVER_ADMIN_PASSWORD"),
-		APIToken:            apiToken,
-		MediaToken:          mediaToken,
-		CookieSecure:        parseBool(os.Getenv("MUSIC_SERVER_COOKIE_SECURE")),
-		FFmpegPath:          os.Getenv("MUSIC_SERVER_FFMPEG_PATH"),
-		TranscodeLiveMax:    positiveEnv("MUSIC_SERVER_TRANSCODE_LIVE_MAX", 4),
-		TranscodeCacheJobs:  positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_JOBS", 2),
-		TranscodeCacheMB:    positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_MB", 4096),
-		ThumbCacheMB:        positiveEnv("MUSIC_SERVER_THUMB_CACHE_MB", 512),
-		LogLevel:            strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
-		DevMode:             devMode,
-		MediaTokenGenerated: mediaTokenGenerated,
-		ResetCredentials:    strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
-		TrustedProxies:      strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
-		CastBaseURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_CAST_BASE_URL")), "/"),
-		CastDevices:         splitList(os.Getenv("MUSIC_SERVER_CAST_DEVICES")),
-		CastSSDP:            !isOffValue(os.Getenv("MUSIC_SERVER_CAST_SSDP")),
-		AnalyzerURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_ANALYZER_URL")), "/"),
-		AnalyzerToken:       strings.TrimSpace(os.Getenv("MUSIC_SERVER_ANALYZER_TOKEN")),
+		BackupEnabled:        !isOffValue(os.Getenv("MUSIC_SERVER_BACKUP_ENABLED")),
+		BackupTime:           envOrDefault("MUSIC_SERVER_BACKUP_TIME", "02:30"),
+		BackupKeepDaily:      positiveEnv("MUSIC_SERVER_BACKUP_KEEP_DAILY", 3),
+		BackupKeepPreupgrade: positiveEnv("MUSIC_SERVER_BACKUP_KEEP_PREUPGRADE", 2),
+		BackupUploadMaxMB:    positiveEnv("MUSIC_SERVER_BACKUP_UPLOAD_MAX_MB", 2048),
+		BackupSkipPreupgrade: os.Getenv("MUSIC_SERVER_BACKUP_SKIP_PREUPGRADE") == "1",
+		ListenAddress:        envOrDefault("MUSIC_SERVER_ADDRESS", ":4533"),
+		DataDirectory:        dataDirectory,
+		DatabasePath:         envOrDefault("MUSIC_SERVER_DATABASE_PATH", filepath.Join(dataDirectory, "music.db")),
+		MusicDirectory:       envOrDefault("MUSIC_SERVER_MUSIC_DIR", "/music"),
+		LibraryName:          envOrDefault("MUSIC_SERVER_LIBRARY_NAME", "Music"),
+		AdminUsername:        envOrDefault("MUSIC_SERVER_ADMIN_USERNAME", "admin"),
+		AdminPassword:        os.Getenv("MUSIC_SERVER_ADMIN_PASSWORD"),
+		APIToken:             apiToken,
+		MediaToken:           mediaToken,
+		CookieSecure:         parseBool(os.Getenv("MUSIC_SERVER_COOKIE_SECURE")),
+		FFmpegPath:           os.Getenv("MUSIC_SERVER_FFMPEG_PATH"),
+		TranscodeLiveMax:     positiveEnv("MUSIC_SERVER_TRANSCODE_LIVE_MAX", 4),
+		TranscodeCacheJobs:   positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_JOBS", 2),
+		TranscodeCacheMB:     positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_MB", 4096),
+		ThumbCacheMB:         positiveEnv("MUSIC_SERVER_THUMB_CACHE_MB", 512),
+		LogLevel:             strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
+		DevMode:              devMode,
+		MediaTokenGenerated:  mediaTokenGenerated,
+		ResetCredentials:     strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
+		TrustedProxies:       strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
+		CastBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_CAST_BASE_URL")), "/"),
+		CastDevices:          splitList(os.Getenv("MUSIC_SERVER_CAST_DEVICES")),
+		CastSSDP:             !isOffValue(os.Getenv("MUSIC_SERVER_CAST_SSDP")),
+		AnalyzerURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_ANALYZER_URL")), "/"),
+		AnalyzerToken:        strings.TrimSpace(os.Getenv("MUSIC_SERVER_ANALYZER_TOKEN")),
 	}
 
 	cfg.WorkPosterBackfill = posterBackfill
@@ -193,6 +203,14 @@ func Load() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.BackupTime != "" {
+		if _, err := time.Parse("15:04", c.BackupTime); err != nil || len(c.BackupTime) != 5 {
+			return fmt.Errorf("MUSIC_SERVER_BACKUP_TIME must be HH:MM")
+		}
+	}
+	if c.BackupKeepDaily > 365 || c.BackupKeepPreupgrade > 365 {
+		return fmt.Errorf("backup retention must not exceed 365")
+	}
 	var problems []string
 	if strings.TrimSpace(c.ListenAddress) == "" {
 		problems = append(problems, "MUSIC_SERVER_ADDRESS must not be empty")

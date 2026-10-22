@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,9 +25,13 @@ import (
 )
 
 var version = "dev"
+var errRestart = errors.New("restart requested")
 
 func main() {
 	if err := run(); err != nil {
+		if exitCode(err) == 75 {
+			os.Exit(exitCode(err))
+		}
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
@@ -47,15 +52,17 @@ func run() error {
 	if cfg.DevMode {
 		logger.Warn("MUSIC_SERVER_DEV_MODE is enabled: weak admin passwords are allowed and the media token may fall back to the API token; do not use in production")
 	}
-	db, err := storage.Open(cfg.DatabasePath)
+	backups := storage.NewBackups(cfg.DatabasePath, cfg.DataDirectory, cfg.MusicDirectory)
+	ctx, stopStartup := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopStartup()
+	db, err := openStartupDatabase(ctx, cfg, backups, logger)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-
-	if err := db.Migrate(context.Background()); err != nil {
-		return err
+	if db == nil {
+		return runRecoveryMode(ctx, cfg, backups, logger)
 	}
+	defer db.Close()
 
 	if err := db.EnsureLibrary(context.Background(), cfg.LibraryName, cfg.MusicDirectory); err != nil {
 		return err
@@ -70,6 +77,7 @@ func run() error {
 	defer rootCancel()
 
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
+	scannerManager.ProtectRestoreScan(backups.ScanProtectionPath())
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
 	// 重启前处于限流等待的任务：恢复倒计时，到点自动继续；人工暂停与存储
 	// 错误的任务不会被扫描拾起，仍需在管理页手动处理。
@@ -86,6 +94,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	restartCh := make(chan struct{}, 1)
+	app.RequestRestart = func() {
+		select {
+		case restartCh <- struct{}{}:
+		default:
+		}
+	}
+	app.SetBackups(backups)
+	backups.Start(rootCtx, app.BackupSettings)
 	// L2: collect custom-image orphans at startup and after every completed
 	// scan (merges and cascading deletes leave no other trigger).
 	go app.GCCustomImages(rootCtx)
@@ -190,11 +207,15 @@ func run() error {
 	}()
 
 	var serveErr error
+	restarting := false
 	select {
 	case serveErr = <-serverError:
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil
 		}
+	case <-restartCh:
+		restarting = true
+		logger.Info("restore restart requested")
 	case <-shutdownContext.Done():
 		logger.Info("shutdown requested")
 	}
@@ -219,6 +240,7 @@ func run() error {
 		analysisService.Wait()
 		taggingService.Wait()
 		dailyMixService.Wait()
+		backups.Wait()
 		app.WaitTranscodes()
 		app.WaitBackgroundLyrics()
 		close(workersDone)
@@ -232,6 +254,9 @@ func run() error {
 
 	if serveErr != nil {
 		return serveErr
+	}
+	if restarting && shutdownErr == nil {
+		return errRestart
 	}
 	return shutdownErr
 }
@@ -248,4 +273,85 @@ func newLogger(levelName string) *slog.Logger {
 	}
 
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+}
+
+// openStartupDatabase 在任何数据库连接之前检测人工恢复隔离标志。
+func openStartupDatabase(ctx context.Context, cfg config.Config, backups *storage.Backups, logger *slog.Logger) (*storage.Store, error) {
+	if _, e := backups.ManualRecovery(); e == nil {
+		return nil, nil
+	} else if !os.IsNotExist(e) {
+		return nil, e
+	}
+	if e := backups.Initialize(); e != nil {
+		return nil, e
+	}
+	restored, err := backups.PrepareRestore(ctx)
+	if _, e := backups.ManualRecovery(); e == nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	db, err := storage.Open(cfg.DatabasePath)
+	if err != nil {
+		return nil, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			db.Close()
+		}
+	}()
+	if !restored && !cfg.BackupSkipPreupgrade {
+		pending, e := db.PendingMigrations(context.Background())
+		if e != nil {
+			return nil, e
+		}
+		if pending > 0 {
+			settings, e := db.BackupSettings(context.Background(), storage.BackupSettings{Enabled: cfg.BackupEnabled, Time: cfg.BackupTime, KeepDaily: cfg.BackupKeepDaily, KeepPreupgrade: cfg.BackupKeepPreupgrade})
+			if e != nil {
+				return nil, e
+			}
+			if _, e = backups.Create(context.Background(), "preupgrade", settings.KeepPreupgrade); e != nil {
+				return nil, fmt.Errorf("升级前快照失败，拒绝迁移；检查磁盘/权限，或设置 MUSIC_SERVER_BACKUP_SKIP_PREUPGRADE=1 跳过: %w", e)
+			}
+		}
+	}
+	migrationErr := db.Migrate(context.Background())
+	if migrationErr == nil && restored {
+		migrationErr = backups.CompleteRestore(context.Background(), db)
+	}
+	if migrationErr != nil {
+		if !restored {
+			return nil, migrationErr
+		}
+		_ = db.Close()
+		if e := backups.RollbackRestore(context.Background(), migrationErr); e != nil {
+			logger.Error("自动回滚失败，停止数据库写入，需离线恢复 prerestore；详见安全隔离页", "error", e)
+			if _, markerErr := backups.ManualRecovery(); markerErr == nil {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("无法持久化安全隔离标志，请停止守护进程并离线恢复: %w", e)
+		}
+		logger.Error("恢复失败，已自动回滚", "error", migrationErr)
+		db, err = storage.Open(cfg.DatabasePath)
+		if err != nil {
+			return nil, err
+		}
+		if err = db.Migrate(context.Background()); err != nil {
+			return nil, err
+		}
+	}
+
+	ok = true
+	return db, nil
+}
+func exitCode(err error) int {
+	if errors.Is(err, errRestart) {
+		return 75
+	}
+	if err != nil {
+		return 1
+	}
+	return 0
 }

@@ -172,6 +172,9 @@ func securityRedirect(w http.ResponseWriter, r *http.Request, code string) {
 // caller must save with it as "expected" so a concurrent change made in
 // between is refused. When it returns false the response has been written.
 func (a *App) beginSensitiveOperation(w http.ResponseWriter, r *http.Request, operation string) (*credentials, bool) {
+	return a.beginSensitiveOperationAt(w, r, operation, securityPagePath)
+}
+func (a *App) beginSensitiveOperationAt(w http.ResponseWriter, r *http.Request, operation, target string) (*credentials, bool) {
 	setNoStore(w)
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -180,24 +183,24 @@ func (a *App) beginSensitiveOperation(w http.ResponseWriter, r *http.Request, op
 	creds := a.currentCredentials()
 	if locked, _ := a.loginLimiter.lockedFor(r, creds.username); locked {
 		a.logger.Warn("sensitive admin operation while locked out", "operation", operation, "session", sessionLogID(r), "remoteAddr", r.RemoteAddr)
-		securityRedirect(w, r, "locked")
+		redirectWithNotice(w, r, target, "locked")
 		return nil, false
 	}
 	ok, err := a.checkAdminPassword(r, creds, r.PostFormValue("current_password"))
 	if errors.Is(err, errPasswordBusy) {
-		securityRedirect(w, r, "busy")
+		redirectWithNotice(w, r, target, "busy")
 		return nil, false
 	}
 	if err != nil {
 		a.logger.Error("verify admin password", "operation", operation, "error", err)
-		securityRedirect(w, r, "verify_failed")
+		redirectWithNotice(w, r, target, "verify_failed")
 		return nil, false
 	}
 	if !ok {
 		a.loginLimiter.recordFailureFor(r, creds.username)
 		time.Sleep(loginFailureDelay)
 		a.logger.Warn("sensitive admin operation rejected: wrong current password", "operation", operation, "session", sessionLogID(r), "remoteAddr", r.RemoteAddr)
-		securityRedirect(w, r, "wrong_password")
+		redirectWithNotice(w, r, target, "wrong_password")
 		return nil, false
 	}
 	a.loginLimiter.recordSuccessFor(r, creds.username)

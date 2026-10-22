@@ -212,7 +212,7 @@ func (a *App) removeUnreferenced(ctx context.Context, names []string) {
 	if len(names) == 0 {
 		return
 	}
-	refs, err := a.store.CustomImageFiles(ctx)
+	refs, err := a.customImageReferences(ctx)
 	if err != nil {
 		a.logger.Warn("custom image reference check failed", "error", err)
 		return
@@ -237,7 +237,7 @@ func (a *App) gcCustomImages(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	refs, err := a.store.CustomImageFiles(ctx)
+	refs, err := a.customImageReferences(ctx)
 	if err != nil {
 		a.logger.Warn("custom image GC reference check failed", "error", err)
 		return

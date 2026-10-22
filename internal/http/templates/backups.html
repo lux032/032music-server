@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>{{template "head" .}}<title>数据库备份与恢复 · 032</title></head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+{{template "sidebar" .}}{{template "nowplaying" .}}
+<main id="app-main" class="browser-main identity-main security-main">
+<header class="browser-header"><div><h1>数据库备份与恢复</h1><p class="result-count">一致数据库快照 · UTC+8 · 异地同步由 QNAP 负责。快照包含凭据，请妥善保管。</p></div></header>
+{{with .Notice}}<p class="form-error" role="alert">{{.}}</p>{{end}}
+{{if .Restarting}}
+<section class="source-card"><h2>正在重启</h2><p>恢复将在启动时生效；当前账号凭据和会话将被保留。若没有进程守护自动重启，请手动启动服务器。</p><div data-backup-restarting></div></section>
+{{else}}
+<section class="source-card security-card"><h2>上次状态</h2>{{if .Status.Time.IsZero}}<p>尚无备份记录</p>{{else}}<p>{{.Status.Time}} · {{if .Status.Success}}备份成功{{else}}备份失败：{{.Status.Error}}{{end}}</p>{{end}}
+{{if .Result.State}}<p role="status">恢复结果：{{if .Result.Success}}成功{{else}}失败，已保留或回滚原数据库：{{.Result.Error}}{{end}} · {{.Result.Time}}</p>{{end}}</section>
+{{if .Validation}}
+<section class="source-card security-card"><h2>确认恢复</h2><p>快照版本：{{.Validation.Version}}。数据库将被替换，恢复前自动生成安全快照。</p>
+{{if .Validation.RootMismatch}}<p class="form-error">警告：快照曲库目录与当前音乐目录不一致，自动扫描可能建立另一曲库。快照目录：{{range .Validation.LibraryRoots}}{{.}} {{end}}</p>{{end}}
+{{if .Validation.MissingImages}}<p class="form-error">警告：引用但缺失的自定义图片数：{{.Validation.MissingImages}}。数据库快照不包含图片文件。</p>{{end}}
+<form method="post" action="/admin/backups/confirm" data-no-pjax><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="stage" value="{{.Stage}}"><label>再次输入当前管理员密码 <input type="password" name="current_password" required autocomplete="current-password"></label><button class="danger-button">确认恢复并重启</button></form>
+<form method="post" action="/admin/backups/cancel"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="stage" value="{{.Stage}}"><button class="secondary-button">取消（删除暂存文件）</button></form>
+</section>
+{{end}}
+<section class="source-card security-card"><h2>每日备份设置 · UTC+8</h2>
+<form method="post" action="/admin/backups/settings"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><label><input type="checkbox" name="enabled" value="1" {{if .Settings.Enabled}}checked{{end}}>启用每日快照</label><label>每日时间 <input type="time" name="time" value="{{.Settings.Time}}" required></label><label>daily 保留份数 <input type="number" min="1" max="365" name="keep_daily" value="{{.Settings.KeepDaily}}" required></label><label>preupgrade 保留份数 <input type="number" min="1" max="365" name="keep_preupgrade" value="{{.Settings.KeepPreupgrade}}" required></label><button>保存</button><button class="secondary-button" name="reset" value="1">恢复环境变量默认</button></form>
+<p>每日最多一份，启动时补跑；手动快照不自动删除；恢复前快照保留两份。</p>
+<form method="post" action="/admin/backups/create"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button>立即备份</button></form></section>
+<section class="source-card security-card"><h2>上传快照恢复</h2><p>先暂存并校验，确认后才会恢复；仅上传不会在重启时生效。</p><form data-backup-upload action="/admin/backups/upload" method="post" enctype="multipart/form-data"><label>SQLite 快照 <input type="file" name="snapshot" accept=".db" required></label><button>上传并校验</button><p data-backup-upload-status role="status"></p></form></section>
+<section class="source-card security-card"><h2>本地快照</h2>{{range .Files}}<article><h3>{{.Name}}</h3><p>{{.Size}} 字节 · {{.Modified}}</p>
+<form method="post" action="/admin/backups/download" data-no-pjax><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="name" value="{{.Name}}"><label>管理员密码 <input type="password" name="current_password" required autocomplete="current-password"></label><button class="secondary-button">下载</button></form>
+<form method="post" action="/admin/backups/select"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="name" value="{{.Name}}"><button class="secondary-button">选择此快照恢复</button></form>
+<details><summary>删除快照…</summary><form method="post" action="/admin/backups/delete"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="name" value="{{.Name}}"><button class="danger-button">确认删除</button></form></details></article>{{else}}<p>暂无快照</p>{{end}}</section>
+{{end}}
+</main></body></html>

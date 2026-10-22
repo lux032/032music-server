@@ -59,3 +59,19 @@
 密码覆盖值使用 PBKDF2-SHA256（600000 次迭代）存储，API Token 覆盖值保存 SHA-256 哈希；媒体 Token 以明文保存，方便在验证密码后查看。修改用户名或密码会让其他会话退出登录；轮换 Token 后，使用旧值的新请求会立即失效，但不会中断已经授权的音频流。
 
 **忘记了在管理页改过的密码**：临时给服务传入 `MUSIC_SERVER_RESET_CREDENTIALS=password`（Compose 需要先把它加进 `environment`），然后重新创建并启动服务，用户名和密码就会恢复为环境变量中的值。恢复后移除这个变量，并再次重建容器。也可以用 `tokens` 或 `all`。在安全页输入的 Token 至少 24 个字符，只能包含字母、数字和 `-`、`_`、`.`、`~`。
+
+## 数据库快照
+
+管理页设置优先于环境变量；“恢复环境变量默认”删除单行覆盖。时间固定 UTC+8，不使用 TZ。
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `MUSIC_SERVER_BACKUP_ENABLED` | `true` | 每日快照开关 |
+| `MUSIC_SERVER_BACKUP_TIME` | `02:30` | HH:MM，启动时补跑，每日最多一份 |
+| `MUSIC_SERVER_BACKUP_KEEP_DAILY` | `3` | daily 保留 1–365 份 |
+| `MUSIC_SERVER_BACKUP_KEEP_PREUPGRADE` | `2` | preupgrade 保留 1–365 份 |
+| `MUSIC_SERVER_BACKUP_UPLOAD_MAX_MB` | `2048` | 上传请求上限（MiB） |
+| `MUSIC_SERVER_BACKUP_SKIP_PREUPGRADE` | `0` | 仅值 `1` 跳过升级前快照，失败默认拒绝启动 |
+
+manual 不自动删；prerestore 保留两份。数据库以外的图片和 .env 需另行同步。
+详见 [备份与升级](deployment.md#备份与升级)。

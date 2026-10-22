@@ -98,12 +98,17 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
-func (s *Store) Migrate(ctx context.Context) error {
+func (s *Store) Migrate(ctx context.Context) error { return s.MigrateUpTo(ctx, 0) }
+
+// MigrateUpTo 仅重放至指定版本；0 表示完整迁移。
+func (s *Store) MigrateUpTo(ctx context.Context, upTo int) error {
 	// Test binaries only (see EnableMigrationTemplate): a brand-new, empty
 	// database is initialised by copying a database migrated once per
 	// process. The loop below then finds every migration applied.
-	if err := s.restoreMigrationTemplate(ctx); err != nil {
-		return err
+	if upTo == 0 {
+		if err := s.restoreMigrationTemplate(ctx); err != nil {
+			return err
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -134,6 +139,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("parse migration version from %q: %w", entry.Name(), err)
 		}
 
+		if upTo > 0 && version > upTo {
+			continue
+		}
 		var alreadyApplied bool
 		if err := s.db.QueryRowContext(ctx,
 			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)", version,
@@ -168,6 +176,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 
+	if upTo > 0 {
+		return nil
+	}
 	// D-9/D62: SQL migrations cannot remove NUL bytes from TEXT values, so
 	// the control-character cleanup of tag-derived album fields runs here in
 	// Go. It is idempotent: once no row matches the dirty predicate this is a

@@ -84,9 +84,9 @@ docker compose logs -f music-server     # 查看日志，Ctrl+C 退出
 | 停止 / 启动 | `docker compose stop` / `docker compose start` |
 | 修改 `.env` 后生效 | `docker compose up -d`（`restart` **不会**读取新配置） |
 | 升级到最新版 | `git pull --ff-only && docker compose up -d --build` |
-| 备份 | 停止服务后备份 `.env` 和整个 `data` 目录 |
+| 备份 | 管理 → 数据库备份与恢复生成快照；QNAP 同步 `data/backups/`，另备份 `.env` 和自定义图片 |
 
-升级时会自动迁移数据库，**升级前请先备份**，旧版本不一定能读取升级后的数据库。详见 [备份与升级](docs/deployment.md#备份与升级)。
+升级时会在待迁移前自动生成一致快照（失败拒绝启动），**仍请妥善保存异地备份**，旧版本不一定能读取升级后的数据库。详见 [备份与升级](docs/deployment.md#备份与升级)。
 
 ## 按需配置
 

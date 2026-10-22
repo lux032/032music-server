@@ -34,19 +34,20 @@ const scanProgressFlushEvery = 100
 const missingGuardRatio = 0.5
 
 type Manager struct {
-	baseCtx          context.Context
-	store            *storage.Store
-	logger           *slog.Logger
-	library          storage.Library
-	artworkDirectory string
-	mu               sync.Mutex
-	running          bool
-	onComplete       func()
-	readMetadata     func(string) (metadata.AudioMetadata, error)
-	probeAudio       func(string, string) metadata.AudioProps
-	updateAudioProbe func(context.Context, int64, string, metadata.AudioProps, bool) error
-	purgePolicy      func(context.Context) string
-	wg               sync.WaitGroup
+	baseCtx               context.Context
+	store                 *storage.Store
+	logger                *slog.Logger
+	library               storage.Library
+	artworkDirectory      string
+	mu                    sync.Mutex
+	running               bool
+	onComplete            func()
+	readMetadata          func(string) (metadata.AudioMetadata, error)
+	probeAudio            func(string, string) metadata.AudioProps
+	updateAudioProbe      func(context.Context, int64, string, metadata.AudioProps, bool) error
+	purgePolicy           func(context.Context) string
+	restoreScanProtection string
+	wg                    sync.WaitGroup
 }
 
 // SetPurgeMissingPolicy 设置缺失文件清理策略的来源（管理页覆盖优先，否则取
@@ -58,11 +59,29 @@ func (m *Manager) SetPurgeMissingPolicy(policy func(context.Context) string) {
 	m.mu.Unlock()
 }
 
+// ProtectRestoreScan 直到一次完整扫描抵达清理阶段前保持恢复保护。
+func (m *Manager) ProtectRestoreScan(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.restoreScanProtection = path
+}
+
 // shouldPurge 判断本次扫描结束后是否永久删除缺失条目。
 func (m *Manager) shouldPurge(ctx context.Context, scanType string) bool {
 	m.mu.Lock()
 	policy := m.purgePolicy
+	protection := m.restoreScanProtection
 	m.mu.Unlock()
+	if protection != "" {
+		if _, err := os.Stat(protection); err == nil {
+			if err = os.Remove(protection); err != nil {
+				m.logger.Warn("restore scan protection removal failed", "error", err)
+			}
+			return false
+		} else if !os.IsNotExist(err) {
+			return false
+		}
+	}
 	if policy == nil {
 		return false
 	}

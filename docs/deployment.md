@@ -104,16 +104,21 @@ docker compose --profile analysis up -d --build
 
 ## 备份与升级
 
-需要备份 `.env` 和**整个数据目录**，不要只备份 `music.db`。数据库里有凭据覆盖值和外部服务密钥，备份文件也要妥善保管。SQLite 使用 WAL 模式，运行期间单独复制数据库可能漏掉最近的写入，最简单的一致性备份方法是先停止服务：
+管理 → **数据库备份与恢复** 可立即备份、下载、删除、选择本地快照或上传恢复。
+应用用 `VACUUM INTO` 生成包含 WAL 中已提交数据的一致快照，不需要停服。
+快照位于 `data/backups/`，文件名为 `music-<kind>-<时间>-v<版本>.db`；状态在 `status.json`，不随恢复倒退。
+默认每日 02:30 **UTC+8**，daily 保留 3 份、preupgrade 保留 2 份，可在管理页覆盖；manual 不自动删除，prerestore 保留 2 份。
 
-```sh
-docker compose stop
-# 备份 .env 和实际配置的 MUSIC_SERVER_DATA_PATH，以默认的 ./data 为例：
-tar -czf music-server-backup.tar.gz .env data
-docker compose start
-```
+**快照仅含数据库，不含自定义图片、音乐和 .env**。请额外备份 `.env` 和数据目录中的 `custom-images/` 等不可再生文件。
+快照包含登录凭据、会话和外部服务密钥，应限制同步目标权限。下载、确认恢复均需再次输入管理员密码。
 
-升级前先按上面的方法停服备份，然后执行：
+### QNAP 异地同步
+
+应用只生成快照，异地同步由 QNAP HBS 等负责。同步 `data/backups/` 并**排除 `backups/.staging/`**；
+同时同步 `custom-images/` 和需要保留的其他数据。可排除可再生的 `transcode-cache/`、`thumbs/`。
+不要在运行时直接复制 `music.db` 当作一致备份，WAL 里可能还有最近提交的数据。
+
+### 升级与在线恢复
 
 ```sh
 git pull --ff-only
@@ -121,7 +126,32 @@ docker compose up -d --build
 docker compose logs --tail=100 music-server
 ```
 
-新版本启动时会自动迁移数据库。不要假设旧版程序能读取升级后的数据库，如果要回退版本，请恢复升级前的备份。服务不会修改、移动或删除音乐文件（`MUSIC_SERVER_PURGE_MISSING` 只清理数据库中已缺失文件的记录）。更换曲库根目录可能影响索引，升级时尽量保持挂载路径不变。
+存在待执行 SQL 迁移时，程序会先生成 preupgrade 快照；失败则拒绝启动并写明原因。
+优先解决磁盘空间或权限问题。紧急情况下可设置 `MUSIC_SERVER_BACKUP_SKIP_PREUPGRADE=1` 跳过，完成后删除此设置。
+空库、刚执行恢复的启动不生成升级前快照。旧程序不一定能读取新数据库，回退时应同时恢复对应版本快照。
+
+导入先暂存并校验，页面提示曲库根目录差异和缺失图片。**只有确认才会安排恢复**，可取消暂存。
+确认后服务优雅退出（退出码 75），Docker `unless-stopped` / systemd `Restart=on-failure` 自动拉起；
+原生无守护进程时需手动启动。恢复保留当前凭据、会话和第三方密钥；首次扫描禁止永久清理，后续扫描恢复配置策略。
+迁移或凭据保留失败会自动复制 prerestore 快照回滚，管理页显示失败原因。
+
+### 离线手动恢复
+
+1. 停止服务，确认进程已退出。另存当前数据库及其 `-wal` / `-shm`，以便排查。
+2. 选择已经完整同步的 `music-*.db` 快照，核实版本与程序兼容。
+3. **先删除目标数据库旁的 `music.db-wal` 和 `music.db-shm`，再替换 `music.db`**。
+   旧 WAL 与新库共存会把旧数据悄悄重放到新库，即使 integrity_check 正常也不安全！
+   若配置了 `MUSIC_SERVER_DATABASE_PATH`，以上路径和 sidecar 名称均按实际路径替换。
+4. 调整数据库所有者/权限（建议 0600），恢复相应自定义图片，启动并检查日志及曲库。
+
+离线直接替换不会保留当前凭据，也不带在线恢复的首次扫描保护；必要时先设 `MUSIC_SERVER_PURGE_MISSING=never`，
+并确认管理页覆盖策略同样关闭。服务从不修改、移动或删除音乐文件，根目录尽量保持不变。
+
+### 反向代理上传限制
+
+上传默认上限 2048 MiB，可设 `MUSIC_SERVER_BACKUP_UPLOAD_MAX_MB`。请求读期限放宽为 30 分钟；
+Nginx 等代理还需配置相应的 `client_max_body_size 2048m;`、`proxy_read_timeout 1800s;` 和 `client_body_timeout 1800s;`，
+并注意代理自身的请求缓冲与临时目录空间。
 
 ## 常见问题
 
@@ -138,3 +168,31 @@ docker compose logs --tail=100 music-server
 | 某种格式在浏览器里放不了 | 播放原文件受浏览器解码能力限制，可以换兼容的客户端或使用转码接口。 |
 | 在线增强因限流停止 | 等一段时间后再重跑，不要通过缩短请求间隔来绕过上游限制。 |
 | 忘记管理员密码 | 见 [配置参考 → 恢复凭据](configuration.md#管理页修改与恢复凭据)。 |
+
+### 自动回滚失败时的人工逃生
+
+恢复前快照失败会取消本次恢复，原库保持不变，管理页显示失败。若换库后的自动回滚本身失败，
+程序创建数据库同目录的 `restore-manual-recovery.json`（时间、阶段、错误摘要、prerestore 文件名），
+进入安全隔离：不打开数据库，不扫描、不调度、不执行任何后台写入；health 返回 503，页面只显示恢复指引。
+进程保持运行，避免容器无限重启；仍可正常 SIGTERM 停止。
+
+1. 停止服务，保留故障数据库、sidecar 和状态文件的离线副本以便排查。
+2. 按隔离页指定的 `music-prerestore-*.db`，从 `backups/` 复制（不要移动）到临时文件。
+3. **先删除目标数据库旁的 `-wal`、`-shm`、`-journal`，再用临时文件替换目标数据库**。
+4. 还原成功后删除数据库同目录的 `restore-state.json`、`restore-pending.db`、`restore-manual-recovery.json`。
+5. 检查权限后启动。不要只删隔离标志就启动故障库。数据库路径按 `MUSIC_SERVER_DATABASE_PATH` 为准。
+
+上传中的文件尚未校验，不属于可信的图片引用集合；在上传完成并生成 staging 前，GC 可能回收仅被上传库引用的旧图片。
+确认页会报告缺失数，必要时先从 QNAP 还原 `custom-images/`。上传完成的 staging/pending 均参与 GC 保护。
+
+如需在升级前检查长期运行实例的数据库副本，可对离线副本运行：
+`CGO_ENABLED=0 go run ./scripts/backupcheck -music-dir /music -images-dir ./data/custom-images /path/to/snapshot.db`。
+工具只读取输入文件，在独立临时副本上校验并打印 JSON；不要以运行中的数据库三件套复制代替一致快照。
+普通表/索引按 PRAGMA 结构及保守 DDL token 比较，兼容空白、大小写与简单标识符引号差异；
+CHECK、生成列、排序规则、STRICT/WITHOUT ROWID、索引表达式仍参与 DDL 比较。带注释或复杂引用的 DDL 保持逐字比较，
+触发器、视图及虚拟表也保持严格比较，无法证明等价时安全拒绝。
+
+安全隔离页按失败阶段显示摘要：`rollback` 为「自动回滚失败」；`prepare` / `reject` 为
+「恢复状态无法判定或无法安全取消」。两种情况都应遵循上述离线恢复步骤，不要仅删除隔离标志继续运行。
+DDL 兼容比较只按 SQLite 的 ASCII 空白与 ASCII 大小写规则处理，所有高位字节原样保留；
+引号名称只有在参考表中真实存在且不是 SQLite 关键字时才与裸标识符等价，避免双引号字符串回退改变 CHECK/WHERE 语义。
