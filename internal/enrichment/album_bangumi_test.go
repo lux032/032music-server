@@ -61,7 +61,7 @@ func TestRVM1RecheckForcesSearchAndSubjectCacheRefresh(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	m := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	m := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	m.phaseEndpoints.BangumiAPI = server.URL
 	m.client = server.Client()
 	m.bangumiInterval = 0
@@ -137,7 +137,7 @@ func TestB1H1AmoreAlbumAutomaticallyConfirmsOnlyOP(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	manager := New(ctx, db, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, db, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.bangumiInterval = 0
 	manager.client = server.Client()
@@ -323,7 +323,7 @@ func TestF1H6BusyAlbumsDoNotTripConsecutiveFailureCircuit(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := New(ctx, store, logger, t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, logger, t.TempDir())
 	manager.client = server.Client()
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.bangumiInterval = 0

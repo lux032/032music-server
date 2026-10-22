@@ -51,7 +51,7 @@ func seriesFixtureServer(t *testing.T, fail map[int64]bool) *httptest.Server {
 
 func newSeriesManager(t *testing.T, server *httptest.Server) (*Manager, *storage.Store) {
 	t.Helper()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	dbPath := filepath.Join(t.TempDir(), "series.db")
 	store, err := storage.Open(dbPath)
 	if err != nil {
@@ -65,7 +65,8 @@ func newSeriesManager(t *testing.T, server *httptest.Server) (*Manager, *storage
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.client = server.Client()
 	manager.bangumiInterval = 0

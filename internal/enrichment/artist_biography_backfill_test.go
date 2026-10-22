@@ -560,7 +560,7 @@ func TestArtistBiographyBackfillRestartAutoResume(t *testing.T) {
 	}
 	manager.Wait()
 	// 重启：running→paused 恢复不触碰已暂停任务；ScanAutoResumeRuns 拾起。
-	restarted := New(context.Background(), manager.store, manager.logger, t.TempDir())
+	restarted := newManagedTestManager(t, context.Background(), manager.store, manager.logger, t.TempDir())
 	defer restarted.Wait()
 	restarted.client = manager.client
 	run, err := manager.store.DurableArtistBiographyBackfillRun(ctx, runID)
@@ -849,7 +849,7 @@ func TestArtistAutoMatchBiographySkipsCreditOnlyArtist(t *testing.T) {
 			}
 		}
 	}
-	restarted := New(ctx, store, manager.logger, t.TempDir())
+	restarted := newManagedTestManager(t, ctx, store, manager.logger, t.TempDir())
 	defer restarted.Wait()
 	restarted.client = manager.client
 	artistFakeClock(restarted)

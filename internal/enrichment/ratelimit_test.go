@@ -182,7 +182,7 @@ func TestNewManagerBangumiIntervalFromEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "800")
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	if manager.bangumiInterval != 800*time.Millisecond {
 		t.Fatalf("interval=%s", manager.bangumiInterval)
 	}
@@ -490,7 +490,7 @@ func transportManager(t *testing.T, transport http.RoundTripper) *Manager {
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	manager.client = &http.Client{Transport: transport}
 	return manager
 }
@@ -825,7 +825,7 @@ func TestPhase4WorkPosterRateLimitStopsRun(t *testing.T) {
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	manager.phaseEndpoints = phase4Endpoints{Bangumi: server.URL + "/bangumi", BangumiAPI: server.URL}
 	// The poster URL uses a public IP literal so validatePublicImageURL passes
 	// without DNS; the transport answers it with a 429 instead of the network.

@@ -104,7 +104,7 @@ func TestF3BangumiFixtureEndToEndMatrix(t *testing.T) {
 		{name: "375293 game opening", title: "infinite synthesis 6", artist: "fripSide", date: "2022-03-23", wantOutcome: "succeeded", role: "op", workType: "game", tieups: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx, cancel := context.WithCancel(context.Background())
 			store, err := storage.Open(filepath.Join(t.TempDir(), "fixture.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -123,7 +123,8 @@ func TestF3BangumiFixtureEndToEndMatrix(t *testing.T) {
 			}
 			server := fixtureBangumiServer(t)
 			defer server.Close()
-			manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+			manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+			t.Cleanup(func() { cancel(); manager.Wait() })
 			manager.phaseEndpoints.BangumiAPI = server.URL
 			manager.client = server.Client()
 			manager.bangumiInterval = 0
@@ -198,7 +199,7 @@ func TestF3BangumiFixtureEndToEndMatrix(t *testing.T) {
 // F3/H1: real 375293 is a game OP in Bangumi's reverse relation; no
 // heuristic may veto this unique, concrete role solely because it is an album.
 func TestRVL7AmoreFixtureLinksMainAndVersionsButNotCW(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	store, err := storage.Open(filepath.Join(t.TempDir(), "amore-fixture.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +223,8 @@ func TestRVL7AmoreFixtureLinksMainAndVersionsButNotCW(t *testing.T) {
 	}
 	server := fixtureBangumiServer(t)
 	defer server.Close()
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints.BangumiAPI, manager.client, manager.bangumiInterval = server.URL, server.Client(), 0
 	setting, _ := store.MetadataSourceSetting(ctx, "bangumi")
 	setting.Enabled, setting.AutoMatch = true, true

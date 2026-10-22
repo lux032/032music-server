@@ -14,7 +14,7 @@ import (
 )
 
 func TestBatch95FilteredEmptyTieupStillPreventsAutoAccept(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	store, err := storage.Open(filepath.Join(t.TempDir(), "ambiguity.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,8 @@ func TestBatch95FilteredEmptyTieupStillPreventsAutoAccept(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.client = server.Client()
 	manager.bangumiInterval = 0

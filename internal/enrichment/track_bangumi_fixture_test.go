@@ -96,7 +96,7 @@ var trackTestDBPath = map[*storage.Store]string{}
 
 func newTrackManager(t *testing.T, server *httptest.Server) (*Manager, *storage.Store, int64) {
 	t.Helper()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	dbPath := filepath.Join(t.TempDir(), "tracks.db")
 	store, err := storage.Open(dbPath)
 	if err != nil {
@@ -114,7 +114,9 @@ func newTrackManager(t *testing.T, server *httptest.Server) (*Manager, *storage.
 		t.Fatal(err)
 	}
 	lib, _ := store.LibraryByRoot(ctx, "/music")
-	manager := New(ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	// 先停止并等待海报后台任务，再让 TempDir cleanup 删除其写入目录。
+	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.client = server.Client()
 	manager.bangumiInterval = 0

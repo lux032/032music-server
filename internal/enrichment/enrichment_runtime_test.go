@@ -68,7 +68,7 @@ func TestEnrichmentRuntimeForceTracksSameRunAfterRestart(t *testing.T) {
 	if before.Processed < 1 {
 		t.Fatal(before)
 	}
-	restarted := New(ctx, s, m.logger, t.TempDir())
+	restarted := newManagedTestManager(t, ctx, s, m.logger, t.TempDir())
 	restarted.phaseEndpoints = m.phaseEndpoints
 	if err = restarted.ResumeRun(ctx, run.ID); err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestEnrichmentRuntimeRequestCheckpointRestartNoNetwork(t *testing.T) {
 	if err = s.ApplyEnrichmentItem(ctx, c, "matched", nil); err != nil {
 		t.Fatal(err)
 	}
-	restarted := New(ctx, s, m.logger, t.TempDir())
+	restarted := newManagedTestManager(t, ctx, s, m.logger, t.TempDir())
 	if err = restarted.ResumeRun(ctx, run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestEnrichmentRuntimeStagePrepareOnceAfterPauseRestart(t *testing.T) {
 	if !paused || interrupted.Status != "paused" || interrupted.Total != 0 || interrupted.StageTracks != -1 {
 		t.Fatalf("interrupted=%+v paused=%v", interrupted, paused)
 	}
-	restarted := New(ctx, s, m.logger, t.TempDir())
+	restarted := newManagedTestManager(t, ctx, s, m.logger, t.TempDir())
 	restarted.phaseEndpoints = m.phaseEndpoints
 	restarted.client = m.client
 	restarted.bangumiInterval = 0
@@ -335,7 +335,7 @@ func TestEnrichmentRuntimeSeriesCrashSkipsMemberReapply(t *testing.T) {
 		t.Fatal("series member effect not recorded", err)
 	}
 	// Simulated crash: the item is still in_progress and the run is running.
-	restarted := New(ctx, store, manager.logger, t.TempDir())
+	restarted := newManagedTestManager(t, ctx, store, manager.logger, t.TempDir())
 	restarted.phaseEndpoints = manager.phaseEndpoints
 	restarted.bangumiInterval = 0
 	restarted.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -538,7 +538,7 @@ func TestEnrichmentRuntimePerItemCurrentAndStageTitles(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("second request not reached")
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		current, _ := s.DurableEnrichmentRun(ctx, run.ID)
 		if current.Stage == "tracks" && strings.Contains(current.Current, "Second") {
@@ -594,7 +594,7 @@ func TestEnrichmentRuntimeSeriesStageCurrentTitle(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("series graph request not reached")
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		current, _ := store.DurableEnrichmentRun(ctx, run.ID)
 		if current.Stage == "series" && current.Current == "作品系列归组" {

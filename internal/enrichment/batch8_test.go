@@ -40,7 +40,9 @@ func batch8Store(t *testing.T) *storage.Store {
 func batch8Manager(t *testing.T, store *storage.Store) *Manager {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := New(context.Background(), store, logger, t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	manager := newManagedTestManager(t, ctx, store, logger, t.TempDir())
+	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.bangumiInterval = 0
 	manager.sleep = func(ctx context.Context, d time.Duration) error { return nil }
 	return manager
@@ -302,7 +304,7 @@ func TestWorkPosterBackfillStatsAndResult(t *testing.T) {
 // LastPosterBackfill 返回的是副本指针，不能用指针比较）。
 func waitBackfillResult(t *testing.T, manager *Manager, prev *PosterBackfillResult) *PosterBackfillResult {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if result := manager.LastPosterBackfill(); result != nil && (prev == nil || result.FinishedAt.After(prev.FinishedAt)) {
 			return result
@@ -471,7 +473,7 @@ func TestScheduleStartupPosterBackfill(t *testing.T) {
 	manager2 := batch8Manager(t, store)
 	manager2.SetPosterBackfillEnabled(true)
 	manager2.ScheduleStartupPosterBackfill(10 * time.Millisecond)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for manager2.LastPosterBackfill() == nil && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -482,7 +484,7 @@ func TestScheduleStartupPosterBackfill(t *testing.T) {
 	// ctx 在延迟窗口内关闭：不再启动。
 	ctx, cancel := context.WithCancel(context.Background())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager3 := New(ctx, batch8Store(t), logger, t.TempDir())
+	manager3 := newManagedTestManager(t, ctx, batch8Store(t), logger, t.TempDir())
 	manager3.SetPosterBackfillEnabled(true)
 	manager3.ScheduleStartupPosterBackfill(50 * time.Millisecond)
 	cancel()

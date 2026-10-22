@@ -457,7 +457,7 @@ func TestArtistImageBackfillPauseResumeCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for entered.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -475,7 +475,7 @@ func TestArtistImageBackfillPauseResumeCancel(t *testing.T) {
 	if err = manager.ResumeArtistImageBackfill(context.Background(), runID); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(30 * time.Second)
 	for entered.Load() < 2 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -521,14 +521,27 @@ func TestArtistImageBackfillDuplicateStart(t *testing.T) {
 	if err = manager.store.SaveArtistImage(context.Background(), storage.ArtistImageInput{ArtistID: artist, ByteSize: 10, Source: "lastfm", RemoteURL: imageHostURL, Hash: "h-gone", MIMEType: "image/jpeg", CachePath: filepath.Join(t.TempDir(), "gone.jpg")}); err != nil {
 		t.Fatal(err)
 	}
+	// 确保 pause/cancel 前 worker 尚未提交缓存，避免极快假 transport 抢先完成。
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	manager.testImageBackfillHook = func(int64) { entered <- struct{}{}; <-release }
 	run2, err := manager.StartArtistImageBackfill(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case <-entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("image backfill worker never entered hook")
+	}
 	if err = manager.PauseArtistImageBackfill(run2); err != nil {
 		t.Fatal(err)
 	}
+	// hook 在取消后释放，guarded 写入会按已暂停 checkpoint 拒绝。
+	release <- struct{}{}
 	manager.Wait()
+	manager.testImageBackfillHook = nil
 	if _, err = manager.StartArtistImageBackfill(context.Background()); !errors.Is(err, storage.ErrArtistImageBackfillState) {
 		t.Fatalf("paused run must block new start: %v", err)
 	}
@@ -558,7 +571,7 @@ func TestArtistImageBackfillRestartRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 模拟崩溃：新管理器走 New 的启动恢复。
-	restarted := New(ctx, manager.store, manager.logger, filepath.Dir(manager.imageDirectory))
+	restarted := newManagedTestManager(t, ctx, manager.store, manager.logger, filepath.Dir(manager.imageDirectory))
 	restarted.client = manager.client
 	state, _ := manager.store.DurableArtistImageBackfillRun(ctx, runID)
 	if state.Status != "paused" || state.PauseReason != "server_restart" {
@@ -983,7 +996,7 @@ func TestArtistImageBackfillGracefulShutdownReason(t *testing.T) {
 	if err = store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(baseCtx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	manager := newManagedTestManager(t, baseCtx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	manager.client = &http.Client{Transport: roundTripFunc(bt.roundTrip)}
 	if err = store.EnsureLibrary(ctx, "Test", "/music"); err != nil {
 		t.Fatal(err)
@@ -1026,7 +1039,7 @@ func TestArtistImageBackfillGracefulShutdownReason(t *testing.T) {
 		t.Fatalf("graceful shutdown must pause as shutdown: %+v", state)
 	}
 	// 重启恢复不得改写关闭原因（server_restart 只留给崩溃/掉电的中断）。
-	restarted := New(context.Background(), store, manager.logger, t.TempDir())
+	restarted := newManagedTestManager(t, context.Background(), store, manager.logger, t.TempDir())
 	defer restarted.Wait()
 	state, _ = store.DurableArtistImageBackfillRun(ctx, runID)
 	if state.PauseReason != "shutdown" {

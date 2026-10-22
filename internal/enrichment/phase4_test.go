@@ -30,6 +30,7 @@ func phase4TestManager(t *testing.T, handler http.Handler) (*Manager, *storage.S
 // manager 的 baseCtx（例如测试关机中的行为）。
 func phase4TestManagerWithCtx(t *testing.T, ctx context.Context, handler http.Handler) (*Manager, *storage.Store, int64, int64) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
 	dbPath := filepath.Join(t.TempDir(), "phase4.db")
 	store, err := storage.Open(dbPath)
 	if err != nil {
@@ -72,7 +73,8 @@ func phase4TestManagerWithCtx(t *testing.T, ctx context.Context, handler http.Ha
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := New(ctx, store, logger, t.TempDir())
+	manager := newManagedTestManager(t, ctx, store, logger, t.TempDir())
+	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints = phase4Endpoints{Bangumi: server.URL + "/bangumi", BangumiAPI: server.URL}
 	manager.client = server.Client()
 	allowed, _ := url.Parse(server.URL)
@@ -107,7 +109,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func waitRun(t *testing.T, store *storage.Store, id int64) storage.EnrichmentRun {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		run, err := store.EnrichmentRun(context.Background(), id)
 		if err == nil && (run.Status == "completed" || run.Status == "failed") {

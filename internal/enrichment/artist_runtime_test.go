@@ -71,7 +71,7 @@ func TestArtistRuntimeRestartMatchedFactAndDeletedSkip(t *testing.T) {
 	if ok, err := m.store.AutoBindArtistRunCandidate(ctx, artist, storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: safetyMBID, DisplayName: "ACE+"}, storage.ArtistRunCheckpoint{RunID: run, ItemID: item.ID, ClaimToken: item.ClaimToken}); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	restarted := New(ctx, m.store, m.logger, t.TempDir())
+	restarted := newManagedTestManager(t, ctx, m.store, m.logger, t.TempDir())
 	requests := 0
 	restarted.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) { requests++; return nil, errors.New("network forbidden") })}
 	state, _ := m.store.DurableArtistRun(ctx, run)
@@ -291,7 +291,7 @@ func TestArtistRuntimeSavedSourcesResumeOutcomes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			restarted := New(ctx, m.store, m.logger, t.TempDir())
+			restarted := newManagedTestManager(t, ctx, m.store, m.logger, t.TempDir())
 			requests := 0
 			restarted.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				requests++
@@ -447,7 +447,7 @@ func TestArtistRuntimeRecoveredSourceSurvivesOtherFailure(t *testing.T) {
 			if err = m.store.SaveArtistRunSourceCheck(ctx, input, setting, snapshot, storage.ArtistRunCheckpoint{RunID: run, ItemID: item.ID, ClaimToken: item.ClaimToken}); err != nil {
 				t.Fatal(err)
 			}
-			resumed := New(ctx, m.store, m.logger, t.TempDir())
+			resumed := newManagedTestManager(t, ctx, m.store, m.logger, t.TempDir())
 			mbRequests := 0
 			resumed.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				if r.URL.Host != "ws.audioscrobbler.com" {
@@ -614,7 +614,7 @@ func TestArtistRuntimeRestartScanAutoResume(t *testing.T) {
 			t.Fatal("worker never entered rate-limit wait")
 		}
 		// 模拟重启：Recover 暂停运行中的等待任务，扫描后到点自动恢复。
-		restarted := New(context.Background(), m.store, m.logger, t.TempDir())
+		restarted := newManagedTestManager(t, context.Background(), m.store, m.logger, t.TempDir())
 		restarted.client = &http.Client{Transport: m.client.Transport}
 		artistFakeClock(restarted)
 		restarted.ScanAutoResumeRuns()
@@ -640,7 +640,7 @@ func TestArtistRuntimeRestartScanAutoResume(t *testing.T) {
 		if err = m.store.TransitionArtistRun(ctx, run, "pause", "manual"); err != nil {
 			t.Fatal(err)
 		}
-		restarted := New(ctx, m.store, m.logger, t.TempDir())
+		restarted := newManagedTestManager(t, ctx, m.store, m.logger, t.TempDir())
 		restarted.ScanAutoResumeRuns()
 		restarted.Wait()
 		state, _ := m.store.DurableArtistRun(ctx, run)
