@@ -38,6 +38,7 @@
 | `MUSIC_SERVER_TRANSCODE_CACHE_MB` | `4096` | FLAC 转码缓存容量，单位 MiB。 |
 | `MUSIC_SERVER_THUMB_CACHE_MB` | `512` | 缩略图缓存容量，单位 MiB。 |
 | `MUSIC_SERVER_BANGUMI_INTERVAL_MS` | `500` | Bangumi 请求间隔，200～10000 毫秒；非法值会告警并回退到默认值。 |
+| `MUSIC_SERVER_BANGUMI_BASE_URL` | `https://api.bgm.tv` | Bangumi API 基地址，同时派生作品搜索和条目接口；仅供测试或自建镜像使用。 |
 | `MUSIC_SERVER_MB_INTERVAL_MS` | `2000` | MusicBrainz 请求间隔，200～10000 毫秒。默认每 2 秒一次，低于官方每秒一次的上限；非法值会告警并回退到默认值。 |
 | `MUSIC_SERVER_WORK_POSTER_BACKFILL` | `true` | 在启动约 30 秒后、扫描后和增强后补全缺失的作品海报。`0/false/off/no` 关闭；未知值会告警并保持开启。手动补全不受影响。 |
 | `MUSIC_SERVER_WATCH_INTERVAL` | `60s` | 曲库目录监控的轮询间隔（纯数字按秒计，也可以写 `5m` 这样的时长，最小 `10s`）。检测到变化，并且连续两次轮询结果一致后，自动执行增量扫描。轮询只做 stat、不读取文件内容，所以在收不到 inotify 事件的场景（Docker Desktop 绑定挂载、SMB/NFS 等）同样有效。`0/off` 关闭监控，不影响启动时的扫描。这里只是默认值：在 管理 → 控制台 →「自动入库」中也能开关和调整间隔，立即生效、无需重启；管理页设置优先于环境变量，并且可以一键恢复默认。 |

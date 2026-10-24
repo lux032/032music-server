@@ -43,7 +43,7 @@ func batch8Manager(t *testing.T, store *storage.Store) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := newManagedTestManager(t, ctx, store, logger, t.TempDir())
 	t.Cleanup(func() { cancel(); manager.Wait() })
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	manager.sleep = func(ctx context.Context, d time.Duration) error { return nil }
 	return manager
 }

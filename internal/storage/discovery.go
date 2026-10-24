@@ -28,15 +28,18 @@ type DiscoverySeed struct {
 	Generation           int64
 }
 type DiscoverySignals struct {
+	SeriesID                                    int64
 	Plays90d                                    float64
 	PlaysAll, FavAlbums, FavTracks, OwnedAlbums int
 	FavArtist                                   bool
 }
 type DiscoveryReason struct {
-	Code   string `json:"code"`
-	Artist string `json:"artist,omitempty"`
-	N      int    `json:"n,omitempty"`
-	Year   int    `json:"year,omitempty"`
+	Work     string `json:"work,omitempty"`
+	Relation string `json:"relation,omitempty"`
+	Code     string `json:"code"`
+	Artist   string `json:"artist,omitempty"`
+	N        int    `json:"n,omitempty"`
+	Year     int    `json:"year,omitempty"`
 }
 type DiscoveryReleaseGroup struct {
 	RGID, Title, PrimaryType, Kind, FirstReleaseDate, Disambiguation, ArtistCredit string
@@ -45,12 +48,18 @@ type DiscoveryReleaseGroup struct {
 }
 type DiscoveryCandidate struct {
 	DiscoveryReleaseGroup
-	SeedArtistID, Generation int64
-	Artist                   string
-	Score                    float64
-	Lane                     string
-	Rank                     int
-	Reasons                  []DiscoveryReason
+	SubjectName, SubjectNameCN         string
+	MappingEvidence                    []string
+	MappingScore                       float64
+	SeedKind                           string
+	SeedWorkID, SubjectID, SeriesID    int64
+	WorkTitle, Relation, MappingStatus string
+	SeedArtistID, Generation           int64
+	Artist                             string
+	Score                              float64
+	Lane                               string
+	Rank                               int
+	Reasons                            []DiscoveryReason
 }
 type DiscoveryLocalAlbum struct {
 	ID                int64
@@ -58,6 +67,7 @@ type DiscoveryLocalAlbum struct {
 	Year, TrackCount  int
 	CurrentRG, Reason string
 	ArtistIDs         []int64
+	WorkIDs           []int64
 }
 type DiscoveryMatch struct {
 	RGID    string
@@ -71,12 +81,13 @@ type Ownership struct {
 	Possible  []DiscoveryLocalAlbum
 }
 type DiscoveryItem struct {
+	MappingOptions []DiscoveryItem
 	DiscoveryCandidate
 	Year           int
 	CoverAvailable bool
 	Possible       []DiscoveryLocalAlbum
 }
-type DiscoveryCounts struct{ Recommended, Possible, Acquiring, Ignored int }
+type DiscoveryCounts struct{ Recommended, Possible, Acquiring, Ignored, Mapping int }
 
 func (s *Store) IdentityReady(c context.Context) error { return s.requireIdentityReady(c) }
 func (s *Store) DiscoveryStatus(c context.Context) (DiscoveryStatus, error) {
@@ -140,7 +151,7 @@ func discoveryGuard(c context.Context, t *sql.Tx, g int64, seeds []DiscoverySeed
 	}
 	return nil
 }
-func (s *Store) BeginDiscoveryRefresh(c context.Context, seeds []DiscoverySeed, force bool, now time.Time) (int64, error) {
+func (s *Store) BeginDiscoveryRefresh(c context.Context, seeds []DiscoverySeed, force bool, now time.Time, workSeeds ...[]DiscoveryWorkSeed) (int64, error) {
 	if e := s.IdentityReady(c); e != nil {
 		return 0, e
 	}
@@ -153,7 +164,7 @@ func (s *Store) BeginDiscoveryRefresh(c context.Context, seeds []DiscoverySeed, 
 		return 0, e
 	}
 	var g int64
-	if e = t.QueryRowContext(c, `UPDATE discovery_refresh_state SET generation=generation+1,status='running',total=?,processed=0,error_message='',started_at=?,finished_at=NULL WHERE id=1 RETURNING generation`, len(seeds), now.UTC().Format(time.RFC3339)).Scan(&g); e != nil {
+	if e = t.QueryRowContext(c, `UPDATE discovery_refresh_state SET generation=generation+1,status='running',total=?,processed=0,error_message='',started_at=?,finished_at=NULL WHERE id=1 RETURNING generation`, len(seeds)+workSeedCount(workSeeds), now.UTC().Format(time.RFC3339)).Scan(&g); e != nil {
 		return 0, e
 	}
 	ids := []int64{}
@@ -164,13 +175,21 @@ func (s *Store) BeginDiscoveryRefresh(c context.Context, seeds []DiscoverySeed, 
 			return 0, e
 		}
 	}
+	for _, ws := range workSeeds {
+		if e = discoveryWorkGuard(c, t, g, ws); e != nil {
+			return 0, e
+		}
+	}
+	if e = beginDiscoveryWorks(c, t, g, workSeeds, force, now); e != nil {
+		return 0, e
+	}
 	raw, _ := json.Marshal(ids)
 	for _, q := range []string{`DELETE FROM discovery_artist_release_groups WHERE artist_id NOT IN (SELECT value FROM json_each(?))`, `DELETE FROM discovery_seeds WHERE artist_id NOT IN (SELECT value FROM json_each(?))`} {
 		if _, e = t.ExecContext(c, q, string(raw)); e != nil {
 			return 0, e
 		}
 	}
-	_, e = t.ExecContext(c, `UPDATE discovery_refresh_state SET processed=(SELECT count(*) FROM discovery_seeds WHERE generation=? AND status='done') WHERE id=1`, g)
+	_, e = t.ExecContext(c, `UPDATE discovery_refresh_state SET processed=(SELECT count(*) FROM discovery_seeds WHERE generation=? AND status='done')+(SELECT count(*) FROM discovery_work_seeds WHERE generation=? AND status='done') WHERE id=1`, g, g)
 	if e != nil {
 		return 0, e
 	}
@@ -247,14 +266,14 @@ func (s *Store) DiscoveryCatalog(c context.Context) ([]DiscoveryCandidate, error
 	if e := s.IdentityReady(c); e != nil {
 		return nil, e
 	}
-	rows, e := s.db.QueryContext(c, `SELECT `+discoveryGroupSelect+`,a.id,COALESCE(a.user_display_name,a.display_name) FROM discovery_release_groups r JOIN discovery_artist_release_groups d ON d.rgid=r.rgid JOIN artists a ON a.id=d.artist_id ORDER BY r.rgid,a.id`)
+	rows, e := s.db.QueryContext(c, `SELECT `+discoveryGroupSelect+`,COALESCE(a.id,0),COALESCE(a.user_display_name,a.display_name,'') FROM discovery_release_groups r JOIN discovery_artist_release_groups d ON d.rgid=r.rgid LEFT JOIN artists a ON a.id=d.artist_id ORDER BY r.rgid,a.id`)
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
 	out := []DiscoveryCandidate{}
 	for rows.Next() {
-		var v DiscoveryCandidate
+		v := DiscoveryCandidate{SeedKind: "artist"}
 		var raw string
 		e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &raw, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedArtistID, &v.Artist)
 		if e != nil {
@@ -267,7 +286,7 @@ func (s *Store) DiscoveryCatalog(c context.Context) ([]DiscoveryCandidate, error
 	}
 	return out, rows.Err()
 }
-func (s *Store) SaveDiscoveryCandidates(c context.Context, g int64, seeds []DiscoverySeed, items []DiscoveryCandidate, matches []DiscoveryMatch) error {
+func (s *Store) SaveDiscoveryCandidates(c context.Context, g int64, seeds []DiscoverySeed, items []DiscoveryCandidate, matches []DiscoveryMatch, workSeeds ...[]DiscoveryWorkSeed) error {
 	if e := s.IdentityReady(c); e != nil {
 		return e
 	}
@@ -282,9 +301,32 @@ func (s *Store) SaveDiscoveryCandidates(c context.Context, g int64, seeds []Disc
 	if e = discoveryGuard(c, t, g, seeds); e != nil {
 		return e
 	}
+	checkedWorks := map[int64]bool{}
+	for _, ws := range workSeeds {
+		for _, seed := range ws {
+			checkedWorks[seed.WorkID] = true
+		}
+		if e = discoveryWorkGuard(c, t, g, ws); e != nil {
+			return e
+		}
+	}
 	for _, q := range []string{`DELETE FROM discovery_candidates`, `DELETE FROM discovery_possible_matches`} {
 		if _, e = t.ExecContext(c, q); e != nil {
 			return e
+		}
+	}
+	for _, v := range items {
+		if v.SeedWorkID != 0 && !checkedWorks[v.SeedWorkID] {
+			var subject int64
+			if e = t.QueryRowContext(c, `SELECT subject_id FROM discovery_work_seeds WHERE work_id=? AND generation=?`, v.SeedWorkID, g).Scan(&subject); errors.Is(e, sql.ErrNoRows) {
+				return ErrDiscoveryStale
+			} else if e != nil {
+				return e
+			}
+			if e = discoveryWorkGuard(c, t, g, []DiscoveryWorkSeed{{WorkID: v.SeedWorkID, SubjectID: subject}}); e != nil {
+				return e
+			}
+			checkedWorks[v.SeedWorkID] = true
 		}
 	}
 	for _, v := range items {
@@ -293,12 +335,12 @@ func (s *Store) SaveDiscoveryCandidates(c context.Context, g int64, seeds []Disc
 		if v.Rank > 0 {
 			rank = v.Rank
 		}
-		if _, e = t.ExecContext(c, `INSERT INTO discovery_candidates VALUES(?,?,?,?,?,?,?)`, v.RGID, v.SeedArtistID, g, v.Score, v.Lane, rank, string(raw)); e != nil {
+		if _, e = t.ExecContext(c, `INSERT INTO discovery_candidates(rgid,seed_kind,seed_artist_id,seed_work_id,bangumi_subject_id,generation,score,lane,rank,reasons_json) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.RGID, discoverySeedKind(v), nullableDiscoveryID(v.SeedArtistID), nullableDiscoveryID(v.SeedWorkID), nullableDiscoveryID(v.SubjectID), g, v.Score, v.Lane, rank, string(raw)); e != nil {
 			return e
 		}
 	}
 	for _, v := range matches {
-		if _, e = t.ExecContext(c, `INSERT OR IGNORE INTO discovery_possible_matches SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM discovery_match_rejections WHERE rgid=? AND album_id=?)`, v.RGID, v.AlbumID, v.Reason, v.RGID, v.AlbumID); e != nil {
+		if _, e = t.ExecContext(c, `INSERT OR IGNORE INTO discovery_possible_matches(rgid,album_id,reason) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM discovery_match_rejections WHERE rgid=? AND album_id=?)`, v.RGID, v.AlbumID, v.Reason, v.RGID, v.AlbumID); e != nil {
 			return e
 		}
 	}

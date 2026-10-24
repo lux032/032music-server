@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lux032/032music-server/internal/netfetch"
-	"github.com/lux032/032music-server/internal/sourcegate"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -20,6 +18,8 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/metadata"
+	"github.com/lux032/032music-server/internal/netfetch"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -72,13 +72,9 @@ type Manager struct {
 	// 默认关闭，由 main 根据配置开启，测试与 e2e 保持关闭以不访问外网。
 	posterBackfillEnabled bool
 	musicBrainzBase       string
-	// Bangumi stays private until S3.
-	bangumiMu           sync.Mutex
-	bangumiLast         time.Time
-	bangumiBlockedUntil time.Time
-	bangumiInterval     time.Duration
-	imageDirectory      string
-	wg                  sync.WaitGroup
+	bangumiPace           time.Duration
+	imageDirectory        string
+	wg                    sync.WaitGroup
 	// sleep backs waitBangumiRateLimit/waitMBRateLimit; tests replace it to
 	// observe backoff waits without really sleeping.
 	sleep func(ctx context.Context, d time.Duration) error
@@ -130,8 +126,8 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
-	manager.gate = sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": mbIntervalFromEnv(logger)}, Now: func() time.Time { return manager.clockNow() }, Sleep: func(c context.Context, d time.Duration) error { return manager.sleep(c, d) }})
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: bangumiEndpoints(sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_BANGUMI_BASE_URL", "https://api.bgm.tv")), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiPace: BangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager.gate = sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": mbIntervalFromEnv(logger), "bangumi": manager.bangumiPace}, Now: func() time.Time { return manager.clockNow() }, Sleep: func(c context.Context, d time.Duration) error { return manager.sleep(c, d) }})
 
 	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {
 		logger.Error("pause interrupted enrichment runs", "error", err)
@@ -801,24 +797,12 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 }
 
 func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
-	m.bangumiMu.Lock()
-	defer m.bangumiMu.Unlock()
-	// Never sleep through a rate-limit backoff while holding the lock: report
-	// it immediately so callers (run loops and interactive handlers alike)
-	// can react instead of being blocked uncancellably.
-	if remaining := m.bangumiBlockedUntil.Sub(m.clockNow()); remaining > 0 {
-		return &RateLimitError{CooldownOnly: true, Source: "bangumi", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
+	err := m.gate.Wait(ctx, "bangumi")
+	var cd *sourcegate.CooldownError
+	if errors.As(err, &cd) {
+		return &RateLimitError{CooldownOnly: true, Source: cd.Source, StatusCode: 429, RetryAfter: cd.RetryAfter}
 	}
-	if wait := m.bangumiLast.Add(m.bangumiInterval).Sub(m.clockNow()); wait > 0 {
-		if err := m.sleep(ctx, wait); err != nil {
-			return err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	m.bangumiLast = m.clockNow()
-	return nil
+	return err
 }
 
 // waitMBRateLimit enforces the MusicBrainz request-spacing policy (default

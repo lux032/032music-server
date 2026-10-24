@@ -1125,3 +1125,26 @@ func TestCancelDropsUnsubmittedPendingBytes(t *testing.T) {
 		t.Fatal("cancelled task retained pending bytes")
 	}
 }
+
+func TestServiceSearchConfirmMappingAndIdentityGuards(t *testing.T) {
+	f := setup(t)
+	search, e := f.s.Search(f.ctx, testRG, "artist album", false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.db.Exec(`INSERT INTO discovery_bangumi_mappings(subject_id,rgid,status) VALUES(1,?,'suggested')`, testRG); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.s.Search(f.ctx, testRG, "artist album", false); !errors.Is(e, storage.ErrMappingUnconfirmed) {
+		t.Fatal(e)
+	}
+	if _, e = f.s.Confirm(f.ctx, testRG, search.SearchID, 0, "mapping-guard"); !errors.Is(e, storage.ErrMappingUnconfirmed) {
+		t.Fatal(e)
+	}
+	if _, e = f.db.Exec(`UPDATE release_group_rebuild SET status='rebuilding'`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.s.Search(f.ctx, otherRG, "artist album", false); !errors.Is(e, storage.ErrIdentityNotReady) {
+		t.Fatal(e)
+	}
+}

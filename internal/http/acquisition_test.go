@@ -123,7 +123,7 @@ func TestAcquisitionRoutesSettingsAndDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`INSERT INTO discovery_release_groups(rgid,title,primary_type,kind,artist_credit,fetched_at) VALUES(?,'album','Album','Album','artist','now')`, rg)
-	exec(`INSERT INTO discovery_candidates VALUES(?,?,0,10,'exploit',1,'[]')`, rg, artist)
+	exec(`INSERT INTO discovery_candidates(rgid,seed_kind,seed_artist_id,generation,score,lane,rank,reasons_json) VALUES(?,'artist',?,0,10,'exploit',1,'[]')`, rg, artist)
 	task, err := app.store.CreateAcquisitionTask(ctx, storage.AcquisitionTask{RGID: rg, Title: "task snapshot", Artist: "artist", IdempotencyKey: "one", DownloadRef: "/dl/jpopsuki/?path=DOWNLOAD-PRIVATE"})
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestAcquisitionErrorMappingNeverDiscloses(t *testing.T) {
 		status int
 		code   string
 	}{
-		{storage.ErrIdentityNotReady, 409, "identity_not_ready"}, {storage.ErrAcquisitionRGActive, 409, "acquisition_active"}, {storage.ErrAcquisitionHashBound, 409, "hash_bound"}, {storage.ErrAcquisitionStale, 409, "stale"},
+		{storage.ErrMappingUnconfirmed, 409, "mapping_unconfirmed"}, {storage.ErrIdentityNotReady, 409, "identity_not_ready"}, {storage.ErrAcquisitionRGActive, 409, "acquisition_active"}, {storage.ErrAcquisitionHashBound, 409, "hash_bound"}, {storage.ErrAcquisitionStale, 409, "stale"},
 		{&storage.ErrReplacesReleaseGroup{RGID: "old"}, 409, "replaces_rg"}, {qbit.ErrAuth, 502, "qb_auth"}, {sanitize.Error("qBittorrent request", &url.Error{Op: "Get", URL: "http://private/?apikey=KEY-PRIVATE", Err: errors.New("connection refused")}), 500, "acquisition_failed"}, {sql.ErrNoRows, 404, "not_found"},
 		{&sourcegate.CooldownError{Source: "jackett", RetryAfter: time.Minute}, 429, "jackett_cooldown"},
 		{&jackett.APIError{Code: 500}, 429, "jackett_cooldown"}, {&jackett.APIError{Code: 501}, 429, "jackett_cooldown"}, {&jackett.APIError{Code: 100}, 502, "jackett_auth"}, {&jackett.APIError{Code: 900}, 502, "jackett_failed"},
@@ -350,7 +350,7 @@ func TestAcquisitionTabSurvivesCandidateRefreshAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, counts, err := app.store.ListDiscovery(ctx, "acquiring", 60, 0)
+	rows, counts, err := app.store.ListDiscovery(ctx, "acquiring", "all", 60, 0)
 	if err != nil || counts.Acquiring != 1 || len(rows) != 1 || rows[0].Title != task.Title {
 		t.Fatal(rows, counts, err)
 	}
@@ -358,7 +358,7 @@ func TestAcquisitionTabSurvivesCandidateRefreshAndCancel(t *testing.T) {
 	if _, err = service.Cancel(ctx, task.PublicID); err != nil {
 		t.Fatal(err)
 	}
-	rows, counts, err = app.store.ListDiscovery(ctx, "acquiring", 60, 0)
+	rows, counts, err = app.store.ListDiscovery(ctx, "acquiring", "all", 60, 0)
 	if err != nil || counts.Acquiring != 0 || len(rows) != 0 {
 		t.Fatal(rows, counts, err)
 	}
@@ -400,7 +400,7 @@ func TestAcquisitionTabPagination(t *testing.T) {
 		offset, limit int
 		want          []string
 	}{{0, 1, []string{tasks[2].PublicID}}, {1, 1, []string{tasks[1].PublicID}}, {2, 2, []string{tasks[0].PublicID}}, {3, 1, []string{}}} {
-		rows, counts, err := app.store.ListDiscovery(ctx, "acquiring", tc.limit, tc.offset)
+		rows, counts, err := app.store.ListDiscovery(ctx, "acquiring", "all", tc.limit, tc.offset)
 		if err != nil || counts.Acquiring != 3 || len(rows) != len(tc.want) {
 			t.Fatal(rows, counts, err)
 		}

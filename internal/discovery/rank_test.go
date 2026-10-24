@@ -128,3 +128,11 @@ func TestDiscoveryNormalizeTitleTypeBoundaries(t *testing.T) {
 		t.Fatal("version not stripped")
 	}
 }
+
+func TestRankRetainsAcquiringSnapshotForCancellation(t *testing.T) {
+	input := []storage.DiscoveryCandidate{{DiscoveryReleaseGroup: storage.DiscoveryReleaseGroup{RGID: "active", Kind: "Album"}, SeedArtistID: 1}}
+	out := Rank(input, map[int64]storage.DiscoverySignals{1: {FavArtist: true}}, map[string]storage.Ownership{"active": {Acquiring: true}}, nil, time.Now())
+	if len(out) != 1 || out[0].Rank != 1 {
+		t.Fatal(out)
+	}
+}

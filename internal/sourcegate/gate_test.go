@@ -36,3 +36,44 @@ func TestGateSpacingCooldownCancel(t *testing.T) {
 		t.Fatal("default")
 	}
 }
+
+func TestSetIntervalPreservesCooldownAndLastRequest(t *testing.T) {
+	now := time.Now()
+	var waited time.Duration
+	g := New(Options{Intervals: map[string]time.Duration{"bangumi": time.Second}, Now: func() time.Time { return now }, Sleep: func(_ context.Context, d time.Duration) error { waited = d; now = now.Add(d); return nil }})
+	if err := g.Wait(context.Background(), "bangumi"); err != nil {
+		t.Fatal(err)
+	}
+	g.SetInterval("bangumi", 2*time.Second)
+	if err := g.Wait(context.Background(), "bangumi"); err != nil {
+		t.Fatal(err)
+	}
+	if waited != 2*time.Second {
+		t.Fatal(waited)
+	}
+	g.Block("bangumi", now.Add(time.Minute))
+	g.SetInterval("bangumi", 0)
+	if err := g.Wait(context.Background(), "bangumi"); err == nil {
+		t.Fatal("lost cooldown")
+	}
+	g.SetInterval("unknown", time.Second)
+	if g.Owns("unknown") {
+		t.Fatal("registered unknown source")
+	}
+}
+
+func TestGateIntervalWaitDeadline(t *testing.T) {
+	g := New(Options{Intervals: map[string]time.Duration{"bangumi": time.Hour}})
+	if err := g.Wait(context.Background(), "bangumi"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := g.Wait(ctx, "bangumi"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait err=%v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("interval wait took %s", elapsed)
+	}
+}

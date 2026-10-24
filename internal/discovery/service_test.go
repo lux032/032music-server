@@ -92,7 +92,7 @@ func TestServiceIdentityNotReady(t *testing.T) {
 	if _, e := s.Refresh(f.ctx, true); !errors.Is(e, storage.ErrIdentityNotReady) {
 		t.Fatal(e)
 	}
-	if _, _, e := f.store.ListDiscovery(f.ctx, "recommended", 60, 0); !errors.Is(e, storage.ErrIdentityNotReady) {
+	if _, _, e := f.store.ListDiscovery(f.ctx, "recommended", "all", 60, 0); !errors.Is(e, storage.ErrIdentityNotReady) {
 		t.Fatal(e)
 	}
 	if _, e := f.store.DiscoveryOwnership(f.ctx, nil); !errors.Is(e, storage.ErrIdentityNotReady) {
@@ -131,7 +131,7 @@ func TestServiceCancelAndIdentityDriftRejectLateWrites(t *testing.T) {
 			want := "cancelled"
 			if drift {
 				want = "failed"
-				if state.ErrorMessage != "艺人身份已变化，请重新刷新" {
+				if state.ErrorMessage != "艺人或作品身份已变化，请重新刷新" {
 					t.Fatal(state)
 				}
 			}
@@ -167,7 +167,7 @@ func TestDiscoveryGuardTransactionsAndDecisions(t *testing.T) {
 	if e = f.store.SaveDiscoveryCandidates(f.ctx, g, []storage.DiscoverySeed{f.seed}, []storage.DiscoveryCandidate{candidate}, matches); e != nil {
 		t.Fatal(e)
 	}
-	items, counts, e := f.store.ListDiscovery(f.ctx, "possible", 60, 0)
+	items, counts, e := f.store.ListDiscovery(f.ctx, "possible", "all", 60, 0)
 	if e != nil || len(items) != 1 || counts.Possible != 1 || len(items[0].Possible) != 1 {
 		t.Fatal(items, counts, e)
 	}
@@ -181,7 +181,7 @@ func TestDiscoveryGuardTransactionsAndDecisions(t *testing.T) {
 	if e = f.store.SaveDiscoveryCandidates(f.ctx, g, []storage.DiscoverySeed{f.seed}, []storage.DiscoveryCandidate{candidate}, matches); e != nil {
 		t.Fatal(e)
 	}
-	items, counts, e = f.store.ListDiscovery(f.ctx, "recommended", 60, 0)
+	items, counts, e = f.store.ListDiscovery(f.ctx, "recommended", "all", 60, 0)
 	if e != nil || len(items) != 1 || counts.Possible != 0 {
 		t.Fatal(items, counts, e)
 	}
@@ -189,7 +189,7 @@ func TestDiscoveryGuardTransactionsAndDecisions(t *testing.T) {
 		if e = f.store.DiscoveryIgnore(f.ctx, testRG, ignored); e != nil {
 			t.Fatal(e)
 		}
-		_, counts, e = f.store.ListDiscovery(f.ctx, "ignored", 60, 0)
+		_, counts, e = f.store.ListDiscovery(f.ctx, "ignored", "all", 60, 0)
 		if e != nil || ignored != (counts.Ignored == 1) {
 			t.Fatal(counts, e)
 		}
@@ -255,7 +255,7 @@ func TestServiceCompleteCooldownAndSpecialArtist(t *testing.T) {
 				if state.Status != "completed" {
 					t.Fatal(state)
 				}
-				items, _, e := f.store.ListDiscovery(f.ctx, "recommended", 60, 0)
+				items, _, e := f.store.ListDiscovery(f.ctx, "recommended", "all", 60, 0)
 				if e != nil || len(items) != 1 {
 					t.Fatal(items, e)
 				}
@@ -357,7 +357,7 @@ func TestServiceDownloadsCoverAndCachedCoverIsDiskOnly(t *testing.T) {
 	if requests.Load() != 2 {
 		t.Fatal("cover read touched network")
 	}
-	items, _, e := f.store.ListDiscovery(f.ctx, "recommended", 60, 0)
+	items, _, e := f.store.ListDiscovery(f.ctx, "recommended", "all", 60, 0)
 	if e != nil || len(items) != 1 || !items[0].CoverAvailable {
 		t.Fatal(items, e)
 	}

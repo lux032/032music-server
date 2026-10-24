@@ -1,0 +1,18 @@
+CREATE TABLE discovery_work_seeds (work_id INTEGER PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE, subject_id INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','done','failed','gone')), music_count INTEGER NOT NULL DEFAULT 0, error_message TEXT NOT NULL DEFAULT '', fetched_at TEXT) STRICT;
+CREATE TABLE discovery_bangumi_music (subject_id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_cn TEXT NOT NULL DEFAULT '', date TEXT NOT NULL DEFAULT '', artists_json TEXT NOT NULL DEFAULT '[]', multi_title INTEGER NOT NULL DEFAULT 0 CHECK(multi_title IN (0,1)), status TEXT NOT NULL DEFAULT 'ok' CHECK(status IN ('ok','gone')), search_status TEXT NOT NULL DEFAULT 'pending' CHECK(search_status IN ('pending','hits','none','filtered','failed')), fetched_at TEXT NOT NULL, searched_at TEXT) STRICT;
+CREATE TABLE discovery_work_music (work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE, subject_id INTEGER NOT NULL REFERENCES discovery_bangumi_music(subject_id) ON DELETE CASCADE, relation TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY(work_id,subject_id)) STRICT;
+CREATE INDEX idx_discovery_work_music_subject ON discovery_work_music(subject_id);
+CREATE TABLE discovery_bangumi_mappings (subject_id INTEGER NOT NULL, rgid TEXT NOT NULL REFERENCES discovery_release_groups(rgid), status TEXT NOT NULL CHECK(status IN ('auto','suggested','confirmed','rejected')), score REAL NOT NULL DEFAULT 0, evidence_json TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), decided_at TEXT, PRIMARY KEY(subject_id,rgid)) STRICT;
+CREATE INDEX idx_discovery_mappings_rg ON discovery_bangumi_mappings(rgid);
+CREATE UNIQUE INDEX idx_discovery_mappings_confirmed ON discovery_bangumi_mappings(subject_id) WHERE status='confirmed';
+CREATE TABLE discovery_candidates_new (rgid TEXT PRIMARY KEY REFERENCES discovery_release_groups(rgid) ON DELETE CASCADE, seed_kind TEXT NOT NULL CHECK(seed_kind IN ('artist','work')), seed_artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE, seed_work_id INTEGER REFERENCES works(id) ON DELETE CASCADE, bangumi_subject_id INTEGER, generation INTEGER NOT NULL, score REAL NOT NULL, lane TEXT NOT NULL CHECK(lane IN ('exploit','explore')), rank INTEGER, reasons_json TEXT NOT NULL,
+ CHECK((seed_kind='artist' AND seed_artist_id IS NOT NULL AND seed_work_id IS NULL AND bangumi_subject_id IS NULL) OR (seed_kind='work' AND seed_work_id IS NOT NULL AND seed_artist_id IS NULL AND bangumi_subject_id IS NOT NULL))) STRICT;
+INSERT INTO discovery_candidates_new(rgid,seed_kind,seed_artist_id,generation,score,lane,rank,reasons_json) SELECT rgid,'artist',seed_artist_id,generation,score,lane,rank,reasons_json FROM discovery_candidates;
+DROP TABLE discovery_candidates; ALTER TABLE discovery_candidates_new RENAME TO discovery_candidates;
+CREATE INDEX idx_discovery_candidates_seed ON discovery_candidates(seed_artist_id);
+CREATE INDEX idx_discovery_candidates_work ON discovery_candidates(seed_work_id);
+CREATE TABLE discovery_possible_matches_new (rgid TEXT NOT NULL REFERENCES discovery_release_groups(rgid) ON DELETE CASCADE, album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE, reason TEXT NOT NULL CHECK(reason IN ('title_artist','other_rg','title_work')), PRIMARY KEY(rgid,album_id)) STRICT;
+INSERT INTO discovery_possible_matches_new(rgid,album_id,reason) SELECT rgid,album_id,reason FROM discovery_possible_matches;
+DROP TABLE discovery_possible_matches;
+ALTER TABLE discovery_possible_matches_new RENAME TO discovery_possible_matches;
+CREATE INDEX idx_discovery_matches_album ON discovery_possible_matches(album_id);

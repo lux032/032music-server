@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/metadata"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -119,25 +120,25 @@ func TestBangumiIntervalFromEnv(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	t.Run("default 500ms", func(t *testing.T) {
 		t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "")
-		if got := bangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
+		if got := BangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
 			t.Fatalf("default interval=%s", got)
 		}
 	})
 	t.Run("legal value", func(t *testing.T) {
 		t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "750")
-		if got := bangumiIntervalFromEnv(logger); got != 750*time.Millisecond {
+		if got := BangumiIntervalFromEnv(logger); got != 750*time.Millisecond {
 			t.Fatalf("interval=%s", got)
 		}
 	})
 	t.Run("out of range falls back", func(t *testing.T) {
 		t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "100")
-		if got := bangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
+		if got := BangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
 			t.Fatalf("interval=%s", got)
 		}
 	})
 	t.Run("invalid falls back", func(t *testing.T) {
 		t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "fast")
-		if got := bangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
+		if got := BangumiIntervalFromEnv(logger); got != 500*time.Millisecond {
 			t.Fatalf("interval=%s", got)
 		}
 	})
@@ -183,8 +184,8 @@ func TestNewManagerBangumiIntervalFromEnv(t *testing.T) {
 	}
 	t.Setenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS", "800")
 	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
-	if manager.bangumiInterval != 800*time.Millisecond {
-		t.Fatalf("interval=%s", manager.bangumiInterval)
+	if manager.bangumiPace != 800*time.Millisecond {
+		t.Fatalf("interval=%s", manager.bangumiPace)
 	}
 }
 
@@ -232,20 +233,19 @@ func TestCachedJSONRateLimited(t *testing.T) {
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("backoff wait did not return immediately")
 	}
-	// A cancelled context aborts the ordinary interval wait immediately.
-	manager.bangumiMu.Lock()
-	manager.bangumiBlockedUntil = time.Time{}
-	manager.bangumiLast = time.Now()
-	manager.bangumiMu.Unlock()
-	manager.bangumiInterval = 30 * time.Second
-	manager.sleep = sleepContext
-	cancelled, cancel := context.WithCancel(ctx)
-	cancel()
+	// A deadline interrupts an ordinary interval wait already in progress.
+	manager.gate = sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0, "bangumi": 0}})
+	if err := manager.waitBangumiRateLimit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	manager.setBangumiIntervalForTest(time.Hour)
+	cancelled, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
 	start = time.Now()
-	if err = manager.waitBangumiRateLimit(cancelled); !errors.Is(err, context.Canceled) {
+	if err = manager.waitBangumiRateLimit(cancelled); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancelled wait err=%v", err)
 	}
-	if time.Since(start) > 2*time.Second {
+	if time.Since(start) >= time.Second {
 		t.Fatal("cancelled interval wait did not return immediately")
 	}
 }
@@ -836,7 +836,7 @@ func TestPhase4WorkPosterRateLimitStopsRun(t *testing.T) {
 		}
 		return http.DefaultTransport.RoundTrip(r)
 	})}
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	setting, err := store.MetadataSourceSetting(ctx, "bangumi")
 	if err != nil {
 		t.Fatal(err)

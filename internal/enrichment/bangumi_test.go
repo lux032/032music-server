@@ -209,12 +209,14 @@ func TestBangumiTypeAndYearPreventAutoConfirm(t *testing.T) {
 
 func TestBangumiWaitRateLimitCancelled(t *testing.T) {
 	manager, _, _, _ := phase4TestManager(t, http.NotFoundHandler())
-	manager.bangumiInterval = time.Hour
-	manager.bangumiLast = time.Now()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	manager.setBangumiIntervalForTest(time.Hour)
+	if err := manager.waitBangumiRateLimit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
 	started := time.Now()
-	if err := manager.waitBangumiRateLimit(ctx); err != context.Canceled || time.Since(started) > time.Second {
+	if err := manager.waitBangumiRateLimit(ctx); err != context.DeadlineExceeded || time.Since(started) >= time.Second {
 		t.Fatalf("err=%v elapsed=%s", err, time.Since(started))
 	}
 }

@@ -3,21 +3,22 @@ package enrichment
 import (
 	"context"
 	"errors"
-	"github.com/lux032/032music-server/internal/discovery/mb"
-	"github.com/lux032/032music-server/internal/sourcegate"
-	"github.com/lux032/032music-server/internal/storage"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lux032/032music-server/internal/discovery/mb"
+	"github.com/lux032/032music-server/internal/sourcegate"
+	"github.com/lux032/032music-server/internal/storage"
 )
 
 func TestMusicBrainz503WithoutRetryAfterAndSharedGate(t *testing.T) {
 	for _, reverse := range []bool{false, true} {
 		t.Run(map[bool]string{false: "enrichment-to-discovery", true: "discovery-to-enrichment"}[reverse], func(t *testing.T) {
 			m := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) { return cannedResponse(503, http.Header{}, ""), nil }))
-			g := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0}})
+			g := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0, "bangumi": 0}})
 			m.SetSourceGate(g)
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 			defer s.Close()

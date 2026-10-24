@@ -68,6 +68,8 @@ func (a *App) acquisitionError(w http.ResponseWriter, err error) {
 	var remote *jackett.HTTPError
 	var network interface{ NetworkFailure() bool }
 	switch {
+	case errors.Is(err, storage.ErrMappingUnconfirmed):
+		code, message, status = "mapping_unconfirmed", "请先确认 Bangumi 对应关系", 409
 	case errors.Is(err, storage.ErrIdentityNotReady):
 		code, message, status = "identity_not_ready", "请先重建发行组身份", 409
 	case errors.Is(err, storage.ErrAcquisitionRGActive):

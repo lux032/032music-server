@@ -21,6 +21,7 @@ import (
 var ErrRunning = errors.New("discovery refresh already running")
 
 type Options struct {
+	Bangumi                    BangumiSource
 	BaseContext                context.Context
 	Gate                       *sourcegate.Gate
 	HTTPClient                 *http.Client
@@ -29,6 +30,7 @@ type Options struct {
 	UserAgent                  func(context.Context) string
 }
 type Service struct {
+	bangumi      BangumiSource
 	baseCtx      context.Context
 	store        *storage.Store
 	logger       *slog.Logger
@@ -71,7 +73,7 @@ func New(store *storage.Store, logger *slog.Logger, o Options) *Service {
 	if o.CAAURL == "" {
 		o.CAAURL = sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_COVERART_BASE_URL", "https://coverartarchive.org")
 	}
-	return &Service{baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, "discovery-covers"), caa: o.CAAURL}
+	return &Service{bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, "discovery-covers"), caa: o.CAAURL}
 }
 func (s *Service) Status(ctx context.Context) (storage.DiscoveryStatus, error) {
 	return s.store.DiscoveryStatus(ctx)
@@ -117,7 +119,11 @@ func (s *Service) Refresh(ctx context.Context, force bool) (int64, error) {
 			filtered = append(filtered, v)
 		}
 	}
-	g, e := s.store.BeginDiscoveryRefresh(ctx, filtered, force, s.now())
+	works, e := s.workSnapshot(ctx)
+	if e != nil {
+		return 0, e
+	}
+	g, e := s.store.BeginDiscoveryRefresh(ctx, filtered, force, s.now(), works)
 	if e != nil {
 		return 0, e
 	}
@@ -143,7 +149,7 @@ func (s *Service) launch(ctx context.Context, g int64) {
 		if errors.Is(e, storage.ErrDiscoveryStale) {
 			state, err := s.store.DiscoveryStatus(ctx)
 			if err == nil && state.Generation == g {
-				_ = s.store.FinishDiscovery(ctx, g, "failed", "艺人身份已变化，请重新刷新")
+				_ = s.store.FinishDiscovery(ctx, g, "failed", "艺人或作品身份已变化，请重新刷新")
 			}
 			return
 		}
@@ -155,6 +161,9 @@ func (s *Service) launch(ctx context.Context, g int64) {
 				n = 1
 			}
 			name := "MusicBrainz"
+			if cd.Source == "bangumi" {
+				name = "Bangumi"
+			}
 			if cd.Source == "coverartarchive" {
 				name = "Cover Art Archive"
 			}
@@ -222,35 +231,39 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 			return e
 		}
 	}
-	catalog, e := s.store.DiscoveryCatalog(ctx)
+	message, e := s.executeWorks(ctx, g)
 	if e != nil {
 		return e
 	}
-	signals, e := s.store.DiscoveryArtistSignals(ctx)
+	ranked, e := s.rankAndSave(ctx, g)
 	if e != nil {
 		return e
 	}
-	albums, e := s.store.DiscoveryLocalAlbums(ctx)
+	if message != "" {
+		if e = s.store.DiscoveryMessage(ctx, g, message); e != nil {
+			return e
+		}
+	}
+	mapping, _, e := s.store.ListDiscovery(ctx, "mapping", "all", 200, 0)
 	if e != nil {
 		return e
 	}
-	rejections, e := s.store.DiscoveryRejections(ctx)
-	if e != nil {
-		return e
+	mappingCovers := map[string]bool{}
+	for _, group := range mapping {
+		for _, option := range group.MappingOptions {
+			if mappingCovers[option.RGID] {
+				continue
+			}
+			if len(mappingCovers) >= 30 {
+				break
+			}
+			mappingCovers[option.RGID] = true
+			candidate := option.DiscoveryCandidate
+			candidate.Rank = 1
+			ranked = append(ranked, candidate)
+		}
 	}
-	matches := WeakMatches(catalog, albums, rejections)
-	ids := []string{}
-	for _, v := range catalog {
-		ids = append(ids, v.RGID)
-	}
-	owned, e := s.store.DiscoveryOwnership(ctx, ids)
-	if e != nil {
-		return e
-	}
-	ranked := Rank(catalog, signals, owned, matches, s.now())
-	if e = s.store.SaveDiscoveryCandidates(ctx, g, seeds, ranked, matches); e != nil {
-		return e
-	}
+
 	for _, v := range ranked {
 		if e = ctx.Err(); e != nil {
 			return e
@@ -313,14 +326,30 @@ func (s *Service) CachedCover(raw string) (path, mime string, err error) {
 }
 
 // Items adds disk availability to the storage list; it never fetches images.
-func (s *Service) Items(ctx context.Context, tab string, limit, offset int) ([]storage.DiscoveryItem, storage.DiscoveryCounts, error) {
-	items, counts, err := s.store.ListDiscovery(ctx, tab, limit, offset)
+func (s *Service) Items(ctx context.Context, tab string, limit, offset int, sources ...string) ([]storage.DiscoveryItem, storage.DiscoveryCounts, error) {
+	source := "all"
+	if len(sources) > 0 {
+		source = sources[0]
+	}
+	items, counts, err := s.store.ListDiscovery(ctx, tab, source, limit, offset)
 	if err != nil {
 		return nil, counts, err
 	}
 	for i := range items {
 		_, _, e := s.CachedCover(items[i].RGID)
 		items[i].CoverAvailable = e == nil
+		for j := range items[i].MappingOptions {
+			_, _, err := s.CachedCover(items[i].MappingOptions[j].RGID)
+			items[i].MappingOptions[j].CoverAvailable = err == nil
+		}
 	}
 	return items, counts, nil
+}
+
+// BangumiEnabled reports the shared enrichment setting for the discovery status UI.
+func (s *Service) BangumiEnabled(ctx context.Context) (bool, error) {
+	if s.bangumi == nil {
+		return false, nil
+	}
+	return s.bangumi.BangumiEnabled(ctx)
 }

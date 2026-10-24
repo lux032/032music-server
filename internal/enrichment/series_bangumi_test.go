@@ -69,7 +69,7 @@ func newSeriesManager(t *testing.T, server *httptest.Server) (*Manager, *storage
 	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.client = server.Client()
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	setting, _ := store.MetadataSourceSetting(ctx, "bangumi")
 	setting.Enabled = true
 	if err = store.SaveMetadataSourceSetting(ctx, setting); err != nil {

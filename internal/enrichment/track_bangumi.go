@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lux032/032music-server/internal/bangumi"
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 	"golang.org/x/text/unicode/norm"
@@ -90,25 +91,6 @@ func (m *Manager) musicSubjectArtists(ctx context.Context, setting storage.Metad
 		return nil, err
 	}
 	return musicArtists(subject, people), nil
-}
-
-// splitMultiTitle separates an entry that names several songs ("A / B").
-// Every slash is a separator, including a single slash inside one title
-// ("赤い罠(who loves it?)/ADAMAS"). Fewer than two non-empty parts is not a multi-title.
-func splitMultiTitle(name string) []string {
-	name = norm.NFKC.String(strings.TrimSpace(name))
-	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '/' })
-	var out []string
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	if len(out) < 2 {
-		return nil
-	}
-	return out
 }
 
 type musicHit struct {
@@ -330,7 +312,7 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 func renameMultiParts(subjects []musicSubject, query string) []musicSubject {
 	var renamed []musicSubject
 	for _, subject := range subjects {
-		for _, part := range splitMultiTitle(subject.Name) {
+		for _, part := range bangumi.SplitMultiTitle(subject.Name) {
 			if titleLayer(part, query) == "" {
 				continue
 			}
@@ -352,7 +334,7 @@ func (m *Manager) multiTitleHits(ctx context.Context, setting storage.MetadataSo
 	}
 	var multi []musicSubject
 	for _, subject := range subjects {
-		if subject.Type != 3 || len(splitMultiTitle(subject.Name)) < 2 {
+		if subject.Type != 3 || len(bangumi.SplitMultiTitle(subject.Name)) < 2 {
 			continue
 		}
 		multi = append(multi, subject)

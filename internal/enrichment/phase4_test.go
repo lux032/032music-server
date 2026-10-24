@@ -90,7 +90,7 @@ func phase4TestManagerWithCtx(t *testing.T, ctx context.Context, handler http.Ha
 		return upstream.RoundTrip(r)
 	})
 	manager.musicBrainzBase = server.URL + "/mb"
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	for _, source := range []string{"bangumi"} {
 		setting, _ := store.MetadataSourceSetting(ctx, source)
 		setting.Enabled = true

@@ -71,6 +71,13 @@ func WeakMatches(items []storage.DiscoveryCandidate, albums []storage.DiscoveryL
 				continue
 			}
 			has := false
+			workMatch := false
+			for _, id := range a.WorkIDs {
+				if v.SeedWorkID != 0 && id == v.SeedWorkID {
+					has = true
+					workMatch = true
+				}
+			}
 			for _, id := range a.ArtistIDs {
 				if id == v.SeedArtistID {
 					has = true
@@ -82,7 +89,10 @@ func WeakMatches(items []storage.DiscoveryCandidate, albums []storage.DiscoveryL
 			}
 			seen[key] = true
 			reason := "title_artist"
-			if a.CurrentRG != "" {
+			if workMatch {
+				reason = "title_work"
+			}
+			if a.CurrentRG != "" && !workMatch {
 				reason = "other_rg"
 			}
 			out = append(out, storage.DiscoveryMatch{RGID: v.RGID, AlbumID: a.ID, Reason: reason})
@@ -112,25 +122,38 @@ func recency(date string, now time.Time) float64 {
 }
 
 // Rank retains excluded/unselected candidates with rank=0 (stored as SQL NULL).
-func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.DiscoverySignals, ownership map[string]storage.Ownership, matches []storage.DiscoveryMatch, now time.Time) []storage.DiscoveryCandidate {
-	aff := map[int64]float64{}
+func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.DiscoverySignals, ownership map[string]storage.Ownership, matches []storage.DiscoveryMatch, now time.Time, workSignalsArg ...map[int64]storage.DiscoverySignals) []storage.DiscoveryCandidate {
+	workSignals := map[int64]storage.DiscoverySignals{}
+	if len(workSignalsArg) > 0 {
+		workSignals = workSignalsArg[0]
+	}
+	aff := map[string]float64{}
 	for _, v := range input {
-		aff[v.SeedArtistID] = Affinity(signals[v.SeedArtistID])
-	}
-	artists := []int64{}
-	for id := range aff {
-		artists = append(artists, id)
-	}
-	sort.Slice(artists, func(i, j int) bool {
-		if aff[artists[i]] != aff[artists[j]] {
-			return aff[artists[i]] > aff[artists[j]]
+		key := seedKey(v)
+		if v.SeedWorkID == 0 {
+			aff[key] = Affinity(signals[v.SeedArtistID])
+		} else {
+			aff[key] = WorkAffinity(v.SeedWorkID, v.SeriesID, workSignals)
 		}
-		return artists[i] < artists[j]
-	})
-	top := map[int64]bool{}
-	for i, id := range artists {
-		if i < int(math.Ceil(float64(len(artists))*.3)) {
-			top[id] = true
+	}
+	top := map[string]bool{}
+	for _, kind := range []string{"a:", "w:"} {
+		keys := []string{}
+		for key := range aff {
+			if strings.HasPrefix(key, kind) {
+				keys = append(keys, key)
+			}
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if aff[keys[i]] != aff[keys[j]] {
+				return aff[keys[i]] > aff[keys[j]]
+			}
+			return keys[i] < keys[j]
+		})
+		for i, key := range keys {
+			if i < int(math.Ceil(float64(len(keys))*.3)) {
+				top[key] = true
+			}
 		}
 	}
 	possible := map[string]bool{}
@@ -140,11 +163,18 @@ func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.Discover
 	unique := map[string]storage.DiscoveryCandidate{}
 	for _, v := range input {
 		s := signals[v.SeedArtistID]
-		v.Score = aff[v.SeedArtistID] * kindWeight(v.Kind) * recency(v.FirstReleaseDate, now)
+		if v.SeedWorkID != 0 {
+			s = workSignals[v.SeedWorkID]
+			s.FavArtist = false
+		}
+		v.Score = aff[seedKey(v)] * kindWeight(v.Kind) * recency(v.FirstReleaseDate, now)
+		if v.SeedWorkID != 0 {
+			v.Score *= RelationWeight(v.Relation)
+		}
 		v.Rank = 0
 		v.Generation = 0
 		v.Lane = "explore"
-		if top[v.SeedArtistID] || s.FavArtist || s.Plays90d > 0 {
+		if top[seedKey(v)] || s.FavArtist || s.Plays90d > 0 {
 			v.Lane = "exploit"
 		}
 		v.Reasons = []storage.DiscoveryReason{}
@@ -163,9 +193,33 @@ func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.Discover
 		if v.Lane == "explore" {
 			v.Reasons = append(v.Reasons, storage.DiscoveryReason{Code: "explore", Artist: v.Artist})
 		}
+		if v.SeedWorkID != 0 {
+			v.Reasons = nil
+			if s.Plays90d > 0 {
+				v.Reasons = append(v.Reasons, storage.DiscoveryReason{Code: "work_plays", Work: v.WorkTitle, N: int(math.Ceil(s.Plays90d))})
+			}
+			if v.SeriesID != 0 && aff[seedKey(v)] > Affinity(s) {
+				v.Reasons = append(v.Reasons, storage.DiscoveryReason{Code: "work_series", Work: v.WorkTitle})
+			}
+			v.Reasons = append(v.Reasons, storage.DiscoveryReason{Code: "work_relation", Work: v.WorkTitle, Relation: v.Relation})
+			if v.Lane == "explore" {
+				v.Reasons = append(v.Reasons, storage.DiscoveryReason{Code: "explore_work", Work: v.WorkTitle})
+			}
+			if v.MappingStatus == "auto" {
+				v.Reasons = append(v.Reasons, storage.DiscoveryReason{Code: "mapping_auto"})
+			}
+		}
 		old, ok := unique[v.RGID]
 		if !ok || v.Score > old.Score || v.Score == old.Score && v.SeedArtistID < old.SeedArtistID {
+			if ok && discoverySourceKind(v) != discoverySourceKind(old) {
+				v.Reasons = mergeReasons(v.Reasons, old.Reasons)
+			}
 			unique[v.RGID] = v
+		} else {
+			if discoverySourceKind(v) != discoverySourceKind(old) {
+				old.Reasons = mergeReasons(old.Reasons, v.Reasons)
+			}
+			unique[v.RGID] = old
 		}
 	}
 	all := []storage.DiscoveryCandidate{}
@@ -199,12 +253,12 @@ func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.Discover
 		ha, hb := sha256.Sum256([]byte(a.RGID+now.Format("2006-01-02"))), sha256.Sum256([]byte(b.RGID+now.Format("2006-01-02")))
 		return string(ha[:]) < string(hb[:])
 	})
-	counts := map[int64]int{}
+	counts := map[string]int{}
 	take := func(pool *[]int) int {
 		for len(*pool) > 0 {
 			i := (*pool)[0]
 			*pool = (*pool)[1:]
-			if counts[all[i].SeedArtistID] < MaxPerArtist {
+			if counts[capKey(all[i])] < MaxPerSeed {
 				return i
 			}
 		}
@@ -223,7 +277,47 @@ func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.Discover
 			break
 		}
 		all[i].Rank = rank
-		counts[all[i].SeedArtistID]++
+		counts[capKey(all[i])]++
 	}
 	return all
+}
+
+func seedKey(v storage.DiscoveryCandidate) string {
+	if v.SeedWorkID != 0 {
+		return fmt.Sprintf("w:%d", v.SeedWorkID)
+	}
+	return fmt.Sprintf("a:%d", v.SeedArtistID)
+}
+func capKey(v storage.DiscoveryCandidate) string {
+	if v.SeedWorkID != 0 && v.SeriesID != 0 {
+		return fmt.Sprintf("s:%d", v.SeriesID)
+	}
+	return seedKey(v)
+}
+func mergeReasons(primary, secondary []storage.DiscoveryReason) []storage.DiscoveryReason {
+	if len(secondary) > 0 {
+		primary = append(primary, secondary[0])
+	}
+	if len(primary) > 3 {
+		primary = primary[:3]
+	}
+	return primary
+}
+
+func discoverySourceKind(v storage.DiscoveryCandidate) string {
+	if v.SeedWorkID != 0 {
+		return "work"
+	}
+	return "artist"
+}
+func WorkAffinity(workID, seriesID int64, signals map[int64]storage.DiscoverySignals) float64 {
+	bonus := 0.
+	if seriesID != 0 {
+		for id, v := range signals {
+			if id != workID && v.SeriesID == seriesID {
+				bonus = math.Max(bonus, Affinity(v))
+			}
+		}
+	}
+	return Affinity(signals[workID]) + .5*bonus
 }

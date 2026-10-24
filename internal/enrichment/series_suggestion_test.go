@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/lux032/032music-server/internal/bangumi"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -249,13 +250,13 @@ func TestSeriesSuggestionFailureKeepsOldSuggestions(t *testing.T) {
 // seriesSuggestionPairs is pure: whitelist pairs, narrowed sequel pairs
 // (D67), one-way relations, locked works, shared series and decided pairs.
 func TestSeriesSuggestionPairsPure(t *testing.T) {
-	rel := func(id int64, relation string) musicRelation {
-		return musicRelation{ID: id, Type: 2, Relation: relation}
+	rel := func(id int64, relation string) bangumi.Relation {
+		return bangumi.Relation{ID: id, Type: 2, Relation: relation}
 	}
-	rel4 := func(id int64, relation string) musicRelation {
-		return musicRelation{ID: id, Type: 4, Relation: relation}
+	rel4 := func(id int64, relation string) bangumi.Relation {
+		return bangumi.Relation{ID: id, Type: 4, Relation: relation}
 	}
-	relations := map[int64][]musicRelation{
+	relations := map[int64][]bangumi.Relation{
 		1:  {rel(2, "游戏")},    // 1 -> 2 whitelisted with reverse below
 		2:  {rel(1, "动画")},    // pair (1,2): cross
 		3:  {rel(4, "续集")},    // pair (3,4): sequel — 103 is a manual

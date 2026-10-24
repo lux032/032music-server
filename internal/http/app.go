@@ -500,6 +500,12 @@ func (a *App) Handler() http.Handler {
 	for _, route := range []string{"GET /admin/discover/items.json", "GET /admin/discover/status.json", "POST /admin/discover/refresh", "POST /admin/discover/refresh/cancel"} {
 		mux.Handle(route, a.requireAdminJSON(http.HandlerFunc(a.handleDiscoveryJSON)))
 	}
+	for _, route := range []struct{ method, action string }{{"POST", "confirm"}, {"POST", "reject"}, {"DELETE", "reject"}} {
+		mux.Handle(route.method+" /admin/discover/mapping/{subjectId}/{rgid}/"+route.action, a.requireAdminJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("action", route.action)
+			a.handleDiscoveryJSON(w, r)
+		})))
+	}
 	for _, route := range []struct{ method, action string }{{"POST", "ignore"}, {"DELETE", "ignore"}, {"POST", "owned"}, {"POST", "not-same"}} {
 		mux.Handle(route.method+" /admin/discover/rg/{rgid}/"+route.action, a.requireAdminJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.SetPathValue("action", route.action)

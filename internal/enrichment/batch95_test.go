@@ -53,7 +53,7 @@ func TestBatch95AlbumWithoutTieupsBecomesMiss(t *testing.T) {
 	t.Cleanup(func() { cancel(); manager.Wait() })
 	manager.phaseEndpoints.BangumiAPI = server.URL
 	manager.client = server.Client()
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	targets, err := store.AlbumsForBangumiTieup(ctx, true, 0)
 	if err != nil || len(targets) != 1 {
 		t.Fatalf("targets=%v err=%v", targets, err)

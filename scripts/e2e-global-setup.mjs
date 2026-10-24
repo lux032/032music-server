@@ -115,7 +115,7 @@ export default async function setup() {
     await sleep(100);
   }
   await fixtureSetup({ port: 45445, stateFile: DISCOVERY_STATE_FILE, tempPrefix: '032music-e2e-discovery-', go, ffmpeg, serverBin,
-    env: { MUSIC_SERVER_MUSICBRAINZ_BASE_URL: 'http://127.0.0.1:45446', MUSIC_SERVER_COVERART_BASE_URL: 'http://127.0.0.1:45446' } });
+    env: { MUSIC_SERVER_BANGUMI_BASE_URL: 'http://127.0.0.1:45446', MUSIC_SERVER_MUSICBRAINZ_BASE_URL: 'http://127.0.0.1:45446', MUSIC_SERVER_COVERART_BASE_URL: 'http://127.0.0.1:45446' } });
   const discoveryState = JSON.parse(fs.readFileSync(DISCOVERY_STATE_FILE, 'utf8'));
   const seedBin = path.join(discoveryState.tempRoot, process.platform === 'win32' ? 'seed_discovery.exe' : 'seed_discovery');
   const build = spawnSync(go, ['build', '-o', seedBin, './scripts/seed_discovery_e2e.go'], { cwd: ROOT, encoding: 'utf8' });

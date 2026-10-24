@@ -34,7 +34,7 @@ test('发现推荐、反馈、对比、刷新及 PJAX 键盘交互', async ({ pa
     fs.mkdirSync('.local/mockups/discovery', { recursive: true });
     await page.screenshot({ path: '.local/mockups/discovery/' + test.info().project.name + '.png', fullPage: true });
   }
-  await expect(page.locator('[data-count="recommended"]')).toHaveText('2');
+  await expect(page.locator('[data-count="recommended"]')).toHaveText('4');
   await card(page, 1).getByRole('button', { name: '忽略', exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(card(page, 1)).toHaveCount(0);
@@ -73,6 +73,63 @@ test('发现推荐、反馈、对比、刷新及 PJAX 键盘交互', async ({ pa
   await page.getByRole('button', { name: '确认替换发行组' }).click();
   await expect(page.locator('dialog')).not.toBeVisible();
   await expectFocus(page);
+  await page.getByRole('button', { name: '来自作品', exact: true }).click();
+  await expect(page.locator('[data-discovery-grid]')).toContainText('来自你常听的作品《发现测试作品》');
+  await expect(card(page, 1)).toHaveCount(0);
+  await page.getByRole('button', { name: '来自艺人', exact: true }).click();
+  await expect(card(page, 1)).toBeVisible();
+  await expect(page.locator('[data-discovery-grid]')).not.toContainText('Discovery Work OST');
+  await page.getByRole('button', { name: /待确认对应/ }).click();
+  const mapping = page.locator('article[data-subject-id="900011"]');
+  const independent = page.locator('article[data-subject-id="900014"]');
+  await expect(independent).toBeVisible();
+  await expect(mapping).toContainText('A / B');
+  await expect(mapping.locator('[data-option-rgid]')).toHaveCount(2);
+  const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+  const blocked = await page.request.post('/admin/discover/rg/55555555-5555-4555-8555-000000000002/search', { headers: { 'X-CSRF-Token': token }, data: { q: 'A / B' } });
+  expect(blocked.status()).toBe(409);
+  expect((await blocked.json()).error.code).toBe('mapping_unconfirmed');
+  // A later request can fail after an earlier option was committed. Reload the
+  // group and counts even in that case, then restore the committed option.
+  let rejected = 0;
+  await page.route('**/admin/discover/mapping/900011/*/reject', async route => {
+    if (++rejected === 2) await route.fulfill({ status: 500, json: { error: { message: '测试失败' } } });
+    else await route.continue();
+  });
+  await mapping.getByRole('button', { name: '都不是' }).click();
+  await expect(page.locator('[data-discovery-live]')).toContainText('已处理 1/2 项');
+  await expect(mapping.locator('[data-option-rgid]')).toHaveCount(1);
+  await expect(independent).toBeVisible();
+  await page.unroute('**/admin/discover/mapping/900011/*/reject');
+  await page.getByRole('button', { name: /已忽略/ }).click();
+  await page.locator('[data-mapping-status="rejected"]').getByRole('button', { name: /恢复：/ }).click();
+  await expect(page.locator('[data-mapping-status="rejected"]')).toHaveCount(0);
+  await page.getByRole('button', { name: /为你发现/ }).click();
+  await expect(mapping.locator('[data-option-rgid]')).toHaveCount(2);
+  // Return reranked=false while preserving the real decision to test its notice.
+  await page.route('**/admin/discover/mapping/900011/*/reject', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), reranked: false } });
+  });
+  await mapping.getByRole('button', { name: '都不是' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-discovery-live]')).toContainText('排名将在下次刷新时更新');
+  await expect(independent).toBeVisible();
+  await expect(independent.getByRole('button', { name: '是这张：Independent Suggested' })).toBeFocused();
+  await page.getByRole('button', { name: /已忽略/ }).click();
+  await expect(page.locator('[data-mapping-status="rejected"]')).toContainText('已拒绝的对应');
+  await page.locator('[data-mapping-status="rejected"]').getByRole('button', { name: '恢复：A / B', exact: true }).click();
+  await expect(page.locator('[data-mapping-status="rejected"] [data-option-rgid]')).toHaveCount(1);
+  await page.getByRole('button', { name: /为你发现/ }).click();
+  await expect(mapping).toBeVisible();
+  await mapping.getByRole('button', { name: '是这张：A / B', exact: true }).click();
+  await expect(mapping).toHaveCount(0);
+  await page.getByRole('button', { name: '来自作品', exact: true }).click();
+  await expect(page.locator('[data-rgid="55555555-5555-4555-8555-000000000002"]')).toBeVisible();
+  await page.locator('[data-rgid="55555555-5555-4555-8555-000000000003"]').getByRole('button', { name: '不是这张：Discovery Auto' }).click();
+  await expect(page.locator('[data-rgid="55555555-5555-4555-8555-000000000003"]')).toHaveCount(0);
+  await page.getByRole('button', { name: '全部', exact: true }).click();
+
   await page.getByRole('button', { name: /获取中/ }).click();
   await expect(page.locator('[data-discovery-grid]')).toHaveText('暂无获取任务');
   await page.getByRole('button', { name: /为你发现/ }).click();
@@ -81,6 +138,10 @@ test('发现推荐、反馈、对比、刷新及 PJAX 键盘交互', async ({ pa
   await expect(page.getByRole('button', { name: '取消刷新' })).toBeVisible();
   await expect(page.locator('[data-discovery-grid]')).toContainText('Refreshed Discovery', { timeout: 15000 });
   await expect(page.locator('[data-discovery-live]')).toContainText('目录刷新已结束');
+  await expect(page.locator('[data-discovery-status]')).toContainText('Bangumi 已启用');
+  await page.getByRole('button', { name: /待确认对应/ }).click();
+  await expect(page.locator('article[data-subject-id="900013"]')).toContainText('Fresh A / B');
+  await expect(page.locator('article[data-subject-id="900013"] [data-option-rgid="55555555-5555-4555-8555-000000000004"]')).toBeVisible();
   await page.getByRole('button', { name: '刷新目录' }).click();
   await page.getByRole('button', { name: '取消刷新' }).click();
   await expect(page.locator('[data-discovery-status]')).toContainText('已取消');

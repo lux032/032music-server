@@ -308,9 +308,19 @@ func acquisitionConflict(err error) error {
 
 // AcquisitionReleaseGroup reads the durable catalog rather than refresh candidates.
 func (s *Store) AcquisitionReleaseGroup(ctx context.Context, rgid string) (DiscoveryReleaseGroup, error) {
+	if err := s.IdentityReady(ctx); err != nil {
+		return DiscoveryReleaseGroup{}, err
+	}
 	id, err := normalizedDiscoveryID(rgid)
 	if err != nil {
 		return DiscoveryReleaseGroup{}, err
+	}
+	var blocked bool
+	if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM discovery_bangumi_mappings WHERE rgid=?) AND NOT EXISTS(SELECT 1 FROM discovery_bangumi_mappings m WHERE rgid=? AND status IN ('auto','confirmed') AND NOT EXISTS(SELECT 1 FROM discovery_bangumi_mappings x WHERE x.subject_id=m.subject_id AND x.status='confirmed' AND x.rgid<>m.rgid)) AND NOT EXISTS(SELECT 1 FROM discovery_artist_release_groups WHERE rgid=?)`, id, id, id).Scan(&blocked); err != nil {
+		return DiscoveryReleaseGroup{}, err
+	}
+	if blocked {
+		return DiscoveryReleaseGroup{}, ErrMappingUnconfirmed
 	}
 	var r DiscoveryReleaseGroup
 	err = s.db.QueryRowContext(ctx, `SELECT rgid,title,kind,artist_credit FROM discovery_release_groups WHERE rgid=?`, id).Scan(&r.RGID, &r.Title, &r.Kind, &r.ArtistCredit)

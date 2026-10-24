@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"github.com/lux032/032music-server/internal/netfetch"
-	"github.com/lux032/032music-server/internal/sourcegate"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/lux032/032music-server/internal/netfetch"
+	"github.com/lux032/032music-server/internal/sourcegate"
 )
 
 var posterExtensions = map[string]string{"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
@@ -263,7 +264,7 @@ func (m *Manager) StartWorkPosterBackfill() (started bool) {
 			select {
 			case <-m.baseCtx.Done():
 				return
-			case <-time.After(m.bangumiInterval):
+			case <-time.After(m.bangumiPace):
 			}
 		}
 		if result.Cached > 0 || result.Failed > 0 {

@@ -199,7 +199,7 @@ func TestEnrichmentRuntimeStagePrepareOnceAfterPauseRestart(t *testing.T) {
 	restarted := newManagedTestManager(t, ctx, s, m.logger, t.TempDir())
 	restarted.phaseEndpoints = m.phaseEndpoints
 	restarted.client = m.client
-	restarted.bangumiInterval = 0
+	restarted.setBangumiIntervalForTest(0)
 	if err = restarted.ResumeRun(ctx, run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestEnrichmentRuntimeSeriesCrashSkipsMemberReapply(t *testing.T) {
 	// Simulated crash: the item is still in_progress and the run is running.
 	restarted := newManagedTestManager(t, ctx, store, manager.logger, t.TempDir())
 	restarted.phaseEndpoints = manager.phaseEndpoints
-	restarted.bangumiInterval = 0
+	restarted.setBangumiIntervalForTest(0)
 	restarted.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("resume re-requested %s", r.URL)
 		return nil, fmt.Errorf("network forbidden on resume")

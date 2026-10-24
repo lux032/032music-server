@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"strconv"
 	"time"
 )
 
@@ -35,7 +37,6 @@ func (s *Store) DiscoveryLocalAlbums(c context.Context) ([]DiscoveryLocalAlbum, 
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
 	index := map[int64]int{}
 	for i, v := range out {
 		index[v.ID] = i
@@ -43,10 +44,30 @@ func (s *Store) DiscoveryLocalAlbums(c context.Context) ([]DiscoveryLocalAlbum, 
 	for rows.Next() {
 		var album, artist int64
 		if e = rows.Scan(&album, &artist); e != nil {
+			rows.Close()
 			return nil, e
 		}
 		if i, ok := index[album]; ok {
 			out[i].ArtistIDs = append(out[i].ArtistIDs, artist)
+		}
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return nil, e
+	}
+	rows, e = s.db.QueryContext(c, `SELECT album_id,work_id FROM album_works`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a, w int64
+		if e = rows.Scan(&a, &w); e != nil {
+			return nil, e
+		}
+		if i, ok := index[a]; ok {
+			out[i].WorkIDs = append(out[i].WorkIDs, w)
 		}
 	}
 	return out, rows.Err()
@@ -133,15 +154,18 @@ func (s *Store) DiscoveryRejections(c context.Context) (map[string]map[int64]boo
 	}
 	return out, rows.Err()
 }
-func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) ([]DiscoveryItem, DiscoveryCounts, error) {
+func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offset int) ([]DiscoveryItem, DiscoveryCounts, error) {
 	var counts DiscoveryCounts
 	if e := s.IdentityReady(c); e != nil {
 		return nil, counts, e
 	}
-	if tab != "recommended" && tab != "possible" && tab != "ignored" && tab != "acquiring" {
+	if source != "all" && source != "artist" && source != "work" {
+		return nil, counts, errors.New("invalid discovery source")
+	}
+	if tab != "recommended" && tab != "possible" && tab != "ignored" && tab != "acquiring" && tab != "mapping" {
 		return nil, counts, errors.New("invalid discovery tab")
 	}
-	rows, e := s.db.QueryContext(c, `SELECT `+discoveryGroupSelect+`,d.seed_artist_id,COALESCE(a.user_display_name,a.display_name),d.generation,d.score,d.lane,COALESCE(d.rank,0),d.reasons_json FROM discovery_candidates d JOIN discovery_release_groups r ON r.rgid=d.rgid JOIN artists a ON a.id=d.seed_artist_id ORDER BY COALESCE(d.rank,2147483647),d.score DESC,r.rgid`)
+	rows, e := s.db.QueryContext(c, `SELECT `+discoveryGroupSelect+`,COALESCE(d.seed_artist_id,0),COALESCE(a.user_display_name,a.display_name,''),d.generation,d.score,d.lane,COALESCE(d.rank,0),d.reasons_json,d.seed_kind,COALESCE(d.seed_work_id,0),COALESCE(d.bangumi_subject_id,0),COALESCE(w.title,''),COALESCE(sm.series_id,0),COALESCE((SELECT relation FROM discovery_work_music wm WHERE wm.work_id=d.seed_work_id AND wm.subject_id=d.bangumi_subject_id),''),COALESCE((SELECT status FROM discovery_bangumi_mappings m WHERE m.subject_id=d.bangumi_subject_id AND m.rgid=d.rgid AND NOT EXISTS(SELECT 1 FROM discovery_bangumi_mappings x WHERE x.subject_id=m.subject_id AND x.status='confirmed' AND x.rgid<>m.rgid)),'') FROM discovery_candidates d JOIN discovery_release_groups r ON r.rgid=d.rgid LEFT JOIN artists a ON a.id=d.seed_artist_id LEFT JOIN works w ON w.id=d.seed_work_id LEFT JOIN work_series_members sm ON sm.work_id=w.id ORDER BY COALESCE(d.rank,2147483647),d.score DESC,r.rgid`)
 	if e != nil {
 		return nil, counts, e
 	}
@@ -150,7 +174,7 @@ func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) 
 	for rows.Next() {
 		var v DiscoveryItem
 		var secondary, reasons string
-		e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &secondary, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedArtistID, &v.Artist, &v.Generation, &v.Score, &v.Lane, &v.Rank, &reasons)
+		e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &secondary, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedArtistID, &v.Artist, &v.Generation, &v.Score, &v.Lane, &v.Rank, &reasons, &v.SeedKind, &v.SeedWorkID, &v.SubjectID, &v.WorkTitle, &v.SeriesID, &v.Relation, &v.MappingStatus)
 		if e != nil {
 			rows.Close()
 			return nil, counts, e
@@ -177,6 +201,13 @@ func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) 
 	if e != nil {
 		return nil, counts, e
 	}
+	mapping, e := s.discoveryMappingCatalog(c, true)
+	if e != nil {
+		return nil, counts, e
+	}
+	for _, v := range mapping {
+		ids = append(ids, v.RGID)
+	}
 	own, e := s.DiscoveryOwnership(c, ids)
 	if e != nil {
 		return nil, counts, e
@@ -192,7 +223,19 @@ func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) 
 			out = append(out, DiscoveryItem{DiscoveryCandidate: DiscoveryCandidate{DiscoveryReleaseGroup: DiscoveryReleaseGroup{RGID: task.RGID, Title: task.Title, ArtistCredit: task.Artist, Kind: task.Kind}}})
 		}
 	}
+	metadata, err := s.discoveryMappingMetadata(c)
+	if err != nil {
+		return nil, counts, err
+	}
 	for _, v := range all {
+		if v.SubjectID > 0 {
+			if _, ok := metadata[discoveryMappingKey(v.SubjectID, v.RGID)]; !ok {
+				continue
+			}
+		}
+		if v.SeedKind == "work" && v.MappingStatus != "auto" && v.MappingStatus != "confirmed" {
+			continue
+		}
 		o := own[v.RGID]
 		if len(o.Albums) > 0 || o.Acquiring {
 			continue
@@ -210,11 +253,72 @@ func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) 
 			}
 			counts.Recommended++
 		}
-		if kind == tab {
+		if kind == tab && (source == "all" || source == v.SeedKind) {
 			v.Possible = o.Possible
 			out = append(out, v)
 		}
 	}
+	seenMappings := map[string]bool{}
+	perSubject := map[int64]int{}
+	groupIndexes := map[string]int{}
+	counted := map[string]bool{}
+	for _, v := range mapping {
+		if _, ok := metadata[discoveryMappingKey(v.SubjectID, v.RGID)]; !ok {
+			continue
+		}
+		key := fmt.Sprintf("%d:%s", v.SubjectID, v.RGID)
+		if seenMappings[key] {
+			continue
+		}
+		seenMappings[key] = true
+		o := own[v.RGID]
+		if len(o.Albums) > 0 || o.Acquiring || o.Ignored {
+			continue
+		}
+		kind := "mapping"
+		if v.MappingStatus == "rejected" {
+			kind = "ignored"
+
+			countKey := fmt.Sprintf("ignored:%d", v.SubjectID)
+			if !counted[countKey] {
+				counts.Ignored++
+				counted[countKey] = true
+			}
+		} else {
+			if perSubject[v.SubjectID] >= 3 {
+				continue
+			}
+			perSubject[v.SubjectID]++
+
+			countKey := fmt.Sprintf("mapping:%d", v.SubjectID)
+			if !counted[countKey] {
+				counts.Mapping++
+				counted[countKey] = true
+			}
+		}
+		if kind == tab && source != "artist" {
+			item := DiscoveryItem{DiscoveryCandidate: v, CoverAvailable: v.CoverStatus == "cached"}
+			if len(v.FirstReleaseDate) >= 4 {
+				item.Year, _ = strconv.Atoi(v.FirstReleaseDate[:4])
+			}
+			groupKey := fmt.Sprintf("%s:%d", kind, v.SubjectID)
+			if index, ok := groupIndexes[groupKey]; ok {
+				out[index].MappingOptions = append(out[index].MappingOptions, item)
+			} else {
+				item.MappingOptions = []DiscoveryItem{item}
+				groupIndexes[groupKey] = len(out)
+				out = append(out, item)
+			}
+		}
+	}
+	enriched := out[:0]
+	for _, item := range out {
+		item, ok := enrichDiscoveryMappingItem(item, metadata)
+		if ok {
+			enriched = append(enriched, item)
+		}
+	}
+	out = enriched
 	if offset < 0 {
 		offset = 0
 	}
@@ -432,4 +536,38 @@ func (s *Store) DiscoveryArtistSignals(c context.Context) (map[int64]DiscoverySi
 		out[id] = v
 	}
 	return out, rows.Err()
+}
+
+// Promote the first surviving option if a concurrent refresh retired the head.
+func enrichDiscoveryMappingItem(item DiscoveryItem, metadata map[string]discoveryMappingDisplay) (DiscoveryItem, bool) {
+	if item.SubjectID == 0 {
+		return item, true
+	}
+	if len(item.MappingOptions) > 0 {
+		options := []DiscoveryItem{}
+		for _, option := range item.MappingOptions {
+			if info, ok := metadata[discoveryMappingKey(option.SubjectID, option.RGID)]; ok {
+				option.SubjectName = info.name
+				option.SubjectNameCN = info.nameCN
+				option.MappingEvidence = info.evidence
+				option.MappingScore = info.score
+				options = append(options, option)
+			}
+		}
+		if len(options) == 0 {
+			return DiscoveryItem{}, false
+		}
+		item = options[0]
+		item.MappingOptions = options
+		return item, true
+	}
+	info, ok := metadata[discoveryMappingKey(item.SubjectID, item.RGID)]
+	if !ok {
+		return DiscoveryItem{}, false
+	}
+	item.SubjectName = info.name
+	item.SubjectNameCN = info.nameCN
+	item.MappingEvidence = info.evidence
+	item.MappingScore = info.score
+	return item, true
 }

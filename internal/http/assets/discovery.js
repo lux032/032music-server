@@ -119,24 +119,24 @@
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const n = crypto.getRandomValues(new Uint8Array(1))[0] % 16; return (c === 'x' ? n : (n & 3) | 8).toString(16); });
     }
     function announce(text) { message.textContent = text; }
-    function cardIndex(card = trigger?.closest('[data-rgid]')) {
-      return [...grid.querySelectorAll('[data-rgid]')].indexOf(card);
+    function cardIndex(card = trigger?.closest('article[data-rgid], article[data-subject-id]')) {
+      return [...grid.querySelectorAll('article[data-rgid], article[data-subject-id]')].indexOf(card);
     }
     function restoreFocus(index) {
       const active = document.activeElement;
       if (active?.isConnected && active !== document.body && (dialog.open || !dialog.contains(active))) return;
-      const cards = [...grid.querySelectorAll('[data-rgid]')];
+      const cards = [...grid.querySelectorAll('article[data-rgid], article[data-subject-id]')];
       const fallback = dialog.open ? dialog.querySelector('button:not(:disabled)') :
-        cards[Math.min(Math.max(index, 0), cards.length - 1)]?.querySelector('button') || root.querySelector('[data-tab="' + tab + '"]');
+        [...(cards[Math.min(Math.max(index, 0), cards.length - 1)]?.querySelectorAll('button:not(:disabled)') || [])].find(button => button.getClientRects().length) || root.querySelector('[data-tab="' + tab + '"]');
       fallback?.focus();
     }
-    async function load(append = false, focusIndex = cardIndex(document.activeElement?.closest('[data-rgid]')), { restore = true } = {}) {
+    async function load(append = false, focusIndex = cardIndex(document.activeElement?.closest('article[data-rgid], article[data-subject-id]')), { restore = true } = {}) {
       const sequence = ++listSequence;
       root.querySelector('.discovery-chips').hidden = tab !== 'recommended';
       root.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
       root.querySelectorAll('[data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === filter)));
-      // S1 has only artist seeds: all and artist are equivalent until S3 adds work sources.
-      const data = await request('items.json?tab=' + (tab === 'recommended' && filter === 'possible' ? 'possible' : tab) + '&limit=60&offset=' + (append ? offset : 0));
+
+      const data = await request('items.json?tab=' + (tab === 'recommended' && ['possible', 'mapping'].includes(filter) ? filter : tab) + '&source=' + (tab === 'recommended' && ['artist','work'].includes(filter) ? filter : 'all') + '&limit=60&offset=' + (append ? offset : 0));
       if (sequence !== listSequence) return;
       // HTML is rendered by the same escaped Go card template as the first screen.
       let content;
@@ -194,7 +194,7 @@
       try {
         if (b.dataset.tab) { tab = b.dataset.tab; await load(); return; }
         if (b.dataset.filter) { filter = b.dataset.filter; await load(); return; }
-        const action = b.dataset.action, card = b.closest('[data-rgid]'), focusIndex = cardIndex(card);
+        const action = b.dataset.action, card = b.closest('article[data-rgid], article[data-subject-id]'), focusIndex = cardIndex(card);
         if (!action) return;
         if (action === 'close') { close(); return; }
         if (action === 'acquire') { open(card, b, false, true); return; }
@@ -202,6 +202,24 @@
         if (action === 'task-cancel') { open(card, b, false); search.hidden = true; cancelPanel.hidden = false; root.querySelector('#discovery-dialog-title').textContent = '取消获取任务'; cancelPanel.querySelector('button').focus(); return; }
         if (action === 'owned' || action === 'compare' || action === 'task-link') { open(card, b, action === 'compare'); return; }
         busy = true; b.disabled = true;
+        if (action.startsWith('mapping-')) {
+          const group = b.closest('[data-subject-id]');
+          const subject = group.dataset.subjectId;
+          const options = action === 'mapping-reject-all' ? [...group.querySelectorAll('[data-option-rgid]')].map(el => el.dataset.optionRgid) : [b.closest('[data-option-rgid]')?.dataset.optionRgid || card?.dataset.rgid];
+          let reranked = true, processed = 0, failure;
+          try {
+            for (const rgid of options) {
+              const decision = action === 'mapping-confirm' ? 'confirm' : 'reject';
+              const data = await request('mapping/' + subject + '/' + rgid + '/' + decision, action === 'mapping-restore' ? 'DELETE' : 'POST');
+              reranked &&= data.reranked;
+              processed++;
+            }
+          } catch (error) { failure = error; }
+          finally { await load(false, focusIndex); }
+          if (failure) announce('已处理 ' + processed + '/' + options.length + ' 项 · ' + failure.message);
+          else announce(reranked ? '对应已更新。' : '对应已更新，排名将在下次刷新时更新');
+          return;
+        }
         if (action === 'confirm-acquire') {
           if (selected === undefined || !snapshot) return;
           idempotencyKey ||= newKey();
@@ -252,9 +270,10 @@
             time.dateTime = s.finishedAt; time.dataset.localTime = ''; time.textContent = s.finishedAt;
             status.append(time);
           } else status.append('尚未刷新');
-          if (s.errorMessage) status.append(' · ' + s.errorMessage);
+          if (s.errorMessage && s.errorMessage !== s.bangumi) status.append(' · ' + s.errorMessage);
           if (s.status === 'cancelled') status.append(' · 已取消');
         }
+        status.append(' · MusicBrainz · ' + (s.bangumi || 'Bangumi'));
         root.querySelector('[data-action="cancel"]').hidden = s.status !== 'running';
         root.querySelector('[data-action="refresh"]').disabled = s.status === 'running';
         if (previousStatus === 'running' && s.status !== 'running') { await load(); announce(s.errorMessage || '目录刷新已结束。'); }

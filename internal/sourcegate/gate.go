@@ -151,3 +151,15 @@ func ParseRetryAfter(header string, now time.Time) time.Duration {
 func IsRateLimitResponse(source string, status int, h http.Header) bool {
 	return status == 429 || status == 503 && (source == "musicbrainz" || h.Get("Retry-After") != "")
 }
+
+// SetInterval changes spacing for an already registered source without clearing
+// its last request time or cooldown. Unknown sources remain unregistered.
+func (g *Gate) SetInterval(source string, d time.Duration) {
+	if !g.Owns(source) {
+		return
+	}
+	v := g.states[source]
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.interval = d
+}

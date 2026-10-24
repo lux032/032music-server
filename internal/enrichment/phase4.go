@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lux032/032music-server/internal/sourcegate"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -28,7 +28,7 @@ type RunRequest struct {
 type phase4Endpoints struct{ Bangumi, BangumiAPI string }
 
 func defaultPhase4Endpoints() phase4Endpoints {
-	return phase4Endpoints{Bangumi: "https://api.bgm.tv/v0/search/subjects", BangumiAPI: "https://api.bgm.tv"}
+	return bangumiEndpoints("https://api.bgm.tv")
 }
 
 // 批次 8：分阶段进度。stage 名字与 enrichment_runs.stage / 页面展示一致。
@@ -501,7 +501,7 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 	}
 	// M4: force skips the persistent cache, but a key already fetched in this run
 	// is reused so one refresh does not repeat the same request.
-	if force && m.runMemo != nil && m.runMemo[source+"\x00"+key] {
+	if force && !isSharedFetch(ctx) && m.runMemo != nil && m.runMemo[source+"\x00"+key] {
 		force = false
 	}
 	if !force {
@@ -537,7 +537,7 @@ func (m *Manager) cachedJSON(ctx context.Context, source, key, endpoint string, 
 	status, err := attempt()
 	if err != nil && isTransientTransportError(err) && ctx.Err() == nil {
 		m.logger.Info("retrying request after transient transport error", "source", source, "endpoint", endpoint, "error", err)
-		if sleepErr := m.sleep(ctx, m.bangumiInterval); sleepErr != nil {
+		if sleepErr := m.sleep(ctx, m.bangumiPace); sleepErr != nil {
 			return status, err
 		}
 		status, err = attempt()
@@ -614,7 +614,7 @@ func (m *Manager) cachedJSONAttempt(ctx context.Context, source, key, endpoint s
 				return resp.StatusCode, e
 			}
 		}
-		if m.runMemo != nil {
+		if !isSharedFetch(ctx) && m.runMemo != nil {
 			m.runMemo[source+"\x00"+key] = true
 		}
 		now := time.Now().UTC()

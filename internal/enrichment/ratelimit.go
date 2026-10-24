@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lux032/032music-server/internal/sourcegate"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -13,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lux032/032music-server/internal/sourcegate"
 )
 
 // ErrRateLimited marks errors caused by a remote source asking us to back off
@@ -78,21 +79,11 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 }
 
 // noteRateLimited pushes back the next allowed request time of a throttled
-// source. Only sources with their own throttle (bangumi, musicbrainz) keep a
-// blocked-until timestamp; other sources are a no-op here because nothing
-// serializes their requests.
+// source. Gate-owned sources share their cooldown with other gate users;
+// other sources keep their cooldown in the manager.
 func (m *Manager) noteRateLimited(source string, retryAfter time.Duration) {
 	until := m.clockNow().Add(retryAfter)
 	m.blockSourceUntil(source, until)
-	switch source {
-	case "bangumi":
-		m.bangumiMu.Lock()
-		if until.After(m.bangumiBlockedUntil) {
-			m.bangumiBlockedUntil = until
-		}
-		m.bangumiMu.Unlock()
-
-	}
 }
 
 // NoteRateLimited records a rate-limit backoff for source. It is exported so
@@ -109,7 +100,7 @@ func (m *Manager) SetMusicBrainzBaseURL(base string) { m.musicBrainzBase = base 
 
 // SetBangumiBaseURL overrides the Bangumi subject API base URL for integration
 // tests. Interactive tests use an httptest server and never access the network.
-func (m *Manager) SetBangumiBaseURL(base string) { m.phaseEndpoints.BangumiAPI = base }
+func (m *Manager) SetBangumiBaseURL(base string) { m.phaseEndpoints = bangumiEndpoints(base) }
 
 // SetPosterBackfillTestHook 安装海报补全的测试钩子（在 goroutine 开始处理
 // 列表前调用）。只供测试使用，让“正在补全”状态的观察成为确定性事件。
@@ -312,10 +303,10 @@ func mbIntervalFromEnv(logger *slog.Logger) time.Duration {
 	return defaultMBInterval
 }
 
-// bangumiIntervalFromEnv reads the Bangumi request interval from
+// BangumiIntervalFromEnv reads the Bangumi request interval from
 // MUSIC_SERVER_BANGUMI_INTERVAL_MS, falling back to the default (with a
 // warning) for missing or invalid values.
-func bangumiIntervalFromEnv(logger *slog.Logger) time.Duration {
+func BangumiIntervalFromEnv(logger *slog.Logger) time.Duration {
 	raw := strings.TrimSpace(os.Getenv("MUSIC_SERVER_BANGUMI_INTERVAL_MS"))
 	if raw == "" {
 		return defaultBangumiInterval
@@ -378,9 +369,11 @@ func RedactSourceError(err error) error {
 
 func MBIntervalFromEnv(logger *slog.Logger) time.Duration { return mbIntervalFromEnv(logger) }
 
-// SetSourceGate must be called before starting any workers. Bangumi migrates in S3.
+// SetSourceGate must be called before starting any workers.
 func (m *Manager) SetSourceGate(g *sourcegate.Gate) {
-	if g != nil {
-		m.gate = g
+	if !g.Owns("musicbrainz") || !g.Owns("bangumi") {
+		m.logger.Error("source gate must register musicbrainz and bangumi")
+		return
 	}
+	m.gate = g
 }

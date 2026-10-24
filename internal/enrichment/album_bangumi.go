@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lux032/032music-server/internal/bangumi"
 	"github.com/lux032/032music-server/internal/storage"
-	"golang.org/x/text/unicode/norm"
 	"modernc.org/sqlite"
 )
 
@@ -42,19 +42,6 @@ type musicSubject struct {
 type musicPerson struct {
 	Name     string `json:"name"`
 	Relation string `json:"relation"`
-}
-type musicRelation struct {
-	ID       int64  `json:"id"`
-	Type     int    `json:"type"`
-	Name     string `json:"name"`
-	NameCN   string `json:"name_cn"`
-	Date     string `json:"date"`
-	Platform string `json:"platform"`
-	Relation string `json:"relation"`
-	Images   struct {
-		Large  string `json:"large"`
-		Common string `json:"common"`
-	} `json:"images"`
 }
 
 var versionSuffix = regexp.MustCompile(`(?i)\s*(\([^()]*\)|\[[^\[\]]*\]|（[^（）]*）|【[^【】]*】|〈[^〈〉]*〉|［[^［］]*］)$`)
@@ -97,29 +84,16 @@ func musicTitleScore(local, remote string) (int, []string) {
 	return 0, nil
 }
 
-var artistSeparators = regexp.MustCompile(`(?i)(?:feat\.|ft\.|cv\.|cv:|vo\.)`)
-
-func personTokens(raw string) map[string]bool {
-	raw = artistSeparators.ReplaceAllString(norm.NFKC.String(strings.ToLower(raw)), "/")
-	tokens := map[string]bool{}
-	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return strings.ContainsRune("()[]/、,，&×・;", r) }) {
-		part = strings.Join(strings.Fields(part), "")
-		if part != "" {
-			tokens[part] = true
-		}
-	}
-	return tokens
-}
 func peopleOverlap(left, right []string) int {
 	tokens := map[string]bool{}
 	for _, name := range left {
-		for key := range personTokens(name) {
+		for key := range bangumi.ArtistTokens(name) {
 			tokens[key] = true
 		}
 	}
 	seen := map[string]bool{}
 	for _, name := range right {
-		for key := range personTokens(name) {
+		for key := range bangumi.ArtistTokens(name) {
 			if tokens[key] {
 				seen[key] = true
 			}
@@ -244,31 +218,12 @@ func specificBangumiRole(role string) bool {
 	return false
 }
 
-func relationRole(s string) string {
-	switch s {
-	case "片头曲":
-		return "op"
-	case "片尾曲":
-		return "ed"
-	case "插入歌":
-		return "insert"
-	case "原声集":
-		return "ost"
-	case "角色歌":
-		return "character"
-	case "主题歌":
-		return "theme"
-	case "印象曲", "意象歌":
-		return "image_song"
-	}
-	return "other"
-}
 func (m *Manager) musicTieups(ctx context.Context, setting storage.MetadataSourceSetting, id int64, force bool) ([]storage.BangumiTieup, error) {
 	base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
 	if base == "" {
 		base = "https://api.bgm.tv"
 	}
-	var related []musicRelation
+	var related []bangumi.Relation
 	key := strconv.FormatInt(id, 10)
 	_, err := m.cachedJSON(ctx, "bangumi", "subject-rel:"+key, base+"/v0/subjects/"+key+"/subjects", setting, force, nil, &related)
 	if err != nil {
@@ -299,7 +254,7 @@ func (m *Manager) musicTieups(ctx context.Context, setting storage.MetadataSourc
 				typ = "movie"
 			}
 		}
-		var reverse []musicRelation
+		var reverse []bangumi.Relation
 		workID := strconv.FormatInt(r.ID, 10)
 		_, err = m.cachedJSON(ctx, "bangumi", "subject-rel:"+workID, base+"/v0/subjects/"+workID+"/subjects", setting, force, nil, &reverse)
 		if err != nil {
@@ -308,7 +263,7 @@ func (m *Manager) musicTieups(ctx context.Context, setting storage.MetadataSourc
 		role := "other"
 		for _, relation := range reverse {
 			if relation.ID == id {
-				role = relationRole(relation.Relation)
+				role = bangumi.RelationRole(relation.Relation)
 				break
 			}
 		}

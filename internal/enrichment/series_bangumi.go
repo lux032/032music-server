@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lux032/032music-server/internal/bangumi"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -68,7 +69,7 @@ type seriesSuggestionPair struct {
 // pair skipped this run (tainted, node cap) heals on the next. Pairs
 // already sharing a series, touching a locked work (D56) or already decided
 // (D55) are skipped.
-func seriesSuggestionPairs(relations map[int64][]musicRelation, lib map[int64]int64, workSeries map[int64]int64, manualMember map[int64]bool, type4 map[int64]bool, locked map[int64]bool, decided map[[2]int64]bool) []seriesSuggestionPair {
+func seriesSuggestionPairs(relations map[int64][]bangumi.Relation, lib map[int64]int64, workSeries map[int64]int64, manualMember map[int64]bool, type4 map[int64]bool, locked map[int64]bool, decided map[[2]int64]bool) []seriesSuggestionPair {
 	relationTo := func(from, to int64) (string, bool) {
 		for _, relation := range relations[from] {
 			if relation.ID == to {
@@ -156,13 +157,13 @@ func seriesSuggestionPairs(relations map[int64][]musicRelation, lib map[int64]in
 
 // fetchSeriesRelations returns the raw Bangumi subject relations for one
 // subject using the shared subject-rel cache key, throttle and run memo.
-func (m *Manager) fetchSeriesRelations(ctx context.Context, setting storage.MetadataSourceSetting, subjectID int64, force bool) ([]musicRelation, error) {
+func (m *Manager) fetchSeriesRelations(ctx context.Context, setting storage.MetadataSourceSetting, subjectID int64, force bool) ([]bangumi.Relation, error) {
 	base := strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")
 	if base == "" {
 		base = "https://api.bgm.tv"
 	}
 	key := strconv.FormatInt(subjectID, 10)
-	var related []musicRelation
+	var related []bangumi.Relation
 	_, err := m.cachedJSON(ctx, "bangumi", "subject-rel:"+key, base+"/v0/subjects/"+key+"/subjects", setting, force, nil, &related)
 	if err != nil {
 		return nil, err
@@ -271,8 +272,8 @@ func (m *Manager) enrichBangumiSeries(ctx context.Context, runID int64, force bo
 	// whenever a strictly smaller outside count is found, so the result does
 	// not depend on traversal order (M1, D23: ≤3 hops outside the library).
 	visited := map[int64]bool{}
-	tainted := map[int64]bool{}            // nodes a failed component touched
-	fetched := map[int64][]musicRelation{} // relation lists fetched successfully this run (404 = empty)
+	tainted := map[int64]bool{}               // nodes a failed component touched
+	fetched := map[int64][]bangumi.Relation{} // relation lists fetched successfully this run (404 = empty)
 	var components [][]int64
 	seedOrder := make([]int64, 0, len(library))
 	for subjectID := range library {
@@ -460,7 +461,7 @@ func (m *Manager) enrichBangumiSeries(ctx context.Context, runID int64, force bo
 // with the shared cache key, throttle, cancellation and circuit breaker.
 // Works whose relations could not be fetched stay unprocessed: their old
 // suggestions survive the run untouched.
-func (m *Manager) generateSeriesSuggestions(ctx context.Context, runID int64, setting storage.MetadataSourceSetting, force bool, suggestLibrary, library map[int64]int64, fetched map[int64][]musicRelation, seedResolved, type4Subjects map[int64]bool) (int, error) {
+func (m *Manager) generateSeriesSuggestions(ctx context.Context, runID int64, setting storage.MetadataSourceSetting, force bool, suggestLibrary, library map[int64]int64, fetched map[int64][]bangumi.Relation, seedResolved, type4Subjects map[int64]bool) (int, error) {
 	if len(suggestLibrary) == 0 {
 		return 0, nil
 	}

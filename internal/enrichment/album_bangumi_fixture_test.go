@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lux032/032music-server/internal/bangumi"
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -127,7 +128,7 @@ func TestF3BangumiFixtureEndToEndMatrix(t *testing.T) {
 			t.Cleanup(func() { cancel(); manager.Wait() })
 			manager.phaseEndpoints.BangumiAPI = server.URL
 			manager.client = server.Client()
-			manager.bangumiInterval = 0
+			manager.setBangumiIntervalForTest(0)
 			setting, err := store.MetadataSourceSetting(ctx, "bangumi")
 			if err != nil {
 				t.Fatal(err)
@@ -225,7 +226,8 @@ func TestRVL7AmoreFixtureLinksMainAndVersionsButNotCW(t *testing.T) {
 	defer server.Close()
 	manager := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	t.Cleanup(func() { cancel(); manager.Wait() })
-	manager.phaseEndpoints.BangumiAPI, manager.client, manager.bangumiInterval = server.URL, server.Client(), 0
+	manager.phaseEndpoints.BangumiAPI, manager.client = server.URL, server.Client()
+	manager.setBangumiIntervalForTest(0)
 	setting, _ := store.MetadataSourceSetting(ctx, "bangumi")
 	setting.Enabled, setting.AutoMatch = true, true
 	if err = store.SaveMetadataSourceSetting(ctx, setting); err != nil {
@@ -262,13 +264,13 @@ func TestF3Bangumi375293GameOPIsAuthoritative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var relations []musicRelation
+	var relations []bangumi.Relation
 	if err = json.Unmarshal(data, &relations); err != nil {
 		t.Fatal(err)
 	}
 	for _, relation := range relations {
 		if relation.ID == 375293 {
-			if relationRole(relation.Relation) != "op" {
+			if bangumi.RelationRole(relation.Relation) != "op" {
 				t.Fatalf("reverse relation %q", relation.Relation)
 			}
 			return

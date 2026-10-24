@@ -272,3 +272,9 @@
 .acquisition-result:has(input:disabled) { opacity:.65; cursor:not-allowed }
 [data-acquisition-controls] { margin-top:16px }
 [data-acquisition-controls] button { margin:4px }
+
+.discovery-mapping { min-width:0; }
+.discovery-mapping-option { border-top:1px solid var(--line); padding-block:1rem; overflow-wrap:anywhere; }
+[data-mapping-status="suggested"] [data-action="mapping-restore"],
+[data-mapping-status="rejected"] [data-action="mapping-confirm"] { display:none; }
+.discovery-chips { flex-wrap:wrap; }

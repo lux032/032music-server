@@ -26,6 +26,7 @@ type Credit struct {
 	} `json:"artist"`
 }
 type ReleaseGroup struct {
+	Score            int      `json:"score"`
 	ID               string   `json:"id"`
 	Title            string   `json:"title"`
 	PrimaryType      string   `json:"primary-type"`
@@ -143,4 +144,36 @@ func (c *Client) ReleaseGroup(ctx context.Context, id string) (ReleaseGroup, err
 	}
 	e := c.get(ctx, "/release-group/"+id+"?inc=artist-credits&fmt=json", &rg)
 	return rg, e
+}
+
+// EscapeLucene quotes reserved query syntax inside a releasegroup phrase.
+func EscapeLucene(title string) string {
+	return titleWithEscapes(title)
+}
+func titleWithEscapes(title string) string {
+	var b strings.Builder
+	for _, r := range title {
+		if strings.ContainsRune(`+-&|!(){}[]^"~*?:\/`, r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+func (c *Client) SearchReleaseGroups(ctx context.Context, title string) ([]ReleaseGroup, error) {
+	var v struct {
+		Groups []ReleaseGroup `json:"release-groups"`
+	}
+	q := url.Values{"query": {`releasegroup:"` + EscapeLucene(title) + `"`}, "limit": {"10"}, "fmt": {"json"}}
+	if e := c.get(ctx, "/release-group?"+q.Encode(), &v); e != nil {
+		return nil, e
+	}
+	out := []ReleaseGroup{}
+	for _, rg := range v.Groups {
+		if id, ok := metadata.NormalizeMusicBrainzID(rg.ID); ok {
+			rg.ID = id
+			out = append(out, rg)
+		}
+	}
+	return out, nil
 }

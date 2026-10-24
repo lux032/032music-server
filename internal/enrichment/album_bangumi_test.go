@@ -64,7 +64,7 @@ func TestRVM1RecheckForcesSearchAndSubjectCacheRefresh(t *testing.T) {
 	m := newManagedTestManager(t, ctx, store, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	m.phaseEndpoints.BangumiAPI = server.URL
 	m.client = server.Client()
-	m.bangumiInterval = 0
+	m.setBangumiIntervalForTest(0)
 	album := storage.AlbumBangumiTarget{ID: 1, Title: "Fresh", Artists: []string{"Singer"}, Recheck: true}
 	_, _ = m.enrichBangumiAlbum(ctx, 0, album, false)
 	_, _ = m.enrichBangumiAlbum(ctx, 0, album, false)
@@ -139,7 +139,7 @@ func TestB1H1AmoreAlbumAutomaticallyConfirmsOnlyOP(t *testing.T) {
 	defer server.Close()
 	manager := newManagedTestManager(t, ctx, db, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
 	manager.phaseEndpoints.BangumiAPI = server.URL
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	manager.client = server.Client()
 	setting, err := db.MetadataSourceSetting(ctx, "bangumi")
 	if err != nil {
@@ -187,7 +187,8 @@ func TestB1H2MusicTieupsOnlyAnimeGameAndSpecificRole(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	m := &Manager{phaseEndpoints: phase4Endpoints{BangumiAPI: server.URL}, client: server.Client(), bangumiInterval: 0, baseCtx: context.Background()}
+	m := &Manager{phaseEndpoints: phase4Endpoints{BangumiAPI: server.URL}, client: server.Client(), baseCtx: context.Background()}
+	m.setBangumiIntervalForTest(0)
 	store, err := storage.Open(filepath.Join(t.TempDir(), "relations.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +327,7 @@ func TestF1H6BusyAlbumsDoNotTripConsecutiveFailureCircuit(t *testing.T) {
 	manager := newManagedTestManager(t, ctx, store, logger, t.TempDir())
 	manager.client = server.Client()
 	manager.phaseEndpoints.BangumiAPI = server.URL
-	manager.bangumiInterval = 0
+	manager.setBangumiIntervalForTest(0)
 	calls := 0
 	manager.confirmAlbumSubject = func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error) {
 		calls++
