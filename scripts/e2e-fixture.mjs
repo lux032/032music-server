@@ -93,6 +93,7 @@ export async function setup(options = {}) {
     stdio: ['ignore', logFd, logFd],
     env: {
       ...process.env,
+      ...options.env,
       MUSIC_SERVER_ADDRESS: `127.0.0.1:${port}`,
       MUSIC_SERVER_DATA_DIR: data,
       MUSIC_SERVER_DATABASE_PATH: path.join(data, 'music.db'),

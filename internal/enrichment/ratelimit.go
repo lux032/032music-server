@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -18,7 +19,7 @@ import (
 // (HTTP 429, or 503 with a Retry-After header, or the Last.fm rate-limit error
 // code 29). Run loops stop the current run when they see it instead of
 // counting it towards the consecutive-failure circuit breaker.
-var ErrRateLimited = errors.New("remote source rate limited")
+var ErrRateLimited = sourcegate.ErrRateLimited
 
 // RateLimitError describes one rate-limit response from a remote source.
 type RateLimitError struct {
@@ -52,34 +53,8 @@ const (
 // parseRetryAfter interprets a Retry-After header value, which is either a
 // number of seconds or an HTTP date. Missing or unparsable values fall back
 // to defaultRateLimitBackoff; the result is capped at maxRateLimitBackoff.
-func parseRetryAfter(header string, now time.Time) time.Duration {
-	header = strings.TrimSpace(header)
-	delay := defaultRateLimitBackoff
-	if header != "" {
-		if seconds, err := strconv.Atoi(header); err == nil {
-			if seconds < 0 {
-				seconds = 0
-			}
-			// Cap before multiplying: seconds*time.Second overflows int64 for
-			// huge (but parseable) values.
-			if seconds > int(maxRateLimitBackoff/time.Second) {
-				return maxRateLimitBackoff
-			}
-			delay = time.Duration(seconds) * time.Second
-		} else if errors.Is(err, strconv.ErrRange) {
-			// A number beyond int64 is far beyond the cap.
-			return maxRateLimitBackoff
-		} else if at, err := http.ParseTime(header); err == nil {
-			delay = at.Sub(now)
-			if delay < 0 {
-				delay = 0
-			}
-		}
-	}
-	if delay > maxRateLimitBackoff {
-		delay = maxRateLimitBackoff
-	}
-	return delay
+func parseRetryAfter(h string, now time.Time) time.Duration {
+	return sourcegate.ParseRetryAfter(h, now)
 }
 
 // isRateLimitResponse reports whether the response asks the client to back
@@ -116,12 +91,7 @@ func (m *Manager) noteRateLimited(source string, retryAfter time.Duration) {
 			m.bangumiBlockedUntil = until
 		}
 		m.bangumiMu.Unlock()
-	case "musicbrainz":
-		m.mbMu.Lock()
-		if until.After(m.mbBlockedUntil) {
-			m.mbBlockedUntil = until
-		}
-		m.mbMu.Unlock()
+
 	}
 }
 
@@ -178,7 +148,7 @@ func (m *Manager) logSourceResponse(source, operation string, response *http.Res
 		"source", source,
 		"operation", operation,
 		"status", response.StatusCode,
-		"rateLimited", isRateLimitResponse(response.StatusCode, response.Header),
+		"rateLimited", sourcegate.IsRateLimitResponse(source, response.StatusCode, response.Header),
 		"retryAfter", response.Header.Get("Retry-After"),
 		"rateLimitLimit", response.Header.Get("X-RateLimit-Limit"),
 		"rateLimitRemaining", response.Header.Get("X-RateLimit-Remaining"),
@@ -206,7 +176,7 @@ func (m *Manager) doSourceJSON(client *http.Client, req *http.Request, source st
 	}
 	defer response.Body.Close()
 	m.logSourceResponse(source, "json", response)
-	if isRateLimitResponse(response.StatusCode, response.Header) {
+	if sourcegate.IsRateLimitResponse(source, response.StatusCode, response.Header) {
 		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
 		return m.rateLimitedError(source, response.StatusCode, retryAfter)
 	}
@@ -358,6 +328,10 @@ func bangumiIntervalFromEnv(logger *slog.Logger) time.Duration {
 }
 
 func (m *Manager) blockSourceUntil(source string, until time.Time) {
+	if m.gate.Owns(source) {
+		m.gate.Block(source, until)
+		return
+	}
 	m.cooldownMu.Lock()
 	defer m.cooldownMu.Unlock()
 	if m.blockedUntil == nil {
@@ -368,6 +342,9 @@ func (m *Manager) blockSourceUntil(source string, until time.Time) {
 	}
 }
 func (m *Manager) sourceBlockedUntil(source string) time.Time {
+	if m.gate.Owns(source) {
+		return m.gate.BlockedUntil(source)
+	}
 	m.cooldownMu.Lock()
 	defer m.cooldownMu.Unlock()
 	return m.blockedUntil[source]
@@ -397,4 +374,13 @@ func RedactSourceError(err error) error {
 		return urlErr.Err
 	}
 	return err
+}
+
+func MBIntervalFromEnv(logger *slog.Logger) time.Duration { return mbIntervalFromEnv(logger) }
+
+// SetSourceGate must be called before starting any workers. Bangumi migrates in S3.
+func (m *Manager) SetSourceGate(g *sourcegate.Gate) {
+	if g != nil {
+		m.gate = g
+	}
 }

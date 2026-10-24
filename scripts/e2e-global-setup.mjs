@@ -6,7 +6,7 @@
 // 两个实例共用一个 findTool 解析结果，server 二进制只 build 一次。
 // 种子失败会直接抛错中止整个 e2e 运行，不吞错误；每个实例启动后立刻写各自的
 // state file，global teardown 按 state file 逐个关闭，中途失败也能清理。
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,8 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 export const SHARED_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-state.json');
 export const BATCH3_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-batch3-state.json');
 export const BIN_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-bin.json');
+export const DISCOVERY_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-discovery-state.json');
+export const DISCOVERY_FAKE_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-discovery-fake.json');
 export const BATCH3_PORT = 45441;
 export const EMPTY_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-empty-state.json');
 
@@ -81,6 +83,39 @@ export default async function setup() {
     serverBin
   });
   await seedBatch3(go);
+
+  const fake = spawn(process.execPath, [path.join(ROOT, 'scripts/discovery-fake-mb.mjs')], { detached: true, stdio: 'ignore' });
+  fake.unref();
+  fs.writeFileSync(DISCOVERY_FAKE_STATE_FILE, JSON.stringify({ pid: fake.pid }));
+  let fakeError;
+  fake.on('error', error => { fakeError = error; });
+  fake.on('exit', (code, signal) => { fakeError = new Error(`discovery fake MB exited (code=${code}, signal=${signal}); check port 45446`); });
+  const fakeDeadline = Date.now() + 10000;
+  for (;;) {
+    if (fakeError) throw fakeError;
+    try {
+      const response = await fetch('http://127.0.0.1:45446/health', { signal: AbortSignal.timeout(1000) });
+      if (response.ok && await response.text() === String(fake.pid)) break;
+    } catch { /* Retry while the child starts listening. */ }
+    if (Date.now() > fakeDeadline) throw new Error('discovery fake MB readiness timed out on port 45446');
+    await sleep(100);
+  }
+  await fixtureSetup({ port: 45445, stateFile: DISCOVERY_STATE_FILE, tempPrefix: '032music-e2e-discovery-', go, ffmpeg, serverBin,
+    env: { MUSIC_SERVER_MUSICBRAINZ_BASE_URL: 'http://127.0.0.1:45446', MUSIC_SERVER_COVERART_BASE_URL: 'http://127.0.0.1:45446' } });
+  const discoveryState = JSON.parse(fs.readFileSync(DISCOVERY_STATE_FILE, 'utf8'));
+  const seedBin = path.join(discoveryState.tempRoot, process.platform === 'win32' ? 'seed_discovery.exe' : 'seed_discovery');
+  const build = spawnSync(go, ['build', '-o', seedBin, './scripts/seed_discovery_e2e.go'], { cwd: ROOT, encoding: 'utf8' });
+  if (build.error || build.status !== 0) throw new Error(build.error?.message || build.stderr);
+  const resetBin = path.join(discoveryState.tempRoot, process.platform === 'win32' ? 'reset_discovery.exe' : 'reset_discovery');
+  const resetBuild = spawnSync(go, ['build', '-o', resetBin, './scripts/reset_discovery_e2e.go'], { cwd: ROOT, encoding: 'utf8' });
+  if (resetBuild.error || resetBuild.status !== 0) throw new Error(resetBuild.error?.message || resetBuild.stderr);
+  const deadline = Date.now() + 180000;
+  for (;;) {
+    const result = spawnSync(seedBin, [path.join(discoveryState.tempRoot, 'data/music.db')], { encoding: 'utf8' });
+    if (result.status === 0) break;
+    if (result.status !== 2 || Date.now() > deadline) throw new Error(result.stderr || 'discovery seed timeout');
+    await sleep(1000);
+  }
 
   // 空曲库实例：主页“首次安装引导”状态的验收（不播种、不生成音频）。
   await fixtureSetup({

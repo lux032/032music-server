@@ -14,11 +14,13 @@ import (
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/dailymix"
+	"github.com/lux032/032music-server/internal/discovery"
 	"github.com/lux032/032music-server/internal/enrichment"
 	webhttp "github.com/lux032/032music-server/internal/http"
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
 	"github.com/lux032/032music-server/internal/upnp"
@@ -82,6 +84,13 @@ func run() error {
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	scannerManager.ProtectRestoreScan(backups.ScanProtectionPath())
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
+	gate := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": enrichment.MBIntervalFromEnv(logger), "coverartarchive": time.Second}})
+	enrichmentManager.SetSourceGate(gate)
+	discoveryService := discovery.New(db, logger, discovery.Options{BaseContext: rootCtx, Gate: gate, DataDir: cfg.DataDirectory, UserAgent: enrichmentManager.MetadataUserAgent})
+	if err := discoveryService.Start(rootCtx); err != nil {
+		logger.Warn("resume discovery", "error", err)
+	}
+
 	// 重启前处于限流等待的任务：恢复倒计时，到点自动继续；人工暂停与存储
 	// 错误的任务不会被扫描拾起，仍需在管理页手动处理。
 	enrichmentManager.ScanAutoResumeRuns()
@@ -97,6 +106,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	app.SetDiscovery(discoveryService)
 	restartCh := make(chan struct{}, 1)
 	app.RequestRestart = func() {
 		select {
@@ -246,6 +256,7 @@ func run() error {
 	go func() {
 		scannerManager.Wait()
 		enrichmentManager.Wait()
+		discoveryService.Wait()
 		lastFMService.Wait()
 		analysisService.Wait()
 		taggingService.Wait()

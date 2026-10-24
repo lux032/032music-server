@@ -22,6 +22,7 @@ import (
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/dailymix"
+	"github.com/lux032/032music-server/internal/discovery"
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/lyricsonline"
@@ -31,6 +32,7 @@ import (
 )
 
 type App struct {
+	discovery      *discovery.Service
 	backups        *storage.Backups
 	RequestRestart func()
 	// config keeps the raw environment values; effective (possibly
@@ -285,6 +287,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"assetPlayerMainJS": func() string { return assets.assetURL("player-main.js") },
 		"assetAdminJS":      func() string { return assets.assetURL("admin.js") },
 		"assetBrowseJS":     func() string { return assets.assetURL("browse.js") },
+		"assetDiscoveryJS":  func() string { return assets.assetURL("discovery.js") },
+		"assetDiscoveryCSS": func() string { return assets.assetURL("discovery.css") },
 		"assetHomeJS":       func() string { return assets.assetURL("home.js") },
 		"assetThemeJS":      func() string { return assets.assetURL("theme.js") },
 		"assetFaviconICO":   func() string { return assets.assetURL("favicon.ico") },
@@ -483,6 +487,17 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/home/songs", a.requireAdmin(http.HandlerFunc(a.handleHomeSongs)))
 	mux.Handle("GET /admin/status", a.requireAdmin(http.HandlerFunc(a.handleAdminStatus)))
 	mux.Handle("GET /admin/options/artists", a.requireAdminJSON(http.HandlerFunc(a.handleAdminArtistOptions)))
+	mux.Handle("GET /admin/discover", a.requireAdmin(http.HandlerFunc(a.handleDiscover)))
+	mux.Handle("GET /admin/discover/covers/{rgid}", a.requireAdmin(http.HandlerFunc(a.handleDiscoveryCover)))
+	for _, route := range []string{"GET /admin/discover/items.json", "GET /admin/discover/status.json", "POST /admin/discover/refresh", "POST /admin/discover/refresh/cancel"} {
+		mux.Handle(route, a.requireAdminJSON(http.HandlerFunc(a.handleDiscoveryJSON)))
+	}
+	for _, route := range []struct{ method, action string }{{"POST", "ignore"}, {"DELETE", "ignore"}, {"POST", "owned"}, {"POST", "not-same"}} {
+		mux.Handle(route.method+" /admin/discover/rg/{rgid}/"+route.action, a.requireAdminJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("action", route.action)
+			a.handleDiscoveryJSON(w, r)
+		})))
+	}
 	mux.Handle("GET /admin/options/albums", a.requireAdminJSON(http.HandlerFunc(a.handleAdminAlbumOptions)))
 	mux.Handle("GET /admin/options/works", a.requireAdminJSON(http.HandlerFunc(a.handleAdminWorkOptions)))
 	mux.Handle("GET /admin/options/series", a.requireAdminJSON(http.HandlerFunc(a.handleAdminSeriesOptions)))
@@ -1178,4 +1193,10 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 			"message": message,
 		},
 	})
+}
+
+func (a *App) SetDiscovery(s *discovery.Service) { a.discovery = s }
+func (a *App) validCSRFHeader(r *http.Request) bool {
+	session, ok := a.sessions.get(r)
+	return ok && secureEqual(r.Header.Get("X-CSRF-Token"), session.CSRFToken)
 }

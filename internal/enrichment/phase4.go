@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"io"
 	"net"
 	"net/http"
@@ -587,7 +588,7 @@ func (m *Manager) cachedJSONAttempt(ctx context.Context, source, key, endpoint s
 	// 429 (or 503 with Retry-After) pushes back the source's next allowed
 	// request time and is reported as a recognizable error; the response is
 	// never cached.
-	if isRateLimitResponse(resp.StatusCode, resp.Header) {
+	if sourcegate.IsRateLimitResponse(source, resp.StatusCode, resp.Header) {
 		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		return resp.StatusCode, m.rateLimitedError(source, resp.StatusCode, retryAfter)
 	}

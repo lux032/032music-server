@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>{{template "head" .}}<title>发现新音乐 · 032</title>
+<script defer src="{{assetDiscoveryJS}}"></script></head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+{{template "sidebar" .}}{{template "nowplaying" .}}
+<main id="app-main" class="browser-main discovery-main">
+<header class="browser-header"><div><h1>发现新音乐</h1><p class="result-count">从你喜欢的艺人出发，寻找曲库之外值得拥有的发行。</p></div></header>
+{{if .Blocked}}
+<section class="discovery-blocked"><h2>发现功能尚未就绪</h2><p>{{.Blocked}}</p>{{if .Rebuild.Status}}<p>身份重建状态：{{.Rebuild.Status}} · {{.Rebuild.Processed}} / {{.Rebuild.Discovered}}</p>{{if .Rebuild.Error}}<p>{{.Rebuild.Error}}</p>{{end}}<a href="/admin">前往控制台重建</a>{{end}}</section>
+{{else}}
+<section data-discovery>
+<div class="discovery-status"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><div><button type="button" data-action="refresh">刷新目录</button><button type="button" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button></div><p>MusicBrainz · 与元数据增强共享请求带宽，仅手动刷新。</p></div>
+<nav class="discovery-tabs" aria-label="发现内容状态">
+<button type="button" data-tab="recommended" aria-pressed="true">为你发现 <span data-count="recommended">{{.Counts.Recommended}}</span></button>
+<button type="button" data-tab="acquiring" aria-pressed="false">获取中 <span data-count="acquiring">0</span></button>
+<button type="button" data-tab="ignored" aria-pressed="false">已忽略 <span data-count="ignored">{{.Counts.Ignored}}</span></button>
+</nav>
+<div class="discovery-chips" role="group" aria-label="按推荐来源筛选">
+<button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="artist" aria-pressed="false">来自艺人</button><button type="button" data-filter="possible" aria-pressed="false">可能已有 <span data-count="possible">{{.Counts.Possible}}</span></button>
+</div>
+<div class="discovery-grid" data-discovery-grid>{{template "discovery-cards" .Items}}</div>
+<button type="button" data-action="more" {{if lt (len .Items) 60}}hidden{{end}}>加载更多</button>
+<p class="discovery-announcement" aria-live="polite" data-discovery-live></p>
+<dialog class="discovery-dialog" aria-labelledby="discovery-dialog-title">
+<div class="discovery-dialog-header"><h2 id="discovery-dialog-title">关联本地专辑</h2><button type="button" data-action="close" aria-label="关闭">关闭</button></div>
+<p data-discovery-target></p>
+<div data-discovery-compare></div>
+<form data-discovery-search><label for="discovery-album-query">搜索本地专辑</label><p>优先选择尚无发行组身份的专辑；关联前请核对标题与版本。</p><div class="discovery-search"><input id="discovery-album-query" name="q" autocomplete="off" placeholder="输入专辑名"><button type="submit">搜索</button></div></form>
+<div data-discovery-results></div>
+<div data-discovery-confirm hidden><p data-discovery-replace></p><button type="button" data-action="confirm-replace">确认替换发行组</button></div>
+<p role="status" data-discovery-dialog-message></p>
+</dialog>
+</section>
+{{end}}
+</main></body></html>
+{{define "discovery-cards"}}
+{{range .}}
+<article class="discovery-card" data-rgid="{{.RGID}}" data-title="{{.Title}}">
+<div class="discovery-cover"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</div>
+<h2>{{.Title}}</h2><p class="discovery-artist">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}} · {{end}}{{.Kind}}</p>
+<div class="discovery-reasons">{{range .Reasons}}<p>{{.}}</p>{{end}}</div>
+{{if .Ignored}}<button type="button" data-action="restore">恢复推荐</button>
+{{else if .Possible}}<p class="discovery-possible">可能已有 · 请先核对本地专辑</p><button type="button" data-action="compare">对比本地专辑</button><div data-possible hidden>{{range .Possible}}<div data-album-id="{{.ID}}" data-current-rg="{{.CurrentRG}}"><h3>{{.Title}}</h3><p>{{.Year}} 年 · {{.TrackCount}} 首</p><p>当前发行组：{{if .CurrentRG}}{{.CurrentRG}}{{else}}未知或冲突{{end}}</p><div class="discovery-compare-actions"><button type="button" data-action="same" data-album-id="{{.ID}}">是同一发行</button><button type="button" data-action="not-same" data-album-id="{{.ID}}">不是</button></div></div>{{end}}</div>
+{{else}}<div class="discovery-card-actions"><button type="button" data-action="owned">我已有</button><button type="button" data-action="ignore">忽略</button></div>{{end}}
+</article>
+{{else}}<div class="discovery-empty"><h2>暂无推荐</h2><p>手动刷新目录，或尝试其他筛选。</p></div>{{end}}
+{{end}}

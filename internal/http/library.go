@@ -589,6 +589,34 @@ func (a *App) handleAdminAlbumOptions(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 500, "query_failed", err.Error())
 		return
 	}
+	if r.URL.Query().Get("discovery") == "1" {
+		local, err := a.store.DiscoveryLocalAlbums(r.Context())
+		if err != nil {
+			a.discoveryError(w, err)
+			return
+		}
+		byID := map[int64]storage.DiscoveryLocalAlbum{}
+		for _, album := range local {
+			byID[album.ID] = album
+		}
+		type albumOption struct {
+			ID         int64  `json:"id"`
+			Label      string `json:"label"`
+			CurrentRG  string `json:"currentRg"`
+			Year       int    `json:"year"`
+			TrackCount int    `json:"trackCount"`
+		}
+		items := []albumOption{}
+		for _, withRG := range []bool{false, true} {
+			for _, album := range albums {
+				if v, ok := byID[album.ID]; ok && (v.CurrentRG != "") == withRG {
+					items = append(items, albumOption{v.ID, v.Title, v.CurrentRG, v.Year, v.TrackCount})
+				}
+			}
+		}
+		writeJSON(w, 200, items)
+		return
+	}
 	items := make([]optionItem, 0, len(albums))
 	for _, album := range albums {
 		items = append(items, optionItem{ID: album.ID, Label: album.Title})

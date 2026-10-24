@@ -75,3 +75,22 @@
 
 manual 不自动删；prerestore 保留两份。数据库以外的图片和 .env 需另行同步。
 详见 [备份与升级](deployment.md#备份与升级)。
+
+### Discovery test endpoints
+
+`MUSIC_SERVER_MUSICBRAINZ_BASE_URL` overrides the MusicBrainz WS/2 base URL for
+both enrichment and discovery (default `https://musicbrainz.org/ws/2`).
+`MUSIC_SERVER_COVERART_BASE_URL` overrides the discovery Cover Art Archive base
+(default `https://coverartarchive.org`). These overrides are primarily for
+isolated tests; only absolute HTTP/HTTPS URLs are accepted. Empty values use the
+default; invalid values produce a startup warning and use the default. Public
+image downloads still enforce public-address checks, including at connection
+time; a loopback test server requires an injected test transport in Go tests.
+Discovery refresh is manual; startup only resumes an interrupted running generation.
+
+Image downloads honor `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` via Go's
+`http.ProxyFromEnvironment`. Direct connections additionally check the actual
+connected IP. With a configured proxy, the proxy connection itself may be
+private: protection relies on public URL/DNS validation before each request and
+redirect, plus the administrator's trusted proxy. Consequently DNS rebinding
+protection at the final destination is the proxy's responsibility in proxy mode.

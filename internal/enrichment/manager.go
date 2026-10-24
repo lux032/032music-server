@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lux032/032music-server/internal/netfetch"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -40,10 +41,7 @@ type Manager struct {
 	running             bool
 	artistRunID         int64
 	artistCancel        context.CancelFunc
-	mbMu                sync.Mutex
-	mbLast              time.Time
-	mbInterval          time.Duration
-	mbBlockedUntil      time.Time
+	gate                *sourcegate.Gate
 	phaseMu             sync.Mutex
 	phaseRunning        bool
 	phaseRunID          int64
@@ -54,14 +52,14 @@ type Manager struct {
 	posterBackfilling   bool
 	posterLastResult    *PosterBackfillResult
 	// 头像补全 durable run（B+2）与身份匹配 run 使用同一把 m.mu 但独立字段：
-	// 两类任务可以并行，带宽共享由现有各来源限流原语（mbMu/mbLast 请求间隔、
+	// 两类任务可以并行，带宽共享由现有各来源限流原语（sourcegate 请求间隔、
 	// blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。
 	imageBackfillRunning bool
 	imageBackfillRunID   int64
 	imageBackfillCancel  context.CancelFunc
 	imageBackfillDone    chan struct{}
 	// 歌手简介补全 durable run 与身份匹配/头像补全 run 使用同一把 m.mu 但
-	// 独立字段：三类任务可以并行，带宽共享由现有各来源限流原语（mbMu/mbLast
+	// 独立字段：三类任务可以并行，带宽共享由现有各来源限流原语（sourcegate
 	// 请求间隔、blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。
 	bioBackfillRunning bool
 	bioBackfillRunID   int64
@@ -74,12 +72,13 @@ type Manager struct {
 	// 默认关闭，由 main 根据配置开启，测试与 e2e 保持关闭以不访问外网。
 	posterBackfillEnabled bool
 	musicBrainzBase       string
-	bangumiMu             sync.Mutex
-	bangumiLast           time.Time
-	bangumiBlockedUntil   time.Time
-	bangumiInterval       time.Duration
-	imageDirectory        string
-	wg                    sync.WaitGroup
+	// Bangumi stays private until S3.
+	bangumiMu           sync.Mutex
+	bangumiLast         time.Time
+	bangumiBlockedUntil time.Time
+	bangumiInterval     time.Duration
+	imageDirectory      string
+	wg                  sync.WaitGroup
 	// sleep backs waitBangumiRateLimit/waitMBRateLimit; tests replace it to
 	// observe backoff waits without really sleeping.
 	sleep func(ctx context.Context, d time.Duration) error
@@ -131,7 +130,9 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: "https://musicbrainz.org/ws/2", bangumiInterval: bangumiIntervalFromEnv(logger), mbInterval: mbIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: defaultPhase4Endpoints(), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiInterval: bangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager.gate = sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": mbIntervalFromEnv(logger)}, Now: func() time.Time { return manager.clockNow() }, Sleep: func(c context.Context, d time.Duration) error { return manager.sleep(c, d) }})
+
 	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {
 		logger.Error("pause interrupted enrichment runs", "error", err)
 	}
@@ -824,21 +825,12 @@ func (m *Manager) waitBangumiRateLimit(ctx context.Context) error {
 // 2s, below MB's official 1 request/second cap; see defaultMBInterval). Every
 // request to musicbrainz.org — direct or cache-backed — must go through this.
 func (m *Manager) waitMBRateLimit(ctx context.Context) error {
-	m.mbMu.Lock()
-	defer m.mbMu.Unlock()
-	if remaining := m.mbBlockedUntil.Sub(m.clockNow()); remaining > 0 {
-		return &RateLimitError{CooldownOnly: true, Source: "musicbrainz", StatusCode: http.StatusTooManyRequests, RetryAfter: remaining}
+	err := m.gate.Wait(ctx, "musicbrainz")
+	var cd *sourcegate.CooldownError
+	if errors.As(err, &cd) {
+		return &RateLimitError{CooldownOnly: true, Source: cd.Source, StatusCode: 429, RetryAfter: cd.RetryAfter}
 	}
-	if wait := m.mbLast.Add(m.mbInterval).Sub(m.clockNow()); wait > 0 {
-		if err := m.sleep(ctx, wait); err != nil {
-			return err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	m.mbLast = m.clockNow()
-	return nil
+	return err
 }
 
 func (m *Manager) mbRequest(ctx context.Context, endpoint string, setting storage.MetadataSourceSetting, target any) error {
@@ -937,32 +929,8 @@ func (m *Manager) lastFMInfoLanguage(ctx context.Context, artist storage.ArtistM
 // validatePublicImageURL ensures an image URL is http(s) and does not point
 // at loopback, private (RFC1918), link-local (incl. 169.254.169.254) or
 // otherwise non-public address space.
-func validatePublicImageURL(rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		return errors.New("artist image source returned an invalid URL")
-	}
-	hostname := parsed.Hostname()
-	if ip := net.ParseIP(hostname); ip != nil {
-		return rejectPrivateIP(ip)
-	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(context.Background(), hostname)
-	if err != nil {
-		return fmt.Errorf("resolve artist image host: %w", err)
-	}
-	for _, address := range addresses {
-		if err = rejectPrivateIP(address.IP); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rejectPrivateIP(ip net.IP) error {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-		return fmt.Errorf("artist image URL resolves to a non-public address %s", ip)
-	}
-	return nil
+func validatePublicImageURL(raw string) error {
+	return netfetch.ValidatePublicURL(context.Background(), raw)
 }
 
 func profilePayload(pageURL, imageURL, biography string, aliases, tags []string) json.RawMessage {

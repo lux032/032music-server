@@ -159,7 +159,7 @@ type ArtistBiographyIdentity struct {
 
 func (s *Store) ArtistBiographyIdentity(ctx context.Context, artistID int64) (ArtistBiographyIdentity, error) {
 	var v ArtistBiographyIdentity
-	err := s.db.QueryRowContext(ctx, `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT p.artist_id,p.external_id FROM artist_external_profiles p WHERE p.source='musicbrainz' AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)) ORDER BY (p.artist_id=?) DESC,p.artist_id LIMIT 1`, artistID, artistID, artistID).Scan(&v.OwnerID, &v.MBID)
+	err := s.db.QueryRowContext(ctx, artistConfirmedIdentitySQL, artistID, artistID, artistID).Scan(&v.OwnerID, &v.MBID)
 	return v, err
 }
 
@@ -216,7 +216,7 @@ func (s *Store) UpsertArtistBiographyGuarded(ctx context.Context, artistID, owne
 	// 迟到的旧身份简介一律拒绝，绝不覆盖新身份确认流程写入的内容。
 	var currentOwner int64
 	var currentMBID string
-	err = tx.QueryRowContext(ctx, `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT p.artist_id,p.external_id FROM artist_external_profiles p WHERE p.source='musicbrainz' AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)) ORDER BY (p.artist_id=?) DESC,p.artist_id LIMIT 1`, artistID, artistID, artistID).Scan(&currentOwner, &currentMBID)
+	err = tx.QueryRowContext(ctx, artistConfirmedIdentitySQL, artistID, artistID, artistID).Scan(&currentOwner, &currentMBID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrArtistBiographyBackfillState
 	}
@@ -609,3 +609,5 @@ func (s *Store) ArtistBiographyBackfillRunsAwaitingAutoResume(ctx context.Contex
 	}
 	return runs, nil
 }
+
+const artistConfirmedIdentitySQL = `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT p.artist_id,p.external_id FROM artist_external_profiles p WHERE p.source='musicbrainz' AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)) ORDER BY (p.artist_id=?) DESC,p.artist_id LIMIT 1`

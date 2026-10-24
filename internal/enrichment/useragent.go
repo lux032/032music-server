@@ -51,3 +51,6 @@ func (m *Manager) metadataUserAgent(ctx context.Context) string {
 	}
 	return userAgent(setting)
 }
+
+// MetadataUserAgent uses the configured MusicBrainz contact for shared clients.
+func (m *Manager) MetadataUserAgent(ctx context.Context) string { return m.metadataUserAgent(ctx) }

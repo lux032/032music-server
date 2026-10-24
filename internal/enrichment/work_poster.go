@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"github.com/lux032/032music-server/internal/netfetch"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,77 +19,26 @@ var posterExtensions = map[string]string{"image/jpeg": ".jpg", "image/png": ".pn
 // private/loopback/link-local targets (including across redirects) to prevent
 // SSRF, and returns the body with its detected MIME type and file extension.
 func (m *Manager) downloadPublicImage(ctx context.Context, remoteURL, label string) ([]byte, string, string, error) {
-	if err := validatePublicImageURL(remoteURL); err != nil {
-		return nil, "", "", err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
-	if err != nil {
-		return nil, "", "", err
-	}
-	request.Header.Set("User-Agent", m.metadataUserAgent(ctx))
-	client := *m.client
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("too many redirects")
-		}
-		return validatePublicImageURL(req.URL.String())
-	}
 	if err := m.checkSourceCooldown(label); err != nil {
 		return nil, "", "", err
 	}
-	response, err := client.Do(request)
+	img, err := netfetch.DownloadImage(ctx, m.client, nil, label, remoteURL, m.metadataUserAgent(ctx))
+	var cd *sourcegate.CooldownError
+	if errors.As(err, &cd) {
+		status := 429
+		var imageLimit *netfetch.ImageRateLimitError
+		if errors.As(err, &imageLimit) {
+			status = imageLimit.StatusCode
+		}
+		err = m.rateLimitedError(label, status, cd.RetryAfter)
+	}
 	if err != nil {
-		return nil, "", "", err
+		err = fmt.Errorf("%s: %w", label, err)
 	}
-	defer response.Body.Close()
-	if isRateLimitResponse(response.StatusCode, response.Header) {
-		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
-		return nil, "", "", m.rateLimitedError(label, response.StatusCode, retryAfter)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", "", fmt.Errorf("%s returned %s", label, response.Status)
-	}
-	const maxImageBytes = 10 << 20
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxImageBytes+1))
-	if err != nil {
-		return nil, "", "", err
-	}
-	if len(data) == 0 || len(data) > maxImageBytes {
-		return nil, "", "", fmt.Errorf("%s is empty or exceeds 10 MiB", label)
-	}
-	mimeType := http.DetectContentType(data)
-	extension, ok := posterExtensions[mimeType]
-	if !ok {
-		return nil, "", "", fmt.Errorf("unsupported %s type %s", label, mimeType)
-	}
-	return data, mimeType, extension, nil
+	return img.Data, img.MIME, img.Ext, err
 }
-
-// writeCacheFile atomically stores data at directory/name unless it exists.
 func writeCacheFile(directory, name string, data []byte) (string, error) {
-	if err := os.MkdirAll(directory, 0o750); err != nil {
-		return "", err
-	}
-	cachePath := filepath.Join(directory, name)
-	if _, statErr := os.Stat(cachePath); statErr == nil {
-		return cachePath, nil
-	}
-	temporary, err := os.CreateTemp(directory, "download-*")
-	if err != nil {
-		return "", err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if _, err = temporary.Write(data); err == nil {
-		err = temporary.Chmod(0o640)
-	}
-	if closeErr := temporary.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return "", err
-	}
-	return cachePath, os.Rename(temporaryPath, cachePath)
+	return netfetch.WriteCacheFile(directory, name, data)
 }
 
 func (m *Manager) workPosterDirectory() string {
