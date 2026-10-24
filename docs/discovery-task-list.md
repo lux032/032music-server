@@ -2,7 +2,7 @@
 
 > 用途：每个对话完成一个阶段。新对话先读本文件和 `PRODUCT.md`，确认当前勾选状态后继续，不要重复已完成阶段。
 >
-> 当前进度：**S0、S1、S2 已完成，下一步 S3。**
+> 当前进度：**S0、S1、S2、S3 已完成；本清单的开发部分已结束。S4 由用户亲自进行实机验证，不再由代理执行。**
 
 ## 已确认的产品边界
 
@@ -189,16 +189,57 @@
 - [ ] E2E 未等待真实 60 秒下载轮询，add 超时/未知与完成等后台边界由 Go fake 测试覆盖。
 - [ ] storage/http 完整 race 单包超过 10 分钟默认时限，需 `-timeout 60m` 以上；并发跑多套重型测试时 `TestLyricsFallback/timeout` 偶发超时（单跑通过，既有问题）。
 
-## S3 · Bangumi 作品来源 ⬜
+## S3 · Bangumi 作品来源 ✅
 
-- [ ] 复用已知作品和系列偏好生成作品 seed。
-- [ ] 建立 Bangumi 音乐条目到 MB RG 的候选映射，不把 Bangumi subject 当 RG。
-- [ ] `A / B` 多曲名条目、同名条目和歧义关系不得自动确认。
-- [ ] 映射作为需确认建议；用户决定永久保存并防止自动复活。
-- [ ] 按 seed 艺人/作品封顶，保持 80/20 配额和推荐理由。
-- [ ] 完成普通测试、完整 race、Playwright、独立 reviewer、本地提交。
+- [x] 复用已知作品和系列偏好生成作品 seed。
+- [x] 建立 Bangumi 音乐条目到 MB RG 的候选映射，不把 Bangumi subject 当 RG。
+- [x] `A / B` 多曲名条目、同名条目和歧义关系不得自动确认。
+- [x] 映射作为需确认建议；用户决定永久保存并防止自动复活。
+- [x] 按 seed 艺人/作品封顶，保持 80/20 配额和推荐理由。
+- [x] 完成普通测试、完整 race、Playwright、独立 reviewer、本地提交。
 
-## S4 · 真实环境与交付收尾 ⬜
+**完成提交：** `f2ef76f feat(discovery): Bangumi 作品来源与 MusicBrainz 发行组映射（S3）`
+
+**S3 已拍板决策（用户授权主代理按 oracle 推荐自主拍板）：**
+
+- Q1：待确认映射（suggested）不占“为你发现”的 60 个名额，单独放“待确认对应”视图；确认前服务端拒绝搜种和获取（409 `mapping_unconfirmed`）。
+- Q2：允许自动对应（auto），但条件极严：标题严格相等（NFKC + casefold，只去空白不去标点），Bangumi 艺人与 MB credit 有交集，完整日期同日，Eligible 结果中规范化同名的唯一，非多曲名，同一作品下无同名兄弟条目，跨条目不冲突。auto 卡片提供“不是这张”。
+- Q3：每轮最多 24 个作品 seed，每个作品最多 6 个音乐条目，每轮最多 120 次 MB 新搜索（按 `searched_at` 从旧到新），映射 30 天 TTL；已 confirmed/rejected 的条目不再搜索。
+- Q4：MB 查询 `releasegroup:"<转义 name>"`，limit=10；`name` 无结果时才用 `name_cn` 再搜一次；艺人只参与打分，不进查询；结果先过 Eligible（D-1 不变）。
+- Q5：被拒绝的映射可在“已忽略 → 已拒绝的对应”中恢复，恢复为 suggested。
+- Q6：Bangumi 未启用时跳过作品阶段并在状态里提示，不算失败；UA 使用 Bangumi 设置行。
+- Q7：封顶键为艺人 `a:<id>`；作品在系列中用 `s:<seriesID>`，否则用 `w:<id>`；每键最多 3 张。WorkAffinity = 自身 Affinity + 0.5 × 同系列其他作品 Affinity 的最大值。
+- Q8：Bangumi 限流完整迁入共享 sourcegate（D-7 完成）；discovery 不自建 Bangumi 客户端，而是通过 enrichment 导出的 shared-fetch 方法访问 Bangumi（复用 `http_response_cache`，隔离 runMemo）。
+- relation 白名单与权重：原声集 1.0；片头曲、片尾曲、主题歌 0.9；插入歌 0.8；角色歌、印象曲、意象歌 0.6；“其他”“广播剧”等排除。本地已确认的 Bangumi 音乐条目跳过。
+- M-3 实施决定：只有出现在映射中的 MB 命中才写入 `discovery_release_groups`。TTL 重搜后清理孤儿 RG，但只要存在任何映射、艺人来源、获取任务或快照、RG 决定或“不是同一张”记录就保留，用户决定永不级联删除。
+- 获取层 `AcquisitionReleaseGroup` 也要求身份 ready：重建期间 Search/Confirm 返回 409 `identity_not_ready`。无映射的 S2 RG 和纯艺人来源保持原行为。
+
+**S3 实现落点：** 迁移 060（`060_discovery_works.sql`）、`internal/bangumi`、`internal/enrichment/bangumi_shared.go`（含限流迁移）、`internal/sourcegate`（`SetInterval`）、`internal/discovery/{works.go,mapping.go,rank.go,service.go}`、`internal/discovery/mb`（`SearchReleaseGroups`）、`internal/storage/discovery_works.go`、`internal/storage/discovery{,_queries}.go`、`internal/storage/acquisition_tasks.go`（H2）、`internal/http/discovery.go`（`/admin/discover/mapping/{subjectId}/{rgid}/confirm|reject`）、`templates/discover.html`、`assets/discovery.{js,css}`；`scripts/discovery-fake-mb.mjs` 按路径分流 MB/Bangumi；E2E 环境变量 `MUSIC_SERVER_BANGUMI_BASE_URL`。
+
+**S3 门禁记录：** gofmt、`go vet ./...` 通过；`go test ./...` 通过（仅既有 `TestLyricsFallback/timeout` 在高负载下偶发失败，http 包单独重跑通过）；完整 race 全部通过（storage 1456s、http 942s、discovery 466s、enrichment 453s、acquisition、sourcegate、bangumi、cmd）；全量 Playwright 477 passed / 102 skipped / 6 failed（均为既有 `local-time.spec.js`）。流程：oracle 架构审计 → 批次 A（限流迁移）、B（迁移、存储、算法）、C（HTTP、Web、E2E），各批独立 reviewer 审查 → 阶段终审 → 终审后增量复核，全部 APPROVE。共拦截：
+- Blocker 4 个：作品候选被 JOIN 静默过滤、按列位置插入失效；共享 gate 未注册 bangumi 即不限流；runMemo 并发写崩溃；MB 搜索 score 用 `,string` 解码真实响应失败。
+- High 5 个：标点归一化可骗过自动确认；待确认 RG 可直接获取；用户决定可被级联删除或覆盖；作品 seed 缺少身份守卫；Bangumi 限流错误类型不统一。
+- 若干 Medium：未映射命中入库可绕过 H2；拒绝后 Rerank 跳过时卡片仍在；retire 级联删掉“不是同一张”；分组分页错位；计数随 chip 漂移；决定失败不回滚；E2E 断言恒为真；待确认封面只下组首等。
+
+批次 A 的首个 worker 以同步方式运行，事后无法 resume，其小修复改由同角色 fallback worker 完成；B、C 的修复均 resume 原 worker。
+
+**S3 非阻断遗留（不得在未确认时顺手扩大当前阶段）：**
+
+- [ ] D-1 白名单使 ACG OP/ED 召回率偏低（MB 上常标 Single+Soundtrack）；`discovery_bangumi_music.search_status='filtered'` 已留统计口径，S4 用真实数据评估。
+- [ ] `SplitMultiTitle` 在任意 `/` 处切分（如 `Fate/stay night`），这类条目永远只能待确认，属于有意的保守。
+- [ ] 预算参数（24/6/120/30 天）未经真实数据校准；首次刷新预计 5–6 分钟。
+- [ ] 作品掉出前 24 个 seed 后，其已确认映射的推荐会随之消失（B 轮 L-8）。
+- [ ] `album_subject_candidates` 缺少针对确认状态的索引（L-11）。
+- [ ] 封面下载阶段确认映射时 Rerank 被跳过，前端会提示“排名将在下次刷新时更新”（L-16）；Rerank 本身不下载封面。
+- [ ] retire RG 后磁盘上会遗留孤立封面文件（L-20）。
+- [ ] 理由合并上限 3 条，作品自身理由较多时，跨来源的首条理由可能被截掉（L-15）。
+- [ ] `items.json` 每次请求都全量读取映射显示数据（L-D），按当前规模可接受。
+- [ ] HTTP 层缺 `Options.Score` 读取 `MappingScore` 的断言，以及推荐路径“作品候选缺 metadata 不计数”的回归测试（终审后复核 Low-1/Low-2）。
+- [ ] Bangumi 匿名请求遇到 NSFW 条目返回 404，按 gone 处理（与现有 enrichment 一致）。
+
+## S4 · 真实环境与交付收尾 ⬜（由用户亲自实机验证）
+
+> 用户决定 S4 由本人进行实机验证，代理不执行本节。验证时可参考 S1–S3 各节的“非阻断遗留”。
 
 - [ ] 用受控账号验证 JPopsuki 登录、搜索、分类、下载和当前站点规则。
 - [ ] 核实 qB 版本、add 响应、默认 category/目录与 qB→TR 脚本兼容。
@@ -220,4 +261,4 @@
 
 ## 下一次对话入口
 
-> 继续 `docs/discovery-task-list.md` 的 S3：Bangumi 作品来源。先复核 S1 推荐/排名接口（`internal/discovery`、`rank.go`、迁移 058）、S2 获取接口（`internal/acquisition`、迁移 059）、现有 Bangumi enrichment 与限流（D-7：Bangumi 尚未迁入 sourcegate）以及当前 HEAD，再按阶段门禁实施；迁移编号从 060 开始；不要提前做 S4。
+> 本清单的开发阶段（S0–S3）已全部完成，S4 由用户本人实机验证。若实机验证发现问题，新对话先读本文件、`PRODUCT.md` 和 S1–S3 的遗留项，再按“固定工作方式”针对具体问题修复；迁移编号从 061 开始。
