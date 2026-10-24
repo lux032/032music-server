@@ -2,7 +2,7 @@
 
 > 用途：每个对话完成一个阶段。新对话先读本文件和 `PRODUCT.md`，确认当前勾选状态后继续，不要重复已完成阶段。
 >
-> 当前进度：**S0、S1 已完成，下一步 S2。**
+> 当前进度：**S0、S1、S2 已完成，下一步 S3。**
 
 ## 已确认的产品边界
 
@@ -103,43 +103,91 @@
 - [ ] MB special-purpose 艺人黑名单目前仅 3 个 MBID，S4 对照 MB 文档补全。
 - [ ] 验证环境缺 ffmpeg 与 Chromium 动态库，本次使用 `/tmp/ffmpeg-7.0.2-arm64-static`、`/tmp/pwdeps` 临时依赖运行 Playwright（`LD_LIBRARY_PATH=/tmp/pwdeps/usr/lib/aarch64-linux-gnu FFMPEG=... npx playwright test`）。
 
-## S2 · JPopsuki、qB 与最终入库 ⬜
+## S2 · JPopsuki、qB 与最终入库 ✅
 
 **目标：** 从推荐卡片按需搜种，用户确认后交给 qB，qB 完成后由 server 根据新文件 RG 证据确认入库。
 
+**S2 已拍板决策（2026-10-24，全部按 oracle 推荐）：**
+
+- E1 AWAITING_LIBRARY 72 小时无证据转 ATTENTION（常量）。
+- E2 Jackett indexer 可配置，默认 `jpopsuki`。
+- E3 关键词默认“艺人 标题”，用户可改；不做自动降级；15 分钟缓存按规范化关键词作键。
+- E4 新建 `/admin/settings/acquisition`，发现页放“获取设置”入口。
+- E5 结果显示标题、分类、体积、做种/下载/完成数、日期、freeleech、正则格式徽标；按做种数倒序；不自动选。
+- E6 取消只改本地状态，不碰 qB。
+- E7 magnet-only 结果显示但不可选，标注“不支持磁力”。
+- E8 确认前探测 qB 登录；建任务后失败按退避重试，30 分钟转 ATTENTION(qb_unreachable)，可手动重试。
+- E9 单个 Node fake（Jackett+qB，`:45447`，`/control` 切场景），seed 写设置。
+- E10 删除规则抑制仅启发式诊断，不改 scanner。
+- E11 下载完成不自动触发扫描；目录监控关闭时在卡片提示。
+- E12 qB 登录判定见下方修订条目。
+- E13 有活跃任务时“我已有”→任务 IN_LIBRARY(owned)；“忽略”返回 409 `acquisition_active`。
+- E14 hash 被其他 RG 活跃任务绑定时返回 409 `hash_bound` 并链接该任务。
+- E15 IN_LIBRARY 卡片在“获取中”保留 7 天。
+- 另：qB category 无“默认”语义，设置中提供 category 原样传入；tag 用 `032acq-<public_id UUID>`；恢复备份时整组保留 Jackett/qB 地址+凭据+indexer+category。
+- 实施分三批：A 后端基础 → B 状态机与接线 → C Web 与 E2E；详细方案见 oracle 审计输出。
+
 ### 设置、Jackett 与搜索
 
-- [ ] 迁移 059：acquisition 设置、搜索结果快照、获取任务和入库证据。
-- [ ] Jackett/qB 密钥只写不读，并加入备份恢复 `preserveCredentials`；HTML/JSON/日志不得泄密。
-- [ ] Jackett 按需查询 JPopsuki，缓存 15 分钟；真实空结果与错误不得混淆。
-- [ ] 检查 HTTP 200 中的 Torznab `<error>`；429 遵守 Retry-After；错误描述脱敏。
-- [ ] 下载 URL 只在服务端结果快照中使用，不进通用 HTTP 缓存或页面；种子字节用完即丢、永不落库。
+- [x] 迁移 059：acquisition 设置、搜索结果快照、获取任务和入库证据。
+- [x] Jackett/qB 密钥只写不读，并加入备份恢复 `preserveCredentials`；HTML/JSON/日志不得泄密。
+- [x] Jackett 按需查询 JPopsuki，缓存 15 分钟；真实空结果与错误不得混淆。
+- [x] 检查 HTTP 200 中的 Torznab `<error>`；429 遵守 Retry-After；错误描述脱敏。
+- [x] 下载 URL 只在服务端结果快照中使用，不进通用 HTTP 缓存或页面；种子字节用完即丢、永不落库。
 
 ### qB 幂等与下载状态
 
-- [ ] qB 登录以 SID 为准，请求带正确 Referer/Origin；HTTP 200 不等于登录或添加成功。
-- [ ] 服务端下载 torrent bytes，计算 info hash 后以 multipart 上传 qB，不把敏感 URL 交给 qB。
-- [ ] acquisition ID 仅放 tag；沿用用户现有 category 和默认目录。
-- [ ] 用户确认先持久化幂等键；add 超时进入结果未知，先 hash+tag 对账，禁止盲目重加。
-- [ ] 同一 hash 已被其他任务绑定时合并/提示；同一 RG 同时最多一个活跃获取任务。
-- [ ] 状态只保留 QB_SUBMITTING、DOWNLOADING、AWAITING_LIBRARY、IN_LIBRARY、ATTENTION、CANCELLED。
-- [ ] qB 任务消失不等于失败，允许 DOWNLOADING→IN_LIBRARY；完成后不再追踪做种/TR。
+- [x] qB 登录以 `Ok.` + `GET /api/v2/app/version` 200 为准（cookie 名不写死），请求带正确 Referer、不带 Origin；HTTP 200 不等于登录或添加成功。
+- [x] 服务端下载 torrent bytes，计算 info hash 后以 multipart 上传 qB，不把敏感 URL 交给 qB。
+- [x] acquisition ID 仅放 tag；沿用用户现有 category 和默认目录。
+- [x] 用户确认先持久化幂等键；add 超时进入结果未知，先 hash+tag 对账，禁止盲目重加。
+- [x] 同一 hash 已被其他任务绑定时合并/提示；同一 RG 同时最多一个活跃获取任务。
+- [x] 状态只保留 QB_SUBMITTING、DOWNLOADING、AWAITING_LIBRARY、IN_LIBRARY、ATTENTION、CANCELLED。
+- [x] qB 任务消失不等于失败，允许 DOWNLOADING→IN_LIBRARY；完成后不再追踪做种/TR。
 
 ### 最终入库
 
-- [ ] 证据同时满足：audio_files.created_at 晚于任务创建、available、精确 RG、文件 RG 不冲突、所属专辑 resolved。
-- [ ] 任务和文件时间使用 SQLite 时钟；保存 album_id、evidence_audio_file_id、verified_at 和检测数量。
-- [ ] 扫描完成组合回调中追加 acquisition.Wake，不覆盖其他回调；对账幂等且关机可等待。
-- [ ] 超时转 ATTENTION，提供手动关联；区分 RG 不匹配、MAT 未识别、删除规则抑制等原因。
-- [ ] 不引入 MAT API、做种状态、刮削状态或完整曲数承诺。
+- [x] 证据同时满足：audio_files.created_at 晚于任务创建、available、精确 RG、文件 RG 不冲突、所属专辑 resolved。
+- [x] 任务和文件时间使用 SQLite 时钟；保存 album_id、evidence_audio_file_id、verified_at 和检测数量。
+- [x] 扫描完成组合回调中追加 acquisition.Wake，不覆盖其他回调；对账幂等且关机可等待。
+- [x] 超时转 ATTENTION，提供手动关联；区分 RG 不匹配、MAT 未识别、删除规则抑制等原因。
+- [x] 不引入 MAT API、做种状态、刮削状态或完整曲数承诺。
 
 ### S2 完成门禁
 
-- [ ] Jackett/qB 全部 httptest fake；覆盖 200 error XML、敏感 URL、add 超时、重复 hash、重启对账。
-- [ ] 覆盖备份恢复后任务重新对账和密钥保留。
-- [ ] 覆盖任务前已有 RG、同路径覆盖、扫描部分失败、手动关联和直接 DOWNLOADING→IN_LIBRARY。
-- [ ] 普通测试、完整 race、Playwright 与独立 reviewer 全部通过。
-- [ ] 本地提交并更新本文件。
+- [x] Jackett/qB 全部 httptest fake；覆盖 200 error XML、敏感 URL、add 超时、重复 hash、重启对账。
+- [x] 覆盖备份恢复后任务重新对账和密钥保留。
+- [x] 覆盖任务前已有 RG、同路径覆盖、扫描部分失败、手动关联和直接 DOWNLOADING→IN_LIBRARY。
+- [x] 普通测试、完整 race、Playwright 与独立 reviewer 全部通过。
+- [x] 本地提交并更新本文件。
+
+**完成提交：** `264cce3 feat(discovery): JPopsuki 搜种、qB 获取与入库确认（S2）`
+
+**S2 实施补充决策（实施中拍板）：**
+
+- 059 另含 `add_unknown_since`、`qb_unreachable_since`，与 `qb_missing_since` 分开计时（消失 72h / add 未知 2m / 不可达 30m），均用 SQLite 时钟。
+- 结果未知最多重下重加一次（共两次 add），第二次同样有约 2 分钟对账窗口；只有明确 `AddRejected` 立即转 `qb_rejected`。
+- 重下载错误白名单：仅冷却、HTTP 429/5xx、Torznab 500/501、网络/超时延后重试，其余转 `torrent_unavailable`。
+- 无 download_ref 的 Retry（如 `qb_missing`）回到 DOWNLOADING 并重新计时，复用证据检查与 72h 超时。
+- 确认前每次实际请求 qB `app/version`（Probe）；建任务时在写锁内复查已忽略/已拥有；“我已有”事务内发现活跃任务转 `MarkOwned`。
+- `hash_bound` 返回绑定任务 publicId/title/artist（`Store.ActiveAcquisitionByHash`）。
+- 手动关联复用抽出的 `associateAlbumReleaseGroupTx`，单事务完成，保留 `replaces_rg` 二次确认。
+- 种子 bencode 容忍未排序字典键、拒绝重复键，info hash 始终取原始切片；纯 v2 种子拒绝。
+
+**S2 实现落点：** 迁移 059、`internal/acquisition`（`service.go`、`catalog/`、`jackett/`、`qbit/`、`torrent/`、`lanhttp/`、`sanitize/`）、`internal/storage/acquisition_*.go`、`internal/http/acquisition.go`、`templates/acquisition-settings.html`、`assets/acquisition-settings.js`、`assets/discovery.{js,css}`、`scripts/acquisition-fake.mjs`（:45447）、`tests/e2e/acquisition.spec.js`；`cmd/server/main.go` 注册 sourcegate `jackett`、扫描完成回调追加 `Wake()`、关机 `Wait()`。
+
+**S2 门禁记录：** gofmt、`go vet ./...`、`go test ./...` 通过；完整 race（storage 1351s、http 927s、acquisition、discovery、cmd）全部通过；专项 Playwright（acquisition + discovery 三视口）24 passed / 0 failed；全量 Playwright 471 passed / 102 skipped / 6 failed（均为既有 `local-time.spec.js`）。批次 A、B1、B2、C 均经独立 reviewer 审查 APPROVE，修复均 resume 原 worker；拦截 1 Blocker（Gazelle `torrent_pass`/`authkey` 与 magnet 未脱敏）、3 High（证据时间信任调用方、CAS 可无证据写 IN_LIBRARY、确认前 qB 探测被缓存登录绕过）及若干 Medium。
+
+**S2 非阻断遗留（不得在未确认时顺手扩大当前阶段）：**
+
+- [ ] 未接真实 JPopsuki/Jackett/qB 验证；S4 核实 qB 5.x add 响应、cookie 名、category 不存在时行为、JPopsuki 分类映射与标题格式徽标。
+- [ ] ATTENTION 诊断（`no_rg_files`、`rule_suppressed`、`preexisting_only`）为启发式，仅作提示；精确的删除规则抑制需 scanner 记录被抑制文件 RG（E10 方案 B）。
+- [ ] 恢复旧备份后 qB 中可能遗留无主 `032acq-*` tag，不自动收养，需在 S4 文档说明。
+- [ ] 一个种子含多张发行时会被 `hash_bound` 拦下，只能提示用户（未做多 RG 合并任务）。
+- [ ] bencode 容忍非规范键序，S4 用真实种子确认无误判。
+- [ ] 种子 v2/hybrid 仅按 v1 hash 处理；纯 v2 种子直接拒绝。
+- [ ] E2E 未等待真实 60 秒下载轮询，add 超时/未知与完成等后台边界由 Go fake 测试覆盖。
+- [ ] storage/http 完整 race 单包超过 10 分钟默认时限，需 `-timeout 60m` 以上；并发跑多套重型测试时 `TestLyricsFallback/timeout` 偶发超时（单跑通过，既有问题）。
 
 ## S3 · Bangumi 作品来源 ⬜
 
@@ -172,4 +220,4 @@
 
 ## 下一次对话入口
 
-> 继续 `docs/discovery-task-list.md` 的 S2：JPopsuki、qB 与最终入库。先复核 S1 接口（`internal/discovery`、`internal/storage/discovery*.go`、迁移 058、“获取中”占位 tab）与当前 HEAD，再按阶段门禁实施；迁移编号从 059 开始；不要提前做 S3。
+> 继续 `docs/discovery-task-list.md` 的 S3：Bangumi 作品来源。先复核 S1 推荐/排名接口（`internal/discovery`、`rank.go`、迁移 058）、S2 获取接口（`internal/acquisition`、迁移 059）、现有 Bangumi enrichment 与限流（D-7：Bangumi 尚未迁入 sourcegate）以及当前 HEAD，再按阶段门禁实施；迁移编号从 060 开始；不要提前做 S4。
