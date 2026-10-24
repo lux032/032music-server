@@ -1,0 +1,572 @@
+[
+  {
+    "slug": "the-book",
+    "queryTitle": "THE BOOK",
+    "queryArtist": "YOASOBI",
+    "id": "6ddc7e3d-6fc7-4859-9e35-b666e49b40f5",
+    "title": "THE BOOK",
+    "primaryType": "EP",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2021-01-06",
+    "artistCredit": [
+      {
+        "name": "YOASOBI",
+        "artist": {
+          "id": "df6c619f-4334-43e2-8b6a-4a32af1e4f85",
+          "name": "YOASOBI",
+          "sort-name": "YOASOBI",
+          "aliases": [
+            {
+              "sort-name": "YOASOBI",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "YOASOBI",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "요아소비",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "요아소비",
+              "locale": "ko_KR",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "YOASOBI Band",
+              "name": "YOASOBI バンド",
+              "locale": null,
+              "type": null,
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/the-book.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/6ddc7e3d-6fc7-4859-9e35-b666e49b40f5/front-500"
+  },
+  {
+    "slug": "infinite-synthesis-6",
+    "queryTitle": "infinite synthesis 6",
+    "queryArtist": "fripSide",
+    "id": "c03178ba-4eb0-41ca-873e-cbc339689fd4",
+    "title": "infinite synthesis 6",
+    "primaryType": "Album",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2022-03-23",
+    "artistCredit": [
+      {
+        "name": "fripSide",
+        "artist": {
+          "id": "de1d37ff-942a-4c85-a375-ff4f5bf2eaa9",
+          "name": "fripSide",
+          "sort-name": "fripSide",
+          "aliases": [
+            {
+              "sort-name": "fripSide",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "fripSide",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "フリップサイド",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "フリップサイド",
+              "locale": "ja_JP",
+              "type": "Artist name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "fripSide(nao)",
+              "name": "fripSide(nao)",
+              "locale": null,
+              "type": null,
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "Frip Side",
+              "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+              "name": "Frip Side",
+              "locale": null,
+              "type": "Search hint",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/infinite-synthesis-6.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/c03178ba-4eb0-41ca-873e-cbc339689fd4/front-500"
+  },
+  {
+    "slug": "walpurgis",
+    "queryTitle": "Walpurgis",
+    "queryArtist": "Aimer",
+    "id": "9a1a0031-e552-4386-b67a-c46ebb7f666d",
+    "title": "Walpurgis",
+    "primaryType": "Album",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2021-04-14",
+    "artistCredit": [
+      {
+        "name": "Aimer",
+        "artist": {
+          "id": "9388cee2-7d57-4598-905f-106019b267d3",
+          "name": "Aimer",
+          "sort-name": "Aimer",
+          "disambiguation": "Japanese pop singer",
+          "aliases": [
+            {
+              "sort-name": "エメリズム",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "エメリズム",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "aimerrhythm",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "aimerrhythm",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "フジモトエミ",
+              "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+              "name": "フジモトエミ",
+              "locale": null,
+              "type": "Search hint",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "ふじもとえみ",
+              "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+              "name": "藤本恵実",
+              "locale": "ja",
+              "type": "Legal name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "Fujimoto, Emi",
+              "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+              "name": "Emi Fujimoto",
+              "locale": "en",
+              "type": "Legal name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "エメ",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "エメ",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "Aimer",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "Aimer",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "AimerOfficialVEVO",
+              "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+              "name": "AimerOfficialVEVO",
+              "locale": null,
+              "type": "Search hint",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/walpurgis.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/9a1a0031-e552-4386-b67a-c46ebb7f666d/front-500"
+  },
+  {
+    "slug": "lander",
+    "queryTitle": "LANDER",
+    "queryArtist": "LiSA",
+    "id": "3c1aa9ef-67ff-4171-bd84-40bbd19f960b",
+    "title": "LANDER",
+    "primaryType": "Album",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2022-11-16",
+    "artistCredit": [
+      {
+        "name": "LiSA",
+        "artist": {
+          "id": "85d76093-9865-4605-97fa-8c910929d366",
+          "name": "LiSA",
+          "sort-name": "LiSA",
+          "disambiguation": "Japanese pop/rock singer",
+          "aliases": [
+            {
+              "sort-name": "おりべ りさ",
+              "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+              "name": "織部里沙",
+              "locale": "ja",
+              "type": "Legal name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "lxixsxa",
+              "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+              "name": "lxixsxa",
+              "locale": null,
+              "type": "Search hint",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "リサ",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "LiSA",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "织部里沙 (LiSA OLiVE)",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "织部里沙 (LiSA OLiVE)",
+              "locale": "zh_Hans_CN",
+              "type": "Artist name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/lander.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/3c1aa9ef-67ff-4171-bd84-40bbd19f960b/front-500"
+  },
+  {
+    "slug": "gentou",
+    "queryTitle": "幻燈",
+    "queryArtist": "ヨルシカ",
+    "id": "88ee1a12-f362-4737-b7f4-b2f0b079e218",
+    "title": "幻燈",
+    "primaryType": "Album",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2023-04-05",
+    "artistCredit": [
+      {
+        "name": "ヨルシカ",
+        "artist": {
+          "id": "dfc6a151-3792-4695-8fda-f64723eaa788",
+          "name": "ヨルシカ",
+          "sort-name": "Yorushika",
+          "aliases": [
+            {
+              "sort-name": "YORUSHIKA",
+              "name": "YORUSHIKA",
+              "locale": null,
+              "type": null,
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "Yorushika",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "Yorushika",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "ヨルシカ",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "ヨルシカ",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/gentou.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/88ee1a12-f362-4737-b7f4-b2f0b079e218/front-500"
+  },
+  {
+    "slug": "iv",
+    "queryTitle": "iv",
+    "queryArtist": "SawanoHiroyuki[nZk]",
+    "id": "704ca992-2976-426a-9e72-12cf62d7827e",
+    "title": "iv",
+    "primaryType": "Album",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2021-03-03",
+    "artistCredit": [
+      {
+        "name": "SawanoHiroyuki[nZk]",
+        "artist": {
+          "id": "cb191900-8ad8-46b9-b021-a093ee2b2f9b",
+          "name": "SawanoHiroyuki[nZk]",
+          "sort-name": "Sawano, Hiroyuki, nZk",
+          "aliases": [
+            {
+              "sort-name": "SawanoHiroyuki[nZk]",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "SawanoHiroyuki[nZk]",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "サワノヒロユキヌジーク",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "SawanoHiroyuki[nZk]",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/iv.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/704ca992-2976-426a-9e72-12cf62d7827e/front-500"
+  },
+  {
+    "slug": "zankyo-sanka",
+    "queryTitle": "残響散歌",
+    "queryArtist": "Aimer",
+    "id": "f2899e9e-1995-4f81-9578-1586132ac462",
+    "title": "残響散歌",
+    "primaryType": "Single",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2021-12-06",
+    "artistCredit": [
+      {
+        "name": "Aimer",
+        "artist": {
+          "id": "9388cee2-7d57-4598-905f-106019b267d3",
+          "name": "Aimer",
+          "sort-name": "Aimer",
+          "disambiguation": "Japanese pop singer",
+          "aliases": [
+            {
+              "sort-name": "エメリズム",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "エメリズム",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "aimerrhythm",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "aimerrhythm",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "フジモトエミ",
+              "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+              "name": "フジモトエミ",
+              "locale": null,
+              "type": "Search hint",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "ふじもとえみ",
+              "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+              "name": "藤本恵実",
+              "locale": "ja",
+              "type": "Legal name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "Fujimoto, Emi",
+              "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+              "name": "Emi Fujimoto",
+              "locale": "en",
+              "type": "Legal name",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "エメ",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "エメ",
+              "locale": "ja",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "Aimer",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "Aimer",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "AimerOfficialVEVO",
+              "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+              "name": "AimerOfficialVEVO",
+              "locale": null,
+              "type": "Search hint",
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/zankyo-sanka.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/f2899e9e-1995-4f81-9578-1586132ac462/front-500"
+  },
+  {
+    "slug": "the-book-2",
+    "queryTitle": "THE BOOK 2",
+    "queryArtist": "YOASOBI",
+    "id": "96f4ba04-a052-4a04-ad39-121be2c896fd",
+    "title": "THE BOOK 2",
+    "primaryType": "EP",
+    "secondaryTypes": [],
+    "firstReleaseDate": "2021-12-01",
+    "artistCredit": [
+      {
+        "name": "YOASOBI",
+        "artist": {
+          "id": "df6c619f-4334-43e2-8b6a-4a32af1e4f85",
+          "name": "YOASOBI",
+          "sort-name": "YOASOBI",
+          "aliases": [
+            {
+              "sort-name": "YOASOBI",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "YOASOBI",
+              "locale": "en",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "요아소비",
+              "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+              "name": "요아소비",
+              "locale": "ko_KR",
+              "type": "Artist name",
+              "primary": true,
+              "begin-date": null,
+              "end-date": null
+            },
+            {
+              "sort-name": "YOASOBI Band",
+              "name": "YOASOBI バンド",
+              "locale": null,
+              "type": null,
+              "primary": null,
+              "begin-date": null,
+              "end-date": null
+            }
+          ]
+        }
+      }
+    ],
+    "cover": "prototypes/assets/the-book-2.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/96f4ba04-a052-4a04-ad39-121be2c896fd/front-500"
+  },
+  {
+    "slug": "attack-on-titan-ost",
+    "queryTitle": "TVアニメ「進撃の巨人」Season 3 オリジナルサウンドトラック",
+    "queryArtist": "澤野弘之",
+    "id": "58d84467-7a4d-428b-8637-417ac36ac42b",
+    "title": "TVアニメ「進撃の巨人」Season 3 オリジナルサウンドトラック",
+    "primaryType": "Album",
+    "secondaryTypes": [
+      "Soundtrack"
+    ],
+    "firstReleaseDate": "2019-06-26",
+    "artistCredit": [
+      {
+        "artist": {
+          "sort-name": "Sawano, Hiroyuki",
+          "type": "Person",
+          "id": "60d2ea34-1912-425f-bf9c-fc544e4448cd",
+          "name": "澤野弘之",
+          "country": "JP",
+          "disambiguation": "",
+          "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+        },
+        "joinphrase": "",
+        "name": "澤野弘之"
+      }
+    ],
+    "cover": "prototypes/assets/attack-on-titan-ost.jpg",
+    "coverSource": "https://coverartarchive.org/release-group/58d84467-7a4d-428b-8637-417ac36ac42b/front-500"
+  }
+]

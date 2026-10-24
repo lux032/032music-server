@@ -44,7 +44,7 @@ func TestStartupRestoreSkipsPreupgrade(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = raw.Exec(`DELETE FROM schema_migrations WHERE version=56;DROP TABLE backup_settings`); e != nil {
+	if _, e = raw.Exec(`DELETE FROM schema_migrations WHERE version>=56;DROP TABLE audio_file_release_groups;DROP TABLE audio_file_releases;DROP TABLE album_release_groups;DROP TABLE release_group_decisions;DROP TABLE release_group_rebuild;DROP TABLE release_groups;DROP TABLE backup_settings`); e != nil {
 		t.Fatal(e)
 	}
 	raw.Close()

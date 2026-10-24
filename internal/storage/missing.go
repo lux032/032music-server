@@ -177,6 +177,9 @@ func (s *Store) PurgeMissing(ctx context.Context, libraryID int64, ids []int64) 
 		}
 		result.Albums, result.Artists = albumsBefore-albumsAfter, artistsBefore-artistsAfter
 	}
+	if err = refreshAllAlbumReleaseGroups(ctx, tx); err != nil {
+		return PurgeResult{}, err
+	}
 	if err = tx.Commit(); err != nil {
 		return PurgeResult{}, err
 	}

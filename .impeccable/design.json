@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-24T00:00:00Z",
+  "title": "Design System: 032 Music Server",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Library Violet", "canonical": "#5b47e0", "tonalRamp": ["#1f1661", "#2e2290", "#3d2db0", "#4a37c9", "#5b47e0", "#8d7dff", "#b4aaff", "#e4e0ff"] },
+      "dark-accent": { "role": "primary", "displayName": "Library Violet (dark theme)", "canonical": "#8d7dff", "tonalRamp": ["#1f1661", "#2e2290", "#3d2db0", "#5b47e0", "#8d7dff", "#a194ff", "#b4aaff", "#e4e0ff"] },
+      "accent-soft": { "role": "primary", "displayName": "Violet Wash", "canonical": "rgba(91, 71, 224, 0.09)" },
+      "accent-strong-text": { "role": "primary", "displayName": "Violet Ink", "canonical": "#4a37c9" },
+      "bg": { "role": "neutral", "displayName": "Page Ground", "canonical": "#fafafa", "tonalRamp": ["#111113", "#19191c", "#232327", "#3a3a41", "#64646e", "#d4d4da", "#efeff2", "#fafafa"] },
+      "bg-panel": { "role": "neutral", "displayName": "Panel Ground", "canonical": "#ffffff" },
+      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "#ffffff" },
+      "surface-sunken": { "role": "neutral", "displayName": "Sunken Surface", "canonical": "#ededf0" },
+      "fill": { "role": "neutral", "displayName": "Control Fill", "canonical": "#efeff2", "tonalRamp": ["#232327", "#2e2e33", "#3a3a41", "#64646e", "#9a9aa5", "#d4d4da", "#e4e4e9", "#efeff2"] },
+      "line": { "role": "neutral", "displayName": "Hairline", "canonical": "#e6e6ea" },
+      "text": { "role": "neutral", "displayName": "Ink", "canonical": "#111113", "tonalRamp": ["#111113", "#2a2a2f", "#4f4f59", "#64646e", "#9a9aa5", "#b8b8c2", "#e6e6ea", "#f4f4f6"] },
+      "text-secondary": { "role": "neutral", "displayName": "Secondary Ink", "canonical": "#4f4f59" },
+      "muted": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#64646e" },
+      "danger": { "role": "semantic", "displayName": "Danger", "canonical": "#c42b44", "tonalRamp": ["#2a0710", "#5c1222", "#8f1d33", "#c42b44", "#e0485f", "#ff6f83", "#ffa3b0", "#ffe0e5"] },
+      "success": { "role": "semantic", "displayName": "Success", "canonical": "#0e7651", "tonalRamp": ["#04261a", "#09442f", "#0e7651", "#16935f", "#2fb67e", "#45d39a", "#8be6bf", "#d6f7e9"] },
+      "warning": { "role": "semantic", "displayName": "Warning", "canonical": "#9a5b00", "tonalRamp": ["#2e1b00", "#5a3600", "#9a5b00", "#b97000", "#d99420", "#f2b84b", "#f8d48e", "#fdf0d6"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "专辑详情等英雄标题、首次运行引导。" },
+      "title": { "displayName": "Title", "purpose": "页面 h1。" },
+      "headline": { "displayName": "Headline", "purpose": "页内分节标题。" },
+      "body-lg": { "displayName": "Body Large", "purpose": "引导段落、英雄副标题。" },
+      "body": { "displayName": "Body", "purpose": "界面默认字号，导航项与正文。" },
+      "body-sm": { "displayName": "Body Small", "purpose": "按钮文字、艺人名、计数与表单标签。" },
+      "label": { "displayName": "Label", "purpose": "元数据、时长、徽章；数字使用 tabular-nums。" },
+      "kicker": { "displayName": "Kicker", "purpose": "小型大写分组标签。" }
+    },
+    "shadows": [
+      { "name": "shadow-xs", "value": "0 1px 2px rgba(17, 17, 19, 0.06)", "purpose": "极轻的徽章与小元素。深色：0 1px 2px rgba(0, 0, 0, 0.4)。" },
+      { "name": "shadow-card", "value": "0 2px 6px rgba(17, 17, 19, 0.1)", "purpose": "静止的专辑封面。深色：0 2px 6px rgba(0, 0, 0, 0.4)。" },
+      { "name": "shadow-card-hover", "value": "0 16px 30px -12px rgba(17, 17, 19, 0.38)", "purpose": "悬停或聚焦的封面。深色：0 16px 30px -12px rgba(0, 0, 0, 0.8)。" },
+      { "name": "shadow-cover", "value": "0 28px 50px -22px rgba(17, 17, 19, 0.55)", "purpose": "详情页与当前播放面板的大封面。深色：0 28px 50px -20px rgba(0, 0, 0, 0.85)。" },
+      { "name": "shadow-pop", "value": "0 14px 40px rgba(17, 17, 19, 0.16)", "purpose": "菜单、筛选浮层、提示、歌词面板。深色：0 14px 40px rgba(0, 0, 0, 0.55)。" },
+      { "name": "focus-ring", "value": "outline: 2px solid var(--accent); outline-offset: 2px", "purpose": "全局键盘焦点指示。" },
+      { "name": "input-focus-halo", "value": "0 0 0 3px var(--accent-soft)", "purpose": "输入框聚焦时的光晕。" }
+    ],
+    "motion": [
+      { "name": "dur-fast", "value": "0.14s", "purpose": "按钮、悬停底色与颜色切换。" },
+      { "name": "dur", "value": "0.2s", "purpose": "封面缩放、播放盘浮现、页面入场。" },
+      { "name": "dur-slow", "value": "0.32s", "purpose": "面板收起展开、图片淡入、进度条。" },
+      { "name": "ease", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "全局唯一缓动曲线。" }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "480px" },
+      { "name": "mobile-shell", "value": "900px" },
+      { "name": "grid-3col", "value": "1200px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "紫色胶囊主按钮，仅用于页面主操作与播放。",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">播放全部</button>",
+      "css": ".ds-btn-primary { border: 0; border-radius: 999px; padding: 0.62rem 1rem; color: var(--text-on-accent, #ffffff); background: var(--accent, #5b47e0); font-family: var(--font-ui, Inter, sans-serif); font-size: 0.84rem; font-weight: 600; cursor: pointer; transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1), transform 0.14s cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-primary:hover { background: var(--accent-hover, #4a37c9); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "填充灰胶囊次要按钮，不使用紫色。",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">查看全部</button>",
+      "css": ".ds-btn-secondary { border: 1px solid transparent; border-radius: 999px; padding: 0.62rem 1rem; color: var(--text, #111113); background: var(--fill, #efeff2); font-family: var(--font-ui, Inter, sans-serif); font-size: 0.84rem; font-weight: 600; cursor: pointer; transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1), transform 0.14s cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-secondary:hover { background: var(--fill-hover, #e4e4e9); } .ds-btn-secondary:active { transform: translateY(1px); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "40px 填充式即时搜索框，聚焦时描边转紫、底色转 surface。",
+      "html": "<label class=\"ds-search\"><svg viewBox=\"0 0 24 24\" width=\"17\" height=\"17\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m20 20-3.5-3.5\"/></svg><input type=\"search\" placeholder=\"搜索专辑或歌手\" aria-label=\"搜索专辑或歌手\"></label>",
+      "css": ".ds-search { display: flex; align-items: center; gap: 4px; width: 380px; max-width: 100%; min-height: 40px; border: 1px solid transparent; border-radius: 10px; padding: 0 12px; color: var(--muted, #64646e); background: var(--fill, #efeff2); font-family: var(--font-ui, Inter, sans-serif); transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.14s cubic-bezier(0.16, 1, 0.3, 1); } .ds-search:hover { background: var(--fill-hover, #e4e4e9); } .ds-search:focus-within { border-color: var(--accent, #5b47e0); background: var(--surface, #ffffff); } .ds-search svg { flex: none; } .ds-search input { flex: 1; min-width: 0; border: 0; padding: 2px 4px; color: var(--text, #111113); background: transparent; font: inherit; font-size: 0.92rem; outline: none; } .ds-search input::placeholder { color: var(--muted, #64646e); opacity: 1; }"
+    },
+    {
+      "name": "Filter Chips",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "灰色筛选胶囊；已应用的筛选变为实心紫色。",
+      "html": "<div class=\"ds-chips\"><button class=\"ds-chip\" type=\"button\" aria-expanded=\"false\">年份</button><button class=\"ds-chip is-selected\" type=\"button\">专辑</button><button class=\"ds-chip\" type=\"button\">流派</button></div>",
+      "css": ".ds-chips { display: flex; flex-wrap: wrap; gap: 8px; } .ds-chip { display: inline-flex; align-items: center; min-height: 34px; border: 0; border-radius: 999px; padding: 0 12px 0 14px; color: var(--text-secondary, #4f4f59); background: var(--fill, #efeff2); font-family: var(--font-ui, Inter, sans-serif); font-size: 0.84rem; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1), color 0.14s cubic-bezier(0.16, 1, 0.3, 1); } .ds-chip:hover, .ds-chip[aria-expanded=\"true\"] { color: var(--text, #111113); background: var(--fill-hover, #e4e4e9); } .ds-chip.is-selected, .ds-chip.is-selected:hover { color: var(--text-on-accent, #ffffff); background: var(--accent, #5b47e0); } .ds-chip:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "侧栏主导航；当前项为填充底、粗体正文色，仅图标变紫。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"音乐库\"><a class=\"is-active\" href=\"#\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z\"/></svg>主页</a><a href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/></svg>专辑</a><a href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21a8 8 0 0 1 16 0\"/></svg>歌手</a></nav>",
+      "css": ".ds-nav { display: grid; gap: 2px; width: 208px; padding: 12px; background: var(--bg, #fafafa); font-family: var(--font-ui, Inter, sans-serif); } .ds-nav a { display: flex; align-items: center; gap: 11px; min-height: 38px; border-radius: 8px; padding: 8px 12px; color: var(--text-secondary, #4f4f59); font-size: 0.92rem; font-weight: 500; text-decoration: none; transition: background 0.14s cubic-bezier(0.16, 1, 0.3, 1), color 0.14s cubic-bezier(0.16, 1, 0.3, 1); } .ds-nav svg { width: 18px; height: 18px; flex: none; color: var(--text-secondary, #4f4f59); } .ds-nav a:hover { color: var(--text, #111113); background: var(--fill, #efeff2); } .ds-nav a.is-active { color: var(--text, #111113); background: var(--fill, #efeff2); font-weight: 700; } .ds-nav a.is-active svg { color: var(--accent, #5b47e0); } .ds-nav a:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Album Card",
+      "kind": "card",
+      "refersTo": "album-cover",
+      "description": "封面优先的专辑卡片：6px 圆角正方形封面，悬停放大并浮出紫色播放盘。",
+      "html": "<article class=\"ds-album-card\"><div class=\"ds-album-cover\"><div class=\"ds-album-placeholder\">032</div><button class=\"ds-play-disc\" type=\"button\" aria-label=\"播放 专辑标题\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 5.5v13l11-6.5z\"/></svg></button></div><a class=\"ds-album-title\" href=\"#\">专辑标题</a><p class=\"ds-album-artists\">艺人名</p><small class=\"ds-album-meta\"><span>2024</span><span>专辑</span><span>12 首</span></small></article>",
+      "css": ".ds-album-card { position: relative; width: 205px; min-width: 0; font-family: var(--font-ui, Inter, sans-serif); } .ds-album-cover { position: relative; overflow: hidden; aspect-ratio: 1; margin-bottom: 10px; border-radius: 6px; background: var(--surface-sunken, #ededf0); box-shadow: var(--shadow-card, 0 2px 6px rgba(17, 17, 19, 0.1)); transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1); } .ds-album-placeholder { display: grid; place-items: center; width: 100%; height: 100%; color: var(--muted, #64646e); background: var(--fill, #efeff2); font-weight: 800; } .ds-album-card:hover .ds-album-cover, .ds-album-card:focus-within .ds-album-cover { transform: scale(1.02); box-shadow: var(--shadow-card-hover, 0 16px 30px -12px rgba(17, 17, 19, 0.38)); } .ds-play-disc { position: absolute; right: 12px; bottom: 12px; display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 50%; padding: 0; color: var(--text-on-accent, #ffffff); background: var(--accent, #5b47e0); box-shadow: 0 8px 20px color-mix(in oklab, var(--accent, #5b47e0) 35%, transparent); opacity: 0; transform: translateY(6px); cursor: pointer; transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); } .ds-album-card:hover .ds-play-disc, .ds-album-card:focus-within .ds-play-disc { opacity: 1; transform: none; } .ds-play-disc:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; } .ds-album-title { display: block; overflow: hidden; color: var(--text, #111113); font-size: 0.9rem; font-weight: 600; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; } .ds-album-title:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; border-radius: 6px; } .ds-album-artists { overflow: hidden; margin: 1px 0 0; color: var(--text-secondary, #4f4f59); font-size: 0.84rem; text-overflow: ellipsis; white-space: nowrap; } .ds-album-meta { display: block; overflow: hidden; color: var(--muted, #64646e); font-size: 0.74rem; text-overflow: ellipsis; white-space: nowrap; } .ds-album-meta span + span::before { content: \"·\"; margin: 0 0.35em; } @media (prefers-reduced-motion: reduce) { .ds-album-cover, .ds-play-disc { transition: none; } .ds-album-card:hover .ds-album-cover, .ds-album-card:focus-within .ds-album-cover { transform: none; } }"
+    },
+    {
+      "name": "Player Play Button",
+      "kind": "button",
+      "refersTo": "player-play-main",
+      "description": "播放栏主播放键：44px 墨色正圆，悬停微放大。",
+      "html": "<button class=\"ds-play-main\" type=\"button\" aria-label=\"暂停\"><svg viewBox=\"0 0 24 24\" width=\"21\" height=\"21\" fill=\"currentColor\" aria-hidden=\"true\"><rect x=\"7\" y=\"5\" width=\"3.5\" height=\"14\" rx=\"1\"/><rect x=\"13.5\" y=\"5\" width=\"3.5\" height=\"14\" rx=\"1\"/></svg></button>",
+      "css": ".ds-play-main { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; padding: 0; color: var(--bg, #fafafa); background: var(--text, #111113); cursor: pointer; transition: transform 0.14s cubic-bezier(0.16, 1, 0.3, 1); } .ds-play-main:hover { transform: scale(1.06); } .ds-play-main:active { transform: scale(1); } .ds-play-main:focus-visible { outline: 2px solid var(--accent, #5b47e0); outline-offset: 2px; } @media (prefers-reduced-motion: reduce) { .ds-play-main { transition: none; } .ds-play-main:hover { transform: none; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Library-Player Standard, Played Straight",
+    "overview": "032 Music Server 遵循音乐库播放器的品类标准，并且照直执行：中性灰承载界面，封面与标题承载页面，唯一的紫色强调色只标记主操作、播放与选中。这一方向记录于 `tokens.css`（2026-10-06），是本系统的事实性起点，而不是新的品牌叙事。\n\n界面是一个固定的播放器壳层：左侧导航、中央内容、右侧当前播放与队列、底部播放栏。壳层退为同一块中性底色，页面的色彩几乎全部来自专辑封面。控件以填充灰为主，列表行无分隔线、悬停显示圆角底色，管理卡片是安静的平面。深浅两套主题共享同一组令牌名，浅色为无脚本默认，`theme.js` 在首帧前写入 `data-theme`。\n\n新界面（例如“发现新音乐”）是现有壳层内的页面扩展：沿用同一令牌、同一导航与播放器壳层、同一专辑卡片语言，不另起视觉世界。",
+    "keyCharacteristics": [
+      "中性灰界面，封面提供色彩",
+      "单一紫色强调色，仅用于主操作、播放和选中",
+      "深浅双主题，令牌一一成对",
+      "Inter 负责拉丁字母与数字，平台 CJK 无衬线负责中日文",
+      "固定三栏壳层加底部播放栏，≤900px 转为底部导航",
+      "填充式控件、胶囊按钮、6px 柔角封面"
+    ],
+    "rules": [
+      { "name": "The One Violet Rule", "body": "紫色只用于主操作、播放与选中；其余控件（筛选、次要按钮、行内工具）一律中性填充。", "section": "colors" },
+      { "name": "The Paired Theme Rule", "body": "每个颜色令牌在浅色与深色中成对定义并同名；浅色是无脚本默认。", "section": "colors" },
+      { "name": "The Inter-plus-CJK Rule", "body": "只使用 `--font-ui` 一个字体栈；不要为中日文单独引入网络字体。", "section": "typography" },
+      { "name": "The Quiet Card Rule", "body": "管理卡片是 1px 细线描边的平面表面，不加阴影；阴影只属于封面、浮层和悬停提升。", "section": "elevation" },
+      { "name": "The Cover Corner Rule", "body": "专辑封面始终使用 6px 的 cover 圆角与正方形比例；不要把封面做成大圆角卡片。", "section": "shapes" },
+      { "name": "The Ink Transport Rule", "body": "播放栏主播放键用墨色而非紫色；紫色播放盘保留给封面上的播放入口。", "section": "components" },
+      { "name": "The Filled Control Rule", "body": "搜索、筛选、次要按钮与行悬停共用 fill / fill-hover，不加描边。", "section": "components" }
+    ],
+    "dos": [
+      "**Do** 在应用内直接使用 `tokens.css` 的变量，并同时验证浅色与深色主题。",
+      "**Do** 把紫色限制在主操作、播放、进度与当前选中上。",
+      "**Do** 用 2px 实心紫色外框、2px 偏移作为全局焦点指示。",
+      "**Do** 保持封面正方形、6px 圆角，悬停只做 1.02 缩放与阴影加深。",
+      "**Do** 让列表行无分隔线、以 8–10px 圆角的 fill 底色表示悬停。",
+      "**Do** 遵守 `prefers-reduced-motion`：取消缩放、页面入场与均衡器动画。"
+    ],
+    "donts": [
+      "**Don't** 把紫色用于次要按钮、筛选触发器或行内工具。",
+      "**Don't** 给管理卡片加阴影。",
+      "**Don't** 用半透明 accent-line 作为焦点环（在白底上仅 1.6:1，低于 3:1）。",
+      "**Don't** 为中日文引入额外字体或在 `--font-ui` 之外另建字体栈。"
+    ]
+  }
+}

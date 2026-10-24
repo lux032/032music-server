@@ -76,6 +76,9 @@ func run() error {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	defer rootCancel()
 
+	if err := db.RecoverReleaseGroupRebuild(rootCtx); err != nil {
+		logger.Error("recover RG identity", "error", err)
+	}
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	scannerManager.ProtectRestoreScan(backups.ScanProtectionPath())
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
@@ -155,6 +158,13 @@ func run() error {
 	dailyMixService.Start(rootCtx)
 	analysisService.Start(rootCtx)
 	scannerManager.SetOnComplete(func() {
+		if err := db.CompleteReleaseGroupRebuild(rootCtx); err != nil {
+			logger.Error("complete RG identity", "error", err)
+		}
+		if err := db.RefreshReleaseGroupIdentities(rootCtx); err != nil {
+			logger.Error("refresh RG identity", "error", err)
+		}
+
 		enrichmentManager.StartAuto(rootCtx)
 		app.GCCustomImages(rootCtx)
 		analysisService.Wake()

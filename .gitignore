@@ -26,6 +26,7 @@
 /playwright-report/
 /test-results/
 /blob-report/
+/.impeccable/review/
 
 # Editors and operating systems
 .idea/

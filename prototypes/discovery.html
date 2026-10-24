@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="032 Music Server 发现新音乐功能交互原型">
+  <title>发现新音乐 · 032 Music</title>
+  <style>
+    @font-face{font-family:Inter;src:url('../internal/http/assets/inter-latin.woff2') format('woff2');font-style:normal;font-weight:400 800;font-display:swap}
+    :root{color-scheme:dark;--bg:#111113;--bg-soft:#161619;--surface:#19191c;--surface-2:#222226;--hover:#27272c;--fill:#232327;--line:#2c2c32;--line-strong:#404049;--text:#f4f4f6;--secondary:#b8b8c2;--muted:#9a9aa5;--accent:#8d7dff;--accent-hover:#a194ff;--accent-text:#b4aaff;--accent-soft:rgba(141,125,255,.14);--accent-soft-2:rgba(141,125,255,.24);--on-accent:#140f33;--success:#45d39a;--success-soft:rgba(69,211,154,.11);--warning:#f2b84b;--warning-soft:rgba(242,184,75,.11);--danger:#ff6f83;--sidebar:188px;--nowplaying:258px;--player:74px;--radius:10px;--ease:cubic-bezier(.16,1,.3,1);--shadow:0 18px 45px rgba(0,0,0,.38)}
+    :root[data-theme="light"]{color-scheme:light;--bg:#fafafa;--bg-soft:#f4f4f5;--surface:#fff;--surface-2:#ededf0;--hover:#ededf1;--fill:#efeff2;--line:#e2e2e7;--line-strong:#cfcfd7;--text:#111113;--secondary:#4f4f59;--muted:#64646e;--accent:#5b47e0;--accent-hover:#4a37c9;--accent-text:#4a37c9;--accent-soft:rgba(91,71,224,.09);--accent-soft-2:rgba(91,71,224,.16);--on-accent:#fff;--success:#0e7651;--success-soft:rgba(14,118,81,.09);--warning:#8b5200;--warning-soft:rgba(154,91,0,.09);--danger:#c42b44;--shadow:0 18px 45px rgba(17,17,19,.16)}
+    *{box-sizing:border-box}
+    [hidden]{display:none!important}
+    .muted{color:var(--muted);font-weight:400}
+    .mobile-only{display:none}
+    html{background:var(--bg);scroll-behavior:smooth}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+    button,input,select{font:inherit;color:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.48}
+    a{color:inherit;text-decoration:none}h1,h2,h3,p{margin:0}img{display:block;max-width:100%}
+    ::selection{background:var(--accent-soft-2)}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+    *{scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}input{caret-color:var(--accent)}
+    .icon{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+    .sprite{position:absolute;width:0;height:0;overflow:hidden}
+    .sidebar{position:fixed;inset:0 auto var(--player) 0;z-index:30;display:flex;flex-direction:column;width:var(--sidebar);border-right:1px solid var(--line);padding:22px 12px 12px;background:var(--bg-soft)}
+    .wordmark{display:flex;align-items:center;gap:7px;margin:0 9px 27px;font-weight:800}.wordmark img{width:27px;height:27px;border-radius:8px}.wordmark span{font-size:20px;letter-spacing:-.03em}.wordmark small{margin-left:1px;color:var(--muted);font-size:8px;letter-spacing:.18em}
+    .nav{display:grid;gap:3px}.nav a,.nav button{display:flex;align-items:center;gap:11px;min-height:39px;border:0;border-radius:9px;padding:8px 11px;color:var(--secondary);background:transparent;text-align:left;font-size:13px;transition:background .15s,color .15s}.nav a:hover,.nav button:hover{background:var(--hover);color:var(--text)}.nav a.active{color:var(--accent-text);background:var(--accent-soft);font-weight:650}.nav a.active .icon{color:var(--accent)}
+    .nav-section{margin:20px 10px 6px;color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.12em}
+    .sidebar-bottom{margin-top:auto}.library-health{display:flex;align-items:center;gap:9px;margin:12px 5px;padding:11px 8px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}.health-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px var(--success-soft)}.account{display:flex;align-items:center;justify-content:space-between;padding:8px 7px;color:var(--muted);font-size:12px}.icon-btn{display:inline-grid;place-items:center;width:36px;height:36px;border:0;border-radius:8px;padding:0;color:var(--muted);background:transparent}.icon-btn:hover{color:var(--text);background:var(--hover)}
+    .now-playing{position:fixed;inset:0 0 var(--player) auto;z-index:20;width:var(--nowplaying);border-left:1px solid var(--line);padding:20px 17px;background:var(--surface);overflow:auto}
+    .np-heading{display:flex;align-items:center;justify-content:space-between;color:var(--secondary);font-size:12px}.np-heading h2{font-size:13px}.np-current{margin-top:18px}.np-current>img{width:100%;aspect-ratio:1;border-radius:9px;box-shadow:0 12px 28px rgba(0,0,0,.28)}.np-title{margin-top:15px;font-size:15px;font-weight:650}.np-artist{margin-top:3px;color:var(--muted);font-size:12px}.progress{height:3px;margin-top:17px;border-radius:9px;background:var(--surface-2);overflow:hidden}.progress>span{display:block;height:100%;border-radius:inherit;background:var(--accent)}.np-times{display:flex;justify-content:space-between;margin-top:6px;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}.queue{margin-top:23px;border-top:1px solid var(--line);padding-top:15px}.queue h3{font-size:12px}.queue-list{display:grid;gap:4px;margin:11px 0 0;padding:0;list-style:none}.queue-list li{display:grid;grid-template-columns:16px 1fr auto;gap:7px;align-items:center;border-radius:7px;padding:7px 6px;color:var(--secondary);font-size:11px}.queue-list li.playing{color:var(--accent-text);background:var(--accent-soft)}.queue-list small{color:var(--muted);font-variant-numeric:tabular-nums}
+    .main{min-height:100vh;margin-left:var(--sidebar);margin-right:var(--nowplaying);padding:32px clamp(20px,2.4vw,38px) calc(var(--player) + 42px)}
+    .page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.title-line{display:flex;align-items:center;flex-wrap:wrap;gap:10px}h1{font-size:clamp(25px,2.4vw,33px);line-height:1.15;letter-spacing:-.035em}.prototype-badge{border:1px solid var(--line-strong);border-radius:5px;padding:2px 6px;color:var(--muted);font-size:10px;font-weight:600;letter-spacing:.02em}.page-description{max-width:650px;margin-top:8px;color:var(--muted);font-size:12px}.header-actions{display:flex;gap:8px;flex:none}
+    .button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:37px;border:0;border-radius:999px;padding:8px 13px;color:var(--on-accent);background:var(--accent);font-size:12px;font-weight:650;transition:background .15s,transform .15s}.button:hover{background:var(--accent-hover)}.button:active{transform:translateY(1px)}.button.secondary{color:var(--text);background:var(--fill)}.button.secondary:hover{background:var(--hover)}.button.ghost{color:var(--secondary);background:transparent}.button.ghost:hover{color:var(--text);background:var(--hover)}.button.small{min-height:32px;padding:6px 11px;font-size:11px}.button.full{width:100%}
+    .status-line{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:26px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:11px 1px;color:var(--muted);font-size:11px}.status-primary{display:flex;align-items:center;gap:9px;color:var(--secondary)}.status-primary strong{color:var(--text);font-weight:600}.status-sources{text-align:right}
+    .discovery-tabs{display:flex;gap:22px;margin-top:23px;border-bottom:1px solid var(--line)}.tab{position:relative;display:flex;align-items:center;gap:6px;border:0;border-radius:0;padding:0 0 11px;color:var(--muted);background:transparent;font-size:13px;font-weight:550}.tab:hover{color:var(--text);background:transparent}.tab.active{color:var(--text)}.tab.active:after{content:"";position:absolute;right:0;bottom:-1px;left:0;height:2px;background:var(--accent)}.tab-count{display:inline-grid;place-items:center;min-width:19px;height:19px;border-radius:99px;padding:0 5px;background:var(--fill);color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}.tab.active .tab-count{color:var(--accent-text);background:var(--accent-soft)}
+    .toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:17px 0 21px}.filters{display:flex;align-items:center;gap:7px;overflow-x:auto;padding:2px}.chip{flex:none;min-height:30px;border:1px solid transparent;border-radius:999px;padding:5px 10px;color:var(--muted);background:transparent;font-size:11px}.chip:hover{color:var(--text);background:var(--hover)}.chip.active{border-color:var(--accent-soft-2);color:var(--accent-text);background:var(--accent-soft)}.sort{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;flex:none}.sort select{border:1px solid var(--line);border-radius:8px;padding:7px 27px 7px 9px;color:var(--secondary);background:var(--fill);font-size:11px}
+    .album-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:27px 18px}.album-card{position:relative;min-width:0;animation:card-in .3s var(--ease) both}.album-card[hidden]{display:none}@keyframes card-in{from{opacity:.5;transform:translateY(7px)}to{opacity:1;transform:none}}.cover-wrap{position:relative;overflow:hidden;border-radius:7px;background:var(--surface-2);box-shadow:0 2px 6px rgba(0,0,0,.24);transition:transform .2s var(--ease),box-shadow .2s}.album-card:hover .cover-wrap{transform:translateY(-2px);box-shadow:0 14px 28px -13px rgba(0,0,0,.7)}.cover{width:100%;aspect-ratio:1;object-fit:cover}.cover-badges{position:absolute;inset:9px 9px auto;display:flex;align-items:flex-start;justify-content:space-between;gap:6px;pointer-events:none}.badge{display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.13);border-radius:5px;padding:3px 6px;color:#f7f7f9;background:rgba(17,17,19,.78);backdrop-filter:blur(8px);font-size:9px;font-weight:650}.badge.warning{border-color:rgba(242,184,75,.4);color:#ffe0a0;background:rgba(50,36,8,.86)}.badge.success{color:#a7f3d0;background:rgba(7,46,32,.86)}
+    .album-info{padding-top:10px}.album-title{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-size:13px;font-weight:650;line-height:1.35}.album-artist{overflow:hidden;margin-top:4px;color:var(--secondary);font-size:11px;text-overflow:ellipsis;white-space:nowrap}.album-meta{margin-top:3px;color:var(--muted);font-size:11px}.recommend-reason{display:flex;align-items:flex-start;gap:6px;min-height:36px;margin-top:9px;color:var(--muted);font-size:11px;line-height:1.55}.recommend-reason .icon{width:13px;height:13px;margin-top:1px;color:var(--accent-text)}.possible .recommend-reason .icon{color:var(--warning)}
+    .card-actions{display:grid;grid-template-columns:1fr auto auto;gap:5px;margin-top:11px}.card-actions .button{min-width:0;padding-right:10px;padding-left:10px}.card-actions .icon-btn{width:33px;height:33px;border:1px solid var(--line)}.card-actions .icon-btn:hover{border-color:var(--line-strong)}.owned-action:hover{color:var(--success)}.ignore-action:hover{color:var(--danger)}
+    .acquisition-body{padding-top:10px}.acquisition-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.acquisition-title strong{font-size:13px}.status-text{color:var(--accent-text);font-size:10px;font-weight:600}.acquisition-sub{margin-top:4px;color:var(--muted);font-size:11px}.download-progress{height:5px;margin-top:14px}.pipeline{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}.pipeline li{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:10px}.pipeline .done{color:var(--success)}.pipeline .active{color:var(--accent-text)}.pipeline .icon{width:13px;height:13px}.acquisition-actions{display:flex;gap:7px;margin-top:14px}
+    .empty[hidden]{display:none}.empty{grid-column:1/-1;display:grid;place-items:center;min-height:270px;border:1px dashed var(--line-strong);border-radius:12px;padding:32px;text-align:center}.empty .icon{width:30px;height:30px;margin-bottom:12px;color:var(--muted)}.empty h2{font-size:16px}.empty p{max-width:400px;margin-top:7px;color:var(--muted);font-size:12px}.empty .button{margin-top:16px}
+    .player{position:fixed;inset:auto 0 0;z-index:50;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:var(--player);border-top:1px solid var(--line);padding:9px 17px;background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(16px)}.player-track{display:flex;align-items:center;gap:10px;min-width:0}.player-track img{width:49px;height:49px;border-radius:5px}.player-track-text{min-width:0}.player-track strong,.player-track span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.player-track strong{font-size:11px}.player-track span{margin-top:3px;color:var(--muted);font-size:9px}.player-controls{display:flex;align-items:center;gap:9px}.play-button{display:grid;place-items:center;width:39px;height:39px;border:0;border-radius:50%;color:var(--on-accent);background:var(--accent)}.play-button:hover{background:var(--accent-hover)}.player-right{display:flex;align-items:center;justify-content:flex-end;gap:8px;color:var(--muted)}.volume{width:75px;height:3px;accent-color:var(--accent)}
+    .drawer-backdrop{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.52);opacity:0;transition:opacity .22s}.drawer-backdrop.open{opacity:1}.drawer-backdrop[hidden]{display:none}
+    .drawer{position:fixed;inset:0 0 0 auto;z-index:90;display:flex;flex-direction:column;width:min(510px,100vw);border-left:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);transform:translateX(100%);transition:transform .3s var(--ease)}.drawer.open{transform:none}.drawer[hidden]{display:none}.drawer-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:19px 21px}.drawer-header h2{font-size:18px;letter-spacing:-.02em}.drawer-body{flex:1;overflow-y:auto;padding:20px 21px 28px}.target-release{display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:center}.target-release img{width:64px;height:64px;border-radius:6px}.target-release h3{font-size:14px}.target-release p{margin-top:4px;color:var(--muted);font-size:11px}.target-id{margin-top:5px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:9px}.ownership-compare{margin-top:20px;border:1px solid color-mix(in srgb,var(--warning) 40%,var(--line));border-radius:10px;padding:14px;background:var(--warning-soft)}.ownership-compare h3{font-size:13px}.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.compare-side{min-width:0}.compare-side strong{display:block;font-size:11px}.compare-side p{margin-top:5px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.compare-actions{display:grid;gap:8px;margin-top:14px}.search-form{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:22px}.search-input{min-width:0;border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--fill);font-size:12px}.search-input:focus{border-color:var(--accent);outline:0;box-shadow:0 0 0 3px var(--accent-soft)}.search-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;color:var(--muted);font-size:10px}.connection{display:flex;align-items:center;gap:6px}.connection .health-dot{width:5px;height:5px;box-shadow:none}.results-title{margin-top:25px;font-size:12px;font-weight:650}.results{display:grid;gap:9px;margin-top:11px}.result{position:relative;display:block;border:1px solid var(--line);border-radius:10px;padding:13px;background:var(--bg-soft);cursor:pointer;transition:border-color .15s,background .15s}.result:hover{border-color:var(--line-strong);background:var(--hover)}.result:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}.result input{position:absolute;top:16px;right:14px;width:15px;height:15px;accent-color:var(--accent)}.result-title{max-width:calc(100% - 28px);font-size:11px;font-weight:600;line-height:1.55;word-break:break-word}.result-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}.format{border-radius:4px;padding:2px 5px;color:var(--secondary);background:var(--surface-2);font-size:9px;font-weight:650}.format.free{color:var(--success);background:var(--success-soft)}.result-stats{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}.result-stats .seeders{color:var(--success)}.drawer-note{display:flex;align-items:flex-start;gap:7px;margin-top:17px;color:var(--muted);font-size:10px;line-height:1.6}.drawer-note .icon{width:14px;height:14px;margin-top:1px}.drawer-footer{border-top:1px solid var(--line);padding:15px 21px;background:var(--surface)}.drawer-footer .button{width:100%}.loading{display:grid;place-items:center;min-height:210px;color:var(--muted);font-size:12px}.spinner{width:24px;height:24px;margin-bottom:12px;border:2px solid var(--line-strong);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.success-state{padding-top:28px;text-align:center}.success-mark{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 16px;border-radius:50%;color:var(--success);background:var(--success-soft)}.success-mark .icon{width:26px;height:26px}.success-state h3{font-size:19px}.success-state>p{max-width:350px;margin:8px auto 0;color:var(--muted);font-size:12px}.success-state .pipeline{max-width:330px;margin:25px auto;text-align:left}.success-state .button{margin-top:5px}
+    .toast{position:fixed;z-index:120;bottom:calc(var(--player) + 20px);left:50%;max-width:min(440px,calc(100vw - 30px));border:1px solid var(--line-strong);border-radius:9px;padding:11px 15px;background:var(--surface);box-shadow:var(--shadow);font-size:12px;transform:translate(-50%,12px);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s var(--ease)}.toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}.toast-action{margin-left:12px;border:0;padding:2px 0;color:var(--accent-text);background:transparent;font-size:12px}.toast-action:hover{color:var(--accent-hover);background:transparent}.mobile-nav{display:none}.demo-note{margin-top:32px;border-top:1px solid var(--line);padding-top:15px;color:var(--muted);font-size:10px;line-height:1.7}
+    @media(min-width:1500px){:root{--sidebar:206px;--nowplaying:290px}.main{padding-right:42px;padding-left:42px}.album-grid{gap:30px 22px}}
+    @media(max-width:1190px){:root{--nowplaying:0px}.now-playing{display:none}.album-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:930px){:root{--sidebar:168px}.main{padding-right:20px;padding-left:20px}.album-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.status-sources{display:none}.player-right{display:none}.player{grid-template-columns:1fr auto 1fr}.player-right:after{content:""}}
+    @media(max-width:700px){:root{--sidebar:0px;--player:62px}.sidebar{inset:auto 0 0;width:100%;height:58px;border:0;border-top:1px solid var(--line);padding:0;background:var(--surface)}.wordmark,.sidebar .nav-section,.sidebar-bottom,.sidebar .nav a:nth-child(n+6),.sidebar .nav button{display:none}.sidebar .nav{display:grid;grid-template-columns:repeat(5,1fr);height:100%}.sidebar .nav a{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:0;border-radius:0;padding:5px 2px;font-size:9px}.sidebar .nav a.active{background:transparent}.sidebar .nav .icon{width:19px;height:19px}.main{margin:0;padding:23px 17px 150px}.page-header{gap:12px}.page-description{font-size:11px}.header-actions .button span{display:none}.header-actions .button{width:37px;padding:0}.status-line{margin-top:20px}.toolbar{align-items:flex-start;flex-direction:column;margin-bottom:17px}.filters{width:100%}.sort{align-self:flex-end}.album-grid{gap:23px 13px}.player{bottom:58px;height:62px;padding:7px 12px;grid-template-columns:1fr auto}.player-track img{width:44px;height:44px}.player-controls{gap:3px}.player-controls .icon-btn:first-child,.player-controls .icon-btn:last-child{display:none}.play-button{width:36px;height:36px}.player-right{display:none}.drawer{bottom:0;width:100%;border-left:0}.drawer-header{padding:16px 18px}.drawer-body{padding:18px}.drawer-footer{padding:13px 18px}.toast{bottom:140px}.demo-note{margin-top:25px}}
+    @media(max-width:390px){.main{padding-right:13px;padding-left:13px}.album-grid{gap:20px 10px}.album-title{font-size:12px}.recommend-reason{font-size:10px}.card-actions{grid-template-columns:1fr auto auto;gap:3px}.card-actions .button{font-size:11px}.card-actions .icon-btn{width:29px;height:29px}.discovery-tabs{gap:16px}.tab{font-size:12px}}
+    /* Prototype legibility floor: preserve the incumbent density without micro-text. */
+    .wordmark small,.nav-section,.badge,.prototype-badge,.tab-count,.status-text,.pipeline li,.np-times,.player-track span,.search-meta,.format,.result-stats,.target-id{font-size:11px}
+    .library-health,.status-line,.chip,.sort,.sort select,.album-artist,.album-meta,.recommend-reason,.acquisition-sub,.target-release p,.result-title,.drawer-note,.demo-note,.player-track strong,.queue-list li,.page-description{font-size:12px}
+    @media(max-width:700px){.sidebar .nav a{font-size:11px}.mobile-only{display:inline-flex}#refresh{display:none}}
+    @media(max-width:390px){.card-actions{grid-template-columns:1fr 1fr;gap:6px}.card-actions .button{grid-column:1/-1}.card-actions .icon-btn{width:100%;height:38px}}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true"><defs>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-album" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6m9 3h-6"/></symbol>
+  <symbol id="i-artist" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-5 3-8 8-8s8 3 8 8"/></symbol>
+  <symbol id="i-track" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
+  <symbol id="i-work" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 9h16M9 4v5m6-5v5"/></symbol>
+  <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5m4-1v5l3 2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8a7 7 0 0 1 11.4-1L20 12M4 12l2.5 5a7 7 0 0 0 11.4-1"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 21h16"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 5 10 7L6 19zM19 5v14"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="m18 5-10 7 10 7zM5 5v14"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15 9a4 4 0 0 1 0 6m3-9a8 8 0 0 1 0 12"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3z"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6m0-6-9 9M19 13v7H4V5h7"/></symbol>
+</defs></svg>
+
+<aside class="sidebar" aria-label="主导航">
+  <a class="wordmark" href="#" aria-label="032 Music 主页"><img src="../docs/images/icon-v2.png" alt=""><span>032</span><small>MUSIC</small></a>
+  <nav class="nav">
+    <a href="#"><svg class="icon"><use href="#i-home"/></svg>主页</a>
+    <a href="#"><svg class="icon"><use href="#i-album"/></svg>专辑</a>
+    <a href="#"><svg class="icon"><use href="#i-artist"/></svg>歌手</a>
+    <a href="#"><svg class="icon"><use href="#i-track"/></svg>歌曲</a>
+    <a class="active" href="#discovery" aria-current="page"><svg class="icon"><use href="#i-compass"/></svg>发现</a>
+    <a href="#"><svg class="icon"><use href="#i-work"/></svg>作品</a>
+    <a href="#"><svg class="icon"><use href="#i-heart"/></svg>收藏</a>
+    <a href="#"><svg class="icon"><use href="#i-list"/></svg>歌单</a>
+    <a href="#"><svg class="icon"><use href="#i-history"/></svg>播放记录</a>
+    <p class="nav-section">管理</p>
+    <button type="button" id="settings-demo"><svg class="icon"><use href="#i-gear"/></svg>获取设置</button>
+  </nav>
+  <div class="sidebar-bottom">
+    <div class="library-health"><span class="health-dot"></span><span>曲库与获取服务正常</span></div>
+    <div class="account"><span>lux032</span><button class="icon-btn" id="theme-toggle" type="button" title="切换深浅主题" aria-label="切换深浅主题"><svg class="icon"><use href="#i-moon"/></svg></button></div>
+  </div>
+</aside>
+
+<aside class="now-playing" aria-label="当前播放">
+  <div class="np-heading"><h2>当前播放</h2><button class="icon-btn" aria-label="更多播放操作"><svg class="icon"><use href="#i-list"/></svg></button></div>
+  <section class="np-current">
+    <img src="assets/the-book.jpg" alt="THE BOOK 专辑封面">
+    <h3 class="np-title">夜に駆ける</h3><p class="np-artist">YOASOBI · THE BOOK</p>
+    <div class="progress"><span style="width:38%"></span></div><div class="np-times"><span>1:38</span><span>4:21</span></div>
+  </section>
+  <section class="queue"><h3>播放队列</h3><ol class="queue-list">
+    <li class="playing"><span>1</span><span>夜に駆ける</span><small>4:21</small></li>
+    <li><span>2</span><span>あの夢をなぞって</span><small>4:02</small></li>
+    <li><span>3</span><span>たぶん</span><small>4:18</small></li>
+    <li><span>4</span><span>群青</span><small>4:08</small></li>
+    <li><span>5</span><span>ハルジオン</span><small>3:19</small></li>
+  </ol></section>
+</aside>
+
+<main class="main" id="discovery">
+  <header class="page-header">
+    <div><div class="title-line"><h1>发现新音乐</h1><span class="prototype-badge">交互原型</span></div><p class="page-description">从你喜欢的艺人与作品出发，寻找曲库之外值得拥有的发行。</p></div>
+    <div class="header-actions"><button class="button secondary" id="refresh" type="button"><svg class="icon"><use href="#i-refresh"/></svg><span>刷新发现</span></button><button class="button secondary mobile-only" id="mobile-settings" type="button" aria-label="获取设置" title="获取设置"><svg class="icon"><use href="#i-gear"/></svg></button><button class="button secondary mobile-only" id="mobile-theme" type="button" aria-label="切换深浅主题" title="切换深浅主题"><svg class="icon"><use href="#i-moon"/></svg></button></div>
+  </header>
+
+  <div class="status-line"><div class="status-primary"><span class="health-dot"></span><span><strong id="discovery-total">6 张新发现</strong> · <span id="acquiring-total">2 个获取任务</span></span></div><div class="status-sources">候选目录：MusicBrainz · Bangumi　资源搜索：JPopsuki</div></div>
+
+  <nav class="discovery-tabs" aria-label="发现内容状态">
+    <button class="tab active" aria-pressed="true" data-tab="recommended" type="button">为你发现 <span class="tab-count" data-count="recommended">6</span></button>
+    <button class="tab" aria-pressed="false" data-tab="acquiring" type="button">获取中 <span class="tab-count" data-count="acquiring">2</span></button>
+    <button class="tab" aria-pressed="false" data-tab="ignored" type="button">已忽略 <span class="tab-count" data-count="ignored">1</span></button>
+  </nav>
+
+  <div class="toolbar" id="filter-toolbar">
+    <div class="filters" role="group" aria-label="按推荐来源筛选">
+      <button class="chip active" data-filter="all" type="button">全部来源</button>
+      <button class="chip" data-filter="artist" type="button">艺人补全</button>
+      <button class="chip" data-filter="work" type="button">作品相关</button>
+      <button class="chip" data-filter="possible" type="button">可能已有</button>
+    </div>
+    <label class="sort">排序<select id="sort"><option value="relevance">推荐程度</option><option value="newest">发行日期</option><option value="artist">艺人名称</option></select></label>
+  </div>
+
+  <section class="album-grid" id="album-grid" aria-live="polite">
+    <article class="album-card" data-id="is6" data-status="recommended" data-source="artist" data-date="2022" data-artist="fripSide" data-title="infinite synthesis 6" data-year="2022" data-kind="Album" data-cover="assets/infinite-synthesis-6.jpg" data-mbid="c03178ba-4eb0-41ca-873e-cbc339689fd4">
+      <div class="cover-wrap"><img class="cover" src="assets/infinite-synthesis-6.jpg" alt="infinite synthesis 6 封面"><div class="cover-badges"><span class="badge">艺人补全</span><span class="badge">高相关</span></div></div>
+      <div class="album-info"><h2 class="album-title">infinite synthesis 6</h2><p class="album-artist">fripSide</p><p class="album-meta">2022 · Album · 14 首</p><p class="recommend-reason"><svg class="icon"><use href="#i-spark"/></svg><span>近 30 天常听 fripSide，曲库还缺这张录音室专辑</span></p><div class="card-actions"><button class="button small acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>寻找资源</button><button class="icon-btn owned-action" type="button" title="我已有" aria-label="我已有 infinite synthesis 6"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 infinite synthesis 6"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+    </article>
+
+    <article class="album-card" data-id="walpurgis" data-status="recommended" data-source="artist" data-date="2021" data-artist="Aimer" data-title="Walpurgis" data-year="2021" data-kind="Album" data-cover="assets/walpurgis.jpg" data-mbid="9a1a0031-e552-4386-b67a-c46ebb7f666d">
+      <div class="cover-wrap"><img class="cover" src="assets/walpurgis.jpg" alt="Walpurgis 封面"><div class="cover-badges"><span class="badge">艺人补全</span></div></div>
+      <div class="album-info"><h2 class="album-title">Walpurgis</h2><p class="album-artist">Aimer</p><p class="album-meta">2021 · Album · 14 首</p><p class="recommend-reason"><svg class="icon"><use href="#i-spark"/></svg><span>因为你收藏了 Aimer 的《残響散歌 / 白銀》</span></p><div class="card-actions"><button class="button small acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>寻找资源</button><button class="icon-btn owned-action" type="button" title="我已有" aria-label="我已有 Walpurgis"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 Walpurgis"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+    </article>
+
+    <article class="album-card" data-id="iv" data-status="recommended" data-source="work" data-date="2021" data-artist="SawanoHiroyuki[nZk]" data-title="iv" data-year="2021" data-kind="Album" data-cover="assets/iv.jpg" data-mbid="704ca992-2976-426a-9e72-12cf62d7827e">
+      <div class="cover-wrap"><img class="cover" src="assets/iv.jpg" alt="iv 封面"><div class="cover-badges"><span class="badge">作品相关</span></div></div>
+      <div class="album-info"><h2 class="album-title">iv</h2><p class="album-artist">SawanoHiroyuki[nZk]</p><p class="album-meta">2021 · Album · 12 首</p><p class="recommend-reason"><svg class="icon"><use href="#i-work"/></svg><span>与你常听的《进击的巨人》及泽野弘之作品相关</span></p><div class="card-actions"><button class="button small acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>寻找资源</button><button class="icon-btn owned-action" type="button" title="我已有" aria-label="我已有 iv"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 iv"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+    </article>
+
+    <article class="album-card" data-id="gentou" data-status="recommended" data-source="artist" data-date="2023" data-artist="ヨルシカ" data-title="幻燈" data-year="2023" data-kind="Album" data-cover="assets/gentou.jpg" data-mbid="88ee1a12-f362-4737-b7f4-b2f0b079e218">
+      <div class="cover-wrap"><img class="cover" src="assets/gentou.jpg" alt="幻燈 封面"><div class="cover-badges"><span class="badge">艺人补全</span><span class="badge">新发行</span></div></div>
+      <div class="album-info"><h2 class="album-title">幻燈</h2><p class="album-artist">ヨルシカ</p><p class="album-meta">2023 · Album · 10 首</p><p class="recommend-reason"><svg class="icon"><use href="#i-spark"/></svg><span>你收藏了ヨルシカ的 4 张专辑，这张尚未入库</span></p><div class="card-actions"><button class="button small acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>寻找资源</button><button class="icon-btn owned-action" type="button" title="我已有" aria-label="我已有 幻燈"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 幻燈"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+    </article>
+
+    <article class="album-card" data-id="lander" data-status="recommended" data-source="work" data-date="2022" data-artist="LiSA" data-title="LANDER" data-year="2022" data-kind="Album" data-cover="assets/lander.jpg" data-mbid="3c1aa9ef-67ff-4171-bd84-40bbd19f960b">
+      <div class="cover-wrap"><img class="cover" src="assets/lander.jpg" alt="LANDER 封面"><div class="cover-badges"><span class="badge">作品相关</span></div></div>
+      <div class="album-info"><h2 class="album-title">LANDER</h2><p class="album-artist">LiSA</p><p class="album-meta">2022 · Album · 14 首</p><p class="recommend-reason"><svg class="icon"><use href="#i-work"/></svg><span>包含你常听作品的相关音乐，LiSA 偏好匹配较高</span></p><div class="card-actions"><button class="button small acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>寻找资源</button><button class="icon-btn owned-action" type="button" title="我已有" aria-label="我已有 LANDER"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 LANDER"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+    </article>
+
+    <article class="album-card possible" data-id="the-book" data-status="recommended" data-source="possible" data-date="2021" data-artist="YOASOBI" data-title="THE BOOK" data-year="2021" data-kind="EP" data-cover="assets/the-book.jpg" data-mbid="6ddc7e3d-6fc7-4859-9e35-b666e49b40f5">
+      <div class="cover-wrap"><img class="cover" src="assets/the-book.jpg" alt="THE BOOK 封面"><div class="cover-badges"><span class="badge warning">可能已有</span></div></div>
+      <div class="album-info"><h2 class="album-title">THE BOOK</h2><p class="album-artist">YOASOBI</p><p class="album-meta">2021 · EP · 7 首</p><p class="recommend-reason"><svg class="icon"><use href="#i-info"/></svg><span>本地有标题相近的发行，但未写入 Release Group ID</span></p><div class="card-actions"><button class="button small secondary acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>核对并获取</button><button class="icon-btn owned-action" type="button" title="确认我已有" aria-label="确认我已有 THE BOOK"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 THE BOOK"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+    </article>
+
+    <article class="album-card" data-id="active-zankyo" data-status="acquiring" data-source="artist" data-date="2022" data-artist="Aimer" data-title="残響散歌">
+      <div class="cover-wrap"><img class="cover" src="assets/zankyo-sanka.jpg" alt="残響散歌 封面"><div class="cover-badges"><span class="badge">Single · FLAC</span></div></div>
+      <div class="acquisition-body"><div class="acquisition-title"><strong>残響散歌</strong><span class="status-text">下载中 · 68%</span></div><p class="acquisition-sub">Aimer · 2022 · 212 MB / 312 MB</p><div class="progress download-progress"><span style="width:68%"></span></div><ol class="pipeline"><li class="done"><svg class="icon"><use href="#i-check"/></svg>JPopsuki 种子已确认</li><li class="active"><svg class="icon"><use href="#i-download"/></svg>qBittorrent 下载中 · 68%</li><li><svg class="icon"><use href="#i-folder"/></svg>专辑已入库</li></ol><div class="acquisition-actions"><button class="button small secondary task-detail" type="button">查看任务详情</button></div></div>
+    </article>
+
+    <article class="album-card" data-id="active-aot-ost" data-status="acquiring" data-source="work" data-date="2019" data-artist="澤野弘之" data-title="進撃の巨人 Season 3 OST">
+      <div class="cover-wrap"><img class="cover" src="assets/attack-on-titan-ost.jpg" alt="进击的巨人第三季原声带封面"><div class="cover-badges"><span class="badge success">OST · 下载完成</span></div></div>
+      <div class="acquisition-body"><div class="acquisition-title"><strong>進撃の巨人 Season 3 OST</strong><span class="status-text">下载完成</span></div><p class="acquisition-sub">澤野弘之 · 2019 · 等待曲库出现匹配发行</p><ol class="pipeline"><li class="done"><svg class="icon"><use href="#i-check"/></svg>qBittorrent 下载完成</li><li><svg class="icon"><use href="#i-folder"/></svg>专辑已入库</li></ol><div class="acquisition-actions"><button class="button small secondary task-detail" type="button">查看任务详情</button></div></div>
+    </article>
+
+    <article class="album-card" data-id="ignored-book-2" data-status="ignored" data-source="artist" data-date="2021" data-artist="YOASOBI" data-title="THE BOOK 2" data-year="2021" data-kind="EP" data-cover="assets/the-book-2.jpg" data-mbid="96f4ba04-a052-4a04-ad39-121be2c896fd">
+      <div class="cover-wrap"><img class="cover" src="assets/the-book-2.jpg" alt="THE BOOK 2 封面" style="filter:saturate(.45);opacity:.72"><div class="cover-badges"><span class="badge">已忽略</span></div></div>
+      <div class="album-info"><h2 class="album-title">THE BOOK 2</h2><p class="album-artist">YOASOBI</p><p class="recommend-reason"><svg class="icon"><use href="#i-history"/></svg><span>演示：已于今天标记为不感兴趣，不再自动推荐</span></p><div class="acquisition-actions"><button class="button small secondary restore" type="button">恢复推荐</button></div></div>
+    </article>
+
+    <div class="empty" id="empty" hidden><svg class="icon"><use href="#i-compass"/></svg><h2>这个筛选下还没有内容</h2><p>尝试查看全部来源，或刷新发现以生成新的候选。</p><button class="button secondary" id="empty-reset" type="button">查看全部来源</button></div>
+  </section>
+
+  <p class="demo-note">这是用于需求对齐的静态交互原型。发行与封面来自 MusicBrainz / Cover Art Archive；推荐理由、拥有状态、种子和任务进度均为演示数据，不会连接 JPopsuki 或修改曲库。</p>
+</main>
+
+<footer class="player" aria-label="播放控制">
+  <div class="player-track"><img src="assets/the-book.jpg" alt=""><div class="player-track-text"><strong>夜に駆ける</strong><span>YOASOBI · THE BOOK</span></div></div>
+  <div class="player-controls"><button class="icon-btn" aria-label="上一首"><svg class="icon"><use href="#i-prev"/></svg></button><button class="play-button" id="play-toggle" aria-label="暂停"><svg class="icon"><use href="#i-pause"/></svg></button><button class="icon-btn" aria-label="下一首"><svg class="icon"><use href="#i-next"/></svg></button></div>
+  <div class="player-right"><svg class="icon"><use href="#i-volume"/></svg><input class="volume" type="range" min="0" max="100" value="72" aria-label="音量"><button class="icon-btn" aria-label="播放队列"><svg class="icon"><use href="#i-list"/></svg></button></div>
+</footer>
+
+<div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+<aside class="drawer" id="resource-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+  <header class="drawer-header"><h2 id="drawer-title">寻找资源</h2><button class="icon-btn" id="drawer-close" type="button" aria-label="关闭资源搜索"><svg class="icon"><use href="#i-x"/></svg></button></header>
+  <div class="drawer-body" id="drawer-body">
+    <div class="target-release"><img id="target-cover" src="assets/infinite-synthesis-6.jpg" alt=""><div><h3 id="target-title">infinite synthesis 6</h3><p id="target-artist">fripSide · 2022 · Album</p><p class="target-id" id="target-mbid">MB RG c03178ba…</p></div></div>
+    <form class="search-form" id="search-form"><input class="search-input" id="search-query" aria-label="JPopsuki 搜索关键词" value="fripSide infinite synthesis 6"><button class="button" type="submit"><svg class="icon"><use href="#i-search"/></svg>搜索</button></form>
+    <div class="search-meta"><span class="connection"><span class="health-dot"></span>JPopsuki · 通过 Jackett</span><span>结果缓存 15 分钟</span></div>
+    <div id="search-results"><h3 class="results-title">匹配候选 <span class="muted">· 演示结果</span></h3><div class="results" role="radiogroup" aria-label="种子候选">
+      <label class="result"><input type="radio" name="torrent" value="flac24" checked><span class="result-title" data-result-title>[fripSide] infinite synthesis 6 [FLAC 24bit/48kHz]</span><span class="result-tags"><span class="format free">FREELEECH</span><span class="format">FLAC</span><span class="format">24bit / 48kHz</span><span class="format">Album</span></span><span class="result-stats"><span>1.24 GB</span><span class="seeders">18 做种</span><span>3 下载中</span><span>14 首</span></span></label>
+      <label class="result"><input type="radio" name="torrent" value="flac16"><span class="result-title" data-result-title>[fripSide] infinite synthesis 6 [FLAC]</span><span class="result-tags"><span class="format">FLAC</span><span class="format">16bit / 44.1kHz</span><span class="format">Album</span></span><span class="result-stats"><span>812 MB</span><span class="seeders">9 做种</span><span>1 下载中</span><span>14 首</span></span></label>
+      <label class="result"><input type="radio" name="torrent" value="mp3"><span class="result-title" data-result-title>[fripSide] infinite synthesis 6 [MP3 320]</span><span class="result-tags"><span class="format">MP3</span><span class="format">320 kbps</span><span class="format">Album</span></span><span class="result-stats"><span>186 MB</span><span class="seeders">5 做种</span><span>0 下载中</span><span>14 首</span></span></label>
+    </div><p class="drawer-note"><svg class="icon"><use href="#i-info"/></svg><span>JPopsuki 结果不含 MusicBrainz ID。请根据艺人、标题和版本确认匹配；下载后仍会由 MusicAutoTagger 再次识别。</span></p></div>
+  </div>
+  <footer class="drawer-footer" id="drawer-footer"><button class="button" id="confirm-download" type="button"><svg class="icon"><use href="#i-download"/></svg>确认种子并开始下载</button></footer>
+</aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<noscript><p style="padding:20px">此交互原型需要启用 JavaScript。</p></noscript>
+
+<script>
+(() => {
+  const $ = (s, root = document) => root.querySelector(s);
+  const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+  const grid = $('#album-grid');
+  const drawer = $('#resource-drawer');
+  const backdrop = $('#drawer-backdrop');
+  const drawerBody = $('#drawer-body');
+  const drawerFooter = $('#drawer-footer');
+  const originalBody = drawerBody.innerHTML;
+  const originalFooter = drawerFooter.innerHTML;
+  const originalOrder = $$('.album-card', grid);
+  let activeTab = 'recommended';
+  let activeFilter = 'all';
+  let currentCard = null;
+  let lastFocus = null;
+  let toastTimer;
+
+  function notify(message, action) {
+    const toast = $('#toast');
+    toast.replaceChildren(document.createTextNode(message));
+    if (action) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'toast-action'; button.textContent = action.label;
+      button.addEventListener('click', () => { toast.classList.remove('show'); action.onClick(); }, {once:true});
+      toast.appendChild(button);
+    }
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), action ? 6000 : 2800);
+  }
+
+  function updateCounts() {
+    ['recommended','acquiring','ignored'].forEach(status => {
+      const count = $$(`.album-card[data-status="${status}"]`).length;
+      $(`[data-count="${status}"]`).textContent = count;
+    });
+    $('#discovery-total').textContent = `${$$('.album-card[data-status="recommended"]', grid).length} 张新发现`;
+    $('#acquiring-total').textContent = `${$$('.album-card[data-status="acquiring"]', grid).length} 个获取任务`;
+  }
+
+  function applyFilters() {
+    let visible = 0;
+    $$('.album-card', grid).forEach(card => {
+      const statusMatch = card.dataset.status === activeTab;
+      const filterMatch = activeFilter === 'all' || card.dataset.source === activeFilter;
+      card.hidden = !(statusMatch && filterMatch);
+      if (!card.hidden) visible++;
+    });
+    $('#empty').hidden = visible !== 0;
+    $('#filter-toolbar').hidden = activeTab !== 'recommended';
+    $('#sort').disabled = activeTab !== 'recommended';
+  }
+
+  $$('.tab').forEach(tab => tab.addEventListener('click', () => {
+    activeTab = tab.dataset.tab;
+    $$('.tab').forEach(t => {
+      const selected = t === tab;
+      t.classList.toggle('active', selected);
+      t.setAttribute('aria-pressed', selected);
+    });
+    applyFilters();
+  }));
+
+  $$('.chip').forEach(chip => chip.addEventListener('click', () => {
+    activeFilter = chip.dataset.filter;
+    $$('.chip').forEach(c => c.classList.toggle('active', c === chip));
+    applyFilters();
+  }));
+
+  $('#empty-reset').addEventListener('click', () => {
+    activeFilter = 'all';
+    $$('.chip').forEach(c => c.classList.toggle('active', c.dataset.filter === 'all'));
+    applyFilters();
+  });
+
+  $('#sort').addEventListener('change', event => {
+    const cards = $$('.album-card[data-status="recommended"]', grid);
+    const mode = event.target.value;
+    cards.sort((a,b) => mode === 'newest' ? b.dataset.date.localeCompare(a.dataset.date) : mode === 'artist' ? a.dataset.artist.localeCompare(b.dataset.artist) : originalOrder.indexOf(a) - originalOrder.indexOf(b));
+    const fragment = document.createDocumentFragment();
+    cards.forEach(card => fragment.appendChild(card));
+    $$('.album-card', grid).forEach(card => fragment.appendChild(card));
+    grid.insertBefore(fragment, $('#empty'));
+    notify(mode === 'newest' ? '已按发行日期排序' : mode === 'artist' ? '已按艺人名称排序' : '已按推荐程度排序');
+  });
+
+  function fillTarget(card) {
+    $('#target-cover').src = card.dataset.cover;
+    $('#target-title').textContent = card.dataset.title;
+    $('#target-artist').textContent = `${card.dataset.artist} · ${card.dataset.year} · ${card.dataset.kind}`;
+    $('#target-mbid').textContent = `MB RG ${card.dataset.mbid.slice(0,8)}… · Release Group 级匹配`;
+    $('#search-query').value = `${card.dataset.artist} ${card.dataset.title}`;
+    $$('[data-result-title]').forEach((el,index) => {
+      const suffix = index === 0 ? '[FLAC 24bit/48kHz]' : index === 1 ? '[FLAC]' : '[MP3 320]';
+      el.textContent = `[${card.dataset.artist}] ${card.dataset.title} ${suffix}`;
+    });
+  }
+
+  function setupOwnershipComparison() {
+    $('#search-form').hidden = true;
+    $('#search-results').hidden = true;
+    $('.search-meta').hidden = true;
+    drawerFooter.hidden = true;
+    const compare = document.createElement('section');
+    compare.className = 'ownership-compare';
+    compare.innerHTML = `<h3>先确认它是否已经存在</h3><div class="compare-grid"><div class="compare-side"><strong>本地相近发行</strong><p>THE BOOK（通常盤）<br>YOASOBI · 7 首<br>/music/YOASOBI/THE BOOK<br>Release Group：未写入</p></div><div class="compare-side"><strong>外部候选</strong><p>THE BOOK<br>YOASOBI · 2021 · EP<br>MusicBrainz Release Group<br>${currentCard.dataset.mbid.slice(0,8)}…</p></div></div><div class="compare-actions"><button class="button" id="confirm-same" type="button"><svg class="icon"><use href="#i-check"/></svg>是同一张，标记已有</button><button class="button secondary" id="confirm-different" type="button">不是同一张，继续搜索</button></div>`;
+    drawerBody.insertBefore(compare, $('#search-form'));
+    $('#confirm-same').addEventListener('click', () => {
+      const title = currentCard.dataset.title;
+      currentCard.remove();
+      updateCounts(); applyFilters(); closeDrawer();
+      notify(`已关联本地发行与“${title}”的 Release Group`);
+    });
+    $('#confirm-different').addEventListener('click', () => {
+      compare.remove();
+      $('#search-form').hidden = false;
+      $('#search-results').hidden = false;
+      $('.search-meta').hidden = false;
+      drawerFooter.hidden = false;
+      $('#search-query').focus();
+    });
+  }
+
+  function openDrawer(card) {
+    currentCard = card;
+    lastFocus = document.activeElement;
+    drawerBody.innerHTML = originalBody;
+    drawerFooter.innerHTML = originalFooter;
+    drawerFooter.hidden = false;
+    bindDrawerActions();
+    fillTarget(card);
+    if (card.classList.contains('possible')) setupOwnershipComparison();
+    drawer.hidden = false;
+    backdrop.hidden = false;
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => {
+      drawer.classList.add('open');
+      backdrop.classList.add('open');
+      $('#drawer-close').focus();
+    });
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('open');
+    backdrop.classList.remove('open');
+    document.body.style.overflow = '';
+    setTimeout(() => { drawer.hidden = true; backdrop.hidden = true; }, 230);
+    if (lastFocus?.isConnected) lastFocus.focus();
+    else $('.tab.active').focus();
+  }
+
+  function bindDrawerActions() {
+    $('#search-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const query = $('#search-query').value.trim();
+      if (!query) { $('#search-query').focus(); notify('请输入艺人或专辑标题'); return; }
+      const results = $('#search-results');
+      results.innerHTML = '<div class="loading"><div><div class="spinner"></div>正在通过 Jackett 搜索 JPopsuki…</div></div>';
+      setTimeout(() => {
+        drawerBody.innerHTML = originalBody;
+        bindDrawerActions();
+        fillTarget(currentCard);
+        $('#search-query').value = query;
+        notify('已更新演示搜索结果');
+      }, 650);
+    });
+    $('#confirm-download').addEventListener('click', showDownloadSuccess);
+  }
+
+  function showDownloadSuccess() {
+    if (!currentCard) return;
+    const selected = $('input[name="torrent"]:checked');
+    const format = selected ? selected.value : 'flac24';
+    currentCard.dataset.status = 'acquiring';
+    currentCard.dataset.progress = '0';
+    currentCard.innerHTML = `<div class="cover-wrap"><img class="cover" src="${currentCard.dataset.cover}" alt="${currentCard.dataset.title} 封面"><div class="cover-badges"><span class="badge">任务已创建</span></div></div><div class="acquisition-body"><div class="acquisition-title"><strong>${currentCard.dataset.title}</strong><span class="status-text">等待下载</span></div><p class="acquisition-sub">${currentCard.dataset.artist} · 已加入 qBittorrent</p><ol class="pipeline"><li class="done"><svg class="icon"><use href="#i-check"/></svg>JPopsuki 种子已确认 · ${format}</li><li class="active"><svg class="icon"><use href="#i-download"/></svg>等待 qBittorrent 开始下载</li><li><svg class="icon"><use href="#i-folder"/></svg>专辑已入库</li></ol><div class="acquisition-actions"><button class="button small secondary task-detail" type="button">查看任务详情</button></div></div>`;
+    bindCardActions(currentCard);
+    updateCounts();
+    drawerBody.innerHTML = `<div class="success-state"><div class="success-mark"><svg class="icon"><use href="#i-check"/></svg></div><h3>获取任务已创建</h3><p>${currentCard.dataset.title} 已交给 qBittorrent。下载完成后，服务端将通过曲库扫描结果确认专辑是否入库。</p><ol class="pipeline"><li class="done"><svg class="icon"><use href="#i-check"/></svg>种子与 Release Group 已关联</li><li class="active"><svg class="icon"><use href="#i-download"/></svg>qBittorrent 等待下载</li><li><svg class="icon"><use href="#i-folder"/></svg>专辑已入库</li></ol><button class="button" id="view-progress" type="button">查看获取进度</button></div>`;
+    drawerFooter.innerHTML = '<button class="button secondary" id="success-close" type="button">继续浏览推荐</button>';
+    $('#success-close').addEventListener('click', closeDrawer);
+    $('#view-progress').addEventListener('click', () => {
+      closeDrawer();
+      $('.tab[data-tab="acquiring"]').click();
+      setTimeout(() => currentCard?.scrollIntoView({behavior:'smooth',block:'center'}), 250);
+    });
+  }
+
+  function bindCardActions(card) {
+    $('.acquire', card)?.addEventListener('click', () => openDrawer(card));
+    $('.owned-action', card)?.addEventListener('click', () => {
+      const title = card.dataset.title;
+      const nextSibling = card.nextSibling;
+      card.remove();
+      updateCounts(); applyFilters();
+      notify(`已确认“${title}”为已有`, {label:'撤销', onClick:() => {
+        grid.insertBefore(card, nextSibling?.parentNode === grid ? nextSibling : $('#empty'));
+        updateCounts(); applyFilters();
+      }});
+    });
+    $('.ignore-action', card)?.addEventListener('click', () => {
+      const title = card.dataset.title;
+      card.dataset.status = 'ignored';
+      const info = $('.album-info', card);
+      info.innerHTML = `<h2 class="album-title">${title}</h2><p class="album-artist">${card.dataset.artist}</p><p class="recommend-reason"><svg class="icon"><use href="#i-history"/></svg><span>已标记为不感兴趣，不再自动推荐</span></p><div class="acquisition-actions"><button class="button small secondary restore" type="button">恢复推荐</button></div>`;
+      $('.cover', card).style.cssText = 'filter:saturate(.45);opacity:.72';
+      bindCardActions(card); updateCounts(); applyFilters();
+      notify(`已忽略“${title}”`);
+    });
+    $('.restore', card)?.addEventListener('click', () => {
+      card.dataset.status = 'recommended';
+      card.dataset.year ||= '2021';
+      card.dataset.kind ||= 'EP';
+      card.dataset.cover ||= 'assets/the-book.jpg';
+      card.dataset.mbid ||= '6ddc7e3d-6fc7-4859-9e35-b666e49b40f5';
+      card.innerHTML = `<div class="cover-wrap"><img class="cover" src="${card.dataset.cover}" alt="${card.dataset.title} 封面"><div class="cover-badges"><span class="badge">已恢复</span></div></div><div class="album-info"><h2 class="album-title">${card.dataset.title}</h2><p class="album-artist">${card.dataset.artist}</p><p class="album-meta">${card.dataset.year} · ${card.dataset.kind}</p><p class="recommend-reason"><svg class="icon"><use href="#i-spark"/></svg><span>已恢复推荐，将重新参与后续候选排序</span></p><div class="card-actions"><button class="button small acquire" type="button"><svg class="icon"><use href="#i-search"/></svg>寻找资源</button><button class="icon-btn owned-action" type="button" title="我已有" aria-label="我已有 ${card.dataset.title}"><svg class="icon"><use href="#i-check"/></svg></button><button class="icon-btn ignore-action" type="button" title="不感兴趣" aria-label="不感兴趣 ${card.dataset.title}"><svg class="icon"><use href="#i-x"/></svg></button></div></div>`;
+      bindCardActions(card); updateCounts(); applyFilters();
+      notify(`已恢复“${card.dataset.title}”的推荐`);
+    });
+    $('.task-detail', card)?.addEventListener('click', () => notify('任务详情：下载信息、infohash 与最终入库结果将在此展开'));
+  }
+
+  $$('.album-card', grid).forEach(bindCardActions);
+  $('#drawer-close').addEventListener('click', closeDrawer);
+  backdrop.addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !drawer.hidden) closeDrawer();
+    if (event.key === 'Tab' && !drawer.hidden) {
+      const focusable = $$('button:not(:disabled),input,select,a[href]', drawer).filter(el => el.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+
+  $('#refresh').addEventListener('click', () => {
+    const button = $('#refresh');
+    button.disabled = true;
+    button.querySelector('use').setAttribute('href','#i-refresh');
+    setTimeout(() => { button.disabled = false; notify('推荐候选已是最新 · 演示数据未变化'); }, 700);
+  });
+  function showSettings() { notify('获取设置：Jackett、JPopsuki、qBittorrent 与做种策略'); }
+  function toggleTheme() {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  }
+  $('#settings-demo').addEventListener('click', showSettings);
+  $('#mobile-settings').addEventListener('click', showSettings);
+  $('#theme-toggle').addEventListener('click', toggleTheme);
+  $('#mobile-theme').addEventListener('click', toggleTheme);
+  $('#play-toggle').addEventListener('click', event => {
+    const button = event.currentTarget;
+    const playing = button.dataset.playing !== 'false';
+    button.dataset.playing = !playing;
+    button.setAttribute('aria-label', playing ? '播放' : '暂停');
+    button.querySelector('use').setAttribute('href', playing ? '#i-play' : '#i-pause');
+  });
+
+  updateCounts();
+  applyFilters();
+})();
+</script>
+</body>
+</html>

@@ -136,7 +136,15 @@ func (m *Manager) RefreshAlbumWorks(ctx context.Context) (storage.RefreshStats, 
 // after cancelling the base context during shutdown.
 func (m *Manager) Wait() { m.wg.Wait() }
 
+func (m *Manager) StartIdentityRebuild(ctx context.Context) (int64, error) {
+	return m.start(ctx, "full", true)
+}
+
 func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
+	return m.start(ctx, scanType, false)
+}
+
+func (m *Manager) start(ctx context.Context, scanType string, identity bool) (int64, error) {
 	if scanType != "full" {
 		scanType = "incremental"
 	}
@@ -149,6 +157,11 @@ func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if identity {
+		if err = m.store.BeginReleaseGroupRebuild(ctx, jobID); err != nil {
+			return 0, err
+		}
+	}
 	m.running = true
 	m.wg.Add(1)
 	go func() {
@@ -157,10 +170,12 @@ func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
 			if recovered := recover(); recovered != nil {
 				m.logger.Error("panic in library scan", "jobId", jobID, "panic", recovered, "stack", string(debug.Stack()))
 				m.fail(context.Background(), jobID, fmt.Errorf("internal panic: %v", recovered))
+				_ = m.store.CheckReleaseGroupRebuildFailure(context.Background(), jobID)
 			}
 		}()
 		defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
 		m.run(m.baseCtx, jobID, scanType)
+		_ = m.store.CheckReleaseGroupRebuildFailure(m.baseCtx, jobID)
 	}()
 	return jobID, nil
 }

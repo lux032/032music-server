@@ -100,6 +100,10 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 		if loadErr != nil {
 			return 0, loadErr
 		}
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_release_groups(album_id,rgid,source,status) SELECT ?,rgid,source,'observed' FROM album_release_groups WHERE album_id=?`, targetID, id); err != nil {
+			return 0, err
+		}
+
 		if _, err = tx.ExecContext(ctx, `INSERT INTO album_works(album_id,work_id,role,season,source,inferred_key) SELECT ?,work_id,role,season,source,inferred_key FROM album_works WHERE album_id=? AND source IN ('manual','bangumi') ON CONFLICT(album_id,work_id) DO UPDATE SET source=excluded.source,role=excluded.role,season=excluded.season,inferred_key=excluded.inferred_key,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE CASE album_works.source WHEN 'manual' THEN 3 WHEN 'bangumi' THEN 2 ELSE 1 END < CASE excluded.source WHEN 'manual' THEN 3 WHEN 'bangumi' THEN 2 ELSE 1 END`, targetID, id); err != nil {
 			return 0, err
 		}
@@ -169,6 +173,10 @@ func (s *Store) MergeAlbums(ctx context.Context, targetID int64, sourceIDs []int
 	if _, err = tx.ExecContext(ctx, `DELETE FROM album_subject_candidates WHERE album_id=? AND status='candidate' AND (EXISTS(SELECT 1 FROM album_subject_candidates done WHERE done.album_id=? AND done.status='confirmed') OR EXISTS(SELECT 1 FROM album_works linked WHERE linked.album_id=? AND linked.source IN ('manual','bangumi')))`, targetID, targetID, targetID); err != nil {
 		return 0, err
 	}
+	if err = resolveAlbumReleaseGroups(ctx, tx, targetID); err != nil {
+		return 0, err
+	}
+
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}

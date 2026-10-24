@@ -416,7 +416,7 @@ func TestBackupImageReferencesAndWarnings(t *testing.T) {
 func TestBackupPendingMigrations(t *testing.T) {
 	s, _ := backupFixture(t, 55)
 	n, e := s.PendingMigrations(context.Background())
-	if e != nil || n != 1 {
+	if e != nil || n != 2 {
 		t.Fatalf("pending=%d %v", n, e)
 	}
 }

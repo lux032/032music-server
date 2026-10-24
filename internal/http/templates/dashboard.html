@@ -18,6 +18,17 @@
 
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
+    <section class="console-card" aria-label="MusicBrainz 身份">
+      <h2>MusicBrainz Release Group 身份</h2>
+      <p>{{if eq .Identity.Status "ready"}}身份已就绪{{else}}身份未就绪 · {{.Identity.Status}}{{end}} · {{.Identity.Processed}} / {{.Identity.Discovered}}</p>
+      {{if .Identity.Error}}<p role="alert">{{.Identity.Error}}</p>{{end}}
+      <p>手动重读全部音频标签后才能就绪；不使用旧标签缓存回填。刷新本页查看进度。</p>
+      <form method="post" action="/admin/identity/rebuild">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button type="submit" {{if eq .Identity.Status "rebuilding"}}disabled{{end}}>重建身份（全量扫描）</button>
+      </form>
+    </section>
+
     <section class="console-stats">
       <a href="/admin/albums"><small>专辑</small><strong id="albums-count">{{.Statistics.Albums}}</strong></a>
       <a href="/admin/artists/album"><small>歌手</small><strong id="artists-count">{{.Statistics.Artists}}</strong></a>

@@ -188,6 +188,7 @@ func indexLettersWhere(kana bool) []string {
 }
 
 type dashboardPageData struct {
+	Identity storage.ReleaseGroupRebuild
 	Chrome
 	Version        string
 	Uptime         string
@@ -485,6 +486,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/options/albums", a.requireAdminJSON(http.HandlerFunc(a.handleAdminAlbumOptions)))
 	mux.Handle("GET /admin/options/works", a.requireAdminJSON(http.HandlerFunc(a.handleAdminWorkOptions)))
 	mux.Handle("GET /admin/options/series", a.requireAdminJSON(http.HandlerFunc(a.handleAdminSeriesOptions)))
+	mux.Handle("POST /admin/identity/rebuild", a.requireAdmin(http.HandlerFunc(a.handleIdentityRebuild)))
 	mux.Handle("POST /admin/scan", a.requireAdmin(http.HandlerFunc(a.handleStartScan)))
 	mux.Handle("POST /admin/settings/library-watch", a.requireAdmin(http.HandlerFunc(a.handleSaveLibraryWatch)))
 	mux.Handle("POST /admin/settings/library-watch/reset", a.requireAdmin(http.HandlerFunc(a.handleResetLibraryWatch)))
@@ -816,7 +818,13 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	identity, identityErr := a.store.ReleaseGroupRebuildState(r.Context())
+	if identityErr != nil {
+		http.Error(w, "identity unavailable", 500)
+		return
+	}
 	a.render(w, http.StatusOK, "dashboard.html", dashboardPageData{
+		Identity:       identity,
 		Chrome:         a.chromeFor(r.Context(), session, "console"),
 		Version:        a.version,
 		Uptime:         time.Since(a.startedAt).Round(time.Second).String(),

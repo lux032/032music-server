@@ -370,8 +370,8 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	trackReadingTitle := m.TitleSort // from TITLESORT tag (furigana/romaji)
 	albumReadingTitle := m.AlbumSort // from ALBUMSORT tag
 
-	var trackID int64
-	err = tx.QueryRowContext(ctx, `SELECT track_id FROM audio_files WHERE library_id=? AND relative_path=?`, input.LibraryID, input.RelativePath).Scan(&trackID)
+	var trackID, previousAlbumID int64
+	err = tx.QueryRowContext(ctx, `SELECT af.track_id,t.album_id FROM audio_files af JOIN tracks t ON t.id=af.track_id WHERE af.library_id=? AND af.relative_path=?`, input.LibraryID, input.RelativePath).Scan(&trackID, &previousAlbumID)
 	if err == sql.ErrNoRows || trackID == 0 {
 		result, e := tx.ExecContext(ctx, `INSERT INTO tracks(album_id,title,sort_title,reading_title,disc_number,track_number,duration_ms,release_date,composer,lyricist,arranger,track_type,lyrics) VALUES(?,?,?,NULLIF(?,''),?,?,?,NULLIF(?,''),?,?,?,?,?)`, albumID, m.Title, trackSortTitle, trackReadingTitle, m.DiscNumber, m.TrackNumber, m.DurationMillis, yearDate(m.Year), m.Composer, m.Lyricist, m.Arranger, m.TrackType, m.Lyrics)
 		if e != nil {
@@ -393,15 +393,13 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns,container,mime_type,codec,sample_rate,bit_depth,bitrate,channels,audio_probe_version,has_external_lrc,status,last_scanned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'available',strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(library_id,relative_path) DO UPDATE SET track_id=excluded.track_id,file_size=excluded.file_size,modified_at_ns=excluded.modified_at_ns,container=excluded.container,mime_type=excluded.mime_type,codec=excluded.codec,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,bitrate=excluded.bitrate,channels=excluded.channels,audio_probe_version=excluded.audio_probe_version,has_external_lrc=excluded.has_external_lrc,status='available',last_scanned_at=excluded.last_scanned_at,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, input.LibraryID, trackID, input.RelativePath, input.FileSize, input.ModifiedAtNS, m.Container, m.MIMEType, nullableString(input.AudioProps.Codec), nullableInt(input.AudioProps.SampleRate), nullableInt(input.AudioProps.BitDepth), nullableInt(input.AudioProps.BitrateKbps), nullableInt(input.AudioProps.Channels), AudioProbeVersion, boolInt(input.HasExternalLRC))
+	_, err = tx.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns,container,mime_type,codec,sample_rate,bit_depth,bitrate,channels,audio_probe_version,has_external_lrc,status,last_scanned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'available',strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(library_id,relative_path) DO UPDATE SET track_id=excluded.track_id,file_size=excluded.file_size,modified_at_ns=excluded.modified_at_ns,container=excluded.container,mime_type=excluded.mime_type,codec=excluded.codec,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,bitrate=excluded.bitrate,channels=excluded.channels,audio_probe_version=excluded.audio_probe_version,has_external_lrc=excluded.has_external_lrc,status='available',last_scanned_at=excluded.last_scanned_at,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, input.LibraryID, trackID, input.RelativePath, input.FileSize, input.ModifiedAtNS, m.Container, m.MIMEType, nullableString(input.AudioProps.Codec), nullableInt(input.AudioProps.SampleRate), nullableInt(input.AudioProps.BitDepth), nullableInt(input.AudioProps.BitrateKbps), nullableInt(input.AudioProps.Channels), AudioProbeVersion, boolInt(input.HasExternalLRC))
 	if err != nil {
 		return err
 	}
-	audioID, _ := result.LastInsertId()
-	if audioID == 0 {
-		if err = tx.QueryRowContext(ctx, `SELECT id FROM audio_files WHERE library_id=? AND relative_path=?`, input.LibraryID, input.RelativePath).Scan(&audioID); err != nil {
-			return err
-		}
+	var audioID int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM audio_files WHERE library_id=? AND relative_path=?`, input.LibraryID, input.RelativePath).Scan(&audioID); err != nil {
+		return err
 	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id=?`, trackID); err != nil {
@@ -504,6 +502,15 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			}
 		}
 	}
+	if err = replaceFileReleaseGroups(ctx, tx, audioID, albumID, m.Raw); err != nil {
+		return err
+	}
+	if previousAlbumID != 0 && previousAlbumID != albumID {
+		if err = refreshAlbumFileReleaseGroups(ctx, tx, previousAlbumID); err != nil {
+			return err
+		}
+	}
+
 	if input.Artwork != nil {
 		a := input.Artwork
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO artworks(album_id,track_id,source_type,source_path,content_hash,mime_type,byte_size,is_primary) VALUES(?,NULL,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM artworks WHERE album_id=? AND (is_primary=1 OR source_type='custom')) THEN 0 ELSE 1 END)`, albumID, a.SourceType, a.CachePath, a.Hash, a.MIMEType, a.ByteSize, albumID); err != nil {
@@ -582,11 +589,23 @@ func (s *Store) CountAvailableAudioFiles(ctx context.Context, libraryID int64) (
 }
 
 func (s *Store) MarkMissing(ctx context.Context, libraryID int64, scanStarted string) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE audio_files SET status='missing',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE library_id=? AND (last_scanned_at IS NULL OR last_scanned_at < ?) AND status='available'`, libraryID, scanStarted)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE audio_files SET status='missing',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE library_id=? AND (last_scanned_at IS NULL OR last_scanned_at < ?) AND status='available'`, libraryID, scanStarted)
+	if err != nil {
+		return 0, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err = refreshAllAlbumReleaseGroups(ctx, tx); err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }
 
 // CleanupOrphans removes albums/artists/genres that lost all references.
