@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head>{{template "head" .}}<title>获取设置 · 032</title><script defer src="{{assetAcquisitionSettingsJS}}"></script></head>
+<body class="roon-shell" data-nav="{{.Nav}}">{{template "sidebar" .}}{{template "nowplaying" .}}
+<main id="app-main" class="browser-main"><header class="browser-header"><h1>获取设置</h1><a href="/admin/discover">发现新音乐</a><a href="/admin/settings/metadata">数据来源</a></header>
+{{if .Notice}}<p role="status">{{.Notice}}</p>{{end}}
+<form method="post" action="/admin/settings/acquisition" class="source-card">
+<input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+<label><input type="checkbox" name="enabled" {{if .Settings.Enabled}}checked{{end}}>启用获取功能</label>
+<p>仅通过 Jackett 搜索 JPopsuki；下载交给 qBittorrent。取消只停止本站追踪，不删除 qBittorrent 中的任务。下载完成后请先用 MAT 整理，再依赖目录监控或手动扫描入库。</p>
+<label>Jackett 地址 <input type="url" name="jackett_url" value="{{.Settings.JackettURL}}" placeholder="http://jackett:9117"></label>
+<label>Indexer <input name="jackett_indexer" value="{{.Settings.JackettIndexer}}"></label>
+<label>Jackett API Key <input type="password" name="jackett_api_key" value="" autocomplete="new-password" placeholder="{{if .Settings.KeySet}}已设置，留空保留{{else}}未设置{{end}}"></label>
+<label><input type="checkbox" name="clear_key">清除 API Key</label>
+<label>qBittorrent 地址 <input type="url" name="qb_url" value="{{.Settings.QBURL}}" placeholder="http://qbittorrent:8080"></label>
+<label>用户名 <input name="qb_username" value="{{.Settings.QBUsername}}" autocomplete="off"></label>
+<label>密码 <input type="password" name="qb_password" value="" autocomplete="new-password" placeholder="{{if .Settings.HasPassword}}已设置，留空保留{{else}}未设置{{end}}"></label>
+<label><input type="checkbox" name="clear_password">清除密码</label>
+<label>分类 <input name="qb_category" value="{{.Settings.QBCategory}}"></label>
+<p>分类原样传给 qBittorrent；留空表示无分类。密钥只写不读，留空保留，勾选清除才清空。修改后请先保存，再测试连接。</p>
+<button type="submit">保存获取设置</button>
+</form>
+<div data-acquisition-tests><button type="button" data-test="test-jackett">测试 Jackett</button><button type="button" data-test="test-qb">测试 qBittorrent 与分类</button><p role="status" data-test-status></p></div>
+</main></body></html>

@@ -3,7 +3,7 @@
 // global setup 中途失败时，已启动的实例也按各自 state file 关闭。
 import fs from 'node:fs';
 import { teardown as fixtureTeardown } from './e2e-fixture.mjs';
-import { SHARED_STATE_FILE, BATCH3_STATE_FILE, EMPTY_STATE_FILE, DISCOVERY_STATE_FILE, DISCOVERY_FAKE_STATE_FILE, BIN_STATE_FILE } from './e2e-global-setup.mjs';
+import { SHARED_STATE_FILE, BATCH3_STATE_FILE, EMPTY_STATE_FILE, DISCOVERY_STATE_FILE, DISCOVERY_FAKE_STATE_FILE, ACQUISITION_FAKE_STATE_FILE, BIN_STATE_FILE } from './e2e-global-setup.mjs';
 
 export default async function teardown() {
   const errors = [];
@@ -14,10 +14,12 @@ export default async function teardown() {
       errors.push(err);
     }
   }
-  if (fs.existsSync(DISCOVERY_FAKE_STATE_FILE)) {
-    const { pid } = JSON.parse(fs.readFileSync(DISCOVERY_FAKE_STATE_FILE, 'utf8'));
-    try { process.kill(pid); } catch (err) { if (err.code !== 'ESRCH') errors.push(err); }
-    fs.rmSync(DISCOVERY_FAKE_STATE_FILE, { force: true });
+  for (const fakeState of [DISCOVERY_FAKE_STATE_FILE, ACQUISITION_FAKE_STATE_FILE]) {
+    if (fs.existsSync(fakeState)) {
+      const { pid } = JSON.parse(fs.readFileSync(fakeState, 'utf8'));
+      try { process.kill(pid); } catch (err) { if (err.code !== 'ESRCH') errors.push(err); }
+      fs.rmSync(fakeState, { force: true });
+    }
   }
   // binDir / BIN_STATE_FILE 清理失败也要上报，不静默吞掉（文件不存在除外）。
   if (fs.existsSync(BIN_STATE_FILE)) {

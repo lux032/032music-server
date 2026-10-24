@@ -74,7 +74,7 @@ test('发现推荐、反馈、对比、刷新及 PJAX 键盘交互', async ({ pa
   await expect(page.locator('dialog')).not.toBeVisible();
   await expectFocus(page);
   await page.getByRole('button', { name: /获取中/ }).click();
-  await expect(page.locator('[data-discovery-grid]')).toHaveText('获取功能将在后续版本提供');
+  await expect(page.locator('[data-discovery-grid]')).toHaveText('暂无获取任务');
   await page.getByRole('button', { name: /为你发现/ }).click();
   await page.getByRole('button', { name: '刷新目录' }).click();
   await expect(page.locator('[data-discovery-status]')).toContainText('刷新中');

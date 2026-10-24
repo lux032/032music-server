@@ -152,20 +152,27 @@ func (s *Store) AssociateAlbumReleaseGroup(ctx context.Context, albumID int64, r
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `DELETE FROM album_release_groups WHERE album_id=? AND source='manual'`, albumID); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO release_groups(rgid) VALUES(?)`, id); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO album_release_groups(album_id,rgid,source,status) VALUES(?,?,'manual','observed')`, albumID, id); err != nil {
-		return err
-	}
-	if err = resolveAlbumReleaseGroups(ctx, tx, albumID); err != nil {
+	if err = associateAlbumReleaseGroupTx(ctx, tx, albumID, id); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
+
+// associateAlbumReleaseGroupTx preserves the manual-choice semantics for callers
+// that need the association and another CAS write to commit atomically.
+func associateAlbumReleaseGroupTx(ctx context.Context, tx *sql.Tx, albumID int64, id string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM album_release_groups WHERE album_id=? AND source='manual'`, albumID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO release_groups(rgid) VALUES(?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO album_release_groups(album_id,rgid,source,status) VALUES(?,?,'manual','observed')`, albumID, id); err != nil {
+		return err
+	}
+	return resolveAlbumReleaseGroups(ctx, tx, albumID)
+}
+
 func (s *Store) SetReleaseGroupIgnored(ctx context.Context, rgid string, ignored bool) error {
 	id, ok := metadata.NormalizeMusicBrainzID(rgid)
 	if !ok {

@@ -44,7 +44,7 @@ func TestStartupRestoreSkipsPreupgrade(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = raw.Exec(`DELETE FROM schema_migrations WHERE version>=56;DROP TABLE discovery_match_rejections;DROP TABLE discovery_possible_matches;DROP TABLE discovery_candidates;DROP TABLE discovery_artist_release_groups;DROP TABLE discovery_seeds;DROP TABLE discovery_refresh_state;DROP TABLE discovery_release_groups;DROP TABLE audio_file_release_groups;DROP TABLE audio_file_releases;DROP TABLE album_release_groups;DROP TABLE release_group_decisions;DROP TABLE release_group_rebuild;DROP TABLE release_groups;DROP TABLE backup_settings`); e != nil {
+	if _, e = raw.Exec(`DELETE FROM schema_migrations WHERE version>=56;DROP INDEX idx_acq_available_file_created;DROP TABLE acquisition_evidence;DROP TABLE acquisition_tasks;DROP TABLE acquisition_search_results;DROP TABLE acquisition_searches;DROP TABLE acquisition_settings;DROP TABLE discovery_match_rejections;DROP TABLE discovery_possible_matches;DROP TABLE discovery_candidates;DROP TABLE discovery_artist_release_groups;DROP TABLE discovery_seeds;DROP TABLE discovery_refresh_state;DROP TABLE discovery_release_groups;DROP TABLE audio_file_release_groups;DROP TABLE audio_file_releases;DROP TABLE album_release_groups;DROP TABLE release_group_decisions;DROP TABLE release_group_rebuild;DROP TABLE release_groups;DROP TABLE backup_settings`); e != nil {
 		t.Fatal(e)
 	}
 	raw.Close()

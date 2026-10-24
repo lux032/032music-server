@@ -68,20 +68,21 @@ func (s *Store) DiscoveryOwnership(c context.Context, ids []string) (map[string]
 	for _, id := range keys {
 		out[id] = Ownership{}
 	}
-	rows, e := s.db.QueryContext(c, `SELECT j.value,COALESCE(g.album_id,0),EXISTS(SELECT 1 FROM release_group_decisions d WHERE d.rgid=j.value) FROM json_each(?) j LEFT JOIN album_release_groups g ON g.rgid=j.value AND g.status='resolved'`, string(raw))
+	rows, e := s.db.QueryContext(c, `SELECT j.value,COALESCE(g.album_id,0),EXISTS(SELECT 1 FROM release_group_decisions d WHERE d.rgid=j.value),EXISTS(SELECT 1 FROM acquisition_tasks t WHERE t.rgid=j.value AND t.state IN (`+AcquisitionActiveStates+`)) FROM json_each(?) j LEFT JOIN album_release_groups g ON g.rgid=j.value AND g.status='resolved'`, string(raw))
 	if e != nil {
 		return nil, e
 	}
 	for rows.Next() {
 		var id string
 		var album int64
-		var ignored bool
-		if e = rows.Scan(&id, &album, &ignored); e != nil {
+		var ignored, acquiring bool
+		if e = rows.Scan(&id, &album, &ignored, &acquiring); e != nil {
 			rows.Close()
 			return nil, e
 		}
 		v := out[id]
 		v.Ignored = ignored
+		v.Acquiring = acquiring
 		if album != 0 {
 			v.Albums = append(v.Albums, album)
 		}
@@ -137,7 +138,7 @@ func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) 
 	if e := s.IdentityReady(c); e != nil {
 		return nil, counts, e
 	}
-	if tab != "recommended" && tab != "possible" && tab != "ignored" {
+	if tab != "recommended" && tab != "possible" && tab != "ignored" && tab != "acquiring" {
 		return nil, counts, errors.New("invalid discovery tab")
 	}
 	rows, e := s.db.QueryContext(c, `SELECT `+discoveryGroupSelect+`,d.seed_artist_id,COALESCE(a.user_display_name,a.display_name),d.generation,d.score,d.lane,COALESCE(d.rank,0),d.reasons_json FROM discovery_candidates d JOIN discovery_release_groups r ON r.rgid=d.rgid JOIN artists a ON a.id=d.seed_artist_id ORDER BY COALESCE(d.rank,2147483647),d.score DESC,r.rgid`)
@@ -180,10 +181,20 @@ func (s *Store) ListDiscovery(c context.Context, tab string, limit, offset int) 
 	if e != nil {
 		return nil, counts, e
 	}
+	tasks, e := s.ListAcquisitionTasks(c)
+	if e != nil {
+		return nil, counts, e
+	}
+	counts.Acquiring = len(tasks)
 	out := []DiscoveryItem{}
+	if tab == "acquiring" {
+		for _, task := range tasks {
+			out = append(out, DiscoveryItem{DiscoveryCandidate: DiscoveryCandidate{DiscoveryReleaseGroup: DiscoveryReleaseGroup{RGID: task.RGID, Title: task.Title, ArtistCredit: task.Artist, Kind: task.Kind}}})
+		}
+	}
 	for _, v := range all {
 		o := own[v.RGID]
-		if len(o.Albums) > 0 {
+		if len(o.Albums) > 0 || o.Acquiring {
 			continue
 		}
 		kind := "recommended"
@@ -234,7 +245,28 @@ func (s *Store) DiscoveryIgnore(c context.Context, raw string, ignored bool) err
 	if !exists {
 		return sql.ErrNoRows
 	}
-	return s.SetReleaseGroupIgnored(c, id, ignored)
+	if !ignored {
+		return s.SetReleaseGroupIgnored(c, id, false)
+	}
+	tx, e := s.db.BeginTx(c, nil)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if e = discoveryLock(c, tx); e != nil {
+		return e
+	}
+	var active bool
+	if e = tx.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM acquisition_tasks WHERE rgid=? AND state IN (`+AcquisitionActiveStates+`))`, id).Scan(&active); e != nil {
+		return e
+	}
+	if active {
+		return ErrAcquisitionRGActive
+	}
+	if _, e = tx.ExecContext(c, `INSERT OR IGNORE INTO release_group_decisions(rgid,decision) VALUES(?,'ignore')`, id); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 func (s *Store) DiscoveryNotSame(c context.Context, raw string, album int64) error {
 	if e := s.IdentityReady(c); e != nil {
@@ -286,6 +318,13 @@ func (s *Store) DiscoveryOwned(c context.Context, raw string, album int64, confi
 	defer t.Rollback()
 	if e = discoveryLock(c, t); e != nil {
 		return e
+	}
+	var active bool
+	if e = t.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM acquisition_tasks WHERE rgid=? AND state IN (`+AcquisitionActiveStates+`))`, id).Scan(&active); e != nil {
+		return e
+	}
+	if active {
+		return ErrAcquisitionRGActive
 	}
 	var exists bool
 	if e = t.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM albums a WHERE a.id=? AND `+albumVisibleSQL("a.id")+`) AND EXISTS(SELECT 1 FROM discovery_release_groups WHERE rgid=?)`, album, id).Scan(&exists); e != nil {

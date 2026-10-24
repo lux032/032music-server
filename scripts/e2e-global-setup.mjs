@@ -18,6 +18,7 @@ export const BATCH3_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-batch3-sta
 export const BIN_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-bin.json');
 export const DISCOVERY_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-discovery-state.json');
 export const DISCOVERY_FAKE_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-discovery-fake.json');
+export const ACQUISITION_FAKE_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-acquisition-fake.json');
 export const BATCH3_PORT = 45441;
 export const EMPTY_STATE_FILE = path.join(os.tmpdir(), '032music-e2e-empty-state.json');
 
@@ -98,6 +99,19 @@ export default async function setup() {
       if (response.ok && await response.text() === String(fake.pid)) break;
     } catch { /* Retry while the child starts listening. */ }
     if (Date.now() > fakeDeadline) throw new Error('discovery fake MB readiness timed out on port 45446');
+    await sleep(100);
+  }
+  const acquisitionFake = spawn(process.execPath, [path.join(ROOT, 'scripts/acquisition-fake.mjs')], { detached: true, stdio: 'ignore' });
+  acquisitionFake.unref();
+  fs.writeFileSync(ACQUISITION_FAKE_STATE_FILE, JSON.stringify({ pid: acquisitionFake.pid }));
+  let acquisitionError;
+  acquisitionFake.on('error', error => { acquisitionError = error; });
+  acquisitionFake.on('exit', () => { acquisitionError = new Error('acquisition fake exited; check port 45447'); });
+  const acquisitionDeadline = Date.now() + 10000;
+  for (;;) {
+    if (acquisitionError) throw acquisitionError;
+    try { const r = await fetch('http://127.0.0.1:45447/health', { signal: AbortSignal.timeout(1000) }); if (await r.text() === String(acquisitionFake.pid)) break; } catch { /* starting */ }
+    if (Date.now() > acquisitionDeadline) throw new Error('acquisition fake readiness timed out');
     await sleep(100);
   }
   await fixtureSetup({ port: 45445, stateFile: DISCOVERY_STATE_FILE, tempPrefix: '032music-e2e-discovery-', go, ffmpeg, serverBin,

@@ -22,6 +22,8 @@ var migrationFiles embed.FS
 
 type Store struct {
 	db retryDB
+	// acquisitionAfterRead is a test-only transaction interleaving seam.
+	acquisitionAfterRead func()
 	// skipMigrationTemplate is set on the store that builds the migration
 	// template itself, so it replays the real migrations.
 	skipMigrationTemplate bool

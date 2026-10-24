@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/lux032/032music-server/internal/acquisition"
 	"github.com/lux032/032music-server/internal/discovery"
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
@@ -88,7 +89,7 @@ func (a *App) discoveryItems(r *http.Request, tab string, limit, offset int) ([]
 		}
 		items = append(items, d)
 	}
-	return items, discoveryCountsDTO{c.Recommended, c.Possible, 0, c.Ignored}, e
+	return items, discoveryCountsDTO{c.Recommended, c.Possible, c.Acquiring, c.Ignored}, e
 }
 func (a *App) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
@@ -169,7 +170,7 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		if tab == "" {
 			tab = "recommended"
 		}
-		if tab != "recommended" && tab != "possible" && tab != "ignored" {
+		if tab != "recommended" && tab != "possible" && tab != "ignored" && tab != "acquiring" {
 			writeAPIError(w, 400, "invalid_tab", "无效分类")
 			return
 		}
@@ -178,6 +179,38 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		items, counts, e := a.discoveryItems(r, tab, limit, offset)
 		if e != nil {
 			a.discoveryError(w, e)
+			return
+		}
+		if tab == "acquiring" {
+			tasks, err := a.store.ListAcquisitionTasks(r.Context())
+			if err != nil {
+				a.acquisitionError(w, err)
+				return
+			}
+			views := make([]acquisitionTaskDTO, 0, len(tasks))
+			if offset < 0 {
+				offset = 0
+			}
+			if limit <= 0 || limit > 200 {
+				limit = 60
+			}
+			for i, task := range tasks {
+				if i < offset || i >= offset+limit {
+					continue
+				}
+				view, err := a.acquisitionTaskView(r.Context(), task)
+				if err != nil {
+					a.acquisitionError(w, err)
+					return
+				}
+				views = append(views, view)
+			}
+			watch, _, err := a.effectiveLibraryWatch(r.Context())
+			if err != nil {
+				a.acquisitionError(w, err)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"items": views, "counts": counts, "html": "", "watchDisabled": !watch.Enabled})
 			return
 		}
 		var html bytes.Buffer
@@ -223,6 +256,20 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.PathValue("action") == "owned" {
 			e = a.store.DiscoveryOwned(r.Context(), id, body.AlbumID, body.ConfirmReplace)
+			if errors.Is(e, storage.ErrAcquisitionRGActive) {
+				if a.acquisition == nil {
+					writeAPIError(w, 503, "unavailable", "获取服务暂不可用")
+					return
+				}
+				task, taskErr := a.store.ActiveAcquisitionByRG(r.Context(), id)
+				if taskErr == nil {
+					_, e = a.acquisition.MarkOwned(r.Context(), task.PublicID, body.AlbumID, body.ConfirmReplace)
+				} else if errors.Is(taskErr, sql.ErrNoRows) {
+					e = storage.ErrAcquisitionStale
+				} else {
+					e = taskErr
+				}
+			}
 		} else {
 			e = a.store.DiscoveryNotSame(r.Context(), id, body.AlbumID)
 		}
@@ -231,7 +278,12 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e != nil {
-		a.discoveryError(w, e)
+		var acquisitionErr *acquisition.Error
+		if errors.Is(e, storage.ErrAcquisitionRGActive) || errors.Is(e, storage.ErrAcquisitionStale) || errors.As(e, &acquisitionErr) {
+			a.acquisitionError(w, e)
+		} else {
+			a.discoveryError(w, e)
+		}
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

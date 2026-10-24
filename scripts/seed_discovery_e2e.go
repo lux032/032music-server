@@ -41,6 +41,22 @@ func main() {
 			exec(`INSERT OR IGNORE INTO discovery_possible_matches SELECT ?,id,'title_artist' FROM albums LIMIT 1`, id)
 		}
 	}
+	if len(os.Args) > 2 && os.Args[2] == "acquisition" {
+		exec(`UPDATE acquisition_settings SET enabled=1,jackett_url='http://127.0.0.1:45447',jackett_api_key='e2e-key',jackett_indexer='jpopsuki',qb_url='http://127.0.0.1:45447',qb_username='e2e',qb_password='e2e-password',qb_category='music' WHERE id=1`)
+		reasons := []string{"qb_unreachable", "qb_auth", "qb_rejected", "qb_missing", "torrent_unavailable", "library_timeout", "rg_conflict", "preexisting_only", "no_rg_files", "rule_suppressed"}
+		for i, reason := range append(reasons, "", "", "", "") {
+			state := "ATTENTION"
+			if i >= len(reasons) {
+				state = []string{"QB_SUBMITTING", "DOWNLOADING", "AWAITING_LIBRARY", "IN_LIBRARY"}[i-len(reasons)]
+			}
+			exec(`INSERT OR IGNORE INTO discovery_release_groups(rgid,title,primary_type,kind,artist_credit,fetched_at) VALUES(?,?,'Album','Album','E2E Artist','2026-01-01')`, fmt.Sprintf("44444444-4444-4444-8444-%012d", i+1), "Task "+reason+state)
+			publicID := fmt.Sprintf("22222222-2222-4222-8222-%012d", i+1)
+			exec(`INSERT INTO acquisition_tasks(public_id,idempotency_key,rgid,title,artist,kind,torrent_title,state,attention_reason,next_check_at,finished_at) VALUES(?,?,?,?,?,'Album','Fixture FLAC',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 day'),CASE WHEN ?='IN_LIBRARY' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END)`, publicID, publicID, fmt.Sprintf("44444444-4444-4444-8444-%012d", i+1), "Task "+reason+state, "E2E Artist", state, reason, state)
+			if state == "IN_LIBRARY" {
+				exec(`INSERT INTO acquisition_evidence(task_id,source,album_id,detected_count) SELECT t.id,'manual',a.id,20 FROM acquisition_tasks t,albums a WHERE t.public_id=? LIMIT 1`, publicID)
+			}
+		}
+	}
 	if e = tx.Commit(); e != nil {
 		panic(e)
 	}

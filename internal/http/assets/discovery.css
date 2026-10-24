@@ -242,3 +242,33 @@
 .discovery-main [hidden] {
   display: none !important;
 }
+
+.acquisition-card {
+  border:1px solid var(--line);
+  border-radius:var(--radius-row,8px);
+  padding:18px;
+  overflow-wrap:anywhere
+}
+.acquisition-state {
+  display:inline-block;
+  background:var(--accent-soft);
+  color:var(--accent-strong-text);
+  border-radius:999px;
+  padding:4px 10px;
+  font-size:.8rem
+}
+.acquisition-result {
+  display:grid;
+  grid-template-columns:24px minmax(0,1fr);
+  gap:6px 8px;
+  padding:14px 8px;
+  border-bottom:1px solid var(--line);
+  overflow-wrap:anywhere;
+  cursor:pointer
+}
+.acquisition-result input { grid-row:1/4 }
+.acquisition-result span { grid-column:2; font-size:.8rem; color:var(--text-secondary) }
+.acquisition-result:has(input:checked) { background:var(--accent-soft) }
+.acquisition-result:has(input:disabled) { opacity:.65; cursor:not-allowed }
+[data-acquisition-controls] { margin-top:16px }
+[data-acquisition-controls] button { margin:4px }

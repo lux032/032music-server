@@ -10,6 +10,10 @@
     const controller = new AbortController();
     const { signal } = controller;
     let timer, tab = 'recommended', filter = 'all', target, trigger, replaceAlbum, busy = false, offset = root.querySelectorAll('[data-rgid]').length, searchSequence = 0, listSequence = 0;
+    let mode = 'owned', snapshot, selected, idempotencyKey, acquisitionTimer, cooldownTimer, acquisitionPolling = false;
+    const controls = root.querySelector('[data-acquisition-controls]');
+    const cancelPanel = root.querySelector('[data-task-cancel]');
+    const acquireButton = root.querySelector('[data-action="confirm-acquire"]');
     const dialog = root.querySelector('dialog');
     const grid = root.querySelector('[data-discovery-grid]');
     const message = root.querySelector('[data-discovery-live]');
@@ -18,12 +22,101 @@
     const compare = root.querySelector('[data-discovery-compare]');
     const search = root.querySelector('[data-discovery-search]');
     const confirm = root.querySelector('[data-discovery-confirm]');
-    cleanup = () => { clearTimeout(timer); controller.abort(); if (dialog.open) dialog.close(); };
+    cleanup = () => { clearTimeout(timer); clearTimeout(acquisitionTimer); clearInterval(cooldownTimer); controller.abort(); if (dialog.open) dialog.close(); };
     async function request(path, method = 'GET', body) {
-      const response = await fetch('/admin/discover/' + path, { method, signal, headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      const response = await fetch(path.startsWith('/') ? path : '/admin/discover/' + path, { method, signal, headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
       const data = await response.json();
-      if (!response.ok) { const e = new Error(data.error?.message || data.message || '请求失败，请重试'); e.data = data; e.status = response.status; throw e; }
+      if (!response.ok) { const e = new Error(data.error?.message || data.message || '请求失败，请重试'); e.data = data; e.status = response.status; e.retryAfter = Number(response.headers.get('Retry-After')) || 0; e.message = errors[data.error?.code] || e.message; throw e; }
       return data;
+    }
+    const errors = {
+      disabled: '获取尚未启用，请前往获取设置完成配置', unavailable: '获取服务尚未配置，请前往获取设置',
+      acquisition_active: '已有活跃获取任务，请先取消获取任务再忽略',
+      jackett_auth: 'Jackett 认证失败，请检查获取设置', jackett_unreachable: '无法连接 Jackett，请检查获取设置',
+      jackett_failed: 'Jackett 搜索失败，请稍后重试', jackett_cooldown: 'Jackett 请求冷却中',
+      invalid_settings: '请前往获取设置完成 Jackett 与 qBittorrent 配置',
+      qb_auth: 'qBittorrent 认证失败，请修改获取设置', qb_unreachable: '无法连接 qBittorrent，请检查连接后重试',
+      magnet_only: '不支持磁力', pure_v2: '不支持纯 v2 种子', not_retryable: '此原因不能重试，请手动关联专辑',
+      not_found: '搜索已过期或任务不存在，请重新搜索', hash_bound: '该种子已绑定其他获取任务',
+      stale: '任务状态已变化，请刷新后重试', already_owned: '该发行已在曲库中', ignored: '请先恢复该发行',
+      idempotency_conflict: '确认请求已变化，请重新搜索'
+    };
+    const reasons = {
+      qb_unreachable: '无法连接 qBittorrent，请检查连接后重试', qb_auth: 'qBittorrent 认证失败，请修改获取设置',
+      qb_rejected: 'qBittorrent 未接受种子，请重试', qb_missing: 'qBittorrent 中未找到任务，请检查后重试或关联专辑',
+      torrent_unavailable: '种子暂不可用，请重试', library_timeout: '等待入库超时，请检查 MAT 整理及扫描',
+      rg_conflict: '文件发行组身份冲突，请检查后关联专辑', preexisting_only: '仅检测到任务创建前的文件，请手动关联专辑',
+      no_rg_files: '新文件缺少发行组身份，MAT 可能未识别', rule_suppressed: '可能受到专辑删除规则抑制，请检查后关联专辑'
+    };
+    function element(tag, text, className) {
+      const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el;
+    }
+    function taskCards(data) {
+      const fragment = document.createDocumentFragment();
+      const states = { QB_SUBMITTING: '提交中', DOWNLOADING: '下载中', AWAITING_LIBRARY: '等待入库', IN_LIBRARY: '已入库', ATTENTION: '需处理', CANCELLED: '已取消' };
+      data.items.forEach(task => {
+        const card = element('article', '', 'discovery-card acquisition-card');
+        Object.assign(card.dataset, { rgid: task.rgid, title: task.title, artist: task.artist, publicId: task.publicId });
+        card.id = 'acquisition-' + task.publicId;
+        card.append(element('span', states[task.state] || task.state, 'acquisition-state'), element('h2', task.title), element('p', task.artist), element('p', task.torrentTitle, 'discovery-meta'));
+        if (task.state === 'IN_LIBRARY') {
+          card.append(element('p', '专辑已入库 · 检测到 ' + task.detectedCount + ' 首'));
+          if (task.albumId > 0) { const a = element('a', task.albumTitle || '查看专辑'); a.href = '/admin/albums/' + task.albumId; card.append(a); }
+        }
+        if (task.state === 'AWAITING_LIBRARY' && data.watchDisabled) card.append(element('p', '目录监控已关闭，整理后需手动扫描入库。'));
+        const actions = element('div', '', 'discovery-card-actions');
+        const button = (action, label) => { const b = element('button', label); b.type = 'button'; b.dataset.action = action; actions.append(b); };
+        if (task.state === 'ATTENTION') {
+          card.append(element('p', reasons[task.attentionReason] || '请检查任务并手动关联专辑'));
+          if (/^(qb_|torrent_)/.test(task.attentionReason)) button('task-retry', '重试');
+          button('task-link', '手动关联专辑');
+          const a = element('a', '获取设置'); a.href = '/admin/settings/acquisition'; card.append(a);
+        }
+        if (!['IN_LIBRARY', 'CANCELLED'].includes(task.state)) button('task-cancel', '取消获取');
+        card.append(actions); fragment.append(card);
+      });
+      if (!data.items.length) fragment.append(element('p', '暂无获取任务', 'discovery-empty'));
+      return fragment;
+    }
+    async function searchTorrents(force = false) {
+      const sequence = ++searchSequence;
+      snapshot = undefined; selected = undefined; idempotencyKey = undefined; acquireButton.disabled = true;
+      results.replaceChildren(); clearInterval(cooldownTimer); dialogMessage.textContent = '正在搜索…';
+      try {
+        const data = await request('rg/' + target.rgid + '/search', 'POST', { q: search.elements.q.value, force });
+        if (sequence !== searchSequence || !dialog.open) return;
+        snapshot = data.searchId;
+        const group = element('div', '', 'acquisition-results'); group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', '种子候选');
+        data.results.map((result, index) => ({ result, index })).sort((a, b) => (b.result.seeders ?? -1) - (a.result.seeders ?? -1)).forEach(({ result: r, index }) => {
+          const label = element('label', '', 'acquisition-result'); const radio = document.createElement('input');
+          radio.type = 'radio'; radio.name = 'torrent'; radio.value = index; radio.disabled = r.magnetOnly;
+          radio.addEventListener('change', () => { selected = index; acquireButton.disabled = false; });
+          label.append(radio, element('strong', r.title));
+          label.append(element('span', [r.category || '分类未知', r.size == null ? '体积未知' : (r.size / 1048576).toFixed(1) + ' MB', (r.seeders ?? '未知') + ' 做种', (r.peers ?? '未知') + ' 下载', (r.grabs ?? '未知') + ' 完成', r.publishedAt || '日期未知'].join(' · ')));
+          label.append(element('span', [...(r.badges || []), ...(r.downloadFactor === 0 ? ['FREELEECH'] : []), ...(r.magnetOnly ? ['不支持磁力'] : [])].join(' · ')));
+          group.append(label);
+        });
+        results.append(group); dialogMessage.textContent = data.results.length ? '请选择一个种子，不会自动选中。' : '没有找到种子，请更换关键词。';
+      } catch (e) {
+        if (e.name === 'AbortError' || sequence !== searchSequence) return;
+        showDialogError(e);
+      }
+    }
+    function showDialogError(error) {
+      clearInterval(cooldownTimer);
+      dialogMessage.textContent = error.message;
+      if (!error.retryAfter) return;
+      const until = Date.now() + error.retryAfter * 1000;
+      const tick = () => {
+        const seconds = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        dialogMessage.textContent = seconds ? error.message + '，请等待 ' + seconds + ' 秒' : error.message + '，可以重新搜索';
+        if (!seconds) clearInterval(cooldownTimer);
+      };
+      tick(); cooldownTimer = setInterval(tick, 1000);
+    }
+    function newKey() {
+      if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const n = crypto.getRandomValues(new Uint8Array(1))[0] % 16; return (c === 'x' ? n : (n & 3) | 8).toString(16); });
     }
     function announce(text) { message.textContent = text; }
     function cardIndex(card = trigger?.closest('[data-rgid]')) {
@@ -37,39 +130,44 @@
         cards[Math.min(Math.max(index, 0), cards.length - 1)]?.querySelector('button') || root.querySelector('[data-tab="' + tab + '"]');
       fallback?.focus();
     }
-    async function load(append = false, focusIndex = cardIndex(document.activeElement?.closest('[data-rgid]'))) {
+    async function load(append = false, focusIndex = cardIndex(document.activeElement?.closest('[data-rgid]')), { restore = true } = {}) {
       const sequence = ++listSequence;
       root.querySelector('.discovery-chips').hidden = tab !== 'recommended';
       root.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
       root.querySelectorAll('[data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === filter)));
-      if (tab === 'acquiring') { grid.replaceChildren(); const p = document.createElement('p'); p.className = 'discovery-empty'; p.textContent = '获取功能将在后续版本提供'; grid.append(p); root.querySelector('[data-action="more"]').hidden = true; return; }
       // S1 has only artist seeds: all and artist are equivalent until S3 adds work sources.
       const data = await request('items.json?tab=' + (tab === 'recommended' && filter === 'possible' ? 'possible' : tab) + '&limit=60&offset=' + (append ? offset : 0));
       if (sequence !== listSequence) return;
       // HTML is rendered by the same escaped Go card template as the first screen.
-      const fragment = document.createElement('template'); fragment.innerHTML = data.html;
-      if (!append) grid.replaceChildren(); grid.append(fragment.content);
+      let content;
+      if (tab === 'acquiring') content = taskCards(data);
+      else { const fragment = document.createElement('template'); fragment.innerHTML = data.html; content = fragment.content; }
+      if (!append) grid.replaceChildren(); grid.append(content);
       offset = (append ? offset : 0) + data.items.length;
       root.querySelector('[data-action="more"]').hidden = data.items.length < 60;
       Object.entries(data.counts).forEach(([key, value]) => { root.querySelectorAll('[data-count="' + key + '"]').forEach(el => { el.textContent = value; }); });
-      restoreFocus(focusIndex);
+      if (restore) restoreFocus(focusIndex);
     }
     function close() { dialog.close(); }
-    dialog.addEventListener('close', () => { ++searchSequence; if (trigger?.isConnected) trigger.focus(); else restoreFocus(target?.cardIndex ?? 0); }, { signal });
-    function open(card, button, comparing) {
-      target = { rgid: card.dataset.rgid, title: card.dataset.title, cardIndex: cardIndex(card) }; trigger = button;
+    dialog.addEventListener('close', () => { ++searchSequence; clearInterval(cooldownTimer); if (trigger?.isConnected) trigger.focus(); else restoreFocus(target?.cardIndex ?? 0); }, { signal });
+    function open(card, button, comparing, acquiring = false) {
+      mode = acquiring ? 'acquire' : button.dataset.action === 'task-link' ? 'link' : 'owned';
+      controls.hidden = !acquiring; cancelPanel.hidden = true; acquireButton.disabled = true;
+      target = { rgid: card.dataset.rgid, title: card.dataset.title, publicId: card.dataset.publicId, cardIndex: cardIndex(card) }; trigger = button;
       results.replaceChildren(); compare.replaceChildren(); confirm.hidden = true; dialogMessage.textContent = '';
       root.querySelector('[data-discovery-target]').textContent = target.title;
       root.querySelector('#discovery-dialog-title').textContent = comparing ? '核对可能已有的发行' : '关联本地专辑';
       search.hidden = comparing;
       if (comparing) compare.append(card.querySelector('[data-possible]').cloneNode(true));
       compare.querySelector('[data-possible]')?.removeAttribute('hidden');
-      search.elements.q.value = target.title;
+      search.elements.q.value = acquiring ? [card.dataset.artist, target.title].filter(Boolean).join(' ') : target.title;
+      search.querySelector('label').textContent = acquiring ? 'JPopsuki 搜索关键词' : '搜索本地专辑';
+      root.querySelector('#discovery-dialog-title').textContent = acquiring ? '获取发行' : comparing ? '核对可能已有的发行' : '关联本地专辑';
       dialog.showModal();
       (comparing ? dialog.querySelector('[data-action="same"]') : search.elements.q)?.focus();
     }
     async function owned(albumId, confirmReplace = false) {
-      try { await request('rg/' + target.rgid + '/owned', 'POST', { albumId, confirmReplace }); close(); await load(false, target.cardIndex); announce('已关联本地专辑，推荐和计数已更新。'); }
+      try { await request(mode === 'link' ? '/admin/acquisitions/' + target.publicId + '/link' : 'rg/' + target.rgid + '/owned', 'POST', { albumId, confirmReplace }); close(); await load(false, target.cardIndex); announce('已关联本地专辑，推荐和计数已更新。'); }
       catch (e) {
         if (e.status === 409 && e.data.error?.code === 'replaces_rg') {
           replaceAlbum = albumId; confirm.hidden = false;
@@ -80,6 +178,7 @@
     }
     root.addEventListener('submit', async event => {
       if (event.target !== search) return; event.preventDefault();
+      if (mode === 'acquire') { await searchTorrents(); return; }
       const sequence = ++searchSequence;
       dialogMessage.textContent = '正在搜索…'; results.replaceChildren(); confirm.hidden = true;
       try {
@@ -98,8 +197,25 @@
         const action = b.dataset.action, card = b.closest('[data-rgid]'), focusIndex = cardIndex(card);
         if (!action) return;
         if (action === 'close') { close(); return; }
-        if (action === 'owned' || action === 'compare') { open(card, b, action === 'compare'); return; }
+        if (action === 'acquire') { open(card, b, false, true); return; }
+        if (action === 'force-search') { await searchTorrents(true); return; }
+        if (action === 'task-cancel') { open(card, b, false); search.hidden = true; cancelPanel.hidden = false; root.querySelector('#discovery-dialog-title').textContent = '取消获取任务'; cancelPanel.querySelector('button').focus(); return; }
+        if (action === 'owned' || action === 'compare' || action === 'task-link') { open(card, b, action === 'compare'); return; }
         busy = true; b.disabled = true;
+        if (action === 'confirm-acquire') {
+          if (selected === undefined || !snapshot) return;
+          idempotencyKey ||= newKey();
+          try { await request('rg/' + target.rgid + '/acquire', 'POST', { searchId: snapshot, resultIdx: selected, idempotencyKey }); close(); await load(); announce('已交给 qBittorrent'); }
+          catch (e) {
+            if (e.data?.error?.code === 'hash_bound') {
+              dialogMessage.textContent = e.message;
+              if (e.data.publicId) { const a = element('a', '查看绑定任务'); a.href = '#acquisition-' + e.data.publicId; a.addEventListener('click', () => { (async () => { close(); tab = 'acquiring'; await load(); document.getElementById('acquisition-' + e.data.publicId)?.scrollIntoView(); })().catch(e => announce(e.message)); }); dialogMessage.append(' · ', a); }
+              else await load();
+            } else throw e;
+          }
+        }
+        if (action === 'task-retry') { await request('/admin/acquisitions/' + card.dataset.publicId + '/retry', 'POST'); await load(); announce('已安排重试'); }
+        if (action === 'confirm-task-cancel') { await request('/admin/acquisitions/' + target.publicId + '/cancel', 'POST'); close(); await load(); announce('已取消本地追踪，未删除 qBittorrent 任务'); }
         if (action === 'ignore' || action === 'restore') { await request('rg/' + card.dataset.rgid + '/ignore', action === 'ignore' ? 'POST' : 'DELETE'); await load(false, focusIndex); announce(action === 'ignore' ? '已忽略该发行，可在已忽略中恢复。' : '已恢复推荐。'); }
         if (action === 'same' || action === 'select-album') await owned(Number(b.dataset.albumId));
         if (action === 'confirm-replace') await owned(replaceAlbum, true);
@@ -110,13 +226,13 @@
         }
         if (action === 'more') await load(true);
         if (action === 'refresh' || action === 'cancel') { await request(action === 'refresh' ? 'refresh' : 'refresh/cancel', 'POST'); if (action === 'refresh') previousStatus = 'running'; await poll(); }
-      } catch (e) { if (e.name !== 'AbortError') { if (dialog.open) dialogMessage.textContent = e.message; else announce(e.message); } }
-      finally { busy = false; b.disabled = b.dataset.action === 'refresh' && previousStatus === 'running'; }
+      } catch (e) { if (e.name !== 'AbortError') { if (dialog.open) showDialogError(e); else announce(e.message); } }
+      finally { busy = false; b.disabled = b === acquireButton ? selected === undefined || !snapshot : b.dataset.action === 'refresh' && previousStatus === 'running'; }
     }, { signal });
     // Native modal dialog provides inert background, Escape and focus containment.
     dialog.addEventListener('keydown', e => {
       if (e.key !== 'Tab') return;
-      const focusable = [...dialog.querySelectorAll('button,input')].filter(el => !el.disabled && el.getClientRects().length);
+      const focusable = [...dialog.querySelectorAll('button,input,a[href]')].filter(el => !el.disabled && el.getClientRects().length);
       const first = focusable[0], last = focusable.at(-1);
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
@@ -143,10 +259,40 @@
         root.querySelector('[data-action="refresh"]').disabled = s.status === 'running';
         if (previousStatus === 'running' && s.status !== 'running') { await load(); announce(s.errorMessage || '目录刷新已结束。'); }
         previousStatus = s.status;
-        if (s.status === 'running') timer = setTimeout(poll, 1000);
+        if (!signal.aborted && s.status === 'running') timer = setTimeout(poll, 1000);
       } catch (e) { if (e.name !== 'AbortError') announce(e.message); }
     }
     root.addEventListener('error', event => { if (event.target.matches('.discovery-cover img')) { event.target.remove(); } }, { signal, capture: true });
+    async function pollAcquisitions() {
+      clearTimeout(acquisitionTimer);
+      if (signal.aborted || acquisitionPolling || document.hidden) return;
+      acquisitionPolling = true;
+      const pollingTab = tab;
+      try {
+        // Do not replace a card while a keyboard user is interacting with it.
+        if (!dialog.open && !busy && !grid.contains(document.activeElement)) {
+          if (pollingTab === 'acquiring' && grid.querySelector('[data-action="task-cancel"]')) {
+            const pages = Math.max(1, Math.ceil(offset / 60));
+            await load(false, undefined, { restore: false });
+            for (let page = 1; page < pages && tab === pollingTab && !signal.aborted; page++) {
+              await load(true, undefined, { restore: false });
+            }
+          } else if (pollingTab !== 'acquiring') {
+            const data = await request('acquisitions.json');
+            root.querySelector('[data-count="acquiring"]').textContent = data.items.length;
+          }
+        }
+      } catch (e) { if (e.name !== 'AbortError') announce(e.message); }
+      finally {
+        acquisitionPolling = false;
+        if (!signal.aborted && !document.hidden) acquisitionTimer = setTimeout(pollAcquisitions, 20000);
+      }
+    }
+    document.addEventListener('visibilitychange', () => {
+      clearTimeout(acquisitionTimer);
+      if (!document.hidden) pollAcquisitions();
+    }, { signal });
+    acquisitionTimer = setTimeout(pollAcquisitions, 20000);
     poll();
   }
   document.addEventListener('DOMContentLoaded', init);

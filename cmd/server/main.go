@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lux032/032music-server/internal/acquisition"
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/dailymix"
@@ -84,11 +85,16 @@ func run() error {
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	scannerManager.ProtectRestoreScan(backups.ScanProtectionPath())
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
-	gate := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": enrichment.MBIntervalFromEnv(logger), "coverartarchive": time.Second}})
+	gate := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": enrichment.MBIntervalFromEnv(logger), "coverartarchive": time.Second, "jackett": 3 * time.Second}})
 	enrichmentManager.SetSourceGate(gate)
 	discoveryService := discovery.New(db, logger, discovery.Options{BaseContext: rootCtx, Gate: gate, DataDir: cfg.DataDirectory, UserAgent: enrichmentManager.MetadataUserAgent})
 	if err := discoveryService.Start(rootCtx); err != nil {
 		logger.Warn("resume discovery", "error", err)
+	}
+
+	acquisitionService := acquisition.New(db, logger, acquisition.Options{Gate: gate})
+	if err := acquisitionService.Start(rootCtx); err != nil {
+		logger.Warn("start acquisition", "error", err)
 	}
 
 	// 重启前处于限流等待的任务：恢复倒计时，到点自动继续；人工暂停与存储
@@ -107,6 +113,7 @@ func run() error {
 		return err
 	}
 	app.SetDiscovery(discoveryService)
+	app.SetAcquisition(acquisitionService)
 	restartCh := make(chan struct{}, 1)
 	app.RequestRestart = func() {
 		select {
@@ -175,6 +182,7 @@ func run() error {
 			logger.Error("refresh RG identity", "error", err)
 		}
 
+		acquisitionService.Wake()
 		enrichmentManager.StartAuto(rootCtx)
 		app.GCCustomImages(rootCtx)
 		analysisService.Wake()
@@ -257,6 +265,7 @@ func run() error {
 		scannerManager.Wait()
 		enrichmentManager.Wait()
 		discoveryService.Wait()
+		acquisitionService.Wait()
 		lastFMService.Wait()
 		analysisService.Wait()
 		taggingService.Wait()

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lux032/032music-server/internal/acquisition"
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/dailymix"
@@ -33,6 +34,7 @@ import (
 
 type App struct {
 	discovery      *discovery.Service
+	acquisition    *acquisition.Service
 	backups        *storage.Backups
 	RequestRestart func()
 	// config keeps the raw environment values; effective (possibly
@@ -277,25 +279,26 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		// PJAX layer to detect deployments. No-arg variants are used instead
 		// of {{asset "name"}} because html/template's context escaper breaks
 		// when several attribute actions carry string literals.
-		"assetTokensCSS":    func() string { return assets.assetURL("tokens.css") },
-		"assetBaseCSS":      func() string { return assets.assetURL("base.css") },
-		"assetShellCSS":     func() string { return assets.assetURL("shell.css") },
-		"assetPagesCSS":     func() string { return assets.assetURL("pages.css") },
-		"assetHomeCSS":      func() string { return assets.assetURL("home.css") },
-		"assetIconsSVG":     func() string { return assets.assetURL("icons.svg") },
-		"assetNavJS":        func() string { return assets.assetURL("navigation.js") },
-		"assetPlayerMainJS": func() string { return assets.assetURL("player-main.js") },
-		"assetAdminJS":      func() string { return assets.assetURL("admin.js") },
-		"assetBrowseJS":     func() string { return assets.assetURL("browse.js") },
-		"assetDiscoveryJS":  func() string { return assets.assetURL("discovery.js") },
-		"assetDiscoveryCSS": func() string { return assets.assetURL("discovery.css") },
-		"assetHomeJS":       func() string { return assets.assetURL("home.js") },
-		"assetThemeJS":      func() string { return assets.assetURL("theme.js") },
-		"assetFaviconICO":   func() string { return assets.assetURL("favicon.ico") },
-		"assetIcon192":      func() string { return assets.assetURL("icon-192.png") },
-		"assetAppleIcon":    func() string { return assets.assetURL("apple-touch-icon.png") },
-		"assetBrandIcon":    func() string { return assets.assetURL("icon-96.png") },
-		"appBuild":          func() string { return assets.hash },
+		"assetTokensCSS":             func() string { return assets.assetURL("tokens.css") },
+		"assetBaseCSS":               func() string { return assets.assetURL("base.css") },
+		"assetShellCSS":              func() string { return assets.assetURL("shell.css") },
+		"assetPagesCSS":              func() string { return assets.assetURL("pages.css") },
+		"assetHomeCSS":               func() string { return assets.assetURL("home.css") },
+		"assetIconsSVG":              func() string { return assets.assetURL("icons.svg") },
+		"assetNavJS":                 func() string { return assets.assetURL("navigation.js") },
+		"assetPlayerMainJS":          func() string { return assets.assetURL("player-main.js") },
+		"assetAdminJS":               func() string { return assets.assetURL("admin.js") },
+		"assetBrowseJS":              func() string { return assets.assetURL("browse.js") },
+		"assetAcquisitionSettingsJS": func() string { return assets.assetURL("acquisition-settings.js") },
+		"assetDiscoveryJS":           func() string { return assets.assetURL("discovery.js") },
+		"assetDiscoveryCSS":          func() string { return assets.assetURL("discovery.css") },
+		"assetHomeJS":                func() string { return assets.assetURL("home.js") },
+		"assetThemeJS":               func() string { return assets.assetURL("theme.js") },
+		"assetFaviconICO":            func() string { return assets.assetURL("favicon.ico") },
+		"assetIcon192":               func() string { return assets.assetURL("icon-192.png") },
+		"assetAppleIcon":             func() string { return assets.assetURL("apple-touch-icon.png") },
+		"assetBrandIcon":             func() string { return assets.assetURL("icon-96.png") },
+		"appBuild":                   func() string { return assets.hash },
 		// thumb appends a thumbnail size parameter to an artwork or artist
 		// image URL. Empty URLs stay empty so {{if}} guards keep working.
 		"thumb": thumbURL,
@@ -487,6 +490,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/home/songs", a.requireAdmin(http.HandlerFunc(a.handleHomeSongs)))
 	mux.Handle("GET /admin/status", a.requireAdmin(http.HandlerFunc(a.handleAdminStatus)))
 	mux.Handle("GET /admin/options/artists", a.requireAdminJSON(http.HandlerFunc(a.handleAdminArtistOptions)))
+	mux.Handle("GET /admin/settings/acquisition", a.requireAdmin(http.HandlerFunc(a.handleAcquisitionSettings)))
+	mux.Handle("POST /admin/settings/acquisition", a.requireAdmin(http.HandlerFunc(a.handleAcquisitionSettings)))
+	for _, route := range []string{"POST /admin/discover/rg/{rgid}/search", "POST /admin/discover/rg/{rgid}/acquire", "GET /admin/discover/acquisitions.json", "POST /admin/acquisitions/{publicId}/cancel", "POST /admin/acquisitions/{publicId}/retry", "POST /admin/acquisitions/{publicId}/link", "POST /admin/settings/acquisition/test-jackett", "POST /admin/settings/acquisition/test-qb"} {
+		mux.Handle(route, a.requireAdminJSON(http.HandlerFunc(a.handleAcquisitionJSON)))
+	}
 	mux.Handle("GET /admin/discover", a.requireAdmin(http.HandlerFunc(a.handleDiscover)))
 	mux.Handle("GET /admin/discover/covers/{rgid}", a.requireAdmin(http.HandlerFunc(a.handleDiscoveryCover)))
 	for _, route := range []string{"GET /admin/discover/items.json", "GET /admin/discover/status.json", "POST /admin/discover/refresh", "POST /admin/discover/refresh/cancel"} {
@@ -1200,3 +1208,5 @@ func (a *App) validCSRFHeader(r *http.Request) bool {
 	session, ok := a.sessions.get(r)
 	return ok && secureEqual(r.Header.Get("X-CSRF-Token"), session.CSRFToken)
 }
+
+func (a *App) SetAcquisition(s *acquisition.Service) { a.acquisition = s }

@@ -268,7 +268,7 @@ func (b *Backups) CompleteRestore(ctx context.Context, s *Store) error {
 		if e = preserveCredentials(ctx, tx); e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(ctx, `UPDATE playlists SET revision=max(revision,coalesce((SELECT p.revision FROM prerestore.playlists p WHERE p.id=playlists.id),0))+1; DELETE FROM lastfm_scrobble_queue;`); e != nil {
+		if _, e = tx.ExecContext(ctx, `UPDATE playlists SET revision=max(revision,coalesce((SELECT p.revision FROM prerestore.playlists p WHERE p.id=playlists.id),0))+1; DELETE FROM lastfm_scrobble_queue; DELETE FROM acquisition_searches;`); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, `INSERT INTO backup_restore_receipt VALUES(?)`, state.SHA256); e != nil {
@@ -357,7 +357,7 @@ func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
 	for _, item := range []struct {
 		table, key string
 		cols       []string
-	}{{"lastfm_scrobble_settings", "id", []string{"api_secret", "session_key", "username"}}, {"metadata_source_settings", "source", []string{"api_key"}}, {"ai_settings", "id", []string{"base_url", "api_key", "proxy_url"}}} {
+	}{{"lastfm_scrobble_settings", "id", []string{"api_secret", "session_key", "username"}}, {"metadata_source_settings", "source", []string{"api_key"}}, {"ai_settings", "id", []string{"base_url", "api_key", "proxy_url"}}, {"acquisition_settings", "id", []string{"jackett_url", "jackett_api_key", "jackett_indexer", "qb_url", "qb_username", "qb_password", "qb_category"}}} {
 		source, e := tableColumns(ctx, tx, "prerestore", item.table)
 		if e != nil {
 			return e
@@ -375,6 +375,9 @@ func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
 				continue
 			}
 			query := "UPDATE " + item.table + " SET " + c + "=''"
+			if item.table == "acquisition_settings" && c == "jackett_indexer" {
+				query = "UPDATE acquisition_settings SET jackett_indexer='jpopsuki'"
+			}
 			if source[c] {
 				query = "UPDATE " + item.table + " SET " + c + "=" + preservedValueSQL(item.table, item.key, c)
 			}

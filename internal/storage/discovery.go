@@ -65,9 +65,10 @@ type DiscoveryMatch struct {
 	Reason  string
 }
 type Ownership struct {
-	Albums   []int64
-	Ignored  bool
-	Possible []DiscoveryLocalAlbum
+	Acquiring bool
+	Albums    []int64
+	Ignored   bool
+	Possible  []DiscoveryLocalAlbum
 }
 type DiscoveryItem struct {
 	DiscoveryCandidate
