@@ -2,7 +2,7 @@
 
 > 用途：每个对话完成一个阶段。新对话先读本文件和 `PRODUCT.md`，确认当前勾选状态后继续，不要重复已完成阶段。
 >
-> 当前进度：**S0 已完成，下一步 S1。**
+> 当前进度：**S0、S1 已完成，下一步 S2。**
 
 ## 已确认的产品边界
 
@@ -41,42 +41,67 @@
 - [ ] 在重建按钮说明中提示全量扫描会遵循现有缺失文件清理策略。
 - [ ] 在真实数据库统计历史标签污染规模；先备份，再执行手动身份重建。
 
-## S1 · 已知艺人目录与发现功能 ⬜ 下一阶段
+## S1 · 已知艺人目录与发现功能 ✅
 
 **目标：** 用户可以通过“发现新音乐”看到已知艺人的缺失 RG，并完成已有、忽略、恢复和可能已有核对；本阶段不接 PT/qB。
 
 ### 外部来源基础
 
-- [ ] 新建进程级 `sourcegate`，统一来源最小间隔和 429/503 退避；由 main 注入 enrichment 与 discovery，禁止两套并行限流。
-- [ ] 抽取可复用的公网图片下载器；保留跳转、大小、MIME 和 SSRF 防护，封面必须同源提供。
-- [ ] 新建独立 MusicBrainz 客户端：艺人 release-group 浏览、RG 详情、100 条分页和未来发行过滤。
-- [ ] 过滤 Album/EP/Single；OST 使用 Album+Soundtrack；排除 Live、Compilation 及 Compilation+Soundtrack。
-- [ ] 不为 discovery 复制 enrichment 的 durable run 或缓存框架。
+- [x] 新建进程级 `sourcegate`，统一来源最小间隔和 429/503 退避；由 main 注入 enrichment 与 discovery，禁止两套并行限流。
+- [x] 抽取可复用的公网图片下载器；保留跳转、大小、MIME 和 SSRF 防护，封面必须同源提供。
+- [x] 新建独立 MusicBrainz 客户端：艺人 release-group 浏览、RG 详情、100 条分页和未来发行过滤。
+- [x] 过滤 Album/EP/Single；OST 使用 Album+Soundtrack；排除 Live、Compilation 及 Compilation+Soundtrack。
+- [x] 不为 discovery 复制 enrichment 的 durable run 或缓存框架。
 
 ### 推荐与数据模型
 
-- [ ] 迁移 058：外部 RG 目录、候选、候选 seed、推荐理由和刷新检查点。
-- [ ] 已知且 MBID 已确认的艺人生成候选；按艺人设置候选上限，避免高产艺人占满列表。
-- [ ] 使用现有艺人/作品播放与收藏信号，建立 discovery 自己的可解释评分和 80/20 配额；不改 daily-mix 表。
-- [ ] 单 worker + seed 检查点 + 代际号，防止取消后的旧 worker 晚到写入。
-- [ ] 已拥有强匹配、获取中、已忽略不得重复推荐；弱匹配进入“可能已有”。
-- [ ] 所有 RG 读取调用显式处理 `ErrIdentityNotReady`，不能当作空结果。
+- [x] 迁移 058：外部 RG 目录、候选、候选 seed、推荐理由和刷新检查点。
+- [x] 已知且 MBID 已确认的艺人生成候选；按艺人设置候选上限，避免高产艺人占满列表。
+- [x] 使用现有艺人/作品播放与收藏信号，建立 discovery 自己的可解释评分和 80/20 配额；不改 daily-mix 表。
+- [x] 单 worker + seed 检查点 + 代际号，防止取消后的旧 worker 晚到写入。
+- [x] 已拥有强匹配、获取中、已忽略不得重复推荐；弱匹配进入“可能已有”。
+- [x] 所有 RG 读取调用显式处理 `ErrIdentityNotReady`，不能当作空结果。
 
 ### Web 与反馈
 
-- [ ] 按 `prototypes/discovery.html` 实现正式模板、CSS、外部 JS；遵守现有 CSP，不直接嵌入原型。
-- [ ] 实现推荐、可能已有、获取中占位、已忽略和动态计数。
-- [ ] “我已有”选择并关联本地专辑；忽略/恢复使用 RG 级决定；可能已有先对比再搜索。
-- [ ] 管理写路由执行 requireAdmin + 显式 CSRF；封面本地缓存后同源展示。
-- [ ] 桌面、移动和 820px 边界可访问，支持键盘与 reduced motion。
+- [x] 按 `prototypes/discovery.html` 实现正式模板、CSS、外部 JS；遵守现有 CSP，不直接嵌入原型。
+- [x] 实现推荐、可能已有、获取中占位、已忽略和动态计数。
+- [x] “我已有”选择并关联本地专辑；忽略/恢复使用 RG 级决定；可能已有先对比再搜索。
+- [x] 管理写路由执行 requireAdmin + 显式 CSRF；封面本地缓存后同源展示。
+- [x] 桌面、移动和 820px 边界可访问，支持键盘与 reduced motion。
 
 ### S1 完成门禁
 
-- [ ] `go test ./...` 通过。
-- [ ] `go test -race -count=1 -timeout 60m ./internal/storage/... ./internal/http/...` 通过。
-- [ ] MB 使用 httptest fake，覆盖分页、类型过滤、429/503、取消和迟到写入。
-- [ ] Playwright 三视口覆盖推荐、已有、忽略、恢复和可能已有。
-- [ ] 独立 reviewer 给出 APPROVE；本地提交并更新本文件。
+- [x] `go test ./...` 通过。
+- [x] `go test -race -count=1 -timeout 60m ./internal/storage/... ./internal/http/...` 通过。
+- [x] MB 使用 httptest fake，覆盖分页、类型过滤、429/503、取消和迟到写入。
+- [x] Playwright 三视口覆盖推荐、已有、忽略、恢复和可能已有（`tests/e2e/discovery.spec.js`，隔离实例 :45445 + fake MB）。
+- [x] 独立 reviewer 给出 APPROVE；本地提交并更新本文件。
+
+**完成提交：** `a91c47f feat(discovery): 已知艺人 MusicBrainz 目录与发现功能`
+
+**S1 已拍板决策：**
+
+- D-1 类型白名单：仅无 secondary 的 Album/EP/Single，及 Album+Soundtrack=OST；Remix、Audio drama、EP/Single+Soundtrack 等均排除。
+- D-2 卡片不显示曲目数（不额外查询 release）。
+- D-3 目录仅手动刷新；启动时只续跑中断（running）的那一代；限流时整轮 failed，需手动重试。
+- D-4 空发行日期保留，评分 ×0.7。
+- D-5 Playwright 用隔离实例 + DB 种子 + Node fake MB；新增测试用环境变量 `MUSIC_SERVER_MUSICBRAINZ_BASE_URL`。
+- D-6 “我已有”替换专辑既有 RG 时返回 409 `replaces_rg`，需二次确认。
+- D-7 Bangumi 限流未迁入 sourcegate，留到 S3。
+- 图片下载保留 `HTTP(S)_PROXY`：直连时 dial 阶段校验实际 IP；走代理时依赖请求前与每跳 URL/DNS 校验。
+
+**S1 实现落点：** `internal/sourcegate`、`internal/netfetch`、`internal/discovery`（含 `mb/`）、`internal/storage/discovery*.go`、迁移 058、`internal/http/discovery.go`、`templates/discover.html`、`assets/discovery.{js,css}`、`scripts/{seed,reset}_discovery_e2e.go`、`scripts/discovery-fake-mb.mjs`。
+
+**S1 门禁记录：** `go test ./...`、S1 相关包完整 race、全量 Playwright（456 passed / 102 skipped / 6 failed，失败均为既有问题，见下）、后端与 Web 两轮独立 reviewer APPROVE。
+
+**S1 非阻断遗留（不得在未确认时顺手扩大当前阶段）：**
+
+- [ ] 既有 E2E 失败：`local-time.spec.js` mobile/boundary 6 例（在基线 `4c0c228` 同样失败）；共享实例 `home.html:368` 的 `index .Albums 0` 空切片报错，移动端导航选择器 `.sidebar a[data-nav="playback"]:visible` 不可见。
+- [ ] 封面下载无 E2E 覆盖（下载器拒绝 loopback，fake 封面无法使用）；目前仅 Go 测试。
+- [ ] RG browse 不过滤 bootleg/pseudo-release，S4 用真实数据评估。
+- [ ] MB special-purpose 艺人黑名单目前仅 3 个 MBID，S4 对照 MB 文档补全。
+- [ ] 验证环境缺 ffmpeg 与 Chromium 动态库，本次使用 `/tmp/ffmpeg-7.0.2-arm64-static`、`/tmp/pwdeps` 临时依赖运行 Playwright（`LD_LIBRARY_PATH=/tmp/pwdeps/usr/lib/aarch64-linux-gnu FFMPEG=... npx playwright test`）。
 
 ## S2 · JPopsuki、qB 与最终入库 ⬜
 
@@ -147,4 +172,4 @@
 
 ## 下一次对话入口
 
-> 继续 `docs/discovery-task-list.md` 的 S1：已知艺人 MusicBrainz 目录与发现功能。先复核 S0 接口和当前 HEAD，再按阶段门禁实施；不要提前做 S2。
+> 继续 `docs/discovery-task-list.md` 的 S2：JPopsuki、qB 与最终入库。先复核 S1 接口（`internal/discovery`、`internal/storage/discovery*.go`、迁移 058、“获取中”占位 tab）与当前 HEAD，再按阶段门禁实施；迁移编号从 059 开始；不要提前做 S3。
