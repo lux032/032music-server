@@ -28,7 +28,18 @@ type Options struct {
 	MBBaseURL, CAAURL, DataDir string
 	Now                        func() time.Time
 	UserAgent                  func(context.Context) string
+	// CooldownRetries is how many source cooldowns one refresh waits out
+	// before failing (0 = default, negative = fail on the first cooldown).
+	CooldownRetries int
+	// Sleep waits for a cooldown; tests inject a fake.
+	Sleep func(context.Context, time.Duration) error
 }
+
+// DefaultCooldownRetries lets a long refresh survive transient MusicBrainz /
+// Bangumi throttling (shared with metadata enrichment) instead of discarding
+// the whole round; waits are capped by sourcegate's Retry-After ceiling.
+const DefaultCooldownRetries = 12
+
 type Service struct {
 	bangumi      BangumiSource
 	baseCtx      context.Context
@@ -40,6 +51,8 @@ type Service struct {
 	now          func() time.Time
 	ua           func(context.Context) string
 	dataDir, caa string
+	cooldowns    int
+	sleep        func(context.Context, time.Duration) error
 	mu           sync.Mutex
 	running      bool
 	cancel       context.CancelFunc
@@ -73,8 +86,46 @@ func New(store *storage.Store, logger *slog.Logger, o Options) *Service {
 	if o.CAAURL == "" {
 		o.CAAURL = sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_COVERART_BASE_URL", "https://coverartarchive.org")
 	}
-	return &Service{bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, "discovery-covers"), caa: o.CAAURL}
+	if o.CooldownRetries == 0 {
+		o.CooldownRetries = DefaultCooldownRetries
+	}
+	if o.Sleep == nil {
+		o.Sleep = sleepContext
+	}
+	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, "discovery-covers"), caa: o.CAAURL}
 }
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// withCooldown retries fn after waiting out source cooldowns, up to the
+// service's per-call retry limit. Other errors are returned unchanged.
+func withCooldown[T any](ctx context.Context, s *Service, fn func() (T, error)) (T, error) {
+	for attempt := 0; ; attempt++ {
+		v, e := fn()
+		var cd *sourcegate.CooldownError
+		if e == nil || !errors.As(e, &cd) || attempt >= s.cooldowns {
+			return v, e
+		}
+		wait := cd.RetryAfter
+		if wait <= 0 {
+			wait = time.Minute
+		}
+		wait += time.Second
+		s.logger.Info("discovery waiting for source cooldown", "source", cd.Source, "wait", wait.String())
+		if err := s.sleep(ctx, wait); err != nil {
+			return v, err
+		}
+	}
+}
+
 func (s *Service) Status(ctx context.Context) (storage.DiscoveryStatus, error) {
 	return s.store.DiscoveryStatus(ctx)
 }
@@ -202,7 +253,7 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 		if seed.Status != "pending" {
 			continue
 		}
-		groups, e := s.mb.BrowseArtistReleaseGroups(ctx, seed.MBID)
+		groups, e := withCooldown(ctx, s, func() ([]mb.ReleaseGroup, error) { return s.mb.BrowseArtistReleaseGroups(ctx, seed.MBID) })
 		status := "done"
 		message := ""
 		if errors.Is(e, mb.ErrGone) {

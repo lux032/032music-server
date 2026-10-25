@@ -297,7 +297,13 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"items": items, "counts": counts, "html": html.String()})
 		return
 	case "/admin/discover/refresh":
-		g, e := a.discovery.Refresh(r.Context(), true)
+		// A refresh after a failed/cancelled round resumes from the per-seed
+		// checkpoints (seeds fetched within 7 days are kept); otherwise refetch.
+		force := true
+		if st, se := a.discovery.Status(r.Context()); se == nil && (st.Status == "failed" || st.Status == "cancelled") {
+			force = false
+		}
+		g, e := a.discovery.Refresh(r.Context(), force)
 		if e != nil {
 			a.discoveryError(w, e)
 			return

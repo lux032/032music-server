@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -78,10 +79,34 @@ func (f fixture) ready(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// fakeClock advances only when the service sleeps through a cooldown.
+type fakeClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	sleeps int
+}
+
+func (c *fakeClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	c.sleeps++
+	return ctx.Err()
+}
+func (c *fakeClock) Sleeps() int { c.mu.Lock(); defer c.mu.Unlock(); return c.sleeps }
+
 func serviceFor(t *testing.T, f fixture, handler http.HandlerFunc) *Service {
+	s, _ := serviceWithClock(t, f, handler)
+	return s
+}
+func serviceWithClock(t *testing.T, f fixture, handler http.HandlerFunc) (*Service, *fakeClock) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return New(f.store, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{MBBaseURL: server.URL, CAAURL: server.URL, Gate: sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0, "coverartarchive": 0}}), HTTPClient: server.Client(), DataDir: t.TempDir()})
+	clock := &fakeClock{now: time.Now()}
+	gate := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0, "coverartarchive": 0}, Now: clock.Now})
+	return New(f.store, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{MBBaseURL: server.URL, CAAURL: server.URL, Gate: gate, HTTPClient: server.Client(), DataDir: t.TempDir(), Now: clock.Now, Sleep: clock.Sleep}), clock
 }
 func respond(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(map[string]any{"release-groups": []mb.ReleaseGroup{{ID: testRG, Title: "Remote", PrimaryType: "Album"}}, "release-group-count": 1})
@@ -263,6 +288,30 @@ func TestServiceCompleteCooldownAndSpecialArtist(t *testing.T) {
 				if state.Status != "failed" || state.ErrorMessage != "MusicBrainz 限流，约 1 分钟后可重试" {
 					t.Fatal(state)
 				}
+			}
+		})
+	}
+	// A transient cooldown is waited out instead of failing the round.
+	for _, status := range []int{429, 503} {
+		t.Run(fmt.Sprint("transient-", status), func(t *testing.T) {
+			f := setup(t)
+			f.ready(t)
+			var calls atomic.Int32
+			s, clock := serviceWithClock(t, f, func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					w.Header().Set("Retry-After", "30")
+					w.WriteHeader(status)
+					return
+				}
+				respond(w)
+			})
+			if _, e := s.Refresh(f.ctx, true); e != nil {
+				t.Fatal(e)
+			}
+			s.Wait()
+			state, e := s.Status(f.ctx)
+			if e != nil || state.Status != "completed" || clock.Sleeps() == 0 {
+				t.Fatal(state, e, clock.Sleeps())
 			}
 		})
 	}

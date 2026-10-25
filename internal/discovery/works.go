@@ -89,7 +89,7 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		if seed.Status != "pending" {
 			continue
 		}
-		relations, e := s.bangumi.BangumiRelations(ctx, seed.SubjectID)
+		relations, e := withCooldown(ctx, s, func() ([]bangumi.Relation, error) { return s.bangumi.BangumiRelations(ctx, seed.SubjectID) })
 		status := "done"
 		if errors.Is(e, bangumi.ErrGone) {
 			relations = nil
@@ -185,7 +185,7 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 			truncated = true
 			continue
 		}
-		subject, e := s.bangumi.BangumiMusicSubject(ctx, m.SubjectID)
+		subject, e := withCooldown(ctx, s, func() (bangumi.MusicSubject, error) { return s.bangumi.BangumiMusicSubject(ctx, m.SubjectID) })
 		if errors.Is(e, bangumi.ErrGone) {
 			m.Status = "gone"
 			m.SearchStatus = "none"
@@ -203,7 +203,7 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		m.Artists = subject.Artists
 		m.MultiTitle = bangumi.SplitMultiTitle(subject.Name) != nil
 		fallback := false
-		hits, e := s.mb.SearchReleaseGroups(ctx, subject.Name)
+		hits, e := withCooldown(ctx, s, func() ([]mb.ReleaseGroup, error) { return s.mb.SearchReleaseGroups(ctx, subject.Name) })
 		budget++
 		if e != nil {
 			return fail(e, j.work, j.index)
@@ -211,7 +211,7 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		if len(hits) == 0 && subject.NameCN != "" && subject.NameCN != subject.Name {
 			if budget < MaxMBSearchesPerRefresh {
 				fallback = true
-				hits, e = s.mb.SearchReleaseGroups(ctx, subject.NameCN)
+				hits, e = withCooldown(ctx, s, func() ([]mb.ReleaseGroup, error) { return s.mb.SearchReleaseGroups(ctx, subject.NameCN) })
 				budget++
 				if e != nil {
 					return fail(e, j.work, j.index)
