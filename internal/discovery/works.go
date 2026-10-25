@@ -339,6 +339,9 @@ func (s *Service) Rerank(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	_, e = s.rankAndSave(ctx, state.Generation)
+	if e == nil && s.autoCovers {
+		s.BackfillCovers()
+	}
 	return e == nil, e
 }
 func (s *Service) rankAndSave(ctx context.Context, g int64) ([]storage.DiscoveryCandidate, error) {

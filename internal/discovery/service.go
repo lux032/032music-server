@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +34,9 @@ type Options struct {
 	CooldownRetries int
 	// Sleep waits for a cooldown; tests inject a fake.
 	Sleep func(context.Context, time.Duration) error
+	// CoverBackfill downloads missing covers in the background at startup and
+	// after a re-rank (production only; tests keep downloads explicit).
+	CoverBackfill bool
 }
 
 // DefaultCooldownRetries lets a long refresh survive transient MusicBrainz /
@@ -51,6 +55,9 @@ type Service struct {
 	now          func() time.Time
 	ua           func(context.Context) string
 	dataDir, caa string
+	legacyDir    string
+	autoCovers   bool
+	coverBusy    atomic.Bool
 	cooldowns    int
 	sleep        func(context.Context, time.Duration) error
 	mu           sync.Mutex
@@ -92,7 +99,7 @@ func New(store *storage.Store, logger *slog.Logger, o Options) *Service {
 	if o.Sleep == nil {
 		o.Sleep = sleepContext
 	}
-	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, coverCacheDir), caa: o.CAAURL}
+	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, coverCacheDir), legacyDir: filepath.Join(o.DataDir, "discovery-covers"), autoCovers: o.CoverBackfill, caa: o.CAAURL}
 }
 
 // coverCacheDir holds 500px Cover Art Archive thumbnails. The directory name
@@ -168,6 +175,9 @@ func (s *Service) Start(ctx context.Context) error {
 		return e
 	}
 	if v.Status != "running" {
+		if s.autoCovers && v.Status == "completed" && s.store.IdentityReady(ctx) == nil {
+			s.BackfillCovers()
+		}
 		return nil
 	}
 	if e = s.store.IdentityReady(ctx); e != nil {
@@ -329,6 +339,14 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 			return e
 		}
 	}
+	return s.downloadCovers(ctx, g, ranked)
+}
+
+// downloadCovers fetches covers for the visible recommendations plus the
+// first mapping options. It is shared by refreshes and cover backfills; a
+// newer generation makes UpdateDiscoveryCover fail with ErrDiscoveryStale.
+func (s *Service) downloadCovers(ctx context.Context, g int64, ranked []storage.DiscoveryCandidate) error {
+	var seeds []storage.DiscoverySeed
 	mapping, _, e := s.store.ListDiscovery(ctx, "mapping", "all", 200, 0)
 	if e != nil {
 		return e
@@ -357,7 +375,7 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 			continue
 		}
 		if v.CoverStatus == "cached" {
-			if _, _, err := s.CachedCover(v.RGID); err == nil {
+			if _, _, err := coverFile(s.dataDir, v.RGID); err == nil {
 				continue
 			}
 		}
@@ -404,6 +422,40 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 	return nil
 }
 
+// BackfillCovers downloads missing or outdated covers for the current
+// catalog without refetching MusicBrainz, e.g. after an upgrade changed the
+// cover size or after a mapping confirmation re-ranked the list.
+func (s *Service) BackfillCovers() {
+	if !s.coverBusy.CompareAndSwap(false, true) {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer s.coverBusy.Store(false)
+		ctx := s.baseCtx
+		state, e := s.store.DiscoveryStatus(ctx)
+		if e != nil || state.Status != "completed" {
+			return
+		}
+		items, _, e := s.store.ListDiscovery(ctx, "recommended", "all", RecommendationLimit, 0)
+		if e != nil {
+			return
+		}
+		ranked := make([]storage.DiscoveryCandidate, 0, len(items))
+		for _, v := range items {
+			c := v.DiscoveryCandidate
+			if c.Rank <= 0 {
+				c.Rank = 1
+			}
+			ranked = append(ranked, c)
+		}
+		if e = s.downloadCovers(ctx, state.Generation, ranked); e != nil && !errors.Is(e, storage.ErrDiscoveryStale) && ctx.Err() == nil {
+			s.logger.Warn("discovery cover backfill stopped", "error", e)
+		}
+	}()
+}
+
 // bangumiCover downloads a Bangumi subject's artwork. Any failure (including
 // throttling) simply reports no fallback so CAA's result stands.
 func (s *Service) bangumiCover(ctx context.Context, subjectID int64) (netfetch.Image, bool) {
@@ -422,14 +474,22 @@ func (s *Service) bangumiCover(ctx context.Context, subjectID int64) (netfetch.I
 	return image, true
 }
 
-// CachedCover reads only disk. No network or database call is made.
+// CachedCover reads only disk. No network or database call is made. Covers
+// cached by older versions (250px) are served until the 500px copy exists.
 func (s *Service) CachedCover(raw string) (path, mime string, err error) {
+	if path, mime, err = coverFile(s.dataDir, raw); err == nil {
+		return path, mime, nil
+	}
+	return coverFile(s.legacyDir, raw)
+}
+
+func coverFile(dir, raw string) (path, mime string, err error) {
 	id, ok := metadata.NormalizeMusicBrainzID(raw)
-	if !ok {
+	if !ok || dir == "" {
 		return "", "", os.ErrNotExist
 	}
 	for _, v := range []struct{ ext, mime string }{{".jpg", "image/jpeg"}, {".png", "image/png"}, {".webp", "image/webp"}, {".gif", "image/gif"}} {
-		path = filepath.Join(s.dataDir, id+v.ext)
+		path = filepath.Join(dir, id+v.ext)
 		if st, e := os.Stat(path); e == nil && st.Mode().IsRegular() {
 			return path, v.mime, nil
 		}

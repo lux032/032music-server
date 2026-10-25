@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -745,5 +747,55 @@ func TestCoverFallsBackToBangumiWhenCAAMissing(t *testing.T) {
 	}
 	if _, _, e := s.CachedCover(testRG); e != nil {
 		t.Fatal("fallback cover not cached", e)
+	}
+}
+
+func TestCoverLegacyCacheAndBackfill(t *testing.T) {
+	f := setup(t)
+	f.ready(t)
+	workFixture(t, f, 100, 1000)
+	var covers atomic.Int64
+	client := &http.Client{Transport: coverTransport(func(r *http.Request) (*http.Response, error) {
+		body := `{"release-groups":[]}`
+		if r.URL.Query().Has("query") {
+			body = `{"release-groups":[{"id":"` + testRG + `","title":"Remote","primary-type":"Album","first-release-date":"2024-01-01","artist-credit":[{"name":"Singer"}],"score":99}]}`
+		} else if r.URL.Host != "mb.example" {
+			covers.Add(1)
+			body = "\x89PNG\r\n\x1a\nrest"
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	dir := t.TempDir()
+	s := New(f.store, nil, Options{HTTPClient: client, MBBaseURL: "http://mb.example", CAAURL: "http://93.184.216.34", DataDir: dir, Gate: sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0, "coverartarchive": 0}}), Bangumi: fakeBangumi{enabled: true, relations: func(int64) ([]bangumi.Relation, error) {
+		return []bangumi.Relation{{ID: 2000, Name: "Remote", Type: 3, Relation: "原声集"}}, nil
+	}, subject: func(id int64) (bangumi.MusicSubject, error) { return bangumi.MusicSubject{ID: id, Name: "Remote"}, nil }}})
+	if _, e := s.Refresh(f.ctx, true); e != nil {
+		t.Fatal(e)
+	}
+	s.Wait()
+	before := covers.Load()
+	if before == 0 {
+		t.Fatal("no cover downloaded")
+	}
+	// Simulate an upgrade: only the old 250px cache exists.
+	if e := os.RemoveAll(filepath.Join(dir, coverCacheDir)); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.MkdirAll(filepath.Join(dir, "discovery-covers"), 0o755); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(dir, "discovery-covers", testRG+".png"), []byte("old"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	if path, _, e := s.CachedCover(testRG); e != nil || !strings.Contains(path, "discovery-covers"+string(filepath.Separator)) {
+		t.Fatal("legacy cover not served", path, e)
+	}
+	s.BackfillCovers()
+	s.Wait()
+	if covers.Load() <= before {
+		t.Fatal("backfill did not refetch the 500px cover")
+	}
+	if path, _, e := s.CachedCover(testRG); e != nil || !strings.Contains(path, coverCacheDir) {
+		t.Fatal("500px cover not cached", path, e)
 	}
 }
