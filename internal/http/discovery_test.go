@@ -141,10 +141,10 @@ func TestDiscoveryHandlers(t *testing.T) {
 	}
 	check(request("POST", path+"/owned", fmt.Sprintf(`{"albumId":%d,"confirmReplace":true}`, albumID), csrf, true), 200)
 	check(request("GET", "/admin/discover/covers/"+rg, "", "", true), 404)
-	if e := os.MkdirAll(filepath.Join(dir, "discovery-covers"), 0755); e != nil {
+	if e := os.MkdirAll(filepath.Join(dir, "discovery-covers-500"), 0755); e != nil {
 		t.Fatal(e)
 	}
-	if e := os.WriteFile(filepath.Join(dir, "discovery-covers", rg+".jpg"), []byte("cached only"), 0644); e != nil {
+	if e := os.WriteFile(filepath.Join(dir, "discovery-covers-500", rg+".jpg"), []byte("cached only"), 0644); e != nil {
 		t.Fatal(e)
 	}
 	w = request("GET", "/admin/discover/covers/"+rg, "", "", true)

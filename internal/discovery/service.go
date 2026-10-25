@@ -92,8 +92,17 @@ func New(store *storage.Store, logger *slog.Logger, o Options) *Service {
 	if o.Sleep == nil {
 		o.Sleep = sleepContext
 	}
-	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, "discovery-covers"), caa: o.CAAURL}
+	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, coverCacheDir), caa: o.CAAURL}
 }
+
+// coverCacheDir holds 500px Cover Art Archive thumbnails. The directory name
+// is versioned so covers cached at the old 250px size are fetched again.
+const coverCacheDir = "discovery-covers-500"
+
+// coverMissingRetry lets a release group without CAA art be checked again,
+// since artwork is often uploaded after release.
+const coverMissingRetry = 30 * 24 * time.Hour
+
 func sleepContext(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -353,14 +362,16 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 			}
 		}
 		if v.CoverStatus == "missing" {
-			continue
+			if t, e := time.Parse(time.RFC3339, v.CoverCheckedAt); e == nil && s.now().Sub(t) < coverMissingRetry {
+				continue
+			}
 		}
 		if v.CoverStatus == "failed" {
 			if t, e := time.Parse(time.RFC3339, v.CoverCheckedAt); e == nil && s.now().Sub(t) < 7*24*time.Hour {
 				continue
 			}
 		}
-		image, e := netfetch.DownloadImage(ctx, s.images, s.gate, "coverartarchive", strings.TrimRight(s.caa, "/")+"/release-group/"+v.RGID+"/front-250", s.ua(ctx))
+		image, e := netfetch.DownloadImage(ctx, s.images, s.gate, "coverartarchive", strings.TrimRight(s.caa, "/")+"/release-group/"+v.RGID+"/front-500", s.ua(ctx))
 		status, ext := "cached", image.Ext
 		if errors.Is(e, netfetch.ErrNotFound) {
 			status = "missing"
