@@ -40,7 +40,7 @@ test('发现推荐、反馈、对比、刷新及 PJAX 键盘交互', async ({ pa
   await expect(card(page, 1)).toHaveCount(0);
   expect(ignoreRequests).toBe(1);
   await expectFocus(page);
-  await expect(card(page, 2).getByRole('button', { name: '我已有' })).toBeFocused();
+  await expect(card(page, 2).getByRole('button', { name: '获取', exact: true })).toBeFocused();
   await page.getByRole('button', { name: /已忽略/ }).click();
   await expect(page.locator('.discovery-chips')).not.toBeVisible();
   await card(page, 1).getByRole('button', { name: '恢复推荐' }).focus();

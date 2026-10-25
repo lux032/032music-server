@@ -5,12 +5,12 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
 {{template "sidebar" .}}{{template "nowplaying" .}}
 <main id="app-main" class="browser-main discovery-main">
-<header class="browser-header"><div><h1>发现新音乐</h1><a href="/admin/settings/acquisition">获取设置</a><p class="result-count">从你喜欢的艺人与作品出发，寻找曲库之外值得拥有的发行。</p></div></header>
+<header class="browser-header discovery-header"><div><h1>发现新音乐</h1><p class="result-count">从你喜欢的艺人与作品出发，寻找曲库之外值得拥有的发行。</p></div><a class="secondary-button discovery-settings-link" href="/admin/settings/acquisition">获取设置</a></header>
 {{if .Blocked}}
 <section class="discovery-blocked"><h2>发现功能尚未就绪</h2><p>{{.Blocked}}</p>{{if .Rebuild.Status}}<p>身份重建状态：{{.Rebuild.Status}} · {{.Rebuild.Processed}} / {{.Rebuild.Discovered}}</p>{{if .Rebuild.Error}}<p>{{.Rebuild.Error}}</p>{{end}}<a href="/admin">前往控制台重建</a>{{end}}</section>
 {{else}}
 <section data-discovery>
-<div class="discovery-status"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><div><button type="button" data-action="refresh">刷新目录</button><button type="button" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button></div><p>MusicBrainz · Bangumi · 与元数据增强共享请求带宽，仅手动刷新。</p></div>
+<div class="discovery-status"><p class="discovery-status-text"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><span class="discovery-status-note">与元数据增强共享请求带宽，仅手动刷新</span></p><div class="discovery-status-actions"><button type="button" class="secondary" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button><button type="button" data-action="refresh">刷新目录</button></div></div>
 <nav class="discovery-tabs" aria-label="发现内容状态">
 <button type="button" data-tab="recommended" aria-pressed="true">为你发现 <span data-count="recommended">{{.Counts.Recommended}}</span></button>
 <button type="button" data-tab="acquiring" aria-pressed="false">获取中 <span data-count="acquiring">{{.Counts.Acquiring}}</span></button>
@@ -20,7 +20,7 @@
 <button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="artist" aria-pressed="false">来自艺人</button><button type="button" data-filter="work" aria-pressed="false">来自作品</button><button type="button" data-filter="mapping" aria-pressed="false">待确认对应 <span data-count="mapping">{{.Counts.Mapping}}</span></button><button type="button" data-filter="possible" aria-pressed="false">可能已有 <span data-count="possible">{{.Counts.Possible}}</span></button>
 </div>
 <div class="discovery-grid" data-discovery-grid>{{template "discovery-cards" .Items}}</div>
-<button type="button" data-action="more" {{if lt (len .Items) 60}}hidden{{end}}>加载更多</button>
+<button type="button" class="secondary discovery-more" data-action="more" {{if lt (len .Items) 60}}hidden{{end}}>加载更多</button>
 <p class="discovery-announcement" aria-live="polite" data-discovery-live></p>
 <dialog class="discovery-dialog" aria-labelledby="discovery-dialog-title">
 <div class="discovery-dialog-header"><h2 id="discovery-dialog-title">关联本地专辑</h2><button type="button" data-action="close" aria-label="关闭">关闭</button></div>
@@ -39,24 +39,30 @@
 {{define "discovery-cards"}}
 {{range .}}
 {{if .Mapping}}{{if or (eq .Mapping.Status "suggested") (eq .Mapping.Status "rejected")}}
-<article class="discovery-card discovery-mapping" data-subject-id="{{.Mapping.SubjectID}}" data-mapping-status="{{.Mapping.Status}}">
-{{if eq .Mapping.Status "rejected"}}<p class="discovery-possible">已拒绝的对应</p>{{end}}
-<h2>{{.Mapping.SubjectName}}</h2>{{if .Mapping.SubjectNameCN}}<p>{{.Mapping.SubjectNameCN}}</p>{{end}}<p>《{{.Work}}》 · {{.Mapping.Relation}}</p><a href="{{.Mapping.BangumiURL}}" target="_blank" rel="noopener noreferrer">查看 Bangumi 条目</a>
-{{range .Mapping.Options}}<section class="discovery-mapping-option" data-option-rgid="{{.RGID}}"><h3>{{.Title}}</h3>{{if .CoverAvailable}}<div class="discovery-cover"><img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy"></div>{{end}}<p>{{.Artist}}{{if .Year}} · {{.Year}}{{end}} · {{.Kind}}</p><ul>{{range .Evidence}}<li>{{.}}</li>{{end}}</ul>
-<button type="button" data-action="mapping-confirm" aria-label="是这张：{{.Title}}">是这张</button><button type="button" data-action="mapping-restore" aria-label="恢复：{{.Title}}">恢复</button></section>{{end}}
-{{if eq .Mapping.Status "suggested"}}<p>确认对应后才能搜种获取。</p><button type="button" data-action="mapping-reject-all">都不是</button>{{end}}</article>
+<article class="discovery-mapping" data-subject-id="{{.Mapping.SubjectID}}" data-mapping-status="{{.Mapping.Status}}">
+<header class="discovery-mapping-head">
+<div>{{if eq .Mapping.Status "rejected"}}<p class="discovery-flag is-muted">已拒绝的对应</p>{{else}}<p class="discovery-flag">待确认对应</p>{{end}}
+<h2>{{.Mapping.SubjectName}}</h2>{{if .Mapping.SubjectNameCN}}<p class="discovery-mapping-cn">{{.Mapping.SubjectNameCN}}</p>{{end}}
+<p class="discovery-meta">《{{.Work}}》 · {{.Mapping.Relation}} · <a href="{{.Mapping.BangumiURL}}" target="_blank" rel="noopener noreferrer">Bangumi 条目</a></p></div>
+</header>
+<ul class="discovery-mapping-options" role="list">
+{{range .Mapping.Options}}<li class="discovery-mapping-option" data-option-rgid="{{.RGID}}"><div class="discovery-cover discovery-thumb"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</div>
+<div class="discovery-mapping-body"><h3>{{.Title}}</h3><p class="discovery-meta">{{.Artist}}{{if .Year}} · {{.Year}}{{end}} · {{.Kind}}</p>{{if .Evidence}}<ul class="discovery-evidence">{{range .Evidence}}<li>{{.}}</li>{{end}}</ul>{{end}}</div>
+<button type="button" data-action="mapping-confirm" aria-label="是这张：{{.Title}}">是这张</button><button type="button" class="secondary" data-action="mapping-restore" aria-label="恢复：{{.Title}}">恢复</button></li>{{end}}
+</ul>
+{{if eq .Mapping.Status "suggested"}}<footer class="discovery-mapping-foot"><p class="discovery-hint">确认对应后才能搜种获取。</p><button type="button" class="secondary" data-action="mapping-reject-all">都不是</button></footer>{{end}}</article>
 {{else}}{{template "discovery-card" .}}{{end}}{{else}}{{template "discovery-card" .}}{{end}}
 {{else}}<div class="discovery-empty"><h2>暂无推荐</h2><p>手动刷新目录，或尝试其他筛选。</p></div>{{end}}
 {{end}}
 {{define "discovery-card"}}
 <article class="discovery-card" data-rgid="{{.RGID}}" data-title="{{.Title}}" data-artist="{{.Artist}}">
-<div class="discovery-cover"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</div>
-<h2>{{.Title}}</h2><p class="discovery-artist">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}} · {{end}}{{.Kind}}</p>
-{{if .Mapping}}{{if eq .Mapping.Status "auto"}}<p>Bangumi 自动对应</p><button type="button" data-action="mapping-reject" aria-label="不是这张：{{.Title}}" data-subject-id="{{.Mapping.SubjectID}}">不是这张</button>{{end}}{{end}}
-<div class="discovery-reasons">{{range .Reasons}}<p>{{.}}</p>{{end}}</div>
-{{if .Ignored}}<button type="button" data-action="restore">恢复推荐</button>
-{{else if .Possible}}<p class="discovery-possible">可能已有 · 请先核对本地专辑</p><button type="button" data-action="compare">对比本地专辑</button><div data-possible hidden>{{range .Possible}}<div data-album-id="{{.ID}}" data-current-rg="{{.CurrentRG}}"><h3>{{.Title}}</h3><p>{{.Year}} 年 · {{.TrackCount}} 首</p><p>当前发行组：{{if .CurrentRG}}{{.CurrentRG}}{{else}}未知或冲突{{end}}</p><div class="discovery-compare-actions"><button type="button" data-action="same" data-album-id="{{.ID}}">是同一发行</button><button type="button" data-action="not-same" data-album-id="{{.ID}}">不是</button></div></div>{{end}}</div>
-{{else}}<div class="discovery-card-actions"><button type="button" data-action="owned">我已有</button><button type="button" data-action="ignore">忽略</button></div>{{end}}
-{{if not .Ignored}}<button type="button" data-action="acquire">获取</button>{{end}}
+<div class="discovery-cover"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}<span class="discovery-kind">{{.Kind}}</span></div>
+<h2 title="{{.Title}}">{{.Title}}</h2><p class="discovery-artist" title="{{.Artist}}">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}}{{else}}年份未知{{end}}{{if eq .Source "work"}} · 来自作品{{end}}</p>
+{{if .Mapping}}{{if eq .Mapping.Status "auto"}}<div class="discovery-auto"><span class="discovery-flag">Bangumi 自动对应</span><button type="button" class="discovery-text-button" data-action="mapping-reject" aria-label="不是这张：{{.Title}}" data-subject-id="{{.Mapping.SubjectID}}">不是这张</button></div>{{end}}{{end}}
+{{if .Reasons}}<ul class="discovery-reasons" role="list" title="{{range .Reasons}}{{.}}&#10;{{end}}">{{range .Reasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{if .Ignored}}<div class="discovery-card-actions"><button type="button" class="secondary" data-action="restore">恢复推荐</button></div>
+{{else if .Possible}}<p class="discovery-flag is-warning">可能已有 · 请先核对</p><div data-possible hidden>{{range .Possible}}<div data-album-id="{{.ID}}" data-current-rg="{{.CurrentRG}}"><h3>{{.Title}}</h3><p>{{.Year}} 年 · {{.TrackCount}} 首</p><p>当前发行组：{{if .CurrentRG}}{{.CurrentRG}}{{else}}未知或冲突{{end}}</p><div class="discovery-compare-actions"><button type="button" data-action="same" data-album-id="{{.ID}}">是同一发行</button><button type="button" class="secondary" data-action="not-same" data-album-id="{{.ID}}">不是</button></div></div>{{end}}</div>
+<div class="discovery-card-actions"><button type="button" class="secondary" data-action="compare">对比本地专辑</button><button type="button" data-action="acquire">获取</button></div>
+{{else}}<div class="discovery-card-actions"><button type="button" data-action="acquire">获取</button><button type="button" class="secondary" data-action="owned">我已有</button><button type="button" class="secondary" data-action="ignore">忽略</button></div>{{end}}
 </article>
 {{end}}
