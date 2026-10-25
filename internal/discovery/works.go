@@ -338,7 +338,9 @@ func (s *Service) Rerank(ctx context.Context) (bool, error) {
 	if state.Status != "completed" {
 		return false, nil
 	}
+	started := time.Now()
 	_, e = s.rankAndSave(ctx, state.Generation)
+	s.logger.Info("discovery rerank", "duration", time.Since(started).Round(time.Millisecond).String(), "error", e)
 	if e == nil && s.autoCovers {
 		s.BackfillCovers()
 	}

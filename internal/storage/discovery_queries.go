@@ -114,7 +114,7 @@ func (s *Store) DiscoveryOwnership(c context.Context, ids []string) (map[string]
 	if e != nil {
 		return nil, e
 	}
-	rows, e = s.db.QueryContext(c, `SELECT p.rgid,a.id,COALESCE(a.user_title,a.title),COALESCE(a.user_release_year,a.release_year,0),(SELECT count(*) FROM tracks t WHERE t.album_id=a.id),COALESCE((SELECT rgid FROM album_release_groups g WHERE g.album_id=a.id AND status='resolved'),''),p.reason FROM discovery_possible_matches p JOIN albums a ON a.id=p.album_id WHERE p.rgid IN (SELECT value FROM json_each(?)) AND `+albumVisibleSQL("a.id")+` AND NOT EXISTS(SELECT 1 FROM discovery_match_rejections r WHERE r.rgid=p.rgid AND r.album_id=p.album_id) ORDER BY a.id`, string(raw))
+	rows, e = s.db.QueryContext(c, `SELECT p.rgid,a.id,COALESCE(a.user_title,a.title),COALESCE(a.user_release_year,a.release_year,0),(SELECT count(*) FROM tracks t WHERE t.album_id=a.id),COALESCE((SELECT rgid FROM album_release_groups g WHERE g.album_id=a.id AND status='resolved'),''),p.reason,`+albumArtworkURLSQL+` FROM discovery_possible_matches p JOIN albums a ON a.id=p.album_id WHERE p.rgid IN (SELECT value FROM json_each(?)) AND `+albumVisibleSQL("a.id")+` AND NOT EXISTS(SELECT 1 FROM discovery_match_rejections r WHERE r.rgid=p.rgid AND r.album_id=p.album_id) ORDER BY a.id`, string(raw))
 	if e != nil {
 		return nil, e
 	}
@@ -122,7 +122,7 @@ func (s *Store) DiscoveryOwnership(c context.Context, ids []string) (map[string]
 	for rows.Next() {
 		var id string
 		var a DiscoveryLocalAlbum
-		if e = rows.Scan(&id, &a.ID, &a.Title, &a.Year, &a.TrackCount, &a.CurrentRG, &a.Reason); e != nil {
+		if e = rows.Scan(&id, &a.ID, &a.Title, &a.Year, &a.TrackCount, &a.CurrentRG, &a.Reason, &a.ArtworkURL); e != nil {
 			return nil, e
 		}
 		v := out[id]

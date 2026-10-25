@@ -58,22 +58,32 @@
         const card = element('article', '', 'discovery-card acquisition-card');
         Object.assign(card.dataset, { rgid: task.rgid, title: task.title, artist: task.artist, publicId: task.publicId });
         card.id = 'acquisition-' + task.publicId;
-        card.append(element('span', states[task.state] || task.state, 'acquisition-state'), element('h2', task.title), element('p', task.artist), element('p', task.torrentTitle, 'discovery-meta'));
-        if (task.state === 'IN_LIBRARY') {
-          card.append(element('p', '专辑已入库 · 检测到 ' + task.detectedCount + ' 首'));
-          if (task.albumId > 0) { const a = element('a', task.albumTitle || '查看专辑'); a.href = '/admin/albums/' + task.albumId; card.append(a); }
-        }
-        if (task.state === 'AWAITING_LIBRARY' && data.watchDisabled) card.append(element('p', '目录监控已关闭，整理后需手动扫描入库。'));
+        const albumHref = task.state === 'IN_LIBRARY' && task.albumId > 0 ? '/admin/albums/' + task.albumId : 'https://musicbrainz.org/release-group/' + task.rgid;
+        const cover = element('a', '', 'discovery-cover');
+        cover.href = albumHref; cover.tabIndex = -1; cover.setAttribute('aria-hidden', 'true');
+        if (!albumHref.startsWith('/')) { cover.target = '_blank'; cover.rel = 'noopener noreferrer'; }
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'icon'); svg.setAttribute('aria-hidden', 'true');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', (root.dataset.icons || '') + '#icon-albums'); svg.append(use); cover.append(svg);
+        if (task.coverUrl) { const img = document.createElement('img'); img.src = task.coverUrl; img.alt = ''; img.loading = 'lazy'; cover.append(img); }
+        cover.append(element('span', states[task.state] || task.state, 'acquisition-state' + (task.state === 'ATTENTION' ? ' is-attention' : task.state === 'IN_LIBRARY' ? ' is-done' : '')));
+        const title = element('h2', ''); const link = element('a', task.title); link.href = albumHref;
+        if (!albumHref.startsWith('/')) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+        title.append(link);
+        const torrent = element('p', task.torrentTitle, 'discovery-meta acquisition-torrent'); torrent.title = task.torrentTitle;
+        card.append(cover, title, element('p', task.artist, 'discovery-artist'), torrent);
+        if (task.state === 'IN_LIBRARY') card.append(element('p', '专辑已入库 · 检测到 ' + task.detectedCount + ' 首', 'acquisition-note is-done'));
+        if (task.state === 'AWAITING_LIBRARY' && data.watchDisabled) card.append(element('p', '目录监控已关闭，整理后需手动扫描入库。', 'acquisition-note'));
         const actions = element('div', '', 'discovery-card-actions');
-        const button = (action, label) => { const b = element('button', label); b.type = 'button'; b.dataset.action = action; actions.append(b); };
+        const button = (action, label, primary = false) => { const b = element('button', label, primary ? '' : 'secondary'); b.type = 'button'; b.dataset.action = action; actions.append(b); };
         if (task.state === 'ATTENTION') {
-          card.append(element('p', reasons[task.attentionReason] || '请检查任务并手动关联专辑'));
-          if (/^(qb_|torrent_)/.test(task.attentionReason)) button('task-retry', '重试');
-          button('task-link', '手动关联专辑');
-          const a = element('a', '获取设置'); a.href = '/admin/settings/acquisition'; card.append(a);
+          card.append(element('p', reasons[task.attentionReason] || '请检查任务并手动关联专辑', 'acquisition-note is-attention'));
+          if (/^(qb_|torrent_)/.test(task.attentionReason)) button('task-retry', '重试', true);
+          button('task-link', '手动关联专辑', !/^(qb_|torrent_)/.test(task.attentionReason));
+          const a = element('a', '获取设置', 'acquisition-note-link'); a.href = '/admin/settings/acquisition'; card.append(a);
         }
         if (!['IN_LIBRARY', 'CANCELLED'].includes(task.state)) button('task-cancel', '取消获取');
-        card.append(actions); fragment.append(card);
+        if (actions.childElementCount) card.append(actions);
+        fragment.append(card);
       });
       if (!data.items.length) fragment.append(element('p', '暂无获取任务', 'discovery-empty'));
       return fragment;
@@ -210,6 +220,9 @@
           const subject = group.dataset.subjectId;
           const options = action === 'mapping-reject-all' ? [...group.querySelectorAll('[data-option-rgid]')].map(el => el.dataset.optionRgid) : [b.closest('[data-option-rgid]')?.dataset.optionRgid || card?.dataset.rgid];
           let reranked = true, processed = 0, failure;
+          // Show progress on the card: the request also re-ranks the catalog.
+          (group || card)?.setAttribute('aria-busy', 'true');
+          announce('正在保存对应并更新推荐…');
           try {
             for (const rgid of options) {
               const decision = action === 'mapping-confirm' ? 'confirm' : 'reject';

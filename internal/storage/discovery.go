@@ -68,6 +68,7 @@ type DiscoveryLocalAlbum struct {
 	CurrentRG, Reason string
 	ArtistIDs         []int64
 	WorkIDs           []int64
+	ArtworkURL        string
 }
 type DiscoveryMatch struct {
 	RGID    string

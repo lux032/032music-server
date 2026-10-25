@@ -61,13 +61,22 @@ func NormalizeTitle(title string) string {
 func WeakMatches(items []storage.DiscoveryCandidate, albums []storage.DiscoveryLocalAlbum, rejected map[string]map[int64]bool) []storage.DiscoveryMatch {
 	out := []storage.DiscoveryMatch{}
 	seen := map[string]bool{}
+	// Index local albums by normalized title once: comparing every catalog
+	// entry with every album re-normalized titles O(n·m) times and stalled
+	// refreshes and re-ranks for minutes on large libraries.
+	byTitle := map[string][]storage.DiscoveryLocalAlbum{}
+	for _, a := range albums {
+		if t := NormalizeTitle(a.Title); t != "" {
+			byTitle[t] = append(byTitle[t], a)
+		}
+	}
 	for _, v := range items {
 		title := NormalizeTitle(v.Title)
 		if title == "" {
 			continue
 		}
-		for _, a := range albums {
-			if a.CurrentRG == v.RGID || rejected[v.RGID][a.ID] || NormalizeTitle(a.Title) != title {
+		for _, a := range byTitle[title] {
+			if a.CurrentRG == v.RGID || rejected[v.RGID][a.ID] {
 				continue
 			}
 			has := false

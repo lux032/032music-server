@@ -21,6 +21,7 @@ type discoveryAlbumDTO struct {
 	Year       int    `json:"year"`
 	TrackCount int    `json:"trackCount"`
 	CurrentRG  string `json:"currentRg"`
+	CoverURL   string `json:"coverUrl"`
 }
 type discoveryMappingOptionDTO struct {
 	RGID           string   `json:"rgid"`
@@ -123,7 +124,7 @@ func (a *App) discoveryItems(r *http.Request, tab, source string, limit, offset 
 			d.Reasons = append(d.Reasons, discoveryReason(reason))
 		}
 		for _, p := range v.Possible {
-			d.Possible = append(d.Possible, discoveryAlbumDTO{p.ID, p.Title, p.Year, p.TrackCount, p.CurrentRG})
+			d.Possible = append(d.Possible, discoveryAlbumDTO{p.ID, p.Title, p.Year, p.TrackCount, p.CurrentRG, thumbURL(p.ArtworkURL, 256)})
 		}
 
 		if v.SubjectID > 0 {

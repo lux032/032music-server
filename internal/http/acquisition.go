@@ -38,6 +38,9 @@ type acquisitionTaskDTO struct {
 	AlbumTitle          string `json:"albumTitle"`
 	DetectedCount       int    `json:"detectedCount"`
 	VerifiedAt          string `json:"verifiedAt"`
+	// CoverURL prefers the imported local album's artwork, then the cached
+	// discovery cover; empty shows a placeholder.
+	CoverURL string `json:"coverUrl"`
 }
 
 func (a *App) acquisitionTaskView(ctx context.Context, t storage.AcquisitionTask) (acquisitionTaskDTO, error) {
@@ -55,7 +58,13 @@ func (a *App) acquisitionTaskView(ctx context.Context, t storage.AcquisitionTask
 			}
 			if err == nil {
 				v.AlbumTitle = album.Title
+				v.CoverURL = thumbURL(album.ArtworkURL, 512)
 			}
+		}
+	}
+	if v.CoverURL == "" && a.discovery != nil {
+		if _, _, err := a.discovery.CachedCover(t.RGID); err == nil {
+			v.CoverURL = "/admin/discover/covers/" + t.RGID
 		}
 	}
 	return v, nil

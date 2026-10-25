@@ -9,7 +9,7 @@
 {{if .Blocked}}
 <section class="discovery-blocked"><h2>发现功能尚未就绪</h2><p>{{.Blocked}}</p>{{if .Rebuild.Status}}<p>身份重建状态：{{.Rebuild.Status}} · {{.Rebuild.Processed}} / {{.Rebuild.Discovered}}</p>{{if .Rebuild.Error}}<p>{{.Rebuild.Error}}</p>{{end}}<a href="/admin">前往控制台重建</a>{{end}}</section>
 {{else}}
-<section data-discovery>
+<section data-discovery data-icons="{{assetIconsSVG}}">
 <div class="discovery-status"><p class="discovery-status-text"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><span class="discovery-status-note">与元数据增强共享请求带宽，仅手动刷新</span></p><div class="discovery-status-actions"><button type="button" class="secondary" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button><button type="button" data-action="refresh">刷新目录</button></div></div>
 <nav class="discovery-tabs" aria-label="发现内容状态">
 <button type="button" data-tab="recommended" aria-pressed="true">为你发现 <span data-count="recommended">{{.Counts.Recommended}}</span></button>
@@ -61,8 +61,13 @@
 {{if .Mapping}}{{if eq .Mapping.Status "auto"}}<div class="discovery-auto"><span class="discovery-flag">Bangumi 自动对应</span><button type="button" class="discovery-text-button" data-action="mapping-reject" aria-label="不是这张：{{.Title}}" data-subject-id="{{.Mapping.SubjectID}}">不是这张</button></div>{{end}}{{end}}
 {{if .Reasons}}<ul class="discovery-reasons" role="list" title="{{range .Reasons}}{{.}}&#10;{{end}}">{{range .Reasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if .Ignored}}<div class="discovery-card-actions"><button type="button" class="secondary" data-action="restore">恢复推荐</button></div>
-{{else if .Possible}}<p class="discovery-flag is-warning">可能已有 · 请先核对</p><div data-possible hidden>{{range .Possible}}<div data-album-id="{{.ID}}" data-current-rg="{{.CurrentRG}}"><h3>{{.Title}}</h3><p>{{.Year}} 年 · {{.TrackCount}} 首</p><p>当前发行组：{{if .CurrentRG}}{{.CurrentRG}}{{else}}未知或冲突{{end}}</p><div class="discovery-compare-actions"><button type="button" data-action="same" data-album-id="{{.ID}}">是同一发行</button><button type="button" class="secondary" data-action="not-same" data-album-id="{{.ID}}">不是</button></div></div>{{end}}</div>
-<div class="discovery-card-actions"><button type="button" class="secondary" data-action="compare">对比本地专辑</button><button type="button" data-action="acquire">获取</button></div>
+{{else if .Possible}}<div class="discovery-local-match"><span class="discovery-flag is-warning">可能已有</span><p>本地：{{(index .Possible 0).Title}}{{if gt (len .Possible) 1}} 等 {{len .Possible}} 张{{end}}</p></div>
+<div data-possible hidden>
+<section class="discovery-compare-side" aria-label="推荐的发行"><p class="discovery-compare-label">推荐的发行</p><div class="discovery-compare-item"><a class="discovery-cover discovery-thumb" href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</a><div><h3><a href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a></h3><p>{{.Artist}}</p><p>{{if .Year}}{{.Year}} · {{end}}{{.Kind}} · MusicBrainz</p></div></div></section>
+<section class="discovery-compare-side" aria-label="你的本地专辑"><p class="discovery-compare-label">你的本地专辑</p>
+{{range .Possible}}<div class="discovery-compare-item" data-album-id="{{.ID}}" data-current-rg="{{.CurrentRG}}"><a class="discovery-cover discovery-thumb" href="/admin/albums/{{.ID}}" tabindex="-1" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverURL}}<img src="{{.CoverURL}}" alt="" loading="lazy">{{end}}</a><div><h3><a href="/admin/albums/{{.ID}}">{{.Title}}</a></h3><p>{{if .Year}}{{.Year}} 年 · {{end}}{{.TrackCount}} 首</p><p>当前发行组：{{if .CurrentRG}}已关联其他发行组{{else}}尚无发行组身份{{end}}</p><div class="discovery-compare-actions"><button type="button" data-action="same" data-album-id="{{.ID}}">是同一发行</button><button type="button" class="secondary" data-action="not-same" data-album-id="{{.ID}}">不是</button></div></div></div>{{end}}
+</section></div>
+<div class="discovery-card-actions"><button type="button" data-action="compare">对比本地专辑</button><button type="button" class="secondary" data-action="acquire">获取</button></div>
 {{else}}<div class="discovery-card-actions"><button type="button" data-action="acquire">获取</button><button type="button" class="secondary" data-action="owned">我已有</button><button type="button" class="secondary" data-action="ignore">忽略</button></div>{{end}}
 </article>
 {{end}}

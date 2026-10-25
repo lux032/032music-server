@@ -351,6 +351,16 @@ func (s *Service) downloadCovers(ctx context.Context, g int64, ranked []storage.
 	if e != nil {
 		return e
 	}
+	// Possible-match cards are compared visually, so they get covers too.
+	possible, _, e := s.store.ListDiscovery(ctx, "possible", "all", RecommendationLimit, 0)
+	if e != nil {
+		return e
+	}
+	for _, v := range possible {
+		c := v.DiscoveryCandidate
+		c.Rank = 1
+		ranked = append(ranked, c)
+	}
 	mappingCovers := map[string]bool{}
 	for _, group := range mapping {
 		for _, option := range group.MappingOptions {
@@ -367,13 +377,15 @@ func (s *Service) downloadCovers(ctx context.Context, g int64, ranked []storage.
 		}
 	}
 
+	attempted := map[string]bool{}
 	for _, v := range ranked {
 		if e = ctx.Err(); e != nil {
 			return e
 		}
-		if v.Rank <= 0 || v.Rank > RecommendationLimit {
+		if v.Rank <= 0 || v.Rank > RecommendationLimit || attempted[v.RGID] {
 			continue
 		}
+		attempted[v.RGID] = true
 		if v.CoverStatus == "cached" {
 			if _, _, err := coverFile(s.dataDir, v.RGID); err == nil {
 				continue
