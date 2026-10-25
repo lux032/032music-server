@@ -47,7 +47,7 @@
 </header>
 <ul class="discovery-mapping-options" role="list">
 {{range .Mapping.Options}}<li class="discovery-mapping-option" data-option-rgid="{{.RGID}}"><div class="discovery-cover discovery-thumb"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</div>
-<div class="discovery-mapping-body"><h3>{{.Title}}</h3><p class="discovery-meta">{{.Artist}}{{if .Year}} · {{.Year}}{{end}} · {{.Kind}}</p>{{if .Evidence}}<ul class="discovery-evidence">{{range .Evidence}}<li>{{.}}</li>{{end}}</ul>{{end}}</div>
+<div class="discovery-mapping-body"><h3><a href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" title="在 MusicBrainz 查看：{{.Title}}">{{.Title}}</a></h3><p class="discovery-meta">{{.Artist}}{{if .Year}} · {{.Year}}{{end}} · {{.Kind}}</p>{{if .Evidence}}<ul class="discovery-evidence">{{range .Evidence}}<li>{{.}}</li>{{end}}</ul>{{end}}</div>
 <button type="button" data-action="mapping-confirm" aria-label="是这张：{{.Title}}">是这张</button><button type="button" class="secondary" data-action="mapping-restore" aria-label="恢复：{{.Title}}">恢复</button></li>{{end}}
 </ul>
 {{if eq .Mapping.Status "suggested"}}<footer class="discovery-mapping-foot"><p class="discovery-hint">确认对应后才能搜种获取。</p><button type="button" class="secondary" data-action="mapping-reject-all">都不是</button></footer>{{end}}</article>
@@ -56,8 +56,8 @@
 {{end}}
 {{define "discovery-card"}}
 <article class="discovery-card" data-rgid="{{.RGID}}" data-title="{{.Title}}" data-artist="{{.Artist}}">
-<div class="discovery-cover"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}<span class="discovery-kind">{{.Kind}}</span></div>
-<h2 title="{{.Title}}">{{.Title}}</h2><p class="discovery-artist" title="{{.Artist}}">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}}{{else}}年份未知{{end}}{{if eq .Source "work"}} · 来自作品{{end}}</p>
+<a class="discovery-cover" href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}<span class="discovery-kind">{{.Kind}}</span></a>
+<h2><a href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" title="在 MusicBrainz 查看：{{.Title}}">{{.Title}}</a></h2><p class="discovery-artist" title="{{.Artist}}">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}}{{else}}年份未知{{end}}{{if eq .Source "work"}} · {{if .Work}}《{{.Work}}》{{else}}来自作品{{end}}{{end}}{{if .Mapping}}{{if .Mapping.BangumiURL}} · <a href="{{.Mapping.BangumiURL}}" target="_blank" rel="noopener noreferrer">Bangumi</a>{{end}}{{end}}</p>
 {{if .Mapping}}{{if eq .Mapping.Status "auto"}}<div class="discovery-auto"><span class="discovery-flag">Bangumi 自动对应</span><button type="button" class="discovery-text-button" data-action="mapping-reject" aria-label="不是这张：{{.Title}}" data-subject-id="{{.Mapping.SubjectID}}">不是这张</button></div>{{end}}{{end}}
 {{if .Reasons}}<ul class="discovery-reasons" role="list" title="{{range .Reasons}}{{.}}&#10;{{end}}">{{range .Reasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if .Ignored}}<div class="discovery-card-actions"><button type="button" class="secondary" data-action="restore">恢复推荐</button></div>

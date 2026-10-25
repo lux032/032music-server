@@ -143,6 +143,9 @@
       if (tab === 'acquiring') content = taskCards(data);
       else { const fragment = document.createElement('template'); fragment.innerHTML = data.html; content = fragment.content; }
       if (!append) grid.replaceChildren(); grid.append(content);
+      // Work-sourced picks only appear after a Bangumi→MusicBrainz match is confirmed.
+      const empty = grid.querySelector('.discovery-empty p');
+      if (empty && tab === 'recommended' && filter === 'work') empty.textContent = Number(data.counts.mapping) > 0 ? '作品来源的推荐需要先确认对应关系：在“待确认对应”中点“是这张”后会出现在这里。' : '暂无来自作品的推荐。作品需绑定 Bangumi 条目，并在刷新目录后找到对应的发行。';
       offset = (append ? offset : 0) + data.items.length;
       root.querySelector('[data-action="more"]').hidden = data.items.length < 60;
       Object.entries(data.counts).forEach(([key, value]) => { root.querySelectorAll('[data-count="' + key + '"]').forEach(el => { el.textContent = value; }); });

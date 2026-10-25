@@ -711,3 +711,39 @@ func TestMappingDecisionNonStaleRerankErrorStillSucceeds(t *testing.T) {
 		t.Fatal(status, e)
 	}
 }
+
+func TestCoverFallsBackToBangumiWhenCAAMissing(t *testing.T) {
+	f := setup(t)
+	f.ready(t)
+	workFixture(t, f, 100, 1000)
+	var caa, bgm atomic.Int64
+	client := &http.Client{Transport: coverTransport(func(r *http.Request) (*http.Response, error) {
+		body, status := `{"release-groups":[]}`, 200
+		switch {
+		case r.URL.Query().Has("query"):
+			body = `{"release-groups":[{"id":"` + testRG + `","title":"Remote","primary-type":"Album","score":99}]}`
+		case r.URL.Host == "93.184.216.34":
+			caa.Add(1)
+			body, status = "not found", 404
+		case r.URL.Host == "93.184.216.35":
+			bgm.Add(1)
+			body = "\x89PNG\r\n\x1a\nrest"
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	s := New(f.store, nil, Options{HTTPClient: client, MBBaseURL: "http://mb.example", CAAURL: "http://93.184.216.34", DataDir: t.TempDir(), Gate: sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": 0, "coverartarchive": 0, "bangumi": 0}}), Bangumi: fakeBangumi{enabled: true, relations: func(int64) ([]bangumi.Relation, error) {
+		return []bangumi.Relation{{ID: 2000, Name: "Remote", Type: 3, Relation: "原声集"}}, nil
+	}, subject: func(id int64) (bangumi.MusicSubject, error) {
+		return bangumi.MusicSubject{ID: id, Name: "Remote", Image: "http://93.184.216.35/cover.jpg"}, nil
+	}}})
+	if _, e := s.Refresh(f.ctx, true); e != nil {
+		t.Fatal(e)
+	}
+	s.Wait()
+	if caa.Load() == 0 || bgm.Load() != 1 {
+		t.Fatal("caa", caa.Load(), "bangumi", bgm.Load())
+	}
+	if _, _, e := s.CachedCover(testRG); e != nil {
+		t.Fatal("fallback cover not cached", e)
+	}
+}

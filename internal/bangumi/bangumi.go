@@ -16,6 +16,9 @@ type MusicSubject struct {
 	ID                 int64
 	Name, NameCN, Date string
 	Artists            []string
+	// Image is the subject's cover URL (medium-size "common" variant when
+	// available); empty when Bangumi has no artwork.
+	Image string
 }
 
 type Relation struct {

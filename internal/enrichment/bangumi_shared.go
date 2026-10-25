@@ -66,5 +66,9 @@ func (m *Manager) BangumiMusicSubject(ctx context.Context, subjectID int64) (ban
 	key := strconv.FormatInt(subjectID, 10)
 	var subject musicSubject
 	_, err = m.cachedJSON(ctx, "bangumi", "subject:"+key, strings.TrimRight(m.phaseEndpoints.BangumiAPI, "/")+"/v0/subjects/"+key, setting, false, nil, &subject)
-	return bangumi.MusicSubject{ID: subject.ID, Name: subject.Name, NameCN: subject.NameCN, Date: subject.Date, Artists: musicArtists(subject, nil)}, sharedBangumiError(err)
+	image := subject.Images.Common
+	if image == "" {
+		image = subject.Images.Large
+	}
+	return bangumi.MusicSubject{ID: subject.ID, Name: subject.Name, NameCN: subject.NameCN, Date: subject.Date, Artists: musicArtists(subject, nil), Image: image}, sharedBangumiError(err)
 }

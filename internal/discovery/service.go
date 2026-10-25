@@ -372,6 +372,13 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 			}
 		}
 		image, e := netfetch.DownloadImage(ctx, s.images, s.gate, "coverartarchive", strings.TrimRight(s.caa, "/")+"/release-group/"+v.RGID+"/front-500", s.ua(ctx))
+		if errors.Is(e, netfetch.ErrNotFound) && v.SubjectID > 0 {
+			// CAA has no art for this release group: fall back to the cover of
+			// the Bangumi music subject it was matched from.
+			if fallback, ok := s.bangumiCover(ctx, v.SubjectID); ok {
+				image, e = fallback, nil
+			}
+		}
 		status, ext := "cached", image.Ext
 		if errors.Is(e, netfetch.ErrNotFound) {
 			status = "missing"
@@ -395,6 +402,24 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 		}
 	}
 	return nil
+}
+
+// bangumiCover downloads a Bangumi subject's artwork. Any failure (including
+// throttling) simply reports no fallback so CAA's result stands.
+func (s *Service) bangumiCover(ctx context.Context, subjectID int64) (netfetch.Image, bool) {
+	if s.bangumi == nil {
+		return netfetch.Image{}, false
+	}
+	subject, e := s.bangumi.BangumiMusicSubject(ctx, subjectID)
+	if e != nil || subject.Image == "" {
+		return netfetch.Image{}, false
+	}
+	image, e := netfetch.DownloadImage(ctx, s.images, s.gate, "bangumi", subject.Image, s.ua(ctx))
+	if e != nil {
+		s.logger.Debug("bangumi cover fallback failed", "subject", subjectID, "error", e)
+		return netfetch.Image{}, false
+	}
+	return image, true
 }
 
 // CachedCover reads only disk. No network or database call is made.

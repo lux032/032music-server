@@ -34,9 +34,13 @@
 .discovery-kind { position: absolute; z-index: 2; left: 8px; bottom: 8px; border-radius: var(--radius-sm); padding: 3px 7px; background: var(--surface-glass, var(--surface)); color: var(--text-secondary); box-shadow: var(--shadow-xs); font-size: .66rem; font-weight: 700; letter-spacing: .02em; }
 .discovery-card h2 { display: -webkit-box; margin: 12px 0 3px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--text); font-size: var(--fs-md); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; text-wrap: pretty; }
 .discovery-card p { margin: 0; }
+.discovery-card h2 a, .discovery-mapping-body h3 a { color: inherit; text-decoration: none; }
+.discovery-card h2 a:hover, .discovery-mapping-body h3 a:hover { color: var(--accent-strong-text); text-decoration: underline; text-underline-offset: 3px; }
+a.discovery-cover { color: inherit; }
 .discovery-artist { overflow: hidden; color: var(--text-secondary); font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
 .discovery-meta { margin-top: 2px; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-.discovery-meta a { color: var(--accent-strong-text); text-underline-offset: 3px; }
+.discovery-meta a { color: var(--accent-strong-text); text-decoration: none; }
+.discovery-meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* 推荐理由：最多两行，完整内容在悬停提示中 */
 .discovery-reasons { display: grid; gap: 3px; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
