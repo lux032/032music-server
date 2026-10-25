@@ -161,7 +161,7 @@
                 <input type="hidden" name="confirm" value="1">
                 <h2>确认解除 {{.Source}} 身份</h2>
                 <p>本地歌手：{{$.Artist.Name}}；外部资料：{{.DisplayName}}（{{.ExternalID}}）。</p>
-                <p>移除此来源的绑定与审核记录，并清除相关自动简介和图片缓存。不会删除歌曲、变更艺术家关联或修改自定义资料。其他来源不会自动解绑。</p>
+                <p>移除此来源的绑定，并清除相关自动简介和图片缓存。该身份会记为“已排除”，之后重新匹配不会再自动绑定它（如误操作，可在“已排除的候选”中改回）。不会删除歌曲、变更艺术家关联或修改自定义资料。其他来源不会自动解绑。</p>
                 <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">确认解除，重新审核</button></div>
               </form>
             </dialog>
@@ -173,8 +173,15 @@
         </section>
         <section class="identity-panel">
           <p class="kicker">匹配候选</p>
+          <form class="artist-candidate-search" method="post" action="/admin/artists/{{.Artist.ID}}/match/search">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>手动搜索 MusicBrainz<input type="search" name="query" required value="{{.Artist.Name}}" placeholder="歌手名、MusicBrainz 链接或 MBID" autocomplete="off"></label>
+            <p class="field-hint">输入名称会列出候选供选择；粘贴 MusicBrainz 歌手链接或 MBID 会直接绑定该身份。</p>
+            <button class="secondary-button">搜索候选</button>
+          </form>
+          {{$pending := 0}}{{$rejected := 0}}
           {{range .Artist.Candidates}}
-          {{if eq .Status "candidate"}}
+          {{if eq .Status "candidate"}}{{$pending = 1}}
           <article>
             <strong>{{.DisplayName}}</strong>
             <span>{{.Source}} · {{.Score}} 分</span>
@@ -190,10 +197,33 @@
                 <button class="secondary-button">拒绝</button>
               </form>
             </div>
+            {{if .MBID}}<a href="https://musicbrainz.org/artist/{{.MBID}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
           </article>
+          {{else if eq .Status "rejected"}}{{$rejected = 1}}
           {{end}}
-          {{else}}
-          <p class="result-count">没有待审核候选</p>
+          {{end}}
+          {{if eq $pending 0}}<p class="result-count">没有待审核候选。匹配错误时可先解除错误身份，或在上方手动搜索。</p>{{end}}
+          {{if eq $rejected 1}}
+          <details class="biography-versions rejected-candidates">
+            <summary>已排除的候选</summary>
+            <div>
+              {{range .Artist.Candidates}}{{if eq .Status "rejected"}}
+              <article>
+                <strong>{{.DisplayName}}</strong>
+                <span>{{.Source}}{{if .Score}} · {{.Score}} 分{{end}}</span>
+                <small>{{.Disambiguation}} {{.Country}}</small>
+                {{range .Evidence}}<p class="field-hint">{{.}}</p>{{end}}
+                <div class="candidate-actions">
+                  <form method="post" action="/admin/artists/{{$.Artist.ID}}/confirm/{{.ID}}">
+                    <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                    <button class="secondary-button">改用此身份</button>
+                  </form>
+                  {{if .MBID}}<a href="https://musicbrainz.org/artist/{{.MBID}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+                </div>
+              </article>
+              {{end}}{{end}}
+            </div>
+          </details>
           {{end}}
         </section>
         <section class="identity-panel danger-panel">

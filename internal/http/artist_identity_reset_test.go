@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/lux032/032music-server/internal/storage"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -42,5 +43,15 @@ func TestResetArtistIdentityRequiresConfirmation(t *testing.T) {
 	}
 	if _, err := s.ArtistExternalID(ctx, artist, "musicbrainz"); err == nil {
 		t.Fatal("identity not removed")
+	}
+	body := adminGetBody(t, handler, cookie, fmt.Sprintf("/admin/artists/%d?view=profile", artist))
+	for _, want := range []string{"/match/search", "已排除的候选", "改用此身份"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("artist page missing %q", want)
+		}
+	}
+	rec = postAdminForm(t, handler, cookie, csrf, fmt.Sprintf("/admin/artists/%d/match/search", artist), url.Values{"query": {" "}})
+	if rec.Code != 303 {
+		t.Fatal(rec.Code)
 	}
 }

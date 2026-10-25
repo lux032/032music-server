@@ -254,8 +254,49 @@ func (a *App) handleConfirmArtistMatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", 403)
 		return
 	}
+	a.confirmArtistCandidate(w, r, parseInt64(r.PathValue("id")), parseInt64(r.PathValue("candidate")))
+}
+
+// handleSearchArtistCandidates runs a user-supplied MusicBrainz search (name,
+// MusicBrainz URL or MBID). An explicit MBID is confirmed immediately.
+func (a *App) handleSearchArtistCandidates(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
 	id := parseInt64(r.PathValue("id"))
-	candidateID := parseInt64(r.PathValue("candidate"))
+	if a.enrichment == nil {
+		redirectWithNotice(w, r, artistProfilePath(id), "任务服务不可用")
+		return
+	}
+	result, err := a.enrichment.SearchArtistCandidates(r.Context(), id, r.FormValue("query"))
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			http.NotFound(w, r)
+		case errors.Is(err, enrichment.ErrManualSearchEmpty), errors.Is(err, enrichment.ErrManualSearchUnavailable):
+			redirectWithNotice(w, r, artistProfilePath(id), err.Error())
+		default:
+			if notice, ok := enrichment.RateLimitNotice(err); ok {
+				redirectWithNotice(w, r, artistProfilePath(id), notice)
+				return
+			}
+			redirectWithNotice(w, r, artistProfilePath(id), "搜索失败："+enrichment.RedactSourceError(err).Error())
+		}
+		return
+	}
+	if result.ConfirmCandidateID > 0 {
+		a.confirmArtistCandidate(w, r, id, result.ConfirmCandidateID)
+		return
+	}
+	message := "没有找到匹配的 MusicBrainz 歌手，可换个写法或直接粘贴 MusicBrainz 链接"
+	if result.CandidateCount > 0 {
+		message = fmt.Sprintf("找到 %d 个候选，请在右侧“匹配候选”中核对后确认", result.CandidateCount)
+	}
+	redirectWithNotice(w, r, artistProfilePath(id), message)
+}
+
+func (a *App) confirmArtistCandidate(w http.ResponseWriter, r *http.Request, id, candidateID int64) {
 	if err := a.store.ConfirmArtistCandidate(r.Context(), id, candidateID); err != nil {
 		var conflict *storage.ArtistExternalIDConflictError
 		if errors.As(err, &conflict) {
@@ -510,7 +551,7 @@ func (a *App) handleResetArtistIdentity(w http.ResponseWriter, r *http.Request) 
 		redirectWithNotice(w, r, returnTo, "身份已变化或解除失败，请刷新后核对")
 		return
 	}
-	redirectWithNotice(w, r, returnTo, "已解除指定来源的身份并清除相关自动资料；歌曲关联和自定义资料保持不变，请重新匹配。其他来源如有错误需分别解除。")
+	redirectWithNotice(w, r, returnTo, "已解除并排除该身份，重新匹配不会再自动绑定它；可在“匹配候选”中手动搜索或选择正确歌手。其他来源如有错误需分别解除。")
 }
 
 func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request) {

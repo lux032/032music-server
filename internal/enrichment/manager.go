@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -710,7 +711,11 @@ type mbArtistResponse struct {
 }
 
 func (m *Manager) musicBrainzSearch(ctx context.Context, artist storage.ArtistMatchInput, setting storage.MetadataSourceSetting) ([]storage.ArtistCandidate, map[string]storage.ExternalArtistProfile, error) {
-	endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/?query=" + url.QueryEscape("artist:\""+artist.Name+"\"") + "&fmt=json&limit=5"
+	return m.musicBrainzSearchQuery(ctx, artist, "artist:\""+artist.Name+"\"", 5, setting)
+}
+
+func (m *Manager) musicBrainzSearchQuery(ctx context.Context, artist storage.ArtistMatchInput, query string, limit int, setting storage.MetadataSourceSetting) ([]storage.ArtistCandidate, map[string]storage.ExternalArtistProfile, error) {
+	endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/?query=" + url.QueryEscape(query) + "&fmt=json&limit=" + strconv.Itoa(limit)
 	var response mbSearchResponse
 	if err := m.mbRequest(ctx, endpoint, setting, &response); err != nil {
 		return nil, nil, err

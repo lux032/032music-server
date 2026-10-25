@@ -840,6 +840,13 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .danger-panel > p:not(.kicker) { color: var(--danger); font-size: var(--fs-xs); line-height: 1.6; }
 .candidate-actions { display: flex; gap: 0.55rem; align-items: center; flex-wrap: wrap; }
 .candidate-actions form { margin: 0; }
+.artist-candidate-search { padding-bottom: 12px; }
+.artist-candidate-search label { display: grid; gap: 6px; color: var(--text-secondary); font-size: var(--fs-xs); }
+.artist-candidate-search .field-hint { margin: 0; }
+.artist-candidate-search button { justify-self: start; }
+.identity-panel .rejected-candidates { margin: 12px 0 0; }
+.identity-panel .rejected-candidates article { display: grid; gap: 4px; }
+.identity-panel .rejected-candidates article > div { display: flex; }
 
 /* Match review + merge history + enrichment */
 .review-list { display: grid; gap: 14px; }
