@@ -257,7 +257,7 @@ func TestBangumiDisabledAndCooldown(t *testing.T) {
 			s.Wait()
 			state, _ := s.Status(f.ctx)
 			if cooldown {
-				if state.Status != "failed" || !strings.Contains(state.ErrorMessage, "Bangumi 限流") || state.Processed != 1 {
+				if state.Status != "completed" || !strings.Contains(state.ErrorMessage, "持续限流") {
 					t.Fatal(state)
 				}
 			} else if state.Status != "completed" || !strings.Contains(state.ErrorMessage, "Bangumi 未启用") {
@@ -329,14 +329,14 @@ func TestWorkSearchFailureKeepsCheckpoint(t *testing.T) {
 	}
 	s.Wait()
 	state, _ := s.Status(f.ctx)
-	if state.Status != "failed" || state.Processed != 3 {
+	if state.Status != "completed" || !strings.Contains(state.ErrorMessage, "持续限流") {
 		t.Fatal(state)
 	}
 	var status string
 	if e := f.raw.QueryRow(`SELECT status FROM discovery_work_seeds WHERE work_id=100`).Scan(&status); e != nil || status != "done" {
 		t.Fatal(status, e)
 	}
-	if e := f.raw.QueryRow(`SELECT search_status FROM discovery_bangumi_music WHERE subject_id=10010`).Scan(&status); e != nil || status != "failed" {
+	if e := f.raw.QueryRow(`SELECT search_status FROM discovery_bangumi_music WHERE subject_id=10010`).Scan(&status); e != nil || status != "pending" {
 		t.Fatal(status, e)
 	}
 }

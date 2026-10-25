@@ -302,6 +302,8 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		force := true
 		if st, se := a.discovery.Status(r.Context()); se == nil && (st.Status == "failed" || st.Status == "cancelled") {
 			force = false
+		} else if pending, pe := a.store.DiscoveryHasPendingSeeds(r.Context()); pe == nil && pending {
+			force = false
 		}
 		g, e := a.discovery.Refresh(r.Context(), force)
 		if e != nil {

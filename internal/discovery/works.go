@@ -50,7 +50,7 @@ func (s *Service) workSnapshot(ctx context.Context) ([]storage.DiscoveryWorkSeed
 	}
 	return seeds, nil
 }
-func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
+func (s *Service) executeWorks(ctx context.Context, g int64, mbThrottled bool) (string, error) {
 	if s.bangumi == nil {
 		return "Bangumi 未启用，已跳过作品来源", nil
 	}
@@ -85,15 +85,20 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		decided     bool
 	}
 	jobs := []job{}
+	throttled := false
 	for _, seed := range seeds {
 		if seed.Status != "pending" {
 			continue
 		}
-		relations, e := withCooldown(ctx, s, func() ([]bangumi.Relation, error) { return s.bangumi.BangumiRelations(ctx, seed.SubjectID) })
+		relations, e := withCooldownLimit(ctx, s, workCooldownRetries, func() ([]bangumi.Relation, error) { return s.bangumi.BangumiRelations(ctx, seed.SubjectID) })
 		status := "done"
 		if errors.Is(e, bangumi.ErrGone) {
 			relations = nil
 			status = "gone"
+		} else if isCooldown(e) && s.cooldowns > 0 {
+			// Remaining work seeds stay pending for the next refresh.
+			throttled = true
+			break
 		} else if e != nil {
 			return "", e
 		}
@@ -179,18 +184,24 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		if j.decided || fresh {
 			continue
 		}
-		if budget >= MaxMBSearchesPerRefresh {
+		if budget >= MaxMBSearchesPerRefresh || throttled || mbThrottled {
 			m.SearchStatus = "pending"
 			w.music[j.index] = m
 			truncated = true
 			continue
 		}
-		subject, e := withCooldown(ctx, s, func() (bangumi.MusicSubject, error) { return s.bangumi.BangumiMusicSubject(ctx, m.SubjectID) })
+		subject, e := withCooldownLimit(ctx, s, workCooldownRetries, func() (bangumi.MusicSubject, error) { return s.bangumi.BangumiMusicSubject(ctx, m.SubjectID) })
 		if errors.Is(e, bangumi.ErrGone) {
 			m.Status = "gone"
 			m.SearchStatus = "none"
 			m.SearchUpdated = true
 			m.SearchedAt = s.now().UTC().Format(time.RFC3339)
+			w.music[j.index] = m
+			continue
+		}
+		if isCooldown(e) && s.cooldowns > 0 {
+			throttled, truncated = true, true
+			m.SearchStatus = "pending"
 			w.music[j.index] = m
 			continue
 		}
@@ -203,16 +214,28 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		m.Artists = subject.Artists
 		m.MultiTitle = bangumi.SplitMultiTitle(subject.Name) != nil
 		fallback := false
-		hits, e := withCooldown(ctx, s, func() ([]mb.ReleaseGroup, error) { return s.mb.SearchReleaseGroups(ctx, subject.Name) })
+		hits, e := withCooldownLimit(ctx, s, workCooldownRetries, func() ([]mb.ReleaseGroup, error) { return s.mb.SearchReleaseGroups(ctx, subject.Name) })
 		budget++
+		if isCooldown(e) && s.cooldowns > 0 {
+			throttled, truncated = true, true
+			m.SearchStatus = "pending"
+			w.music[j.index] = m
+			continue
+		}
 		if e != nil {
 			return fail(e, j.work, j.index)
 		}
 		if len(hits) == 0 && subject.NameCN != "" && subject.NameCN != subject.Name {
 			if budget < MaxMBSearchesPerRefresh {
 				fallback = true
-				hits, e = withCooldown(ctx, s, func() ([]mb.ReleaseGroup, error) { return s.mb.SearchReleaseGroups(ctx, subject.NameCN) })
+				hits, e = withCooldownLimit(ctx, s, workCooldownRetries, func() ([]mb.ReleaseGroup, error) { return s.mb.SearchReleaseGroups(ctx, subject.NameCN) })
 				budget++
+				if isCooldown(e) && s.cooldowns > 0 {
+					throttled, truncated = true, true
+					m.SearchStatus = "pending"
+					w.music[j.index] = m
+					continue
+				}
 				if e != nil {
 					return fail(e, j.work, j.index)
 				}
@@ -277,6 +300,9 @@ func (s *Service) executeWorks(ctx context.Context, g int64) (string, error) {
 		if e = s.store.SaveDiscoveryWorkSeed(ctx, g, w.seed, w.music, w.groups, w.mappings, w.status, "", s.now()); e != nil {
 			return "", e
 		}
+	}
+	if throttled {
+		return "MusicBrainz/Bangumi 持续限流，部分作品对应尚未完成，再次刷新会从断点继续", nil
 	}
 	if truncated {
 		return "Bangumi 检索预算已用完，下次刷新继续", nil

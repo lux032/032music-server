@@ -84,7 +84,7 @@
 
 - D-1 类型白名单：仅无 secondary 的 Album/EP/Single，及 Album+Soundtrack=OST；Remix、Audio drama、EP/Single+Soundtrack 等均排除。
 - D-2 卡片不显示曲目数（不额外查询 release）。
-- D-3 目录仅手动刷新；启动时只续跑中断（running）的那一代；限流时整轮 failed，需手动重试。**（实机修订）** 刷新遇到 MusicBrainz/Bangumi 冷却时先等待 Retry-After 后自动继续（每次请求最多等 12 次），仍失败才整轮 failed；失败或取消后再次刷新会从检查点续跑（7 天内已抓取的 seed 不重抓），正常完成后的刷新仍全量重抓。
+- D-3 目录仅手动刷新；启动时只续跑中断（running）的那一代；限流时整轮 failed，需手动重试。**（实机修订）** 刷新遇到 MusicBrainz/Bangumi 冷却时先等待 Retry-After 后自动继续（每次请求最多等 12 次），仍失败时不再整轮 failed：保留已完成的检查点，用已抓到的数据完成排名并提示“持续限流，再次刷新会从断点继续”（作品阶段每次请求只等 2 次，随即推迟剩余检索）；失败、取消或仍有未完成 seed/检索时再次刷新会从检查点续跑（7 天内已抓取的 seed 不重抓），正常完成后的刷新仍全量重抓。
 - D-4 空发行日期保留，评分 ×0.7。
 - D-5 Playwright 用隔离实例 + DB 种子 + Node fake MB；新增测试用环境变量 `MUSIC_SERVER_MUSICBRAINZ_BASE_URL`。
 - D-6 “我已有”替换专辑既有 RG 时返回 409 `replaces_rg`，需二次确认。

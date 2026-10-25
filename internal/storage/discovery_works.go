@@ -466,3 +466,14 @@ func (s *Store) discoveryMappingMetadata(c context.Context) (map[string]discover
 	}
 	return out, rows.Err()
 }
+
+// DiscoveryHasPendingSeeds reports whether the last round left artist or work
+// seeds (or work music searches) unfinished, so a refresh should resume.
+func (s *Store) DiscoveryHasPendingSeeds(c context.Context) (bool, error) {
+	if e := s.IdentityReady(c); e != nil {
+		return false, e
+	}
+	var pending bool
+	e := s.db.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM discovery_seeds WHERE status='pending') OR EXISTS(SELECT 1 FROM discovery_work_seeds WHERE status='pending') OR EXISTS(SELECT 1 FROM discovery_bangumi_music m JOIN discovery_work_music wm USING(subject_id) WHERE m.search_status='pending')`).Scan(&pending)
+	return pending, e
+}

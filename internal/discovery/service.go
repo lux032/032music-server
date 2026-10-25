@@ -108,10 +108,26 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // withCooldown retries fn after waiting out source cooldowns, up to the
 // service's per-call retry limit. Other errors are returned unchanged.
 func withCooldown[T any](ctx context.Context, s *Service, fn func() (T, error)) (T, error) {
+	return withCooldownLimit(ctx, s, s.cooldowns, fn)
+}
+
+// workCooldownRetries bounds waits per call in the optional works stage so a
+// throttled MusicBrainz search defers the rest instead of stalling the round.
+const workCooldownRetries = 2
+
+func isCooldown(e error) bool {
+	var cd *sourcegate.CooldownError
+	return errors.As(e, &cd)
+}
+
+func withCooldownLimit[T any](ctx context.Context, s *Service, limit int, fn func() (T, error)) (T, error) {
+	if limit > s.cooldowns {
+		limit = s.cooldowns
+	}
 	for attempt := 0; ; attempt++ {
 		v, e := fn()
 		var cd *sourcegate.CooldownError
-		if e == nil || !errors.As(e, &cd) || attempt >= s.cooldowns {
+		if e == nil || !errors.As(e, &cd) || attempt >= limit {
 			return v, e
 		}
 		wait := cd.RetryAfter
@@ -246,6 +262,7 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 	if e != nil {
 		return e
 	}
+	artistThrottled := false
 	for _, seed := range seeds {
 		if e = ctx.Err(); e != nil {
 			return e
@@ -259,6 +276,11 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 		if errors.Is(e, mb.ErrGone) {
 			status = "gone"
 			groups = nil
+		} else if isCooldown(e) && s.cooldowns > 0 {
+			// Persistent throttling: keep finished checkpoints, rank what we
+			// have, and let the next refresh resume the pending seeds.
+			artistThrottled = true
+			break
 		} else if e != nil {
 			return e
 		}
@@ -282,9 +304,12 @@ func (s *Service) execute(ctx context.Context, g int64) error {
 			return e
 		}
 	}
-	message, e := s.executeWorks(ctx, g)
+	message, e := s.executeWorks(ctx, g, artistThrottled)
 	if e != nil {
 		return e
+	}
+	if artistThrottled {
+		message = "MusicBrainz 持续限流，部分艺人尚未抓取，再次刷新会从断点继续"
 	}
 	ranked, e := s.rankAndSave(ctx, g)
 	if e != nil {

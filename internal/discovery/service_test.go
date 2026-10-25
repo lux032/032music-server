@@ -285,8 +285,14 @@ func TestServiceCompleteCooldownAndSpecialArtist(t *testing.T) {
 					t.Fatal(items, e)
 				}
 			} else {
-				if state.Status != "failed" || state.ErrorMessage != "MusicBrainz 限流，约 1 分钟后可重试" {
+				// Persistent throttling keeps checkpoints and completes with a
+				// resume hint instead of discarding the round.
+				if state.Status != "completed" || !strings.Contains(state.ErrorMessage, "持续限流") {
 					t.Fatal(state)
+				}
+				pending, e := f.store.DiscoveryHasPendingSeeds(f.ctx)
+				if e != nil || !pending {
+					t.Fatal("throttled seed not left pending", pending, e)
 				}
 			}
 		})
