@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lux032/032music-server/internal/metadata"
 )
@@ -270,8 +271,8 @@ func TestReleaseGroupFileMovesAlbum(t *testing.T) {
 		t.Fatalf("%q %v", got, err)
 	}
 }
-func TestReleaseGroupRebuildFailureAndPartialScan(t *testing.T) {
-	for _, partial := range []bool{false, true} {
+func TestReleaseGroupRebuildFailedScan(t *testing.T) {
+	for _, partial := range []bool{false} {
 		t.Run(map[bool]string{false: "failed", true: "partial"}[partial], func(t *testing.T) {
 			f := newAlbumMergeFixture(t)
 			job, err := f.store.CreateScanJob(f.ctx, f.library, "full")
@@ -356,5 +357,105 @@ func TestReleaseGroupReadsRequireReadyAndNormalizeIDs(t *testing.T) {
 		if _, err := f.store.ReleaseGroupIgnored(f.ctx, input); err == nil {
 			t.Fatalf("invalid ignore ID accepted: %q", input)
 		}
+	}
+}
+
+func TestReleaseGroupRebuildQuarantinesFailedFiles(t *testing.T) {
+	f := newAlbumMergeFixture(t)
+	importRG(t, f, "A/1.flac", "A", rgA)
+	importRG(t, f, "B/1.flac", "B", rgB)
+	importRG(t, f, "C/1.flac", "C", rgA)
+	a, b, c := f.albumID(t, "A"), f.albumID(t, "B"), f.albumID(t, "C")
+	job, err := f.store.CreateScanJob(f.ctx, f.library, "full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.BeginReleaseGroupRebuild(f.ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	// B fails in the rebuild; C fails too but is re-imported afterwards.
+	for _, p := range []string{"B/1.flac", "C/1.flac"} {
+		if err = f.store.AddScanError(f.ctx, job, p, "metadata_failed", "broken"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(5 * time.Millisecond)
+	importRG(t, f, "C/1.flac", "C", rgA)
+	if err = f.store.UpdateScanJob(f.ctx, job, 1, 0, 2, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.FinishScanJob(f.ctx, job, "completed", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.CompleteReleaseGroupRebuild(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.store.ReleaseGroupRebuildState(f.ctx)
+	if err != nil || state.Status != "ready" || !strings.Contains(state.Error, "2 个文件读取失败") {
+		t.Fatalf("%+v %v", state, err)
+	}
+	if got, err := f.store.AlbumReleaseGroup(f.ctx, a); err != nil || got != rgA {
+		t.Fatalf("healthy album: %q %v", got, err)
+	}
+	if _, err := f.store.AlbumReleaseGroup(f.ctx, b); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("failed file evidence trusted: %v", err)
+	}
+	if got, err := f.store.AlbumReleaseGroup(f.ctx, c); err != nil || got != rgA {
+		t.Fatalf("re-imported file lost evidence: %q %v", got, err)
+	}
+	failures, err := f.store.ReleaseGroupRebuildFailures(f.ctx, 10)
+	if err != nil || len(failures) != 2 || failures[0].Path != "B/1.flac" {
+		t.Fatalf("%+v %v", failures, err)
+	}
+	// A later scan completion must not resurrect the quarantined evidence.
+	if err = f.store.RefreshReleaseGroupIdentities(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AlbumReleaseGroup(f.ctx, b); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("quarantine resurrected: %v", err)
+	}
+}
+
+func TestReleaseGroupLegacyReadFailureRecoversAtBoot(t *testing.T) {
+	f := newAlbumMergeFixture(t)
+	importRG(t, f, "A/1.flac", "A", rgA)
+	importRG(t, f, "B/1.flac", "B", rgB)
+	job, err := f.store.CreateScanJob(f.ctx, f.library, "full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err = f.store.AddScanError(f.ctx, job, "B/1.flac", "metadata_failed", "broken"); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.UpdateScanJob(f.ctx, job, 1, 0, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.FinishScanJob(f.ctx, job, "completed", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.db.ExecContext(f.ctx, `UPDATE release_group_rebuild SET status='error',scan_job_id=?,error_message=? WHERE id=1`, job, legacyReadFailureMessage); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.RecoverReleaseGroupRebuild(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.store.ReleaseGroupRebuildState(f.ctx)
+	if err != nil || state.Status != "ready" {
+		t.Fatalf("%+v %v", state, err)
+	}
+	if _, err := f.store.AlbumReleaseGroup(f.ctx, f.albumID(t, "B")); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy failed file trusted: %v", err)
+	}
+	// Other errors (e.g. interrupted scans) stay errors.
+	if _, err = f.store.db.ExecContext(f.ctx, `UPDATE release_group_rebuild SET status='error',error_message='身份重建扫描失败或因服务重启中断，请重新启动' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.RecoverReleaseGroupRebuild(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ = f.store.ReleaseGroupRebuildState(f.ctx); state.Status != "error" {
+		t.Fatalf("%+v", state)
 	}
 }

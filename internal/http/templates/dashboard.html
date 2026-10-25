@@ -22,6 +22,7 @@
       <h2>MusicBrainz Release Group 身份</h2>
       <p>{{if eq .Identity.Status "ready"}}身份已就绪{{else}}身份未就绪 · {{.Identity.Status}}{{end}} · {{.Identity.Processed}} / {{.Identity.Discovered}}</p>
       {{if .Identity.Error}}<p role="alert">{{.Identity.Error}}</p>{{end}}
+      {{if .IdentityFailures}}<details class="identity-failures"><summary>查看读取失败的文件（{{len .IdentityFailures}}）</summary><ul>{{range .IdentityFailures}}<li><code>{{.Path}}</code> · {{.Code}} · {{.Message}}</li>{{end}}</ul></details>{{end}}
       <p>手动重读全部音频标签后才能就绪；不使用旧标签缓存回填。刷新本页查看进度。</p>
       <form method="post" action="/admin/identity/rebuild">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">

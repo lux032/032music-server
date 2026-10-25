@@ -192,7 +192,8 @@ func indexLettersWhere(kana bool) []string {
 }
 
 type dashboardPageData struct {
-	Identity storage.ReleaseGroupRebuild
+	Identity         storage.ReleaseGroupRebuild
+	IdentityFailures []storage.ScanFailure
 	Chrome
 	Version        string
 	Uptime         string
@@ -852,24 +853,31 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "identity unavailable", 500)
 		return
 	}
+	var identityFailures []storage.ScanFailure
+	if identity.Error != "" && identity.Status != "rebuilding" {
+		if identityFailures, identityErr = a.store.ReleaseGroupRebuildFailures(r.Context(), 100); identityErr != nil {
+			a.logger.Warn("query identity rebuild failures", "error", identityErr)
+		}
+	}
 	a.render(w, http.StatusOK, "dashboard.html", dashboardPageData{
-		Identity:       identity,
-		Chrome:         a.chromeFor(r.Context(), session, "console"),
-		Version:        a.version,
-		Uptime:         time.Since(a.startedAt).Round(time.Second).String(),
-		DatabaseStatus: "正常",
-		LibraryName:    a.config.LibraryName,
-		MusicDirectory: a.config.MusicDirectory,
-		Statistics:     stats,
-		Scan:           latestScan(a.store, r),
-		LibraryWatch:   a.libraryWatchView(r.Context()),
-		PurgeMissing:   a.purgeMissingView(r.Context()),
-		AudioAnalysis:  a.dashboardAudioAnalysisView(r.Context()),
-		AITagging:      a.dashboardAITaggingView(r.Context()),
-		DailyMixes:     a.dashboardDailyMixSummary(r.Context()),
-		Translation:    a.dashboardLyricsTranslationSummary(r.Context()),
-		OnlineLyrics:   a.dashboardOnlineLyricsSummary(r.Context()),
-		Notice:         r.URL.Query().Get("notice"),
+		Identity:         identity,
+		IdentityFailures: identityFailures,
+		Chrome:           a.chromeFor(r.Context(), session, "console"),
+		Version:          a.version,
+		Uptime:           time.Since(a.startedAt).Round(time.Second).String(),
+		DatabaseStatus:   "正常",
+		LibraryName:      a.config.LibraryName,
+		MusicDirectory:   a.config.MusicDirectory,
+		Statistics:       stats,
+		Scan:             latestScan(a.store, r),
+		LibraryWatch:     a.libraryWatchView(r.Context()),
+		PurgeMissing:     a.purgeMissingView(r.Context()),
+		AudioAnalysis:    a.dashboardAudioAnalysisView(r.Context()),
+		AITagging:        a.dashboardAITaggingView(r.Context()),
+		DailyMixes:       a.dashboardDailyMixSummary(r.Context()),
+		Translation:      a.dashboardLyricsTranslationSummary(r.Context()),
+		OnlineLyrics:     a.dashboardOnlineLyricsSummary(r.Context()),
+		Notice:           r.URL.Query().Get("notice"),
 	})
 }
 
