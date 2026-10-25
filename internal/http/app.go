@@ -498,7 +498,7 @@ func (a *App) Handler() http.Handler {
 	}
 	mux.Handle("GET /admin/discover", a.requireAdmin(http.HandlerFunc(a.handleDiscover)))
 	mux.Handle("GET /admin/discover/covers/{rgid}", a.requireAdmin(http.HandlerFunc(a.handleDiscoveryCover)))
-	for _, route := range []string{"GET /admin/discover/items.json", "GET /admin/discover/status.json", "POST /admin/discover/refresh", "POST /admin/discover/refresh/cancel"} {
+	for _, route := range []string{"GET /admin/discover/items.json", "GET /admin/discover/status.json", "POST /admin/discover/refresh", "POST /admin/discover/refresh/cancel", "POST /admin/discover/schedule"} {
 		mux.Handle(route, a.requireAdminJSON(http.HandlerFunc(a.handleDiscoveryJSON)))
 	}
 	for _, route := range []struct{ method, action string }{{"POST", "confirm"}, {"POST", "reject"}, {"DELETE", "reject"}} {

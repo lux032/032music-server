@@ -171,7 +171,7 @@ func (s *Store) BeginDiscoveryRefresh(c context.Context, seeds []DiscoverySeed, 
 	ids := []int64{}
 	for _, v := range seeds {
 		ids = append(ids, v.ArtistID)
-		_, e = t.ExecContext(c, `INSERT INTO discovery_seeds(artist_id,mbid,generation,status) VALUES(?,?,?,'pending') ON CONFLICT(artist_id) DO UPDATE SET status=CASE WHEN ?=0 AND mbid=excluded.mbid AND status='done' AND fetched_at>? THEN 'done' ELSE 'pending' END,mbid=excluded.mbid,generation=excluded.generation`, v.ArtistID, v.MBID, g, force, now.Add(-7*24*time.Hour).UTC().Format(time.RFC3339))
+		_, e = t.ExecContext(c, `INSERT INTO discovery_seeds(artist_id,mbid,generation,status) VALUES(?,?,?,'pending') ON CONFLICT(artist_id) DO UPDATE SET status=CASE WHEN ?=0 AND mbid=excluded.mbid AND status='done' AND fetched_at>? THEN 'done' ELSE 'pending' END,mbid=excluded.mbid,generation=excluded.generation`, v.ArtistID, v.MBID, g, force, discoveryCacheCutoff(c, t, now))
 		if e != nil {
 			return 0, e
 		}

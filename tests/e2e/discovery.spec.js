@@ -142,7 +142,16 @@ test('发现推荐、反馈、对比、刷新及 PJAX 键盘交互', async ({ pa
   await page.getByRole('button', { name: /待确认对应/ }).click();
   await expect(page.locator('article[data-subject-id="900013"]')).toContainText('Fresh A / B');
   await expect(page.locator('article[data-subject-id="900013"] [data-option-rgid="55555555-5555-4555-8555-000000000004"]')).toBeVisible();
-  await page.getByRole('button', { name: '刷新目录' }).click();
+  // An ordinary refresh now reuses freshly fetched artists; a full refetch keeps the round long enough to cancel.
+  await page.getByRole('button', { name: '定时与缓存' }).click();
+  await expect(page.locator('[data-discovery-schedule]')).toBeVisible();
+  await expect(page.locator('[data-discovery-schedule-text]')).toContainText('数据复用 7 天');
+  await page.locator('[data-discovery-schedule] select[name="intervalDays"]').selectOption('3');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.locator('[data-discovery-schedule-text]')).toContainText('每 3 天');
+  await page.getByRole('button', { name: '定时与缓存' }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '全部重新抓取' }).click();
   await page.getByRole('button', { name: '取消刷新' }).click();
   await expect(page.locator('[data-discovery-status]')).toContainText('已取消');
   await expect(page.locator('[data-discovery-status] time')).toHaveAttribute('data-local-time', '');

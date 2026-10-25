@@ -37,6 +37,8 @@ type Options struct {
 	// CoverBackfill downloads missing covers in the background at startup and
 	// after a re-rank (production only; tests keep downloads explicit).
 	CoverBackfill bool
+	// Scheduler runs the user-configured automatic refresh (production only).
+	Scheduler bool
 }
 
 // DefaultCooldownRetries lets a long refresh survive transient MusicBrainz /
@@ -57,6 +59,8 @@ type Service struct {
 	dataDir, caa string
 	legacyDir    string
 	autoCovers   bool
+	scheduler    bool
+	schedOnce    sync.Once
 	coverBusy    atomic.Bool
 	cooldowns    int
 	sleep        func(context.Context, time.Duration) error
@@ -99,7 +103,7 @@ func New(store *storage.Store, logger *slog.Logger, o Options) *Service {
 	if o.Sleep == nil {
 		o.Sleep = sleepContext
 	}
-	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, coverCacheDir), legacyDir: filepath.Join(o.DataDir, "discovery-covers"), autoCovers: o.CoverBackfill, caa: o.CAAURL}
+	return &Service{cooldowns: o.CooldownRetries, sleep: o.Sleep, bangumi: o.Bangumi, baseCtx: o.BaseContext, store: store, logger: logger, mb: &mb.Client{BaseURL: o.MBBaseURL, HTTP: o.HTTPClient, Gate: o.Gate, UA: o.UserAgent, Now: o.Now, Logger: logger}, images: o.HTTPClient, gate: o.Gate, now: o.Now, ua: o.UserAgent, dataDir: filepath.Join(o.DataDir, coverCacheDir), legacyDir: filepath.Join(o.DataDir, "discovery-covers"), autoCovers: o.CoverBackfill, scheduler: o.Scheduler, caa: o.CAAURL}
 }
 
 // coverCacheDir holds 500px Cover Art Archive thumbnails. The directory name
@@ -109,6 +113,55 @@ const coverCacheDir = "discovery-covers-500"
 // coverMissingRetry lets a release group without CAA art be checked again,
 // since artwork is often uploaded after release.
 const coverMissingRetry = 30 * 24 * time.Hour
+
+// startScheduler checks the automatic refresh schedule once a minute.
+func (s *Service) startScheduler(ctx context.Context) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			if _, e := s.CheckSchedule(ctx); e != nil && ctx.Err() == nil {
+				s.logger.Warn("discovery schedule check", "error", e)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// CheckSchedule starts an incremental refresh when the schedule is due. The
+// first check after enabling only arms the schedule, so upgrading or turning
+// it on never triggers an immediate long refresh.
+func (s *Service) CheckSchedule(ctx context.Context) (bool, error) {
+	v, e := s.store.DiscoverySchedule(ctx)
+	if e != nil || !v.Enabled {
+		return false, e
+	}
+	now := s.now()
+	if v.LastAutoAt == "" {
+		return false, s.store.MarkDiscoveryAutoRun(ctx, now)
+	}
+	if next := v.NextRun(); next.IsZero() || now.Before(next) {
+		return false, nil
+	}
+	if s.store.IdentityReady(ctx) != nil {
+		return false, nil
+	}
+	if _, e = s.Refresh(ctx, false); errors.Is(e, ErrRunning) {
+		return false, nil
+	} else if e != nil {
+		// Do not retry a failing start every minute; wait for the next slot.
+		_ = s.store.MarkDiscoveryAutoRun(ctx, now)
+		return false, e
+	}
+	s.logger.Info("discovery scheduled refresh started")
+	return true, s.store.MarkDiscoveryAutoRun(ctx, now)
+}
 
 func sleepContext(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -170,6 +223,9 @@ func (s *Service) Start(ctx context.Context) error {
 		return ErrRunning
 	}
 	s.baseCtx = ctx
+	if s.scheduler {
+		s.schedOnce.Do(func() { s.startScheduler(ctx) })
+	}
 	v, e := s.store.DiscoveryStatus(ctx)
 	if e != nil {
 		return e

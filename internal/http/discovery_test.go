@@ -55,7 +55,7 @@ func TestDiscoveryHandlers(t *testing.T) {
 	check(request("GET", "/admin/discover/items.json", "", "", false), 401)
 	for _, endpoint := range []struct{ method, path string }{
 		{"POST", "/admin/discover/mapping/1/bad/confirm"}, {"POST", "/admin/discover/mapping/1/bad/reject"}, {"DELETE", "/admin/discover/mapping/1/bad/reject"},
-		{"POST", "/admin/discover/refresh"}, {"POST", "/admin/discover/refresh/cancel"},
+		{"POST", "/admin/discover/refresh"}, {"POST", "/admin/discover/refresh/cancel"}, {"POST", "/admin/discover/schedule"},
 		{"POST", "/admin/discover/rg/bad/ignore"}, {"DELETE", "/admin/discover/rg/bad/ignore"},
 		{"POST", "/admin/discover/rg/bad/owned"}, {"POST", "/admin/discover/rg/bad/not-same"},
 	} {
@@ -81,6 +81,15 @@ func TestDiscoveryHandlers(t *testing.T) {
 		}
 	}
 	exec(`UPDATE release_group_rebuild SET status='ready'`)
+	// Schedule: invalid values rejected, valid ones saved and reflected in status.json.
+	for _, body := range []string{`{"enabled":true,"intervalDays":0,"runHourUtc":4,"cacheDays":7}`, `{"enabled":true,"intervalDays":7,"runHourUtc":24,"cacheDays":7}`, `{"enabled":true,"intervalDays":7,"runHourUtc":4,"cacheDays":31}`, `not json`} {
+		check(request("POST", "/admin/discover/schedule", body, csrf, true), 400)
+	}
+	check(request("POST", "/admin/discover/schedule", `{"enabled":true,"intervalDays":3,"runHourUtc":5,"cacheDays":14}`, csrf, true), 200)
+	if w := request("GET", "/admin/discover/status.json", "", "", true); !strings.Contains(w.Body.String(), `"intervalDays":3`) || !strings.Contains(w.Body.String(), `"cacheDays":14`) || !strings.Contains(w.Body.String(), `"runHourUtc":5`) {
+		t.Fatal("schedule not in status", w.Body.String())
+	}
+	check(request("POST", "/admin/discover/refresh", `{"full":`, csrf, true), 400)
 	for _, query := range []string{"source=nope", "tab=nope"} {
 		check(request("GET", "/admin/discover/items.json?"+query, "", "", true), 400)
 	}

@@ -10,7 +10,15 @@
 <section class="discovery-blocked"><h2>发现功能尚未就绪</h2><p>{{.Blocked}}</p>{{if .Rebuild.Status}}<p>身份重建状态：{{.Rebuild.Status}} · {{.Rebuild.Processed}} / {{.Rebuild.Discovered}}</p>{{if .Rebuild.Error}}<p>{{.Rebuild.Error}}</p>{{end}}<a href="/admin">前往控制台重建</a>{{end}}</section>
 {{else}}
 <section data-discovery data-icons="{{assetIconsSVG}}">
-<div class="discovery-status"><p class="discovery-status-text"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><span class="discovery-status-note">与元数据增强共享请求带宽，仅手动刷新</span></p><div class="discovery-status-actions"><button type="button" class="secondary" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button><button type="button" data-action="refresh">刷新目录</button></div></div>
+<div class="discovery-status"><p class="discovery-status-text"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><span class="discovery-status-note" data-discovery-schedule-text></span></p><div class="discovery-status-actions"><button type="button" class="secondary" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button><button type="button" class="secondary" data-action="schedule" aria-expanded="false" aria-controls="discovery-schedule">定时与缓存</button><button type="button" data-action="refresh" title="复用缓存期内已抓取的数据，只补过期和新增的艺人与作品，并重新计算排名">刷新目录</button></div>
+<form class="discovery-schedule" id="discovery-schedule" data-discovery-schedule hidden>
+<label class="discovery-switch"><input type="checkbox" name="enabled"> 定时自动刷新</label>
+<label>间隔<select name="intervalDays"><option value="1">每天</option><option value="3">每 3 天</option><option value="7">每周</option><option value="14">每 2 周</option><option value="30">每月</option></select></label>
+<label>时间<select name="hour" data-hour-select></select></label>
+<label>数据复用<select name="cacheDays"><option value="1">1 天</option><option value="3">3 天</option><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option></select></label>
+<div class="discovery-schedule-actions"><button type="submit">保存</button><button type="button" class="secondary" data-action="refresh-full">全部重新抓取</button></div>
+<p class="discovery-schedule-help">“刷新目录”和定时刷新都会复用“数据复用”期内已抓取的艺人与作品，只联网补过期和新增的部分，排名每次都会重新计算。“全部重新抓取”会重新请求所有艺人（约每 2 秒一个，艺人多时需要较长时间）。时间按本机时区显示。</p>
+</form></div>
 <nav class="discovery-tabs" aria-label="发现内容状态">
 <button type="button" data-tab="recommended" aria-pressed="true">为你发现 <span data-count="recommended">{{.Counts.Recommended}}</span></button>
 <button type="button" data-tab="acquiring" aria-pressed="false">获取中 <span data-count="acquiring">{{.Counts.Acquiring}}</span></button>

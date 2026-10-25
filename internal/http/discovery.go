@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/lux032/032music-server/internal/acquisition"
 	"github.com/lux032/032music-server/internal/discovery"
@@ -64,15 +66,23 @@ type discoveryCountsDTO struct {
 	Acquiring   int `json:"acquiring"`
 	Ignored     int `json:"ignored"`
 }
+type discoveryScheduleDTO struct {
+	Enabled      bool   `json:"enabled"`
+	IntervalDays int    `json:"intervalDays"`
+	RunHourUTC   int    `json:"runHourUtc"`
+	CacheDays    int    `json:"cacheDays"`
+	NextRunAt    string `json:"nextRunAt"`
+}
 type discoveryStatusDTO struct {
-	Bangumi      string `json:"bangumi"`
-	Status       string `json:"status"`
-	Generation   int64  `json:"generation"`
-	Total        int    `json:"total"`
-	Processed    int    `json:"processed"`
-	ErrorMessage string `json:"errorMessage"`
-	StartedAt    string `json:"startedAt"`
-	FinishedAt   string `json:"finishedAt"`
+	Schedule     discoveryScheduleDTO `json:"schedule"`
+	Bangumi      string               `json:"bangumi"`
+	Status       string               `json:"status"`
+	Generation   int64                `json:"generation"`
+	Total        int                  `json:"total"`
+	Processed    int                  `json:"processed"`
+	ErrorMessage string               `json:"errorMessage"`
+	StartedAt    string               `json:"startedAt"`
+	FinishedAt   string               `json:"finishedAt"`
 }
 type discoveryPageData struct {
 	Chrome
@@ -179,6 +189,13 @@ func (a *App) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	a.render(w, 200, "discover.html", d)
 }
+func discoveryScheduleView(v storage.DiscoverySchedule) discoveryScheduleDTO {
+	d := discoveryScheduleDTO{Enabled: v.Enabled, IntervalDays: v.IntervalDays, RunHourUTC: v.RunHour, CacheDays: v.CacheDays}
+	if next := v.NextRun(); !next.IsZero() {
+		d.NextRunAt = next.Format(time.RFC3339)
+	}
+	return d
+}
 func discoveryStatus(s storage.DiscoveryStatus) discoveryStatusDTO {
 	return discoveryStatusDTO{Status: s.Status, Generation: s.Generation, Total: s.Total, Processed: s.Processed, ErrorMessage: s.ErrorMessage, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt}
 }
@@ -228,6 +245,12 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		view := discoveryStatus(s)
+		sched, err := a.store.DiscoverySchedule(r.Context())
+		if err != nil {
+			a.discoveryError(w, err)
+			return
+		}
+		view.Schedule = discoveryScheduleView(sched)
 		view.Bangumi = "Bangumi 未启用，已跳过作品来源"
 		if enabled {
 			view.Bangumi = "Bangumi 已启用"
@@ -298,20 +321,50 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"items": items, "counts": counts, "html": html.String()})
 		return
 	case "/admin/discover/refresh":
-		// A refresh after a failed/cancelled round resumes from the per-seed
-		// checkpoints (seeds fetched within 7 days are kept); otherwise refetch.
-		force := true
-		if st, se := a.discovery.Status(r.Context()); se == nil && (st.Status == "failed" || st.Status == "cancelled") {
-			force = false
-		} else if pending, pe := a.store.DiscoveryHasPendingSeeds(r.Context()); pe == nil && pending {
-			force = false
+		// An ordinary refresh reuses artist/work catalogs fetched within the
+		// configured cache window and re-ranks everything; {"full":true}
+		// refetches every artist from MusicBrainz.
+		var body struct {
+			Full bool `json:"full"`
 		}
-		g, e := a.discovery.Refresh(r.Context(), force)
+		if r.ContentLength != 0 {
+			if e := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&body); e != nil && !errors.Is(e, io.EOF) {
+				writeAPIError(w, 400, "invalid_body", "请求格式无效")
+				return
+			}
+		}
+		g, e := a.discovery.Refresh(r.Context(), body.Full)
 		if e != nil {
 			a.discoveryError(w, e)
 			return
 		}
 		writeJSON(w, 202, map[string]any{"generation": g})
+		return
+	case "/admin/discover/schedule":
+		var body struct {
+			Enabled      bool `json:"enabled"`
+			IntervalDays int  `json:"intervalDays"`
+			RunHourUTC   int  `json:"runHourUtc"`
+			CacheDays    int  `json:"cacheDays"`
+		}
+		if e := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&body); e != nil {
+			writeAPIError(w, 400, "invalid_body", "请求格式无效")
+			return
+		}
+		v := storage.DiscoverySchedule{Enabled: body.Enabled, IntervalDays: body.IntervalDays, RunHour: body.RunHourUTC, CacheDays: body.CacheDays}
+		if e := a.store.SaveDiscoverySchedule(r.Context(), v); errors.Is(e, storage.ErrInvalidDiscoverySchedule) {
+			writeAPIError(w, 400, "invalid_schedule", "定时设置无效：间隔与缓存为 1–30 天，时间为 0–23 点")
+			return
+		} else if e != nil {
+			a.discoveryError(w, e)
+			return
+		}
+		sched, e := a.store.DiscoverySchedule(r.Context())
+		if e != nil {
+			a.discoveryError(w, e)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "schedule": discoveryScheduleView(sched)})
 		return
 	case "/admin/discover/refresh/cancel":
 		if e := a.discovery.Cancel(r.Context()); e != nil {

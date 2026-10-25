@@ -71,7 +71,7 @@ func beginDiscoveryWorks(c context.Context, t *sql.Tx, g int64, seeds [][]Discov
 	for _, list := range seeds {
 		for _, v := range list {
 			ids = append(ids, v.WorkID)
-			if _, e := t.ExecContext(c, `INSERT INTO discovery_work_seeds(work_id,subject_id,generation,status) VALUES(?,?,?,'pending') ON CONFLICT(work_id) DO UPDATE SET status=CASE WHEN ?=0 AND subject_id=excluded.subject_id AND status='done' AND fetched_at>? AND NOT EXISTS(SELECT 1 FROM discovery_work_music wm JOIN discovery_bangumi_music m USING(subject_id) WHERE wm.work_id=excluded.work_id AND m.search_status='pending') THEN 'done' ELSE 'pending' END,subject_id=excluded.subject_id,generation=excluded.generation`, v.WorkID, v.SubjectID, g, force, now.Add(-7*24*time.Hour).UTC().Format(time.RFC3339)); e != nil {
+			if _, e := t.ExecContext(c, `INSERT INTO discovery_work_seeds(work_id,subject_id,generation,status) VALUES(?,?,?,'pending') ON CONFLICT(work_id) DO UPDATE SET status=CASE WHEN ?=0 AND subject_id=excluded.subject_id AND status='done' AND fetched_at>? AND NOT EXISTS(SELECT 1 FROM discovery_work_music wm JOIN discovery_bangumi_music m USING(subject_id) WHERE wm.work_id=excluded.work_id AND m.search_status='pending') THEN 'done' ELSE 'pending' END,subject_id=excluded.subject_id,generation=excluded.generation`, v.WorkID, v.SubjectID, g, force, discoveryCacheCutoff(c, t, now)); e != nil {
 				return e
 			}
 		}

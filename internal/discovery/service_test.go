@@ -579,3 +579,59 @@ func TestDiscoveryUTCAndRecursiveMergeSignals(t *testing.T) {
 		t.Fatal(fetched, started, e)
 	}
 }
+
+func TestScheduleArmsThenRunsIncrementalRefresh(t *testing.T) {
+	f := setup(t)
+	f.ready(t)
+	var calls atomic.Int32
+	s, clock := serviceWithClock(t, f, func(w http.ResponseWriter, r *http.Request) { calls.Add(1); respond(w) })
+	if e := f.store.SaveDiscoverySchedule(f.ctx, storage.DiscoverySchedule{Enabled: true, IntervalDays: 1, RunHour: clock.Now().UTC().Hour(), CacheDays: 7}); e != nil {
+		t.Fatal(e)
+	}
+	// First check only arms the schedule.
+	if ran, e := s.CheckSchedule(f.ctx); e != nil || ran {
+		t.Fatal(ran, e)
+	}
+	if ran, _ := s.CheckSchedule(f.ctx); ran {
+		t.Fatal("ran before the interval elapsed")
+	}
+	_ = clock.Sleep(f.ctx, 25*time.Hour)
+	if ran, e := s.CheckSchedule(f.ctx); e != nil || !ran {
+		t.Fatal("due schedule did not run", ran, e)
+	}
+	s.Wait()
+	first := calls.Load()
+	if first == 0 {
+		t.Fatal("scheduled refresh fetched nothing")
+	}
+	// The next due run is incremental: artists fetched within cache_days are reused.
+	_ = clock.Sleep(f.ctx, 25*time.Hour)
+	if ran, e := s.CheckSchedule(f.ctx); e != nil || !ran {
+		t.Fatal(ran, e)
+	}
+	s.Wait()
+	if calls.Load() != first {
+		t.Fatal("incremental scheduled refresh refetched cached artists", first, calls.Load())
+	}
+	// Disabled schedules never run.
+	if e := f.store.SaveDiscoverySchedule(f.ctx, storage.DiscoverySchedule{Enabled: false, IntervalDays: 1, RunHour: 0, CacheDays: 7}); e != nil {
+		t.Fatal(e)
+	}
+	_ = clock.Sleep(f.ctx, 72*time.Hour)
+	if ran, _ := s.CheckSchedule(f.ctx); ran {
+		t.Fatal("disabled schedule ran")
+	}
+}
+
+func TestScheduleValidationAndNextRun(t *testing.T) {
+	f := setup(t)
+	for _, v := range []storage.DiscoverySchedule{{IntervalDays: 0, CacheDays: 7}, {IntervalDays: 31, CacheDays: 7}, {IntervalDays: 7, RunHour: 24, CacheDays: 7}, {IntervalDays: 7, CacheDays: 0}} {
+		if e := f.store.SaveDiscoverySchedule(f.ctx, v); !errors.Is(e, storage.ErrInvalidDiscoverySchedule) {
+			t.Fatal(v, e)
+		}
+	}
+	v := storage.DiscoverySchedule{Enabled: true, IntervalDays: 7, RunHour: 20, LastAutoAt: "2026-10-25T20:00:05Z"}
+	if got := v.NextRun().Format(time.RFC3339); got != "2026-11-01T20:00:00Z" {
+		t.Fatal(got)
+	}
+}

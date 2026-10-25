@@ -210,6 +210,7 @@
         const action = b.dataset.action, card = b.closest('article[data-rgid], article[data-subject-id]'), focusIndex = cardIndex(card);
         if (!action) return;
         if (action === 'close') { close(); return; }
+        if (action === 'schedule') { const open = scheduleForm.hidden; scheduleForm.hidden = !open; b.setAttribute('aria-expanded', String(open)); if (open) scheduleForm.elements.enabled.focus(); return; }
         if (action === 'acquire') { open(card, b, false, true); return; }
         if (action === 'force-search') { await searchTorrents(true); return; }
         if (action === 'task-cancel') { open(card, b, false); search.hidden = true; cancelPanel.hidden = false; root.querySelector('#discovery-dialog-title').textContent = '取消获取任务'; cancelPanel.querySelector('button').focus(); return; }
@@ -260,6 +261,10 @@
         }
         if (action === 'more') await load(true);
         if (action === 'refresh' || action === 'cancel') { await request(action === 'refresh' ? 'refresh' : 'refresh/cancel', 'POST'); if (action === 'refresh') previousStatus = 'running'; await poll(); }
+        if (action === 'refresh-full') {
+          if (!window.confirm('将重新向 MusicBrainz 请求所有艺人的发行，艺人较多时需要较长时间。确定继续？')) return;
+          await request('refresh', 'POST', { full: true }); previousStatus = 'running'; await poll(); announce('已开始全部重新抓取。');
+        }
       } catch (e) { if (e.name !== 'AbortError') { if (dialog.open) showDialogError(e); else announce(e.message); } }
       finally { busy = false; b.disabled = b === acquireButton ? selected === undefined || !snapshot : b.dataset.action === 'refresh' && previousStatus === 'running'; }
     }, { signal });
@@ -271,7 +276,41 @@
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }, { signal });
-    let previousStatus;
+    let previousStatus, scheduleFilled = false;
+    const scheduleForm = root.querySelector('[data-discovery-schedule]');
+    const tzOffset = new Date().getTimezoneOffset(); // minutes, UTC = local + offset
+    const toLocalHour = utc => (((Math.round((utc * 60 - tzOffset) / 60)) % 24) + 24) % 24;
+    const toUtcHour = local => (((Math.round((local * 60 + tzOffset) / 60)) % 24) + 24) % 24;
+    const hourSelect = scheduleForm.querySelector('[data-hour-select]');
+    for (let h = 0; h < 24; h++) hourSelect.append(new Option(String(h).padStart(2, '0') + ':00', String(h)));
+    function renderSchedule(v) {
+      if (!v) return;
+      const text = root.querySelector('[data-discovery-schedule-text]');
+      text.replaceChildren();
+      const labels = { 1: '每天', 3: '每 3 天', 7: '每周', 14: '每 2 周', 30: '每月' };
+      if (!v.enabled) text.append('定时刷新已关闭');
+      else {
+        text.append('定时：' + (labels[v.intervalDays] || '每 ' + v.intervalDays + ' 天') + ' ' + String(toLocalHour(v.runHourUtc)).padStart(2, '0') + ':00');
+        if (v.nextRunAt) { text.append(' · 下次 '); const t = document.createElement('time'); t.dateTime = v.nextRunAt; t.textContent = new Date(v.nextRunAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); text.append(t); }
+      }
+      text.append(' · 数据复用 ' + v.cacheDays + ' 天');
+      if (!scheduleFilled || scheduleForm.hidden) {
+        scheduleForm.elements.enabled.checked = v.enabled;
+        scheduleForm.elements.intervalDays.value = String(v.intervalDays);
+        scheduleForm.elements.hour.value = String(toLocalHour(v.runHourUtc));
+        scheduleForm.elements.cacheDays.value = String(v.cacheDays);
+        scheduleFilled = true;
+      }
+    }
+    scheduleForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const f = scheduleForm.elements;
+      try {
+        const data = await request('schedule', 'POST', { enabled: f.enabled.checked, intervalDays: Number(f.intervalDays.value), runHourUtc: toUtcHour(Number(f.hour.value)), cacheDays: Number(f.cacheDays.value) });
+        scheduleFilled = false; renderSchedule(data.schedule); announce('定时设置已保存。');
+        scheduleForm.hidden = true; const toggle = root.querySelector('[data-action="schedule"]'); toggle.setAttribute('aria-expanded', 'false'); toggle.focus();
+      } catch (e) { announce(e.message); }
+    }, { signal });
     async function poll() {
       clearTimeout(timer);
       try {
@@ -290,6 +329,7 @@
           if (s.status === 'cancelled') status.append(' · 已取消');
         }
         status.append(' · MusicBrainz · ' + (s.bangumi || 'Bangumi'));
+        renderSchedule(s.schedule);
         root.querySelector('[data-action="cancel"]').hidden = s.status !== 'running';
         root.querySelector('[data-action="refresh"]').disabled = s.status === 'running';
         if (previousStatus === 'running' && s.status !== 'running') { await load(); announce(s.errorMessage || '目录刷新已结束。'); }
