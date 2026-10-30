@@ -236,8 +236,9 @@ These are **server process variables**, unless marked “Compose only”. Native
 | `MUSIC_SERVER_COOKIE_SECURE` | `false` | Secure admin cookies for HTTPS. |
 | `MUSIC_SERVER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
 | `MUSIC_SERVER_DEV_MODE` | `false` | Allows short nonempty passwords; missing media token falls back to API token. Local development only. |
-| `MUSIC_SERVER_RESET_CREDENTIALS` | disabled | `password`, `tokens`, or `all`; clears corresponding stored overrides and all admin sessions on every startup while set. Remove after recovery. |
+| `MUSIC_SERVER_RESET_CREDENTIALS` | disabled | `password` (username, password and two-factor login), `tokens`, or `all`; clears corresponding stored overrides and all admin sessions on every startup while set. Remove after recovery. |
 | `MUSIC_SERVER_TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs for login rate limiting. Invalid syntax prevents startup. |
+| `MUSIC_SERVER_LOGIN_ALLOWLIST` | empty | Comma-separated IPs/CIDRs never banned for failed logins (more can be managed on the security page). Also the recovery path if you ban yourself. Invalid syntax prevents startup. |
 | `MUSIC_SERVER_FFMPEG_PATH` | `ffmpeg` on PATH | ffmpeg executable; missing encoders disable corresponding transcode formats, not the server. |
 | `MUSIC_SERVER_TRANSCODE_LIVE_MAX` | `4` | Concurrent live transcodes. |
 | `MUSIC_SERVER_TRANSCODE_CACHE_JOBS` | `2` | Concurrent cached transcodes. |
@@ -258,7 +259,11 @@ At `/admin/settings/security`, change the username/password, rotate tokens, or r
 
 Password overrides use PBKDF2-SHA256 (600,000 iterations); API token overrides are stored as SHA-256 hashes. The media token is stored in plaintext so it can be revealed after password verification. Changing username/password invalidates other sessions; rotating tokens immediately rejects new requests using old tokens without interrupting an already authorized stream.
 
-If you forget a password override, temporarily pass `MUSIC_SERVER_RESET_CREDENTIALS=password` to the server and recreate/restart it to restore the environment username/password. In Compose, add the variable under `environment` first. Remove it after recovery and recreate again. `tokens` and `all` also exist. Tokens entered in the security page must be at least 24 characters and use only letters, digits, `-`, `_`, `.`, and `~`.
+If you forget a password override, temporarily pass `MUSIC_SERVER_RESET_CREDENTIALS=password` to the server and recreate/restart it to restore the environment username/password. In Compose, add the variable under `environment` first. Remove it after recovery and recreate again. `tokens` and `all` also exist.
+
+Login bans: 10 consecutive failures from one address (or 30 across usernames) ban it, escalating on repeat offences: 15 min → 1 h → 6 h → 24 h → 7 days. Wrong passwords, 2FA codes and the security page's current-password checks all count. Bans are stored in the database and survive restarts; strikes are forgotten after 30 days without a new one or after a successful login from that address. IPv6 is tracked per /64. The security page lists and lifts bans and manages an allowlist (allowlisted addresses are never banned but keep the basic 10-failures/15-minute per-username lock, and still need password and 2FA). Behind a reverse proxy you must set `MUSIC_SERVER_TRUSTED_PROXIES`, otherwise everyone shares the proxy's address and an attacker can ban you too. If you lock yourself out, add your address to `MUSIC_SERVER_LOGIN_ALLOWLIST`, restart, log in and lift the ban.
+
+Two-factor login (TOTP): on the security page, enter the current password, choose “设置两步验证”, scan the QR code with any authenticator app and confirm with a 6-digit code. Admin-panel logins then require password + code (API and media tokens are unaffected). If you lose the device, restart once with `MUSIC_SERVER_RESET_CREDENTIALS=password` to turn 2FA off. Keep the server clock in sync (±30 s tolerance). Tokens entered in the security page must be at least 24 characters and use only letters, digits, `-`, `_`, `.`, and `~`.
 
 ## Metadata and work associations
 

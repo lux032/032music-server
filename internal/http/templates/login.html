@@ -18,6 +18,15 @@
     <img class="brand-mark" src="{{assetBrandIcon}}" alt="032 Music Server" width="56" height="56">
     <p class="eyebrow">SELF-HOSTED MUSIC</p>
     <h1>音乐服务器管理面板</h1>
+    {{if .TOTP}}
+    <p class="muted">请输入身份验证器中显示的 6 位验证码。</p>
+    {{if .Error}}<div class="alert" role="alert">{{.Error}}</div>{{end}}
+    <form method="post" action="/admin/login/2fa" class="login-form" data-login-totp>
+      <label>验证码<input class="login-code-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus></label>
+      <button type="submit">验证</button>
+    </form>
+    <p class="login-back"><a href="/admin/login">返回重新登录</a></p>
+    {{else}}
     <p class="muted">登录后查看服务状态、音乐库统计与扫描任务。</p>
     {{if .Error}}<div class="alert" role="alert">{{.Error}}</div>{{end}}
     <form method="post" action="/admin/login" class="login-form">
@@ -26,6 +35,7 @@
       <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
       <button type="submit">登录</button>
     </form>
+    {{end}}
   </main>
 </body>
 </html>

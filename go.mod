@@ -8,6 +8,7 @@ require (
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.56.0
+	rsc.io/qr v0.2.0
 )
 
 require (

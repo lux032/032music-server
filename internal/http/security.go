@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"time"
 
@@ -43,6 +44,12 @@ type securityPageData struct {
 	// configured, so the environment API token doubles as the media token.
 	MediaTokenSharesAPIToken bool
 	Flash                    *securityFlash
+	// TOTPEnabled reports whether two-factor login is on; TOTPSetup is the
+	// enrollment pending on this session, if any.
+	TOTPEnabled bool
+	TOTPSetup   *totpSetupView
+	// Login is the ban / allowlist overview.
+	Login loginProtectionView
 }
 
 // securityResetKeys maps the /reset/{key} path value to the override key
@@ -60,9 +67,9 @@ var securityResetKeys = map[string]struct {
 // resetModeItems describes what each MUSIC_SERVER_RESET_CREDENTIALS value
 // clears, for the reset-mode banner.
 var resetModeItems = map[string]string{
-	config.ResetCredentialsPassword: "登录用户名与密码",
+	config.ResetCredentialsPassword: "登录用户名、密码与两步验证",
 	config.ResetCredentialsTokens:   "API Token 与媒体 Token",
-	config.ResetCredentialsAll:      "登录用户名、密码、API Token 与媒体 Token",
+	config.ResetCredentialsAll:      "登录用户名、密码、两步验证、API Token 与媒体 Token",
 }
 
 func setNoStore(w http.ResponseWriter) {
@@ -106,6 +113,11 @@ func (a *App) handleSecurityPage(w http.ResponseWriter, r *http.Request) {
 	if flash, ok := a.sessions.takeFlash(r); ok {
 		data.Flash = &flash
 	}
+	data.Login = a.loginProtectionFor(r)
+	data.TOTPEnabled = creds.totpEnabled()
+	if setup, ok := a.sessions.totpSetupFor(r); ok && !data.TOTPEnabled {
+		data.TOTPSetup = &totpSetupView{Secret: groupTOTPSecret(setup.secret), QRImage: template.URL(totpQRDataURI(totpURI(creds.username, setup.secret)))}
+	}
 	a.render(w, http.StatusOK, "security.html", data)
 }
 
@@ -119,7 +131,7 @@ type securityNotice struct {
 // fixed messages. Only codes travel in URLs; unknown codes show nothing,
 // so the query string cannot inject text into the page.
 var securityNotices = map[string]securityNotice{
-	"locked":         {"失败次数过多，请稍后再试（最长 15 分钟）。", true},
+	"locked":         {"失败次数过多，当前地址已被临时封禁，请稍后再试。", true},
 	"busy":           {"系统繁忙，请稍后重试。", true},
 	"verify_failed":  {"暂时无法验证密码，请稍后再试。", true},
 	"wrong_password": {"当前密码不正确。", true},
@@ -158,6 +170,26 @@ var securityNotices = map[string]securityNotice{
 	"password_env":      {"密码已在使用环境变量。", true},
 	"api_token_env":     {"API Token 已在使用环境变量。", true},
 	"media_token_env":   {"媒体 Token 已在使用环境变量。", true},
+
+	"totp_setup_started":   {"请用身份验证器扫描二维码（或手动输入密钥），然后输入 6 位验证码完成启用。", false},
+	"totp_setup_expired":   {"两步验证设置已过期，请重新开始。", true},
+	"totp_setup_cancelled": {"已取消启用两步验证。", false},
+	"totp_code_wrong":      {"验证码不正确或已使用，请等待下一个验证码后重试。", true},
+	"totp_enabled":         {"两步验证已启用，其他登录会话已退出。", false},
+	"totp_disabled":        {"两步验证已停用，其他登录会话已退出。", false},
+	"totp_already":         {"两步验证已经启用。", true},
+	"totp_not_enabled":     {"两步验证尚未启用。", true},
+
+	"ban_removed":        {"已解除封禁，该地址的失败记录已清零。", false},
+	"ban_not_found":      {"该地址未被封禁。", true},
+	"allow_added":        {"已加入白名单。", false},
+	"allow_removed":      {"已从白名单移除。", false},
+	"allow_invalid":      {"请输入有效的 IP 地址或 CIDR（如 192.168.1.0/24）。", true},
+	"allow_too_broad":    {"范围过大：IPv4 至少 /8，IPv6 至少 /16。", true},
+	"allow_exists":       {"该范围已在白名单中。", true},
+	"allow_full":         {fmt.Sprintf("白名单最多 %d 条。", maxLoginAllowlist), true},
+	"allow_note_invalid": {fmt.Sprintf("备注不能超过 %d 个字符，且不能包含控制字符。", maxLoginAllowNote), true},
+	"allow_not_found":    {"白名单中没有该条目。", true},
 }
 
 // securityRedirect answers a security form with 303 and a notice code.
@@ -175,6 +207,13 @@ func (a *App) beginSensitiveOperation(w http.ResponseWriter, r *http.Request, op
 	return a.beginSensitiveOperationAt(w, r, operation, securityPagePath)
 }
 func (a *App) beginSensitiveOperationAt(w http.ResponseWriter, r *http.Request, operation, target string) (*credentials, bool) {
+	return a.beginSensitiveOperationOpts(w, r, operation, target, true)
+}
+
+// beginSensitiveOperationOpts: with clearLimiter false a correct password
+// leaves earlier failures counted; the caller clears them once its own
+// additional check (e.g. a two-factor code) passed as well.
+func (a *App) beginSensitiveOperationOpts(w http.ResponseWriter, r *http.Request, operation, target string, clearLimiter bool) (*credentials, bool) {
 	setNoStore(w)
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -203,7 +242,9 @@ func (a *App) beginSensitiveOperationAt(w http.ResponseWriter, r *http.Request, 
 		redirectWithNotice(w, r, target, "wrong_password")
 		return nil, false
 	}
-	a.loginLimiter.recordSuccessFor(r, creds.username)
+	if clearLimiter {
+		a.loginLimiter.recordSuccessFor(r, creds.username)
+	}
 	return creds, true
 }
 

@@ -49,6 +49,11 @@ type Config struct {
 	// or CIDRs of reverse proxies whose X-Forwarded-For is believed when
 	// rate limiting logins. Empty keeps RemoteAddr as the client address.
 	TrustedProxies string
+	// LoginAllowlist is MUSIC_SERVER_LOGIN_ALLOWLIST: comma-separated IPs or
+	// CIDRs that are never banned for failed logins (in addition to the
+	// list managed on the security page). Also the recovery path when the
+	// admin's own address got banned.
+	LoginAllowlist string
 	// WorkPosterBackfill is MUSIC_SERVER_WORK_POSTER_BACKFILL (default on):
 	// automatically cache missing work posters ~30s after startup, after scans
 	// and after each enrichment run. Tests/e2e disable it so nothing reaches
@@ -167,6 +172,7 @@ func Load() (Config, error) {
 		MediaTokenGenerated:  mediaTokenGenerated,
 		ResetCredentials:     strings.ToLower(strings.TrimSpace(os.Getenv("MUSIC_SERVER_RESET_CREDENTIALS"))),
 		TrustedProxies:       strings.TrimSpace(os.Getenv("MUSIC_SERVER_TRUSTED_PROXIES")),
+		LoginAllowlist:       strings.TrimSpace(os.Getenv("MUSIC_SERVER_LOGIN_ALLOWLIST")),
 		CastBaseURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("MUSIC_SERVER_CAST_BASE_URL")), "/"),
 		CastDevices:          splitList(os.Getenv("MUSIC_SERVER_CAST_DEVICES")),
 		CastSSDP:             !isOffValue(os.Getenv("MUSIC_SERVER_CAST_SSDP")),
@@ -246,6 +252,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := ParseTrustedProxies(c.TrustedProxies); err != nil {
 		problems = append(problems, "MUSIC_SERVER_TRUSTED_PROXIES must be comma-separated IPs or CIDRs: "+err.Error())
+	}
+	if _, err := ParseTrustedProxies(c.LoginAllowlist); err != nil {
+		problems = append(problems, "MUSIC_SERVER_LOGIN_ALLOWLIST must be comma-separated IPs or CIDRs: "+err.Error())
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

@@ -76,8 +76,13 @@ type credentials struct {
 	passwordHash string
 	apiTokenHash [sha256.Size]byte
 	mediaToken   string
-	sources      CredentialSources
+	// totpSecret is the base32 TOTP secret; non-empty means two-factor
+	// login is enabled.
+	totpSecret string
+	sources    CredentialSources
 }
+
+func (c *credentials) totpEnabled() bool { return c.totpSecret != "" }
 
 func (c *credentials) apiTokenMatches(token string) bool {
 	sum := sha256.Sum256([]byte(token))
@@ -146,6 +151,12 @@ func buildCredentials(cfg config.Config, overrides map[string]string) (creds *cr
 			}
 			creds.mediaToken = value
 			creds.sources.MediaToken = CredentialSourceOverride
+		case storage.CredentialAdminTOTPSecret:
+			if !validTOTPSecret(value) {
+				ignored = append(ignored, key)
+				continue
+			}
+			creds.totpSecret = value
 		default:
 			ignored = append(ignored, key)
 		}
@@ -174,11 +185,11 @@ func (s *credentialStore) load() *credentials {
 func resetCredentialKeys(mode string) []string {
 	switch mode {
 	case config.ResetCredentialsPassword:
-		return []string{storage.CredentialAdminUsername, storage.CredentialAdminPasswordHash}
+		return []string{storage.CredentialAdminUsername, storage.CredentialAdminPasswordHash, storage.CredentialAdminTOTPSecret}
 	case config.ResetCredentialsTokens:
 		return []string{storage.CredentialAPITokenHash, storage.CredentialMediaToken}
 	case config.ResetCredentialsAll:
-		return []string{storage.CredentialAdminUsername, storage.CredentialAdminPasswordHash, storage.CredentialAPITokenHash, storage.CredentialMediaToken}
+		return []string{storage.CredentialAdminUsername, storage.CredentialAdminPasswordHash, storage.CredentialAdminTOTPSecret, storage.CredentialAPITokenHash, storage.CredentialMediaToken}
 	default:
 		return nil
 	}
@@ -204,6 +215,11 @@ func newCredentialStore(ctx context.Context, cfg config.Config, store *storage.S
 	}
 	creds, ignored := buildCredentials(cfg, s.overrides)
 	for _, key := range ignored {
+		if key == storage.CredentialAdminTOTPSecret {
+			// Fail closed: silently dropping a corrupt secret would turn
+			// two-factor login off.
+			return nil, errors.New("stored admin two-factor secret is invalid; set MUSIC_SERVER_RESET_CREDENTIALS=password to clear it")
+		}
 		logger.Warn("stored credential override is invalid and was ignored; the environment variable is used instead", "item", key, "env", credentialOverrideEnv[key])
 		// Dropped from the in-memory set so later updates are not refused;
 		// the row is overwritten or removed by the next change or reset.

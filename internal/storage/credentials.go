@@ -9,8 +9,11 @@ import (
 // Credential override keys stored in credential_overrides. Values never
 // contain a plaintext password or API token: the password is stored as a
 // self-describing PBKDF2 hash and the API token as its SHA-256 hex digest.
-// The media token is stored in plaintext so it can be revealed again.
+// The media token is stored in plaintext so it can be revealed again. The
+// admin TOTP secret (two-factor login) is stored in base32 because the
+// server must compute codes from it; it has no environment equivalent.
 const (
+	CredentialAdminTOTPSecret   = "admin_totp_secret"
 	CredentialAdminUsername     = "admin_username"
 	CredentialAdminPasswordHash = "admin_password_hash"
 	CredentialAPITokenHash      = "api_token_hash"

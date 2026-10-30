@@ -323,7 +323,9 @@ func tableColumns(ctx context.Context, tx *sql.Tx, schema, table string) (map[st
 	return out, rows.Err()
 }
 func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
-	for _, table := range []string{"credential_overrides", "admin_sessions"} {
+	// Security state (credentials, sessions, login bans and allowlist) never
+	// rolls back with a snapshot.
+	for _, table := range []string{"credential_overrides", "admin_sessions", "login_bans", "login_allowlist"} {
 		target, e := tableColumns(ctx, tx, "main", table)
 		if e != nil {
 			return e

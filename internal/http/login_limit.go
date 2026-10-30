@@ -3,12 +3,15 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lux032/032music-server/internal/storage"
 )
 
 const (
@@ -72,20 +75,35 @@ type loginLimiter struct {
 	// whose X-Forwarded-For header is believed. Empty means RemoteAddr is
 	// always the client.
 	trustedProxies []netip.Prefix
+
+	// Persistent bans (login_bans.go), keyed by banKeyFor. banWriteMu
+	// serializes ban/allowlist writes (memory + database) without holding
+	// mu across database calls.
+	banWriteMu sync.Mutex
+	bans       map[string]storage.LoginBan
+	envAllow   []netip.Prefix
+	pageAllow  []allowEntry
+	store      *storage.Store
+	logger     *slog.Logger
 }
 
 func newLoginLimiter() *loginLimiter {
-	return &loginLimiter{attempts: make(map[string]*loginAttempt), hashing: make(map[string]struct{})}
+	return &loginLimiter{attempts: make(map[string]*loginAttempt), hashing: make(map[string]struct{}), bans: make(map[string]storage.LoginBan)}
+}
+
+// clientKey is the client's ban key (IPv4 address or IPv6 /64).
+func (l *loginLimiter) clientKey(r *http.Request) string {
+	return banKeyFor(l.clientIP(r))
 }
 
 func (l *loginLimiter) loginKey(r *http.Request, username string) string {
-	return l.clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(username))
+	return l.clientKey(r) + "|" + strings.ToLower(strings.TrimSpace(username))
 }
 
 // loginIPKey is the username-independent key. Hosts never contain "|",
 // so it cannot collide with a loginKey.
 func (l *loginLimiter) loginIPKey(r *http.Request) string {
-	return l.clientIP(r)
+	return l.clientKey(r)
 }
 
 func (l *loginLimiter) trusted(addr netip.Addr) bool {
@@ -154,24 +172,57 @@ func (l *loginLimiter) beginHash(r *http.Request) (end func(), ok bool) {
 	}, true
 }
 
-// lockedFor checks both the IP+username key and the IP-only key.
+// lockedFor checks the IP+username key and, unless the client is
+// allowlisted, the IP-only key and the persistent ban. It returns the
+// longest remaining lock.
 func (l *loginLimiter) lockedFor(r *http.Request, username string) (bool, time.Duration) {
-	if locked, remaining := l.locked(l.loginKey(r, username)); locked {
-		return true, remaining
+	ip := l.clientIP(r)
+	key := banKeyFor(ip)
+	locked, remaining := l.locked(l.loginKey(r, username))
+	if l.allowlisted(ip) {
+		return locked, remaining
 	}
-	return l.locked(l.loginIPKey(r))
+	if ipLocked, ipRemaining := l.locked(key); ipLocked {
+		locked, remaining = true, max(remaining, ipRemaining)
+	}
+	l.mu.Lock()
+	banned, banRemaining := l.bannedLocked(key, time.Now())
+	l.mu.Unlock()
+	if banned {
+		locked, remaining = true, max(remaining, banRemaining)
+	}
+	return locked, remaining
 }
 
-// recordFailureFor counts a failed password check against both keys.
+// recordFailureFor counts a failed check against both keys; tripping
+// either lock earns the client a strike (an escalating persistent ban).
+// Allowlisted clients only count against the IP+username key.
 func (l *loginLimiter) recordFailureFor(r *http.Request, username string) {
-	l.recordFailureLimit(l.loginKey(r, username), loginMaxFailures)
-	l.recordFailureLimit(l.loginIPKey(r), loginIPMaxFailures)
+	ip := l.clientIP(r)
+	userLocked := l.recordFailureLimit(l.loginKey(r, username), loginMaxFailures)
+	if l.allowlisted(ip) {
+		return
+	}
+	ipLocked := l.recordFailureLimit(banKeyFor(ip), loginIPMaxFailures)
+	if userLocked || ipLocked {
+		l.strike(banKeyFor(ip))
+	}
 }
 
-// recordSuccessFor clears both keys after a correct password.
+// recordSuccessFor clears both keys after a fully successful check, and
+// forgives the client's strikes.
 func (l *loginLimiter) recordSuccessFor(r *http.Request, username string) {
 	l.recordSuccess(l.loginKey(r, username))
 	l.recordSuccess(l.loginIPKey(r))
+	key := l.clientKey(r)
+	l.mu.Lock()
+	_, banned := l.bans[key]
+	l.mu.Unlock()
+	if banned {
+		if _, err := l.forgive(key); err != nil && l.logger != nil {
+			l.logger.Error("clear login ban after successful login", "ip", key, "error", err)
+		}
+	}
 }
 
 // locked reports whether the key is currently locked out, and the remaining
@@ -194,7 +245,9 @@ func (l *loginLimiter) recordFailure(key string) {
 	l.recordFailureLimit(key, loginMaxFailures)
 }
 
-func (l *loginLimiter) recordFailureLimit(key string, maxFailures int) {
+// recordFailureLimit counts one failure and reports whether it tripped the
+// lock.
+func (l *loginLimiter) recordFailureLimit(key string, maxFailures int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
@@ -205,11 +258,14 @@ func (l *loginLimiter) recordFailureLimit(key string, maxFailures int) {
 	}
 	attempt.failures++
 	attempt.lastSeen = now
+	tripped := false
 	if attempt.failures >= maxFailures {
 		attempt.lockedUntil = now.Add(loginLockDuration)
 		attempt.failures = 0
+		tripped = true
 	}
 	l.prune(now)
+	return tripped
 }
 
 func (l *loginLimiter) recordSuccess(key string) {

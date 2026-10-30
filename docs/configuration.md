@@ -30,8 +30,9 @@
 | `MUSIC_SERVER_COOKIE_SECURE` | `false` | 通过 HTTPS 访问时启用，管理员 Cookie 会带 Secure 标记。 |
 | `MUSIC_SERVER_LOG_LEVEL` | `info` | `debug`、`info`、`warn` 或 `error`。 |
 | `MUSIC_SERVER_DEV_MODE` | `false` | 允许非空的短密码；缺少媒体 Token 时回退到 API Token。仅限本地开发。 |
-| `MUSIC_SERVER_RESET_CREDENTIALS` | 关闭 | `password`、`tokens` 或 `all`。只要设置了这个变量，每次启动都会清除对应的覆盖值和所有管理员会话，恢复完成后请移除。 |
+| `MUSIC_SERVER_RESET_CREDENTIALS` | 关闭 | `password`（用户名、密码与两步验证）、`tokens` 或 `all`。只要设置了这个变量，每次启动都会清除对应的覆盖值和所有管理员会话，恢复完成后请移除。 |
 | `MUSIC_SERVER_TRUSTED_PROXIES` | 空 | 登录限流信任的代理 IP/CIDR，逗号分隔；格式错误时拒绝启动。 |
+| `MUSIC_SERVER_LOGIN_ALLOWLIST` | 空 | 永不因登录失败被封禁的 IP/CIDR，逗号分隔（安全页还可另外管理）；格式错误时拒绝启动。自己被封在外时用它恢复。 |
 | `MUSIC_SERVER_FFMPEG_PATH` | PATH 中的 `ffmpeg` | ffmpeg 可执行文件。缺少某个编码器只会禁用对应的转码格式，不影响服务启动。 |
 | `MUSIC_SERVER_TRANSCODE_LIVE_MAX` | `4` | 实时转码并发数。 |
 | `MUSIC_SERVER_TRANSCODE_CACHE_JOBS` | `2` | 缓存转码并发数。 |
@@ -59,7 +60,11 @@
 
 密码覆盖值使用 PBKDF2-SHA256（600000 次迭代）存储，API Token 覆盖值保存 SHA-256 哈希；媒体 Token 以明文保存，方便在验证密码后查看。修改用户名或密码会让其他会话退出登录；轮换 Token 后，使用旧值的新请求会立即失效，但不会中断已经授权的音频流。
 
-**忘记了在管理页改过的密码**：临时给服务传入 `MUSIC_SERVER_RESET_CREDENTIALS=password`（Compose 需要先把它加进 `environment`），然后重新创建并启动服务，用户名和密码就会恢复为环境变量中的值。恢复后移除这个变量，并再次重建容器。也可以用 `tokens` 或 `all`。在安全页输入的 Token 至少 24 个字符，只能包含字母、数字和 `-`、`_`、`.`、`~`。
+**忘记了在管理页改过的密码**：临时给服务传入 `MUSIC_SERVER_RESET_CREDENTIALS=password`（Compose 需要先把它加进 `environment`），然后重新创建并启动服务，用户名和密码就会恢复为环境变量中的值。恢复后移除这个变量，并再次重建容器。也可以用 `tokens` 或 `all`。
+
+**登录封禁**：同一地址连续输错 10 次（或换用户名累计 30 次）会被封禁，再犯时依次升级为 15 分钟 → 1 小时 → 6 小时 → 24 小时 → 7 天。密码、两步验证码和安全页的「当前密码」输错都会计入。封禁保存在数据库里，重启后仍然有效；30 天内没有再犯、或从该地址成功登录后自动清零。IPv6 按 /64 网段计算。「账号与安全」页可以查看和解除封禁、管理白名单。白名单中的地址不会被封禁（仍保留同一用户名连错 10 次锁 15 分钟的基本保护），也不会跳过密码或两步验证。**在反向代理后面必须设置 `MUSIC_SERVER_TRUSTED_PROXIES`**，否则所有访问者共用代理的地址，攻击者可以把你一起封掉。**自己被封在外**时，把地址加入 `MUSIC_SERVER_LOGIN_ALLOWLIST` 后重启即可登录，再到安全页解除封禁。
+
+**两步验证（2FA）**：在「账号与安全」页输入当前密码后点「设置两步验证」，用身份验证器（Google Authenticator、1Password、Microsoft Authenticator 等）扫描二维码并输入 6 位验证码即可启用。启用后登录管理面板需要密码 + 验证码；只影响管理面板，不影响 API Token 与媒体 Token。停用需要当前密码和一个有效验证码。**丢失手机**时，用上面的 `MUSIC_SERVER_RESET_CREDENTIALS=password` 重启即可关闭两步验证（同时恢复环境变量中的用户名和密码）。服务器时钟需要准确（允许 ±30 秒误差）。在安全页输入的 Token 至少 24 个字符，只能包含字母、数字和 `-`、`_`、`.`、`~`。
 
 ## 数据库快照
 

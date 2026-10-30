@@ -48,6 +48,10 @@ type sessionManager struct {
 	// token) keyed by raw session token. They live only in memory and are
 	// never put into URLs or logs.
 	flashes map[string]securityFlash
+	// totpSetups holds a two-factor secret being enrolled, keyed by raw
+	// session token, until it is confirmed with a code or expires. Memory
+	// only, cleared with the session.
+	totpSetups map[string]totpSetup
 }
 
 // securityFlash is shown once on the next GET of the security page and
@@ -64,6 +68,7 @@ func newSessionManager(cookieSecure bool, store *storage.Store) *sessionManager 
 		cookieSecure: cookieSecure,
 		lifetime:     8 * time.Hour,
 		flashes:      make(map[string]securityFlash),
+		totpSetups:   make(map[string]totpSetup),
 	}
 }
 
@@ -177,6 +182,7 @@ func (m *sessionManager) replaceAll(w http.ResponseWriter, username string, comm
 	m.revocations++
 	clear(m.sessions)
 	clear(m.flashes)
+	clear(m.totpSetups)
 	m.sessions[sessionToken] = session
 	m.setCookie(w, sessionToken)
 	return nil
@@ -270,6 +276,7 @@ func (m *sessionManager) delete(w http.ResponseWriter, r *http.Request) error {
 		}
 		delete(m.sessions, cookie.Value)
 		delete(m.flashes, cookie.Value)
+		delete(m.totpSetups, cookie.Value)
 		m.revocations++
 		m.mu.Unlock()
 	}
@@ -291,6 +298,7 @@ func (m *sessionManager) removeExpiredLocked(now time.Time) {
 		if !session.ExpiresAt.After(now) {
 			delete(m.sessions, token)
 			delete(m.flashes, token)
+			delete(m.totpSetups, token)
 		}
 	}
 }

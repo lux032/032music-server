@@ -266,7 +266,7 @@
     if (!button) return;
     const input = document.getElementById(button.getAttribute('data-copy-target') || '');
     if (!(input instanceof HTMLInputElement)) return;
-    const status = button.closest('[data-security-flash]')?.querySelector('[data-copy-status]');
+    const status = button.closest('[data-security-flash], [data-totp-setup]')?.querySelector('[data-copy-status]');
     const report = (message) => { if (status) status.textContent = message; };
     try {
       if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard unavailable');

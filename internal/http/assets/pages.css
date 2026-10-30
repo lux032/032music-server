@@ -1384,6 +1384,21 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .security-reset .danger-confirm-panel form { display: grid; gap: 10px; }
 .security-reset .danger-confirm-panel label { max-width: 360px; }
 .security-reset-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.security-totp-setup { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; }
+.security-totp-qr { flex: none; width: 200px; height: 200px; border-radius: var(--radius-md); background: #fff; padding: 8px; image-rendering: pixelated; }
+.security-totp-steps { display: grid; gap: 12px; flex: 1 1 320px; min-width: 0; }
+.security-totp-steps > p { margin: 0; color: var(--text-secondary); font-size: var(--fs-sm); }
+.security-totp-disable { border-top: 1px solid var(--line); padding-top: 14px; }
+.security-totp-disable .danger-confirm-panel form { display: grid; gap: 10px; }
+.security-totp-disable .danger-confirm-panel label { max-width: 360px; }
+.login-code-input { font-size: 1.4rem; letter-spacing: 0.3em; text-align: center; font-variant-numeric: tabular-nums; }
+.login-back { margin-top: 1rem; font-size: 0.9rem; text-align: center; }
+.security-subhead { margin: 6px 0 0; font-size: var(--fs-md); }
+.security-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.security-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px 14px; }
+.security-list li > div { display: grid; gap: 2px; min-width: 0; }
+.security-list .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; overflow-wrap: anywhere; }
+.security-list form { flex: none; }
 .masked-field { display: flex; align-items: stretch; gap: 8px; }
 .masked-field input { flex: 1; min-width: 0; }
 .masked-field button { flex: none; }

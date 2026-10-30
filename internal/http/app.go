@@ -51,12 +51,16 @@ type App struct {
 	templates                 *template.Template
 	sessions                  *sessionManager
 	loginLimiter              *loginLimiter
-	scanner                   *scanner.Manager
-	enrichment                *enrichment.Manager
-	startEnrichment           func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
-	assets                    *assetRegistry
-	transcoder                *transcodeManager
-	thumbnails                *thumbnailManager
+	// loginChallenges are password-verified logins waiting for their
+	// two-factor code; totpReplay stops a code from being used twice.
+	loginChallenges loginChallengeStore
+	totpReplay      totpReplayGuard
+	scanner         *scanner.Manager
+	enrichment      *enrichment.Manager
+	startEnrichment func(context.Context, enrichmentRunRequest) (storage.EnrichmentRun, error)
+	assets          *assetRegistry
+	transcoder      *transcodeManager
+	thumbnails      *thumbnailManager
 	// customImageMu serializes custom-image store file -> DB commit ->
 	// cleanup sequences (M4) so GC never races an in-flight upload.
 	customImageMu   sync.Mutex
@@ -109,6 +113,8 @@ type statusResponse struct {
 
 type loginPageData struct {
 	Error string
+	// TOTP renders the two-factor code step instead of the password form.
+	TOTP bool
 	// Next is the validated admin page to return to after logging in.
 	Next string
 }
@@ -323,6 +329,13 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 	}
 	limiter := newLoginLimiter()
 	limiter.trustedProxies = trustedProxies
+	loginAllowlist, err := config.ParseTrustedProxies(cfg.LoginAllowlist)
+	if err != nil {
+		return nil, fmt.Errorf("parse MUSIC_SERVER_LOGIN_ALLOWLIST: %w", err)
+	}
+	if err := limiter.loadBans(credentialCtx, store, loginAllowlist, logger); err != nil {
+		return nil, fmt.Errorf("load login bans: %w", err)
+	}
 
 	return &App{
 		similaritySlots: make(chan struct{}, 4),
@@ -481,6 +494,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/assets/", http.HandlerFunc(a.assets.serveAssets))
 	mux.HandleFunc("GET /admin/login", a.handleLoginPage)
 	mux.HandleFunc("POST /admin/login", a.handleLogin)
+	mux.HandleFunc("GET "+totpLoginPath, a.handleTOTPLoginPage)
+	mux.HandleFunc("POST "+totpLoginPath, a.handleTOTPLogin)
 	mux.Handle("POST /admin/logout", a.requireAdmin(http.HandlerFunc(a.handleLogout)))
 	a.registerBackupRoutes(mux)
 	mux.Handle("GET /admin", a.requireAdmin(http.HandlerFunc(a.handleDashboard)))
@@ -595,6 +610,13 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/security/media-token", a.requireAdmin(http.HandlerFunc(a.handleSecurityMediaToken)))
 	mux.Handle("POST /admin/settings/security/media-token/reveal", a.requireAdmin(http.HandlerFunc(a.handleSecurityRevealMediaToken)))
 	mux.Handle("POST /admin/settings/security/reset/{key}", a.requireAdmin(http.HandlerFunc(a.handleSecurityReset)))
+	mux.Handle("POST /admin/settings/security/totp/setup", a.requireAdmin(http.HandlerFunc(a.handleSecurityTOTPSetup)))
+	mux.Handle("POST /admin/settings/security/totp/enable", a.requireAdmin(http.HandlerFunc(a.handleSecurityTOTPEnable)))
+	mux.Handle("POST /admin/settings/security/totp/cancel", a.requireAdmin(http.HandlerFunc(a.handleSecurityTOTPCancel)))
+	mux.Handle("POST /admin/settings/security/totp/disable", a.requireAdmin(http.HandlerFunc(a.handleSecurityTOTPDisable)))
+	mux.Handle("POST /admin/settings/security/bans/remove", a.requireAdmin(http.HandlerFunc(a.handleSecurityUnban)))
+	mux.Handle("POST /admin/settings/security/allowlist", a.requireAdmin(http.HandlerFunc(a.handleSecurityAllowAdd)))
+	mux.Handle("POST /admin/settings/security/allowlist/remove", a.requireAdmin(http.HandlerFunc(a.handleSecurityAllowRemove)))
 	mux.Handle("POST /admin/matches/run", a.requireAdmin(http.HandlerFunc(a.handleRunArtistMatching)))
 	mux.Handle("POST /admin/matches/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistMatching)))
 	mux.Handle("POST /admin/matches/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseArtistRun)))
@@ -760,8 +782,10 @@ func (a *App) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 
 // loginNotices are the 303 redirect notices of handleLogin.
 var loginNotices = map[string]string{
-	"busy":  "系统繁忙，请稍后重试。",
-	"retry": "登录状态已变更，请重试。",
+	"busy":        "系统繁忙，请稍后重试。",
+	"retry":       "登录状态已变更，请重试。",
+	"mfa_expired": "两步验证已超时或尝试次数过多，请重新登录。",
+	"locked":      "失败次数过多，当前地址已被临时封禁，请稍后再试。",
 }
 
 // loginUsernameLogID identifies a submitted username in logs without
@@ -780,7 +804,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	if locked, remaining := a.loginLimiter.lockedFor(r, username); locked {
 		a.logger.Warn("login attempt while locked out", "usernameHash", loginUsernameLogID(username), "remoteAddr", r.RemoteAddr)
-		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %d 分钟后再试。", int(remaining.Minutes())+1), Next: next})
+		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %s后再试。", humanDuration(remaining)), Next: next})
 		return
 	}
 
@@ -812,9 +836,19 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.render(w, http.StatusUnauthorized, "login.html", loginPageData{Error: "用户名或密码不正确。", Next: next})
 		return
 	}
+	if creds.totpEnabled() {
+		// The limiter is cleared only after the code step succeeds, so a
+		// known password cannot be used to reset it while guessing codes.
+		a.startTOTPChallenge(w, r, creds, generation, next)
+		return
+	}
 	a.loginLimiter.recordSuccessFor(r, username)
+	a.finishLogin(w, r, creds.username, generation, next)
+}
 
-	if _, err := a.sessions.createAt(w, creds.username, generation); err != nil {
+// finishLogin creates the admin session for a fully authenticated login.
+func (a *App) finishLogin(w http.ResponseWriter, r *http.Request, username string, generation uint64, next string) {
+	if _, err := a.sessions.createAt(w, username, generation); err != nil {
 		if errors.Is(err, errSessionsRevoked) {
 			http.Redirect(w, r, loginPath(next, "retry"), http.StatusSeeOther)
 			return

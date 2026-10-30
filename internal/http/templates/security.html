@@ -106,6 +106,126 @@
       {{end}}
     </section>
 
+    <section class="source-card security-card" data-security-item="totp">
+      <header>
+        <div><h2>两步验证（2FA）</h2></div>
+        {{if .TOTPEnabled}}<span class="status-badge success" data-totp-status="enabled">已启用</span>{{else}}<span class="status-badge" data-totp-status="disabled">未启用</span>{{end}}
+      </header>
+      <p>登录管理面板时，除密码外还需输入身份验证器（Google Authenticator、1Password、Microsoft Authenticator 等）生成的 6 位验证码。只影响管理面板登录，不影响 API Token 与媒体 Token。启用或停用后其他登录会话会全部退出。</p>
+      {{if .TOTPEnabled}}
+      <p class="security-note">丢失手机时，可临时设置 <code>MUSIC_SERVER_RESET_CREDENTIALS=password</code> 并重启服务：会关闭两步验证，并把用户名与密码恢复为环境变量。</p>
+      <details class="danger-confirm security-totp-disable">
+        <summary class="secondary-button">停用两步验证…</summary>
+        <div class="danger-confirm-panel">
+          <strong>停用后登录只需密码。</strong>
+          <form method="post" action="/admin/settings/security/totp/disable">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required></label>
+            <div class="security-reset-actions">
+              <button type="submit" class="danger-button">确认停用</button>
+              <button class="secondary-button" type="button" data-cancel-confirm>取消</button>
+            </div>
+          </form>
+        </div>
+      </details>
+      {{else if .TOTPSetup}}
+      <div class="security-totp-setup" data-totp-setup>
+        {{if .TOTPSetup.QRImage}}<img class="security-totp-qr" src="{{.TOTPSetup.QRImage}}" alt="两步验证二维码" width="200" height="200">{{end}}
+        <div class="security-totp-steps">
+          <p>1. 用身份验证器扫描二维码，或手动输入下方密钥（基于时间，6 位，30 秒）。</p>
+          <div class="security-flash-value">
+            <input id="totp-secret" class="mono-input" type="text" readonly value="{{.TOTPSetup.Secret}}" aria-label="两步验证密钥" autocomplete="off" spellcheck="false" data-totp-secret>
+            <button type="button" class="secondary-button" data-copy-target="totp-secret">复制</button>
+          </div>
+          <p class="security-copy-status" role="status" aria-live="polite" data-copy-status></p>
+          <p>2. 输入验证器当前显示的 6 位验证码完成启用（10 分钟内有效）。</p>
+          <form method="post" action="/admin/settings/security/totp/enable" class="security-inline-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required></label>
+            <button type="submit">启用两步验证</button>
+          </form>
+          <form method="post" action="/admin/settings/security/totp/cancel">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button type="submit" class="secondary-button">取消</button>
+          </form>
+        </div>
+      </div>
+      {{else}}
+      <form method="post" action="/admin/settings/security/totp/setup" class="security-inline-form">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <button type="submit">设置两步验证</button>
+      </form>
+      {{end}}
+    </section>
+
+    <section class="source-card security-card" data-security-item="login-protection">
+      {{with .Login}}
+      <header>
+        <div><h2>登录保护</h2></div>
+        {{if .Bans}}<span class="status-badge warning" data-ban-count="{{len .Bans}}">{{len .Bans}} 个地址被封禁</span>{{else}}<span class="status-badge" data-ban-count="0">无封禁</span>{{end}}
+      </header>
+      <p>同一地址连续输错 {{.MaxFailures}} 次（或换用户名累计 {{.MaxIPFailures}} 次）会被封禁，再犯时时长逐级升级：{{.Schedule}}。密码、两步验证码和本页的当前密码输错都会计入。封禁重启后仍然有效；{{.DecayDays}} 天内没有再犯、或从该地址成功登录后，记录自动清零。IPv6 按 /64 网段计算。</p>
+      <p>你当前的地址：<strong class="security-current" data-login-client-ip>{{.ClientIP}}</strong>{{if .ClientAllowlisted}} <span class="status-badge success" data-login-client-allowlisted>在白名单中</span>{{end}}。如果这是反向代理的地址而不是你的真实地址，请设置 <code>MUSIC_SERVER_TRUSTED_PROXIES</code>，否则所有访问者会共用同一个封禁。</p>
+
+      {{if .Bans}}
+      <ul class="security-list" data-login-bans>
+        {{range .Bans}}
+        <li data-login-ban="{{.IP}}">
+          <div>
+            <strong class="mono">{{.IP}}</strong>{{if .Current}} <span class="status-badge">当前地址</span>{{end}}
+            <small>第 {{.Strikes}} 次封禁 · 剩余 {{.Remaining}} · 解封时间 {{formatAdminTime .Until}}</small>
+          </div>
+          <form method="post" action="/admin/settings/security/bans/remove">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="ip" value="{{.IP}}">
+            <button type="submit" class="secondary-button">解除封禁</button>
+          </form>
+        </li>
+        {{end}}
+      </ul>
+      {{end}}
+
+      <h3 class="security-subhead">白名单</h3>
+      <p>白名单中的地址永远不会被封禁（仍保留「同一用户名连错 {{.MaxFailures}} 次锁 15 分钟」的基本保护），适合家里的局域网。不会跳过密码或两步验证。如果自己被封在外，可以把地址加入环境变量 <code>MUSIC_SERVER_LOGIN_ALLOWLIST</code> 后重启。</p>
+      {{if or .EnvAllow .PageAllow}}
+      <ul class="security-list" data-login-allowlist>
+        {{range .EnvAllow}}
+        <li data-login-allow-env="{{.}}">
+          <div><strong class="mono">{{.}}</strong> <span class="status-badge" data-source="allow-env">来源：环境变量</span></div>
+        </li>
+        {{end}}
+        {{range .PageAllow}}
+        <li data-login-allow="{{.Prefix}}">
+          <div>
+            <strong class="mono">{{.Prefix}}</strong>
+            <small>{{if .Note}}{{.Note}} · {{end}}添加于 {{formatAdminTime .CreatedAt}}</small>
+          </div>
+          <form method="post" action="/admin/settings/security/allowlist/remove">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="prefix" value="{{.Prefix}}">
+            <button type="submit" class="secondary-button">移除</button>
+          </form>
+        </li>
+        {{end}}
+      </ul>
+      {{end}}
+      <details class="security-custom">
+        <summary>添加白名单</summary>
+        <form method="post" action="/admin/settings/security/allowlist">
+          <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+          <div class="form-grid thirds">
+            <label>IP 或 CIDR<input name="prefix" required placeholder="192.168.1.0/24" autocomplete="off" spellcheck="false" value=""><small>可填单个地址或网段。当前地址：{{.ClientIP}}</small></label>
+            <label>备注（可选）<input name="note" maxlength="{{.MaxNote}}" autocomplete="off" placeholder="家里局域网"></label>
+            <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
+          </div>
+          <div class="editor-actions"><button type="submit">加入白名单</button></div>
+        </form>
+      </details>
+      {{end}}
+    </section>
+
     <section class="source-card security-card" data-security-item="api-token">
       <header>
         <div><p class="kicker">客户端访问</p><h2>API Token</h2></div>
