@@ -167,7 +167,13 @@
         {{if .Bans}}<span class="status-badge warning" data-ban-count="{{len .Bans}}">{{len .Bans}} 个地址被封禁</span>{{else}}<span class="status-badge" data-ban-count="0">无封禁</span>{{end}}
       </header>
       <p>同一地址连续输错 {{.MaxFailures}} 次（或换用户名累计 {{.MaxIPFailures}} 次）会被封禁，再犯时时长逐级升级：{{.Schedule}}。密码、两步验证码和本页的当前密码输错都会计入。封禁重启后仍然有效；{{.DecayDays}} 天内没有再犯、或从该地址成功登录后，记录自动清零。IPv6 按 /64 网段计算。</p>
-      <p>你当前的地址：<strong class="security-current" data-login-client-ip>{{.ClientIP}}</strong>{{if .ClientAllowlisted}} <span class="status-badge success" data-login-client-allowlisted>在白名单中</span>{{end}}。如果这是反向代理的地址而不是你的真实地址，请设置 <code>MUSIC_SERVER_TRUSTED_PROXIES</code>，否则所有访问者会共用同一个封禁。</p>
+      {{if .ProxyPeer}}
+      <div class="security-banner" role="alert" data-proxy-untrusted="{{.ProxyPeer}}">
+        <strong>检测到反向代理，但它不在 MUSIC_SERVER_TRUSTED_PROXIES 中</strong>
+        <p>本次请求由 <code>{{.ProxyPeer}}</code> 转发并带有 X-Forwarded-For，但服务没有信任它，所以代理后面的所有访问者都会被当成 {{.ProxyPeer}}：失败次数合并计算，攻击者可以把所有人一起封禁。如果这是你自己的代理，请在 .env 中设置 <code>MUSIC_SERVER_TRUSTED_PROXIES={{.ProxyPeer}}</code>（Docker 网络里的容器地址可能在重建后变化，可改填该 Docker 网络的网段），然后执行 <code>docker compose up -d</code>。</p>
+      </div>
+      {{end}}
+      <p>你当前的地址：<strong class="security-current" data-login-client-ip>{{.ClientIP}}</strong>{{if .ClientAllowlisted}} <span class="status-badge success" data-login-client-allowlisted>在白名单中</span>{{end}}。受信任的代理：{{if .TrustedProxies}}{{range $i, $p := .TrustedProxies}}{{if $i}}、{{end}}<code>{{$p}}</code>{{end}}{{else}}未设置{{end}}。如果当前地址是反向代理的地址而不是你的真实地址，请设置 <code>MUSIC_SERVER_TRUSTED_PROXIES</code>。</p>
 
       {{if .Bans}}
       <ul class="security-list" data-login-bans>

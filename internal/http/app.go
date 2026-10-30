@@ -802,6 +802,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	next := loginNext(r.FormValue("next"))
 	username := r.FormValue("username")
+	a.loginLimiter.warnUntrustedForwarder(r, a.logger)
 	if locked, remaining := a.loginLimiter.lockedFor(r, username); locked {
 		a.logger.Warn("login attempt while locked out", "usernameHash", loginUsernameLogID(username), "remoteAddr", r.RemoteAddr)
 		a.render(w, http.StatusTooManyRequests, "login.html", loginPageData{Error: fmt.Sprintf("失败次数过多,请 %s后再试。", humanDuration(remaining)), Next: next})

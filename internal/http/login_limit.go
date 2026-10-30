@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
@@ -85,6 +86,8 @@ type loginLimiter struct {
 	pageAllow  []allowEntry
 	store      *storage.Store
 	logger     *slog.Logger
+	// proxyWarned makes warnUntrustedForwarder log only once.
+	proxyWarned atomic.Bool
 }
 
 func newLoginLimiter() *loginLimiter {
@@ -153,6 +156,39 @@ func (l *loginLimiter) clientIP(r *http.Request) string {
 		}
 	}
 	return client
+}
+
+// untrustedForwarder detects a likely misconfiguration: the request carries
+// reverse-proxy forwarding headers, but its direct peer is not in
+// MUSIC_SERVER_TRUSTED_PROXIES, so every client behind that proxy shares
+// the peer's address for rate limiting and bans. peer is that address.
+// (A direct client can fake the headers; that only shows the admin a
+// warning on their own security page.)
+func (l *loginLimiter) untrustedForwarder(r *http.Request) (peer string, ok bool) {
+	if r.Header.Get("X-Forwarded-For") == "" && r.Header.Get("X-Real-IP") == "" && r.Header.Get("Forwarded") == "" {
+		return "", false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if l.trusted(addr.Unmap()) {
+			return "", false
+		}
+		host = addr.Unmap().String()
+	}
+	return host, true
+}
+
+// warnUntrustedForwarder logs the misconfiguration once per process.
+func (l *loginLimiter) warnUntrustedForwarder(r *http.Request, logger *slog.Logger) {
+	if l.proxyWarned.Load() {
+		return
+	}
+	if peer, ok := l.untrustedForwarder(r); ok && l.proxyWarned.CompareAndSwap(false, true) {
+		logger.Warn("admin login arrived through a reverse proxy that is not trusted: all clients behind it share one address for login rate limiting and bans; set MUSIC_SERVER_TRUSTED_PROXIES", "proxy", peer)
+	}
 }
 
 // beginHash claims the per-IP hash slot; false means this client already

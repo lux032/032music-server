@@ -21,7 +21,6 @@ sudo chown -R <UID>:<GID> ./data
 Compose 会读取 `.env` 做变量替换，但**不会把所有变量都传进容器**，只有 `compose.yaml` 的 `environment` 里列出的变量才会生效。要用 [配置参考](configuration.md) 中的其他变量，就在 `services.music-server.environment` 下添加，例如：
 
 ```yaml
-MUSIC_SERVER_TRUSTED_PROXIES: "${MUSIC_SERVER_TRUSTED_PROXIES:-}"
 MUSIC_SERVER_THUMB_CACHE_MB: "${MUSIC_SERVER_THUMB_CACHE_MB:-512}"
 MUSIC_SERVER_BANGUMI_INTERVAL_MS: "${MUSIC_SERVER_BANGUMI_INTERVAL_MS:-500}"
 MUSIC_SERVER_WORK_POSTER_BACKFILL: "${MUSIC_SERVER_WORK_POSTER_BACKFILL:-true}"
@@ -46,7 +45,7 @@ MUSIC_SERVER_WORK_POSTER_BACKFILL: "${MUSIC_SERVER_WORK_POSTER_BACKFILL:-true}"
 - 用 HTTPS 访问时设置 `MUSIC_SERVER_COOKIE_SECURE=true`；直接用 HTTP 访问时保持 `false`，否则浏览器不会发送登录 Cookie。
 - 在域名根路径代理整个站点：保留 `/admin` 和 `/api/v1` 路径，转发 Range 请求头，并允许长时间的音频串流连接。
 - 代理运行在宿主机上时，可以把端口映射限制为 `127.0.0.1:${MUSIC_SERVER_PORT:-4533}:4533`（用投送功能时不要这样做，见下文）。
-- 把 `MUSIC_SERVER_TRUSTED_PROXIES` 加入 Compose 的 `environment`，填写代理实际的 IP/CIDR。只信任会正确覆盖或追加 `X-Forwarded-For` 的代理，**不要填 `0.0.0.0/0`** 或任意客户端网段。不设置的话，代理后面的所有用户会共用代理 IP 的登录限流。
+- 在 `.env` 中设置 `MUSIC_SERVER_TRUSTED_PROXIES`（`compose.yaml` 已转发该变量），填写代理实际的 IP/CIDR。不确定代理地址时，登录后打开「账号与安全 → 登录保护」：检测到未受信的代理会显示警告和它的地址，服务日志也会提示一次。只信任会正确覆盖或追加 `X-Forwarded-For` 的代理，**不要填 `0.0.0.0/0`** 或任意客户端网段。不设置的话，代理后面的所有用户会共用代理 IP 的登录限流。
 - 转发地址必须是不带端口的纯 IP。只有连接对端是受信代理时，服务才会从右往左解析 `X-Forwarded-For`。这个设置目前只影响登录限流，和 TLS 终止无关。
 - 媒体 URL 中带有凭据，反向代理的访问日志应避免记录查询参数。
 

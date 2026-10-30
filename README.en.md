@@ -128,7 +128,6 @@ Compose uses `.env` for substitution, but **does not automatically forward every
 
 ```yaml
 # Add these under services.music-server.environment:
-MUSIC_SERVER_TRUSTED_PROXIES: "${MUSIC_SERVER_TRUSTED_PROXIES:-}"
 MUSIC_SERVER_THUMB_CACHE_MB: "${MUSIC_SERVER_THUMB_CACHE_MB:-512}"
 MUSIC_SERVER_BANGUMI_INTERVAL_MS: "${MUSIC_SERVER_BANGUMI_INTERVAL_MS:-500}"
 MUSIC_SERVER_WORK_POSTER_BACKFILL: "${MUSIC_SERVER_WORK_POSTER_BACKFILL:-true}"
@@ -149,7 +148,7 @@ The server itself serves HTTP. For public access, put it behind an HTTPS reverse
 - Set `MUSIC_SERVER_COOKIE_SECURE=true` for HTTPS. Leave it `false` for direct HTTP, or the browser will not send the login cookie.
 - Proxy the site at the domain root, preserving the `/admin` and `/api/v1` paths, Range headers, and long-running audio streams.
 - If the proxy is on the host, you can restrict the Compose port mapping to `127.0.0.1:${MUSIC_SERVER_PORT:-4533}:4533`.
-- Add `MUSIC_SERVER_TRUSTED_PROXIES` to Compose's `environment` and set it to the actual proxy IP/CIDR. Only trust proxies that correctly overwrite/append `X-Forwarded-For`; never trust `0.0.0.0/0` or arbitrary client networks. Without this setting, failed logins from all proxied users share the proxy's IP rate limit.
+- Set `MUSIC_SERVER_TRUSTED_PROXIES` in `.env` (`compose.yaml` forwards it) to the actual proxy IP/CIDR. If unsure, open the security page's login-protection card after logging in: an untrusted proxy is shown with its address, and the server logs a one-time warning. Only trust proxies that correctly overwrite/append `X-Forwarded-For`; never trust `0.0.0.0/0` or arbitrary client networks. Without this setting, failed logins from all proxied users share the proxy's IP rate limit.
 - Forwarded addresses must be plain IPs without ports. The server walks `X-Forwarded-For` from right to left only when the connection peer is trusted. This setting currently affects login rate limiting, not TLS termination.
 - Media URLs contain credentials: avoid recording query strings in reverse-proxy access logs.
 

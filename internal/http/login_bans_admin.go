@@ -14,15 +14,20 @@ type loginProtectionView struct {
 	// MUSIC_SERVER_TRUSTED_PROXIES), so a misconfigured proxy is visible.
 	ClientIP          string
 	ClientAllowlisted bool
-	Bans              []loginBanView
-	EnvAllow          []string
-	PageAllow         []loginAllowView
-	Schedule          string
-	MaxFailures       int
-	MaxIPFailures     int
-	MaxAllow          int
-	MaxNote           int
-	DecayDays         int
+	// ProxyPeer is set when the request came through a reverse proxy that
+	// is not in MUSIC_SERVER_TRUSTED_PROXIES (see untrustedForwarder).
+	ProxyPeer string
+	// TrustedProxies is the effective MUSIC_SERVER_TRUSTED_PROXIES.
+	TrustedProxies []string
+	Bans           []loginBanView
+	EnvAllow       []string
+	PageAllow      []loginAllowView
+	Schedule       string
+	MaxFailures    int
+	MaxIPFailures  int
+	MaxAllow       int
+	MaxNote        int
+	DecayDays      int
 }
 
 type loginBanView struct {
@@ -53,6 +58,12 @@ func (a *App) loginProtectionFor(r *http.Request) loginProtectionView {
 		MaxAllow:          maxLoginAllowlist,
 		MaxNote:           maxLoginAllowNote,
 		DecayDays:         int(loginStrikeDecay / (24 * time.Hour)),
+	}
+	if peer, ok := limiter.untrustedForwarder(r); ok {
+		view.ProxyPeer = peer
+	}
+	for _, prefix := range limiter.trustedProxies {
+		view.TrustedProxies = append(view.TrustedProxies, prefix.String())
 	}
 	for _, ban := range limiter.activeBans(now) {
 		view.Bans = append(view.Bans, loginBanView{
