@@ -88,7 +88,9 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-input[type="checkbox"], input[type="radio"] { min-width: 16px; width: 16px; accent-color: var(--accent); }
+input[type="checkbox"], input[type="radio"] { min-width: 16px; width: 16px; height: 16px; padding: 0; accent-color: var(--accent); }
+input[type="checkbox"]:focus, input[type="radio"]:focus { box-shadow: none; }
+input[type="radio"]:focus-visible { border-radius: 50%; }
 input[type="range"] { accent-color: var(--accent); padding: 0; border: 0; background: transparent; }
 
 details { min-width: 260px; }

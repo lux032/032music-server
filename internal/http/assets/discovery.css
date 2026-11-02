@@ -228,7 +228,7 @@ a.discovery-cover { color: inherit; }
   overflow-wrap:anywhere;
   cursor:pointer
 }
-.acquisition-result input { grid-row:1/4 }
+.acquisition-result input { grid-row:1/4; align-self:center; justify-self:center; margin:0 }
 .acquisition-result span { grid-column:2; font-size:.8rem; color:var(--text-secondary) }
 .acquisition-result:has(input:checked) { background:var(--accent-soft) }
 .acquisition-result:has(input:disabled) { opacity:.65; cursor:not-allowed }
