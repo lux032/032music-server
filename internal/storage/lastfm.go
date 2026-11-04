@@ -91,11 +91,15 @@ func (s *Store) LastFMNowPlayingTrack(ctx context.Context, trackID int64) (LastF
 }
 
 type LastFMScrobbleSettings struct {
-	Enabled, NowPlaying        bool
+	Enabled, NowPlaying bool
+	// SyncLoves mirrors local favourites to Last.fm loves (track.love).
+	SyncLoves                  bool
 	APIKey, APISecret          string
 	SessionKey, Username       string
 	LastSuccessAt, LastError   string
 	LastErrorAt                string
+	LastLoveError              string
+	LastLoveErrorAt            string
 	PendingCount               int64
 	OldestPendingStartedAtUnix int64
 }
@@ -109,14 +113,22 @@ func (v LastFMScrobbleSettings) Ready() bool {
 	return v.Enabled && v.APIKey != "" && v.APISecret != "" && v.SessionKey != ""
 }
 
+// LoveSyncReady reports whether favourite changes can be submitted to Last.fm.
+// It needs a connected session but not the scrobble switch: loving a track is
+// a separate feature an admin may enable on its own.
+func (v LastFMScrobbleSettings) LoveSyncReady() bool {
+	return v.SyncLoves && v.APIKey != "" && v.APISecret != "" && v.SessionKey != ""
+}
+
 func (s *Store) LastFMScrobbleSettings(ctx context.Context) (LastFMScrobbleSettings, error) {
 	var value LastFMScrobbleSettings
-	var enabled, nowPlaying int
-	err := s.db.QueryRowContext(ctx, `SELECT l.enabled,l.now_playing,COALESCE((SELECT api_key FROM metadata_source_settings WHERE source='lastfm'),''),l.api_secret,l.session_key,l.username,COALESCE(l.last_success_at,''),l.last_error,COALESCE(l.last_error_at,''),
+	var enabled, nowPlaying, syncLoves int
+	err := s.db.QueryRowContext(ctx, `SELECT l.enabled,l.now_playing,l.sync_loves,COALESCE((SELECT api_key FROM metadata_source_settings WHERE source='lastfm'),''),l.api_secret,l.session_key,l.username,COALESCE(l.last_success_at,''),l.last_error,COALESCE(l.last_error_at,''),l.last_love_error,COALESCE(l.last_love_error_at,''),
 		(SELECT COUNT(*) FROM lastfm_scrobble_queue),COALESCE((SELECT MIN(started_at) FROM lastfm_scrobble_queue),0)
-		FROM lastfm_scrobble_settings l WHERE l.id=1`).Scan(&enabled, &nowPlaying, &value.APIKey, &value.APISecret, &value.SessionKey, &value.Username, &value.LastSuccessAt, &value.LastError, &value.LastErrorAt, &value.PendingCount, &value.OldestPendingStartedAtUnix)
+		FROM lastfm_scrobble_settings l WHERE l.id=1`).Scan(&enabled, &nowPlaying, &syncLoves, &value.APIKey, &value.APISecret, &value.SessionKey, &value.Username, &value.LastSuccessAt, &value.LastError, &value.LastErrorAt, &value.LastLoveError, &value.LastLoveErrorAt, &value.PendingCount, &value.OldestPendingStartedAtUnix)
 	value.Enabled = enabled != 0
 	value.NowPlaying = nowPlaying != 0
+	value.SyncLoves = syncLoves != 0
 	return value, err
 }
 

@@ -53,11 +53,13 @@ func (s *Store) SetAlbumFavorite(ctx context.Context, id int64, favorite bool) e
 	return updateFavorite(ctx, s.db, "albums", id, favorite)
 }
 
-func (s *Store) SetTrackFavorite(ctx context.Context, id int64, favorite bool) error {
-	return updateFavorite(ctx, s.db, "tracks", id, favorite)
+// favoriteExec is satisfied by both retryDB and *sql.Tx, so the favourite
+// update can run alone or inside the love-sync transaction.
+type favoriteExec interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-func updateFavorite(ctx context.Context, db retryDB, table string, id int64, favorite bool) error {
+func updateFavorite(ctx context.Context, db favoriteExec, table string, id int64, favorite bool) error {
 	value := 0
 	if favorite {
 		value = 1
