@@ -266,7 +266,7 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 	} else if err != nil {
 		a.logger.Warn("home listening spotlight", "error", err)
 	}
-	if spot, err := a.store.HomeSeriesSpotlight(ctx); err == nil && spot != nil {
+	if spot, err := a.homeSpotlight(ctx); err == nil && spot != nil {
 		hero.Series = homeSeriesViewFrom(spot)
 	} else if err != nil {
 		a.logger.Warn("home series spotlight", "error", err)
@@ -343,7 +343,7 @@ func (a *App) homeTabAvailability(ctx context.Context) (listening, series bool) 
 	if unfinished, err := a.store.UnfinishedPlayback(ctx, 1); err == nil {
 		listening = len(unfinished) > 0
 	}
-	if spot, err := a.store.HomeSeriesSpotlight(ctx); err == nil {
+	if spot, err := a.homeSpotlight(ctx); err == nil {
 		series = spot != nil
 	}
 	return listening, series

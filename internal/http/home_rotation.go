@@ -14,7 +14,8 @@ import (
 )
 
 // home_rotation.go implements the daily rotation of the home page's
-// “按作品漫游” and “主题曲与插曲” sections.
+// “按作品漫游” and “主题曲与插曲” sections, and of the “作品聚焦” card
+// (one series or work per day, homeSpotlightOrder).
 //
 // Contract:
 //   - Each view (works:all / works:anime / … / songs) is built once per
@@ -66,6 +67,10 @@ type homeRotationView struct {
 	Count      int // works in the pool, or songs across all pages
 	workPages  [][]int64
 	songPages  [][]storage.HomeRolePick
+	// spotlight view only: the day's pool in rotation order, today's entry
+	// first (homeSpotlightOrder).
+	spotSeries bool
+	spotOrder  []int64
 }
 
 func (v *homeRotationView) Pages() int {
@@ -300,6 +305,92 @@ func (a *App) homeWorksRotation(ctx context.Context, filter string) (*homeRotati
 		}
 		return view, nil
 	})
+}
+
+// homeSpotlightOrder rotates the “作品聚焦” pool by day: ids are ranked by a
+// fixed per-id hash (so adding or removing a series only inserts or drops
+// that one entry), and the day number picks the starting point. Consecutive
+// days therefore walk the whole pool without repeats before wrapping, and
+// with two or more candidates the card never shows the same entry two days in
+// a row (unless the pool changed in between). The rest of the returned order
+// is the fallback when today's entry can no longer be loaded.
+func homeSpotlightOrder(ids []int64, day string) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	key := func(id int64) uint64 {
+		h := fnv.New64a()
+		h.Write([]byte("spotlight|" + strconv.FormatInt(id, 10)))
+		return h.Sum64()
+	}
+	ranked := append([]int64(nil), ids...)
+	sort.Slice(ranked, func(i, j int) bool {
+		ki, kj := key(ranked[i]), key(ranked[j])
+		if ki != kj {
+			return ki < kj
+		}
+		return ranked[i] < ranked[j]
+	})
+	start := 0
+	if date, err := time.ParseInLocation("2006-01-02", day, homeZone); err == nil {
+		days := date.Unix() / 86400
+		start = int(((days % int64(len(ranked))) + int64(len(ranked))) % int64(len(ranked)))
+	}
+	return append(ranked[start:], ranked[:start]...)
+}
+
+// homeSpotlightRotation is the day's frozen “作品聚焦” pool (see
+// homeSpotlightOrder), shared by the HTML page, its fragments and the API.
+func (a *App) homeSpotlightRotation(ctx context.Context) (*homeRotationView, error) {
+	return a.homeRotation.view("spotlight", func(day string, _ time.Time) (*homeRotationView, error) {
+		pool, err := a.store.HomeSpotlightCandidates(ctx)
+		if err != nil {
+			return nil, err
+		}
+		order := homeSpotlightOrder(pool.IDs, day)
+		return &homeRotationView{spotSeries: pool.Series, spotOrder: order, Count: len(order)}, nil
+	})
+}
+
+// homeSpotlight loads today's “作品聚焦” card: the first entry of the day's
+// order that still loads (a series or work deleted or emptied since the pool
+// was frozen is skipped). When nothing in the frozen pool loads — it was
+// frozen empty before any work got linked, or every entry went away — the
+// pool is rebuilt live (not cached) so new links show without waiting for
+// the next day. Returns (nil, nil) when there is nothing to show.
+func (a *App) homeSpotlight(ctx context.Context) (*storage.HomeSpotlight, error) {
+	view, err := a.homeSpotlightRotation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	spot, err := a.homeSpotlightFirst(ctx, view.spotSeries, view.spotOrder)
+	if err != nil || spot != nil {
+		return spot, err
+	}
+	pool, err := a.store.HomeSpotlightCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.homeSpotlightFirst(ctx, pool.Series, homeSpotlightOrder(pool.IDs, homeDay(a.homeRotation.now())))
+}
+
+func (a *App) homeSpotlightFirst(ctx context.Context, series bool, order []int64) (*storage.HomeSpotlight, error) {
+	for _, id := range order {
+		var spot *storage.HomeSpotlight
+		var err error
+		if series {
+			spot, err = a.store.HomeSeriesSpotlight(ctx, id)
+		} else {
+			spot, err = a.store.HomeWorkSpotlight(ctx, id)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if spot != nil {
+			return spot, nil
+		}
+	}
+	return nil, nil
 }
 
 func (a *App) homeSongsRotation(ctx context.Context) (*homeRotationView, error) {

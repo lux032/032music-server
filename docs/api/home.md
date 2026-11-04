@@ -104,13 +104,13 @@ JSON 路由和 HTML 路由共用同一套数据构建（`homeData` / `homeRandom
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `isSeries` | bool | `false` 表示曲库没有可聚焦的系列，退回为“关联曲目最多的单部作品” |
+| `isSeries` | bool | `false` 表示曲库没有可聚焦的系列，退回为单部作品 |
 | `seriesId` | int | 系列 id；非系列为 0 |
 | `title` | string | 系列名；非系列为作品名 |
 | `play` | PlayRef | 系列为 `{type: "series", id: seriesId}`，否则 `{type: "work", id}` |
 | `workIds` | int[] | 聚焦卡上的作品（最多 6 部，网页“播放全部”按这些作品逐个取曲目） |
 | `works` | `{work: Work, roleCounts: {role, count}[]}[]` | 成员作品及其各用途歌曲数 |
-| `albums` | `{workId, workTitle, album: AlbumWork, play}[]` | 关联专辑（去重，最多 8 张） |
+| `albums` | `{workId, workTitle, album: AlbumWork, play}[]` | 关联专辑（去重，最多 8 张；每部作品最多 4 张，先列整张关联的专辑，再列只收录了该作品个别歌曲的专辑，后者 `albumRole` 为空，`role` / `trackRoles` 为这些歌曲的用途） |
 | `albumCount` | int | 关联专辑去重总数 |
 | `trackTotal` | int | 各作品关联歌曲数之和 |
 | `yearFrom` / `yearTo` | int | 作品年份范围，没有为 0 |
@@ -264,6 +264,12 @@ JSON 路由和 HTML 路由共用同一套数据构建（`homeData` / `homeRandom
 切换编年年份。`year` 必填且为正整数，否则 400 `invalid_year`。返回 Chronicle；该年没有专辑时 `total: 0, albums: []`。
 
 ## 轮换语义
+
+“作品聚焦”每天换一个系列（与网页同一份内存缓存）：
+
+- 候选池：至少有一部成员作品带可见关联歌曲的全部系列，整张专辑关联和单曲关联都算；没有这样的系列时，候选池改为全部带可见关联歌曲的作品（`isSeries: false`）。
+- 候选池在当天（UTC+8）第一次请求时冻结。每个候选按自身 id 的固定哈希排序，起点随日期后移一位：连续若干天依次轮到每个候选，不会连着两天是同一个，走完一轮再从头开始。
+- 当天的候选被删除或已没有可见歌曲时，顺延到下一个。冻结的候选池一个都加载不出来时（例如当天早些时候还没有任何关联），会实时重新计算，新关联当天就能出现。
 
 “按作品漫游”和“主题曲与插曲”每天轮换，规则与网页完全相同（同一份内存缓存）：
 

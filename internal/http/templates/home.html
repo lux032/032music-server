@@ -365,7 +365,7 @@
 {{end}}
 
 {{define "home-hero-series"}}
-<div class="h-hero-bg">{{with index .Albums 0}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="" aria-hidden="true">{{end}}{{end}}</div>
+<div class="h-hero-bg">{{with .Albums}}{{with index . 0}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="" aria-hidden="true">{{end}}{{end}}{{end}}</div>
 <div class="h-hero-inner">
   <div class="h-hero-art is-fan"><div class="h-fan">{{range $index, $entry := .Albums}}{{if lt $index 3}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="">{{end}}{{end}}{{end}}</div></div>
   <div class="h-hero-info">

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -54,8 +55,8 @@ type HomeSpotlightWork struct {
 }
 
 // HomeSpotlight is the “作品聚焦” card: a series (SeriesID > 0) or, when the
-// library has no series with linked albums, the single work with the most
-// linked tracks (SeriesID == 0, SeriesTitle == "").
+// library has no series with linked songs, a single work (SeriesID == 0,
+// SeriesTitle == ""). Which one is shown rotates daily (HomeSpotlightPool).
 type HomeSpotlight struct {
 	SeriesID    int64
 	SeriesTitle string
@@ -371,8 +372,11 @@ func (s *Store) RandomAlbum(ctx context.Context, exclude int64) (Album, error) {
 	return Album{}, sql.ErrNoRows
 }
 
+// homeSpotlightAlbumsPerWork caps the albums listed per member work.
+const homeSpotlightAlbumsPerWork = 4
+
 // homeSpotlightWorks assembles the member works of a spotlight: role counts
-// plus linked albums for each.
+// plus linked albums for each (homeWorkAlbums).
 func (s *Store) homeSpotlightWorks(ctx context.Context, works []Work) ([]HomeSpotlightWork, error) {
 	ids := make([]int64, 0, len(works))
 	for _, w := range works {
@@ -384,66 +388,145 @@ func (s *Store) homeSpotlightWorks(ctx context.Context, works []Work) ([]HomeSpo
 	}
 	values := make([]HomeSpotlightWork, 0, len(works))
 	for _, w := range works {
-		albums, err := s.AlbumsForWork(ctx, w.ID)
+		albums, err := s.homeWorkAlbums(ctx, w.ID, homeSpotlightAlbumsPerWork)
 		if err != nil {
 			return nil, err
-		}
-		if len(albums) > 4 {
-			albums = albums[:4]
 		}
 		values = append(values, HomeSpotlightWork{Work: w, RoleCounts: counts[w.ID], Albums: albums})
 	}
 	return values, nil
 }
 
-// HomeSeriesSpotlight picks the series whose member works most recently had
-// an album added to the library (deterministic, explainable). When no series
-// has any linked album, it falls back to the single work with the most
-// linked tracks. Returns (nil, nil) when the library has neither.
-func (s *Store) HomeSeriesSpotlight(ctx context.Context) (*HomeSpotlight, error) {
-	var seriesID int64
-	err := s.db.QueryRowContext(ctx, `SELECT m.series_id,MAX(a.added_at) FROM work_series_members m JOIN album_works aw ON aw.work_id=m.work_id JOIN albums a ON a.id=aw.album_id WHERE `+albumVisibleSQL("a.id")+` GROUP BY m.series_id ORDER BY 2 DESC LIMIT 1`).Scan(&seriesID, new(string))
-	if err != nil && err != sql.ErrNoRows {
+// homeWorkAlbums lists up to limit visible albums of a work for the
+// spotlight: the whole-album links first (AlbumsForWork), then the albums
+// that only hold some of the work's track-level songs (an OP single, a
+// compilation), which AlbumsForWork leaves out. Track-level rows carry the
+// work's best-ranked song role in that album as Role/TrackRoles and no
+// AlbumRole.
+func (s *Store) homeWorkAlbums(ctx context.Context, workID int64, limit int) ([]AlbumWork, error) {
+	albums, err := s.AlbumsForWork(ctx, workID)
+	if err != nil {
 		return nil, err
 	}
-	if err == nil {
-		series, err := s.WorkSeriesByID(ctx, seriesID)
-		if err != nil {
-			return nil, err
-		}
-		members, err := s.SeriesMembers(ctx, seriesID)
-		if err != nil {
-			return nil, err
-		}
-		works := make([]Work, 0, len(members))
-		for _, member := range members {
-			if member.Work.TrackCount > 0 {
-				works = append(works, member.Work)
-			}
-			if len(works) >= 6 {
-				break
-			}
-		}
-		if len(works) > 0 {
-			spotlightWorks, err := s.homeSpotlightWorks(ctx, works)
-			if err != nil {
-				return nil, err
-			}
-			return &HomeSpotlight{SeriesID: series.ID, SeriesTitle: series.Title, Works: spotlightWorks}, nil
-		}
+	if len(albums) >= limit {
+		return albums[:limit], nil
 	}
-	// Fallback: the work with the most linked visible tracks.
-	var workID int64
-	err = s.db.QueryRowContext(ctx, `SELECT w.id FROM works w WHERE `+homeTrackCountSQL+` > 0 ORDER BY `+homeTrackCountSQL+` DESC,w.id LIMIT 1`).Scan(&workID)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE((SELECT wt.source FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id=? AND t.album_id=a.id ORDER BY CASE wt.source WHEN 'manual' THEN 0 WHEN 'bangumi' THEN 1 ELSE 2 END LIMIT 1),''),COALESCE(a.user_performed_by,a.performed_by,`+bangumiAlbumArtistSQL+`,''),COALESCE(a.user_release_year,a.release_year,0),COALESCE(a.user_album_type,a.album_type,'album'),a.disc_count,(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id AND `+trackVisibleSQL("t.id")+`),`+albumArtworkURLSQL+`,COALESCE((SELECT GROUP_CONCAT(DISTINCT wt.role) FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id=? AND t.album_id=a.id AND `+trackVisibleSQL("t.id")+`),'') FROM albums a WHERE a.id IN (SELECT t.album_id FROM work_tracks wt JOIN tracks t ON t.id=wt.track_id WHERE wt.work_id=? AND `+trackVisibleSQL("t.id")+`) AND NOT EXISTS(SELECT 1 FROM album_works aw WHERE aw.album_id=a.id AND aw.work_id=?) ORDER BY a.id LIMIT ?`, workID, workID, workID, workID, limit-len(albums))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		v := AlbumWork{WorkID: workID}
+		var roles string
+		if err := rows.Scan(&v.AlbumID, &v.Title, &v.Source, &v.Artist, &v.Year, &v.AlbumType, &v.DiscCount, &v.TrackCount, &v.ArtworkURL, &roles); err != nil {
+			return nil, err
+		}
+		for _, role := range strings.Split(roles, ",") {
+			if role = strings.TrimSpace(role); role != "" {
+				v.TrackRoles = append(v.TrackRoles, role)
+			}
+		}
+		sort.SliceStable(v.TrackRoles, func(i, j int) bool { return WorkRoleRank(v.TrackRoles[i]) < WorkRoleRank(v.TrackRoles[j]) })
+		if len(v.TrackRoles) > 0 {
+			v.Role = v.TrackRoles[0]
+		}
+		albums = append(albums, v)
+	}
+	return albums, rows.Err()
+}
+
+// homeWorkLinkedSQL reports whether the work aliased `w` has at least one
+// visible linked track, through a whole-album link or a track-level link.
+var homeWorkLinkedSQL = `(EXISTS(SELECT 1 FROM work_tracks hwt WHERE hwt.work_id=w.id AND ` + trackVisibleSQL("hwt.track_id") + `) OR EXISTS(SELECT 1 FROM album_works haw WHERE haw.work_id=w.id AND ` + albumVisibleSQL("haw.album_id") + `))`
+
+// HomeSpotlightPool is the rotation pool of the “作品聚焦” card: every series
+// with at least one member work that has a visible linked track (album-level
+// or track-level), ordered by id. Only when no series qualifies does the pool
+// hold single works instead (Series false: every work with a visible linked
+// track). An empty pool means there is nothing to spotlight.
+type HomeSpotlightPool struct {
+	Series bool
+	IDs    []int64
+}
+
+// HomeSpotlightCandidates returns the spotlight rotation pool.
+func (s *Store) HomeSpotlightCandidates(ctx context.Context) (HomeSpotlightPool, error) {
+	ids, err := s.homeInt64s(ctx, `SELECT DISTINCT m.series_id FROM work_series_members m JOIN works w ON w.id=m.work_id WHERE `+homeWorkLinkedSQL+` ORDER BY m.series_id`)
+	if err != nil {
+		return HomeSpotlightPool{}, err
+	}
+	if len(ids) > 0 {
+		return HomeSpotlightPool{Series: true, IDs: ids}, nil
+	}
+	ids, err = s.homeInt64s(ctx, `SELECT w.id FROM works w WHERE `+homeWorkLinkedSQL+` ORDER BY w.id`)
+	return HomeSpotlightPool{IDs: ids}, err
+}
+
+func (s *Store) homeInt64s(ctx context.Context, query string, args ...any) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		values = append(values, id)
+	}
+	return values, rows.Err()
+}
+
+// HomeSeriesSpotlight loads the spotlight card of one series: up to 6 member
+// works (series order) that have visible linked tracks. Returns (nil, nil)
+// when the series is gone or none of its members has a visible linked track.
+func (s *Store) HomeSeriesSpotlight(ctx context.Context, seriesID int64) (*HomeSpotlight, error) {
+	series, err := s.WorkSeriesByID(ctx, seriesID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	work, err := s.WorkByID(ctx, workID)
+	members, err := s.SeriesMembers(ctx, seriesID)
 	if err != nil {
 		return nil, err
+	}
+	works := make([]Work, 0, len(members))
+	for _, member := range members {
+		if member.Work.TrackCount > 0 {
+			works = append(works, member.Work)
+		}
+		if len(works) >= 6 {
+			break
+		}
+	}
+	if len(works) == 0 {
+		return nil, nil
+	}
+	spotlightWorks, err := s.homeSpotlightWorks(ctx, works)
+	if err != nil {
+		return nil, err
+	}
+	return &HomeSpotlight{SeriesID: series.ID, SeriesTitle: series.Title, Works: spotlightWorks}, nil
+}
+
+// HomeWorkSpotlight loads the single-work spotlight card (the pool holds
+// works when the library has no qualifying series). Returns (nil, nil) when
+// the work is gone or has no visible linked track.
+func (s *Store) HomeWorkSpotlight(ctx context.Context, workID int64) (*HomeSpotlight, error) {
+	work, err := s.WorkByID(ctx, workID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if work.TrackCount == 0 {
+		return nil, nil
 	}
 	spotlightWorks, err := s.homeSpotlightWorks(ctx, []Work{work})
 	if err != nil {
