@@ -116,6 +116,9 @@ type workReviewPageData struct {
 	SeriesGroups    []seriesSuggestionGroup
 	SeriesCards     []seriesSuggestionCard
 	SeriesTruncated bool // 建议超过 200 条：仅显示前 200 条
+	// 批量审核栏（Issue #3）：BatchTotal 是本页可勾选的卡片数，为 0 时不显示。
+	BatchTotal    int
+	BatchReturnTo string
 }
 
 func (data *workReviewPageData) buildGroups() {
@@ -582,6 +585,16 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 		// L2：超过 200 条时提示“仅显示前 200 条”（角标计数与列表同口径）。
 		data.SeriesTruncated = data.SeriesSuggestionCount > len(suggestions)
 		data.SeriesGroups, data.SeriesCards = a.seriesSuggestionCards(data.CSRFToken, suggestions)
+		data.BatchTotal = len(suggestions)
+		data.BatchReturnTo = "/admin/work-review?tab=series"
+	}
+	switch tab {
+	case "albums", "tracks":
+		data.BatchTotal = len(data.AlbumSubjects) + len(data.TrackSubjects)
+		data.BatchReturnTo = "/admin/work-review?tab=" + tab + "&group=" + group
+		if albumID > 0 {
+			data.BatchReturnTo += "&albumId=" + strconv.FormatInt(albumID, 10)
+		}
 	}
 
 	a.render(w, http.StatusOK, "work-review.html", data)

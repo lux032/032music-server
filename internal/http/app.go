@@ -638,6 +638,7 @@ func (a *App) Handler() http.Handler {
 
 	mux.Handle("GET /admin/matches", a.requireAdmin(http.HandlerFunc(a.handleMatchReview)))
 	mux.Handle("GET /admin/work-review", a.requireAdmin(http.HandlerFunc(a.handleAdminWorkReview)))
+	mux.Handle("POST /admin/work-review/batch", a.requireAdmin(http.HandlerFunc(a.handleAdminWorkReviewBatch)))
 	mux.Handle("GET /admin/enrichment", a.requireAdmin(http.HandlerFunc(a.handleAdminEnrichment)))
 	mux.Handle("POST /admin/enrichment/run", a.requireAdmin(http.HandlerFunc(a.handleAdminStartEnrichment)))
 	mux.Handle("POST /admin/enrichment/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleAdminCancelEnrichment)))

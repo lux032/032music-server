@@ -821,9 +821,82 @@
   });
   updateSelectedCounts();
 
+  // -------------------------------------- 审核页批量审核（Issue #3）
+  // 卡片复选框经 form= 关联到 #work-review-batch；提交时把每张选中卡片的
+  // 接受表单当前取值（勾选作品、角色、合并命名）序列化为 state-<item>。
+  let lastReviewSelect = null;
+  function reviewSelects() { return [...document.querySelectorAll('input.review-select')]; }
+  function updateReviewBatch() {
+    const bar = document.querySelector('[data-review-batch]');
+    if (!bar) return;
+    const boxes = reviewSelects();
+    const checked = boxes.filter(box => box.checked);
+    boxes.forEach(box => box.closest('.review-candidate-body')?.classList.toggle('is-selected', box.checked));
+    const count = bar.querySelector('[data-review-selected-count]');
+    if (count) count.textContent = `已选 ${checked.length} / ${boxes.length} 条`;
+    const all = bar.querySelector('[data-review-select-all]');
+    if (all) {
+      all.checked = boxes.length > 0 && checked.length === boxes.length;
+      all.indeterminate = checked.length > 0 && checked.length < boxes.length;
+    }
+    bar.querySelectorAll('[data-review-batch-action]').forEach(btn => { btn.disabled = checked.length === 0; });
+    bar.classList.toggle('has-selection', checked.length > 0);
+  }
+  document.addEventListener('click', e => {
+    const box = e.target instanceof HTMLInputElement && e.target.classList.contains('review-select') ? e.target : null;
+    if (!box) return;
+    // Shift+点击：把上次点击与本次之间的卡片设成同一状态。
+    if (e.shiftKey && lastReviewSelect && lastReviewSelect !== box && lastReviewSelect.isConnected) {
+      const boxes = reviewSelects();
+      const [from, to] = [boxes.indexOf(lastReviewSelect), boxes.indexOf(box)].sort((x, y) => x - y);
+      if (from >= 0) boxes.slice(from, to + 1).forEach(other => { other.checked = box.checked; });
+    }
+    lastReviewSelect = box;
+    updateReviewBatch();
+  });
+  document.addEventListener('change', e => {
+    if (!(e.target instanceof HTMLInputElement) || !e.target.matches('[data-review-select-all]')) return;
+    reviewSelects().forEach(box => { box.checked = e.target.checked; });
+    updateReviewBatch();
+  });
+  // 捕获阶段：先于 PJAX 提交处理器补齐卡片状态，取消确认时它看到 defaultPrevented。
+  document.addEventListener('submit', e => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || !form.matches('[data-review-batch]')) return;
+    const checked = reviewSelects().filter(box => box.checked);
+    const accept = e.submitter?.value === 'accept';
+    if (!checked.length) { e.preventDefault(); return; }
+    const verb = accept ? '接受' : (e.submitter?.textContent.trim() || '拒绝').replace(/^批量/, '');
+    const note = accept ? '每条按卡片上当前的勾选与角色写入。' : '拒绝会被永久记住，以后不再建议这些条目。';
+    if (!window.confirm(`${verb}选中的 ${checked.length} 条？\n${note}`)) { e.preventDefault(); return; }
+    form.querySelectorAll('input[data-review-state]').forEach(input => input.remove());
+    for (const box of checked) {
+      const source = document.getElementById(box.dataset.reviewStateForm || '');
+      if (!(source instanceof HTMLFormElement)) continue;
+      const state = new URLSearchParams();
+      for (const [key, value] of new FormData(source)) {
+        if (key !== 'csrfToken' && key !== 'returnTo') state.append(key, String(value));
+      }
+      // 专辑卡片全部勾选时与“接受全部”按钮一致。
+      if (box.hasAttribute('data-review-album')) {
+        const ties = source.querySelectorAll('input[name="workSubjectIds"]');
+        if ([...ties].every(tie => tie.checked)) state.set('acceptAll', '1');
+      }
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = `state-${box.value}`;
+      input.value = state.toString();
+      input.dataset.reviewState = '';
+      form.appendChild(input);
+    }
+  }, true);
+  updateReviewBatch();
+
   document.addEventListener('032:pjax-applied', () => {
     closeHoverPopover(false);
     updateSelectedCounts();
+    lastReviewSelect = null;
+    updateReviewBatch();
     clearAlbumSelection();
     if (pendingDrawerClose) { clearTimeout(pendingDrawerClose.timer); pendingDrawerClose = null; }
     activeDrawer = null;

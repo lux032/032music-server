@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -171,13 +172,20 @@ func (a *App) seriesSuggestionCards(csrfToken string, suggestions []storage.Seri
 // mergeTitleFromForm 按 D58 的单选结果解析合并后的名字：保留 A / 保留 B /
 // 新名字。命名选项不可见（auto/one 模式）时返回空串交给存储层自动处理。
 func mergeTitleFromForm(r *http.Request) (string, string) {
-	switch r.FormValue("titleChoice") {
+	_ = r.ParseForm()
+	return mergeTitleFromValues(r.Form)
+}
+
+// mergeTitleFromValues 是 mergeTitleFromForm 的表单值版本，批量审核按每条
+// 建议各自的命名选择调用。
+func mergeTitleFromValues(values url.Values) (string, string) {
+	switch values.Get("titleChoice") {
 	case "a":
-		return strings.TrimSpace(r.FormValue("seriesTitleA")), ""
+		return strings.TrimSpace(values.Get("seriesTitleA")), ""
 	case "b":
-		return strings.TrimSpace(r.FormValue("seriesTitleB")), ""
+		return strings.TrimSpace(values.Get("seriesTitleB")), ""
 	case "new":
-		title := strings.TrimSpace(r.FormValue("title"))
+		title := strings.TrimSpace(values.Get("title"))
 		if title == "" {
 			return "", "请填写合并后的新名字"
 		}
