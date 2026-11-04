@@ -50,6 +50,21 @@
       {{end}}
     </nav>
     {{if .ConflictWork}}<div class="toast">该条目已对齐到作品<a href="/admin/works/{{.ConflictWork.ID}}">《{{.ConflictWork.Title}}》</a></div>{{else if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    {{if .BatchTotal}}
+    {{/* Issue #3：批量审核栏。卡片复选框通过 form= 关联到本表单；页面脚本在
+         提交时把每张卡片当前的勾选作品、角色与合并命名一并带上。 */}}
+    <form id="work-review-batch" class="review-batch-bar" method="post" action="/admin/work-review/batch" data-review-batch>
+      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+      <input type="hidden" name="returnTo" value="{{.BatchReturnTo}}">
+      <label class="review-batch-all"><input type="checkbox" data-review-select-all aria-label="全选本页候选"> 全选本页</label>
+      <span class="review-batch-count" data-review-selected-count role="status">已选 0 / {{.BatchTotal}} 条</span>
+      <span class="review-batch-hint">按每张卡片当前的勾选与角色处理{{if eq .ActiveTab "albums"}}，未改动勾选的卡片等同“接受全部”{{end}}</span>
+      <div class="candidate-btn-group">
+        <button type="submit" name="decision" value="accept" class="primary-button" data-review-batch-action>批量接受</button>
+        <button type="submit" name="decision" value="reject" class="secondary-button danger-text-button" data-review-batch-action>{{if eq .ActiveTab "albums"}}批量拒绝并抑制{{else}}批量拒绝{{end}}</button>
+      </div>
+    </form>
+    {{end}}
 
     {{if eq .ActiveTab "series"}}
     {{/* 系列建议（D54）：与作品对齐 Tab 相同，始终平铺（同作品多条建议按作
@@ -232,7 +247,8 @@
 </html>
 
 {{define "wrAlbumCandCard"}}
-<div class="review-candidate-body">
+<div class="review-candidate-body is-selectable">
+  <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="album:{{.Cand.AlbumID}}:{{.Cand.ID}}" data-review-state-form="album-accept-{{.Cand.ID}}" data-review-album aria-label="选择专辑候选《{{.Cand.Title}}》"></label>
   <div class="bgm-candidate-bar">
     <div class="bgm-candidate-title">
       <a class="bgm-link" href="https://bgm.tv/subject/{{.Cand.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Cand.Title}} ↗</a>
@@ -282,7 +298,8 @@
 {{end}}
 
 {{define "wrTrackCandCard"}}
-<div class="review-candidate-body">
+<div class="review-candidate-body is-selectable">
+  <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="track:{{.Cand.TrackID}}:{{.Cand.ID}}" data-review-state-form="track-accept-{{.Cand.ID}}" aria-label="选择曲目候选《{{.Cand.TrackTitle}}》→《{{.Cand.Title}}》"></label>
   <div class="review-track-line">
     <strong>{{.Cand.TrackTitle}}</strong>
     <span class="muted">{{if .Cand.TrackArtist}}{{.Cand.TrackArtist}} · {{end}}专辑《<a href="/admin/albums/{{.Cand.AlbumID}}">{{.Cand.AlbumTitle}}</a>》{{if .Cand.TrackNumber}} · 曲目 {{.Cand.DiscNumber}}.{{.Cand.TrackNumber}}{{end}}{{if .Cand.DurationMillis}} · {{formatDurationMillis .Cand.DurationMillis}}{{end}}</span>
@@ -347,7 +364,8 @@
 {{end}}
 
 {{define "wrSeriesSuggCard"}}
-<div class="review-candidate-body series-suggestion-card">
+<div class="review-candidate-body series-suggestion-card is-selectable">
+  <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="series:{{.ID}}" data-review-state-form="series-accept-{{.ID}}" aria-label="选择系列建议《{{.WorkA.Title}}》与《{{.WorkB.Title}}》"></label>
   <div class="series-suggestion-pair">
     <a href="/admin/works/{{.WorkA.ID}}" class="series-suggestion-work">
       <span class="work-type-chip">{{with workTypeLabel .WorkA.Type}}{{.}}{{else}}作品{{end}}</span>

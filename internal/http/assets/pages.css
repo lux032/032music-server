@@ -1729,6 +1729,69 @@ html:not(.drawer-ready) .row-drawer[open] { grid-column: 1 / -1; }
 .review-candidate-body + .review-candidate-body {
   border-top: 1px solid var(--line);
 }
+/* Issue #3：批量审核。卡片左侧一列放复选框，选中的卡片带淡强调底色。 */
+.review-candidate-body.is-selectable {
+  position: relative;
+  padding-left: 50px;
+}
+.review-select-label {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.review-select-label:hover {
+  background: var(--surface-hover);
+}
+.review-candidate-body.is-selected {
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+.review-batch-bar {
+  position: sticky;
+  top: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  background: var(--surface-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-xs);
+}
+.review-batch-bar.has-selection {
+  border-color: var(--accent-line);
+}
+.review-batch-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-batch-count {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.review-batch-hint {
+  flex: 1 1 220px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.review-batch-bar .candidate-btn-group {
+  margin-left: auto;
+}
 .bgm-candidate-bar {
   display: flex;
   align-items: center;
