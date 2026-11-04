@@ -3776,3 +3776,63 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 @media (max-width: 820px) {
   .playlist-track-list.dm-track-list > article { grid-template-columns: 32px minmax(0, 1fr) auto; }
 }
+
+/* ------------------------------------------------- wide settings pages */
+/* 设置类页面由若干张 1060px 上限的卡片纵向堆叠；在 4K 大屏上内容区有
+   3000px 以上，单列卡片右侧会空出一大半。卡片本身就是独立的块，所以
+   内容区够宽时把它们排成网格：≥1700px 两列、≥2700px 三列，列宽 1fr，
+   卡片自身的 1060px 上限继续生效，单列（窄屏）行为完全不变。
+   #app-main 是 app-main 容器查询的容器本身，不能查询自己，所以网格放在
+   模板新增的 .settings-grid 包裹层上。 */
+.settings-grid { display: grid; gap: 18px; align-content: start; align-items: start; }
+.settings-grid > .source-card-form,
+.settings-grid > .source-card,
+.settings-grid > .security-flash { margin: 0; }
+.settings-grid > .source-card-form + .source-card-form { margin-top: 0; }
+@container app-main (min-width: 1700px) {
+  .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container app-main (min-width: 2700px) {
+  .settings-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* 获取设置：表单卡片原先铺满 3172px，输入框和保存按钮都跟着拉满整行。
+   现在说明、Jackett、qBittorrent 各是一张卡片，走 .settings-grid 的宽屏
+   网格；保存按钮是普通尺寸，跟在网格下方。 */
+.acquisition-form { display: grid; gap: 18px; justify-items: start; }
+.acquisition-form > .settings-grid { width: 100%; }
+.acquisition-form .source-card > p { margin-bottom: 12px; }
+.acquisition-form .source-card > p:last-child { margin-bottom: 0; }
+.acquisition-form > button[type="submit"] { margin-top: 2px; }
+
+/* 合并历史：宽内容区里每条记录只有左侧 ~780px 有内容，右侧空 2300px。
+   同样的阈值把记录排成卡片网格，每条记录保持原有的状态/名称/时间/操作
+   结构，只是各自成为一张卡片。 */
+@container app-main (min-width: 1700px) {
+  .merge-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+  }
+  .merge-list > article {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+  .merge-list > article:hover { border-color: var(--line-strong); background: var(--surface); }
+  /* 卡片里 article 仍是 flex 行：内层网格要显式吃掉剩余宽度，
+     否则 minmax(0,1fr) 在 shrink-to-fit 下会塌到最小内容宽度。 */
+  .merge-list > article > div { flex: 1 1 auto; min-width: 0; grid-template-columns: 90px minmax(0, 1fr); }
+  /* 空列表的占位不是记录卡片，铺满整行。 */
+  .merge-list > .zero-state { grid-column: 1 / -1; }
+  .merge-list > article strong { overflow-wrap: anywhere; }
+}
+@container app-main (min-width: 2700px) {
+  .merge-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

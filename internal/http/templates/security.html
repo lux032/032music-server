@@ -24,6 +24,7 @@
 
     {{with .Notice}}<div class="{{if .Error}}form-error{{else}}toast{{end}} security-notice" role="{{if .Error}}alert{{else}}status{{end}}" data-security-notice>{{.Text}}</div>{{end}}
 
+    <div class="settings-grid">
     {{with .Flash}}
     <section class="security-flash" data-security-flash>
       <header>
@@ -323,6 +324,7 @@
       </details>
       {{end}}
     </section>
+    </div>
   </main>
 </body>
 </html>

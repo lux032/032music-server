@@ -6,6 +6,7 @@
 <main id="app-main" class="browser-main identity-main security-main">
 <header class="browser-header"><div><h1>数据库备份与恢复</h1><p class="result-count">一致数据库快照 · UTC+8 · 异地同步由 QNAP 负责。快照包含凭据，请妥善保管。</p></div></header>
 {{with .Notice}}<p class="form-error" role="alert">{{.}}</p>{{end}}
+<div class="settings-grid">
 {{if .Restarting}}
 <section class="source-card"><h2>正在重启</h2><p>恢复将在启动时生效；当前账号凭据和会话将被保留。若没有进程守护自动重启，请手动启动服务器。</p><div data-backup-restarting></div></section>
 {{else}}
@@ -29,4 +30,5 @@
 <form method="post" action="/admin/backups/select"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="name" value="{{.Name}}"><button class="secondary-button">选择此快照恢复</button></form>
 <details><summary>删除快照…</summary><form method="post" action="/admin/backups/delete"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><input type="hidden" name="name" value="{{.Name}}"><button class="danger-button">确认删除</button></form></details></article>{{else}}<p>暂无快照</p>{{end}}</section>
 {{end}}
+</div>
 </main></body></html>
