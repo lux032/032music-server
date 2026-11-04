@@ -3780,8 +3780,8 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 /* ------------------------------------------------- wide settings pages */
 /* 设置类页面由若干张 1060px 上限的卡片纵向堆叠；在 4K 大屏上内容区有
    3000px 以上，单列卡片右侧会空出一大半。卡片本身就是独立的块，所以
-   内容区够宽时把它们排成网格：≥1700px 两列、≥2700px 三列，列宽 1fr，
-   卡片自身的 1060px 上限继续生效，单列（窄屏）行为完全不变。
+   内容区够宽时把它们排成网格：≥1700px 两列、≥2700px 三列，列宽 1fr
+   （两档列宽都小于 1060px，卡片上限不再起作用）。窄屏仍是原来的单列。
    #app-main 是 app-main 容器查询的容器本身，不能查询自己，所以网格放在
    模板新增的 .settings-grid 包裹层上。 */
 .settings-grid { display: grid; gap: 18px; align-content: start; align-items: start; }
