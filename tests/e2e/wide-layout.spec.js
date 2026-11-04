@@ -74,7 +74,13 @@ async function density(page) {
   }
   const fields = await page.locator('.form-grid input:not([type=checkbox]):not([type=radio]):visible, .form-grid select:visible, .create-work-form input:visible, .create-playlist input:visible').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
   for (const width of fields) expect(width).toBeLessThanOrEqual(480);
-  const localWidths = await page.locator('.source-card-form, .security-card, .series-admin-main > .feature-card, .create-work-form, .create-playlist form').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
+  // Cards inside the wide settings grid fill their column, so the 1100px bound
+  // only applies where the layout is still a single stacked column.
+  const localWidths = await page.locator('.source-card-form, .security-card, .series-admin-main > .feature-card, .create-work-form, .create-playlist form').evaluateAll(nodes => nodes.map(n => {
+    const grid = n.closest('.settings-grid');
+    const stacked = !grid || getComputedStyle(grid).gridTemplateColumns.split(' ').length === 1;
+    return stacked ? n.getBoundingClientRect().width : 0;
+  }));
   for (const width of localWidths) expect(width).toBeLessThanOrEqual(1100);
   const fieldWidths = await page.locator('.security-inline-form input:visible, .series-create-form input:visible, .inline-rename input:visible, .create-work-form select:visible').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().width));
   fieldWidths.forEach(width => expect(width).toBeLessThanOrEqual(480));
@@ -85,16 +91,18 @@ async function density(page) {
   // Text Range endpoint, not the full row's left edge: measures the rendered
   // title's visible end (clamped to an ellipsis box) to the primary action.
   const distances = await page.evaluate(() => {
-    const pairs = [['.series-list-row', 'h2', 'a:last-child'], ['.pending-review-banner', 'span', 'a, button'], ['.feature-track-list > article', 'strong', '.row-play-btn'], ['.artist-track-list article', 'strong', '.row-play-btn'], ['.playlist-track-list > article', 'strong', '.track-actions'], ['.playback-list > article', 'strong', '.row-play-btn'], ['.merge-list article', 'strong', 'button']];
-    return pairs.flatMap(([row, copy, action]) => [...document.querySelectorAll(row)].flatMap(n => {
+    const pairs = [['.series-list-row', 'h2', 'a:last-child', 800], ['.pending-review-banner', 'span', 'a, button', 800], ['.feature-track-list > article', 'strong', '.row-play-btn', 800], ['.artist-track-list article', 'strong', '.row-play-btn', 800], ['.playlist-track-list > article', 'strong', '.track-actions', 800], ['.playback-list > article', 'strong', '.row-play-btn', 800], ['.merge-list article', 'strong', 'button', 900]];
+    return pairs.flatMap(([row, copy, action, limit]) => [...document.querySelectorAll(row)].flatMap(n => {
       const title = n.querySelector(copy), button = n.querySelector(action);
       if (!title || !button) return [];
       const range = document.createRange(); range.selectNodeContents(title);
       const end = Math.min(range.getBoundingClientRect().right, title.getBoundingClientRect().right);
-      return [Math.abs(button.getBoundingClientRect().left - end)];
+      // Merge rows became cards in the wide grid, so their copy/action distance
+      // is bounded by the card width rather than the old 720px list row.
+      return [{ distance: Math.abs(button.getBoundingClientRect().left - end), limit }];
     }));
   });
-  for (const distance of distances) expect(distance).toBeLessThanOrEqual(800);
+  for (const { distance, limit } of distances) expect(distance).toBeLessThanOrEqual(limit);
 }
 for (const width of [1920, 2560, 3840]) {
   for (const collapsed of [false, true]) {
@@ -205,6 +213,42 @@ test('toggle animation, floating centers and PJAX round trip', async ({ page }, 
     const offset = await bar.evaluate(n => { const r = n.getBoundingClientRect(), m = document.querySelector('#app-main').getBoundingClientRect(); return Math.abs((r.left+r.right-m.left-m.right)/2); });
     expect(offset).toBeLessThanOrEqual(2);
     await page.locator('.album-selection-cancel').click(); await expect(bar).toBeHidden();
+  }
+});
+
+// Settings-style pages used to stack 1060px cards in a 3172px content column at
+// 4K, leaving most of the right side empty. They now fill the row with a card
+// grid once the content column is wide enough, and stay single-column below it.
+test('wide settings pages fill the content column', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop-chromium');
+  test.setTimeout(120000);
+  const targets = [
+    ['/admin/settings/metadata', '.settings-grid'],
+    ['/admin/backups', '.settings-grid'],
+    ['/admin/settings/security', '.settings-grid'],
+    ['/admin/settings/acquisition', '.acquisition-form > .settings-grid'],
+    ['/admin/merges', '.merge-list']
+  ];
+  for (const [width, expected] of [[1920, 1], [2560, 2], [3840, 3]]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => localStorage.setItem('032_np_collapsed', '0'));
+    for (const [route, selector] of targets) {
+      const response = await page.goto(route); expect(response.status(), route).toBe(200);
+      await boundary(page);
+      const fill = await page.locator(selector).evaluate(n => {
+        const main = document.querySelector('#app-main'), rect = main.getBoundingClientRect(), css = getComputedStyle(main);
+        const right = rect.right - parseFloat(css.paddingRight);
+        const items = [...n.children].filter(c => c.getBoundingClientRect().width > 0);
+        return {
+          columns: getComputedStyle(n).gridTemplateColumns.split(' ').length,
+          gap: Math.round(right - Math.max(...items.map(c => c.getBoundingClientRect().right)))
+        };
+      });
+      expect(fill.columns, `${width} ${route}`).toBe(expected);
+      // Once the row is split into columns the cards must reach the content
+      // edge; a single stacked column keeps the historical 1060px card width.
+      if (expected > 1) expect(fill.gap, `${width} ${route}`).toBeLessThanOrEqual(40);
+    }
   }
 });
 

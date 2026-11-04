@@ -16,6 +16,7 @@
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
+    <div class="settings-grid">
     {{range .Settings}}
       {{if eq .Source "musicbrainz"}}
       <form class="source-card-form" method="post" data-scope-form>
@@ -162,6 +163,7 @@
         <div class="editor-actions"><button type="submit">保存简介策略设置</button></div>
       </section>
     </form>
+    </div>
   </main>
 </body>
 </html>
