@@ -296,6 +296,93 @@ func (c *Client) Scrobble(ctx context.Context, sessionKey string, tracks []Track
 	return results, nil
 }
 
+// Love marks one track as loved ("点亮红心") on the authorised user profile.
+// Last.fm requires only the artist and track names, and the call is
+// idempotent: loving an already loved track succeeds, so retries are safe.
+func (c *Client) Love(ctx context.Context, sessionKey, artist, track string) error {
+	return c.call(ctx, "track.love", loveParams(sessionKey, artist, track), nil)
+}
+
+// Unlove removes the love mark from one track. Also idempotent.
+func (c *Client) Unlove(ctx context.Context, sessionKey, artist, track string) error {
+	return c.call(ctx, "track.unlove", loveParams(sessionKey, artist, track), nil)
+}
+
+func loveParams(sessionKey, artist, track string) url.Values {
+	return url.Values{"sk": {sessionKey}, "artist": {artist}, "track": {track}}
+}
+
+// LovedTrack is one entry of user.getLovedTracks.
+type LovedTrack struct {
+	Artist string
+	Track  string
+	// LovedAt is the UNIX time Last.fm recorded the love.
+	LovedAt int64
+}
+
+// GetLovedTracks fetches one page of the user's loved tracks. The method needs
+// no session key, only the user name and the API key.
+func (c *Client) GetLovedTracks(ctx context.Context, user string, page, limit int) ([]LovedTrack, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	params := url.Values{"user": {user}, "page": {strconv.Itoa(page)}, "limit": {strconv.Itoa(limit)}}
+	// Only the track list is used: Last.fm returns the pagination counters as
+	// strings, and the caller pages until a short/empty response.
+	var response struct {
+		LovedTracks struct {
+			Tracks json.RawMessage `json:"track"`
+		} `json:"lovedtracks"`
+	}
+	if err := c.call(ctx, "user.getLovedTracks", params, &response); err != nil {
+		return nil, err
+	}
+	items, err := decodeLovedTracks(response.LovedTracks.Tracks)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+type lovedTrackItem struct {
+	Name   string `json:"name"`
+	Artist struct {
+		Name string `json:"name"`
+	} `json:"artist"`
+	Date struct {
+		UTS json.RawMessage `json:"uts"` // string or number
+	} `json:"date"`
+}
+
+// decodeLovedTracks handles the same single-object/array quirk as scrobbles.
+func decodeLovedTracks(raw json.RawMessage) ([]LovedTrack, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	var items []lovedTrackItem
+	if strings.HasPrefix(trimmed, "[") {
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return nil, err
+		}
+	} else {
+		var item lovedTrackItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		items = []lovedTrackItem{item}
+	}
+	result := make([]LovedTrack, 0, len(items))
+	for _, item := range items {
+		lovedAt, _ := strconv.ParseInt(strings.Trim(strings.TrimSpace(string(item.Date.UTS)), `"`), 10, 64)
+		result = append(result, LovedTrack{Artist: strings.TrimSpace(item.Artist.Name), Track: strings.TrimSpace(item.Name), LovedAt: lovedAt})
+	}
+	return result, nil
+}
+
 type scrobbleItem struct {
 	IgnoredMessage struct {
 		Code json.RawMessage `json:"code"` // "0" or 0 depending on the endpoint version

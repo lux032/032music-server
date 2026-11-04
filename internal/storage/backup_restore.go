@@ -268,7 +268,9 @@ func (b *Backups) CompleteRestore(ctx context.Context, s *Store) error {
 		if e = preserveCredentials(ctx, tx); e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(ctx, `UPDATE playlists SET revision=max(revision,coalesce((SELECT p.revision FROM prerestore.playlists p WHERE p.id=playlists.id),0))+1; DELETE FROM lastfm_scrobble_queue; DELETE FROM acquisition_searches;`); e != nil {
+		// Queued Last.fm submissions belong to the replaced database: replaying
+		// them would push plays and love changes the restored library never had.
+		if _, e = tx.ExecContext(ctx, `UPDATE playlists SET revision=max(revision,coalesce((SELECT p.revision FROM prerestore.playlists p WHERE p.id=playlists.id),0))+1; DELETE FROM lastfm_scrobble_queue; DELETE FROM lastfm_love_queue; UPDATE lastfm_love_backfill SET state='idle',total=0,processed=0,failed=0,cursor=0,last_error='',started_at=NULL,finished_at=NULL; DELETE FROM acquisition_searches;`); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, `INSERT INTO backup_restore_receipt VALUES(?)`, state.SHA256); e != nil {

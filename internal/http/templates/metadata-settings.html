@@ -114,6 +114,48 @@
           </div>
           {{end}}
         </section>
+        <section class="source-card" id="lastfm-love" data-love-status="{{.LoveSync}}" data-love-running="{{.BackfillRunning}}" aria-live="polite">
+          <header>
+            <div><p class="kicker">收藏同步</p><h2>Last.fm 红心</h2></div>
+            <form method="post" action="/admin/settings/lastfm-scrobble/love-sync">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="sync_loves" value="{{if .LoveSync}}0{{else}}1{{end}}">
+              <button class="secondary-button" {{if and (not .LoveSync) (not .Connected)}}disabled title="请先连接 Last.fm 账号"{{end}}>{{if .LoveSync}}关闭红心同步{{else}}开启红心同步{{end}}</button>
+            </form>
+          </header>
+          <p>开启后，收藏或取消收藏单曲时会同步点亮／取消 Last.fm 的红心。Last.fm 没有专辑和歌手收藏，只有单曲会同步。{{if not .Connected}}<br><strong>尚未连接 Last.fm 账号</strong>，需要先在上方完成授权。{{end}}</p>
+          <div class="lastfm-love-queue">
+            <p id="love-queue-line" class="result-count"{{if not .LovePending}} hidden{{end}}>待同步 {{.LovePending}} 首{{if .LoveFailed}}（其中 {{.LoveFailed}} 首多次失败，正在放慢重试）{{end}}</p>
+            {{if .LoveFailed}}
+            <form method="post" action="/admin/settings/lastfm-scrobble/love-retry">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button class="secondary-button">立即重试</button>
+            </form>
+            {{end}}
+          </div>
+          <p id="love-error-line" class="result-count audio-analysis-error"{{if not .LoveLastError}} hidden{{end}}>最近错误（{{.LoveLastErrorAt}}）：{{.LoveLastError}}</p>
+
+          <div class="lastfm-love-backfill">
+            <div class="lastfm-love-head">
+              <h3>把已有收藏同步过去</h3>
+              {{if .BackfillRunning}}
+              <form method="post" action="/admin/settings/lastfm-scrobble/love-backfill/cancel">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button" data-love-cancel>停止回填</button>
+              </form>
+              {{else}}
+              <form method="post" action="/admin/settings/lastfm-scrobble/love-backfill">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button" {{if not .LoveCanSync}}disabled title="请先连接 Last.fm 账号并开启红心同步"{{end}}>{{if .BackfillDone}}重新回填{{else if eq .BackfillState "cancelled"}}继续回填{{else}}开始回填{{end}}</button>
+              </form>
+              {{end}}
+            </div>
+            <p class="result-count">只在你手动点击后运行：按曲目顺序逐首提交并限速，可以随时停止；中途停止后再次点击会从停下的地方继续。</p>
+            <div class="progress" id="love-backfill-progress" {{if and (not .BackfillRunning) (not .BackfillDone) (ne .BackfillState "cancelled")}}hidden{{end}}><span id="love-backfill-bar" style="width:{{.BackfillPercent}}%"></span></div>
+            <p id="love-backfill-text" class="audio-analysis-line" {{if and (not .BackfillRunning) (not .BackfillDone) (ne .BackfillState "cancelled")}}hidden{{end}}>{{if .BackfillTotal}}已同步 {{.BackfillProcessed}} / {{.BackfillTotal}} 首（{{printf "%.1f" .BackfillPercent}}%）{{if .BackfillFailed}} · 跳过 {{.BackfillFailed}} 首{{end}}{{if .BackfillRunning}} · 进行中{{else if .BackfillDone}} · 已完成{{else}} · 已停止{{end}}{{end}}</p>
+            <p id="love-backfill-error" class="audio-analysis-line audio-analysis-error" {{if not .BackfillError}}hidden{{end}}>{{.BackfillError}}</p>
+          </div>
+        </section>
       </div>
       {{end}}
       {{else if eq .Source "bangumi"}}

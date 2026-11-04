@@ -45,7 +45,7 @@ internal/storage    SQLite、迁移与查询
 internal/metadata   本地标签、credit 与封面解析
 internal/scanner    增量扫描与专辑归档
 internal/enrichment 在线身份、资料、作品与系列增强
-internal/lastfm     Scrobble 客户端与持久化发件箱
+internal/lastfm     Scrobble／红心客户端与持久化发件箱
 internal/http       JSON API、嵌入式管理端/播放器、认证与媒体
 analyzer            可选的声学分析服务（Python）
 ```

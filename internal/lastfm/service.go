@@ -19,6 +19,13 @@ const (
 	maxRetryDelay        = time.Hour
 	maxPermanentAttempts = 5
 	nowPlayingMinRepeat  = time.Minute
+	// loveMinInterval spaces track.love / track.unlove calls. Last.fm asks
+	// applications not to make several calls per second and may suspend an
+	// account that does; love sync therefore runs strictly one call at a time.
+	loveMinInterval = time.Second
+	// loveBackfillMinInterval spaces the backfill walk, which is a bulk
+	// operation over a user's whole favourites list.
+	loveBackfillMinInterval = 1200 * time.Millisecond
 )
 
 // Service owns the Last.fm outbox worker and now-playing notifications.
@@ -39,6 +46,11 @@ type Service struct {
 	mu          sync.Mutex
 	lastNowPlay nowPlayingMark
 	nowPlaySlot chan struct{}
+	lastLoveAt  time.Time
+	// loveBackfillFailures counts consecutive failures of the track the
+	// backfill is currently stuck on; it is in-memory because it only guards
+	// one run's progress, not durable state.
+	loveBackfillFailures map[int64]int
 }
 
 type nowPlayingMark struct {
@@ -100,8 +112,13 @@ func (s *Service) run(ctx context.Context) {
 	}
 }
 
-// Flush submits every due play and returns how long to sleep before the next
-// pass. It is exported so tests can drive the worker synchronously.
+// Flush submits every due play and love change and returns how long to sleep
+// before the next pass. It is exported so tests can drive the worker
+// synchronously.
+//
+// Scrobbles and love changes are independent features that share one session:
+// an admin may enable love sync without scrobble sync, so the readiness checks
+// and the retry delays are computed separately and the shorter delay wins.
 func (s *Service) Flush(ctx context.Context) time.Duration {
 	settings, err := s.store.LastFMScrobbleSettings(ctx)
 	if err != nil {
@@ -110,8 +127,14 @@ func (s *Service) Flush(ctx context.Context) time.Duration {
 		}
 		return errorRecheck
 	}
+	loveDelay, loveWorked := s.flushLoves(ctx, settings)
+	if loveWorked {
+		// Love calls just ran; do not also fire a scrobble batch in the same
+		// pass, so the worker never exceeds the API's per-second guidance.
+		return max(loveDelay, time.Second)
+	}
 	if !settings.Ready() {
-		return notReadyRecheck
+		return minDelay(loveDelay, notReadyRecheck)
 	}
 	if dropped, dropErr := s.store.DropExpiredLastFMScrobbles(ctx, s.now()); dropErr != nil {
 		s.logger.Warn("drop expired Last.fm scrobbles", "error", dropErr)
@@ -128,15 +151,28 @@ func (s *Service) Flush(ctx context.Context) time.Duration {
 		if len(items) == 0 {
 			next, err := s.store.NextLastFMScrobbleAttempt(ctx)
 			if err != nil || next.IsZero() {
-				return idleRecheck
+				return minDelay(loveDelay, idleRecheck)
 			}
-			return max(next.Sub(s.now()), time.Second)
+			return minDelay(loveDelay, max(next.Sub(s.now()), time.Second))
 		}
 		if stop, delay := s.submit(ctx, client, settings.SessionKey, items); stop {
-			return delay
+			return minDelay(loveDelay, delay)
 		}
 	}
-	return errorRecheck
+	return minDelay(loveDelay, errorRecheck)
+}
+
+// minDelay combines the love-sync wake-up with the scrobble one. A
+// non-positive love delay means "no love work scheduled", which must not pull
+// the scrobble wake-up earlier; a positive one may shorten it.
+func minDelay(love, other time.Duration) time.Duration {
+	if love <= 0 {
+		return other
+	}
+	if other <= 0 {
+		return love
+	}
+	return min(love, other)
 }
 
 // submit sends one batch. It returns stop=true when the pass should end.

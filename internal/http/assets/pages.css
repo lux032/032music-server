@@ -3836,3 +3836,23 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 @container app-main (min-width: 2700px) {
   .merge-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+/* Last.fm 红心同步卡片：已有收藏回填的进度区。与声学分析／AI 打标的状态卡
+   保持一致（.progress 进度条 + 说明行），额外用一个带边框的小节把“回填”
+   和上方的开关区分开，避免两个操作按钮并排时混淆。 */
+.lastfm-love-backfill {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.lastfm-love-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.lastfm-love-head h3 { margin: 0; font-size: 0.98rem; font-weight: 650; }
+.lastfm-love-head form { margin: 0; }
+.lastfm-love-backfill > p { margin: 0; }
+.lastfm-love-backfill .progress { margin: 4px 0 0; }
+.lastfm-love-backfill .audio-analysis-line { margin: 0; }
+#lastfm-love[data-love-status="true"] { border-color: var(--accent); }
+.lastfm-love-queue { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.lastfm-love-queue > p { margin: 0; }
+.lastfm-love-queue form { margin: 0; }
