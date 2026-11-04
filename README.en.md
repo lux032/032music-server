@@ -124,11 +124,10 @@ These examples require the **actual configured token**. Compose's `.env` file do
 
 ### 5. Apply configuration changes
 
-Compose uses `.env` for substitution, but **does not automatically forward every variable to the server**. Only variables listed in `compose.yaml` under `environment` reach the container. For an advanced setting, add a mapping, for example:
+Compose uses `.env` for substitution, but **does not automatically forward every variable to the server**. Only variables listed in `compose.yaml` under `environment` reach the container. `MUSIC_SERVER_THUMB_CACHE_MB` is already mapped (default: `512` MiB): edit it in `.env` and run `docker compose up -d`, with no additional mapping needed. For an advanced setting that is not yet mapped, add a mapping, for example:
 
 ```yaml
 # Add these under services.music-server.environment:
-MUSIC_SERVER_THUMB_CACHE_MB: "${MUSIC_SERVER_THUMB_CACHE_MB:-512}"
 MUSIC_SERVER_BANGUMI_INTERVAL_MS: "${MUSIC_SERVER_BANGUMI_INTERVAL_MS:-500}"
 MUSIC_SERVER_WORK_POSTER_BACKFILL: "${MUSIC_SERVER_WORK_POSTER_BACKFILL:-true}"
 ```

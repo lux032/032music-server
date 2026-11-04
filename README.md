@@ -61,6 +61,8 @@ openssl rand -hex 24
 
 ### 3. 启动
 
+**Linux / NAS 首次启动前**，请先确保数据目录可由容器的非 root 用户写入，音乐目录可读取和进入；按 [目录权限说明](docs/deployment.md#目录权限linux--nas) 检查实际 UID/GID 和目录权限，避免首次启动时无法创建数据库。
+
 ```sh
 docker compose up -d --build
 docker compose logs -f music-server     # 查看日志，Ctrl+C 退出
@@ -94,6 +96,7 @@ docker compose logs -f music-server     # 查看日志，Ctrl+C 退出
 |---|---|
 | 通过域名 + HTTPS 从外网访问 | 放在反向代理后面，并设置 `MUSIC_SERVER_COOKIE_SECURE=true`，见 [HTTPS 与反向代理](docs/deployment.md#https-与反向代理) |
 | 改用其他端口 | 修改 `.env` 中的 `MUSIC_SERVER_PORT` |
+| 调整缩略图缓存容量 | 修改 `.env` 中的 `MUSIC_SERVER_THUMB_CACHE_MB`（默认 `512` MiB），再执行 `docker compose up -d`；无需修改 Compose 映射 |
 | 不在本机构建镜像 | [使用预构建镜像](docs/deployment.md#使用预构建镜像) |
 | 投送到 Sonos / DLNA 音箱 | 设置 `MUSIC_SERVER_CAST_BASE_URL`，见 [投送](docs/deployment.md#投送到-sonos--dlna) |
 | 获取歌手资料、动画/游戏作品关联 | 在 管理 → 设置 → 元数据 中启用，见 [元数据与作品关联](docs/features.md#元数据与作品关联) |

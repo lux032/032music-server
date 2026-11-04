@@ -33,6 +33,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Validate Compose configuration
+        run: python3 -B -m unittest discover -s tests/deployment -v
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:

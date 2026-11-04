@@ -18,10 +18,11 @@ sudo chown -R <UID>:<GID> ./data
 
 ## 给容器传更多环境变量
 
-Compose 会读取 `.env` 做变量替换，但**不会把所有变量都传进容器**，只有 `compose.yaml` 的 `environment` 里列出的变量才会生效。要用 [配置参考](configuration.md) 中的其他变量，就在 `services.music-server.environment` 下添加，例如：
+Compose 会读取 `.env` 做变量替换，但**不会把所有变量都传进容器**，只有 `compose.yaml` 的 `environment` 里列出的变量才会生效。缩略图缓存 `MUSIC_SERVER_THUMB_CACHE_MB` 已包含在默认映射中（默认 `512` MiB），直接修改 `.env` 后执行 `docker compose up -d` 即可，无需添加映射。
+
+要用 [配置参考](configuration.md) 中尚未映射的其他变量，就在 `services.music-server.environment` 下添加，例如：
 
 ```yaml
-MUSIC_SERVER_THUMB_CACHE_MB: "${MUSIC_SERVER_THUMB_CACHE_MB:-512}"
 MUSIC_SERVER_BANGUMI_INTERVAL_MS: "${MUSIC_SERVER_BANGUMI_INTERVAL_MS:-500}"
 MUSIC_SERVER_WORK_POSTER_BACKFILL: "${MUSIC_SERVER_WORK_POSTER_BACKFILL:-true}"
 ```
