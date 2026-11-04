@@ -264,14 +264,19 @@ func TestHomeSeriesSpotlight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	spot, err := store.HomeSeriesSpotlight(ctx)
+	pool, err := store.HomeSpotlightCandidates(ctx)
+	if err != nil || !pool.Series || len(pool.IDs) != 2 {
+		t.Fatalf("pool = %+v, err=%v (both series qualify)", pool, err)
+	}
+	newSeries := pool.IDs[1]
+	spot, err := store.HomeSeriesSpotlight(ctx, newSeries)
 	if err != nil || spot == nil {
 		t.Fatalf("spotlight = %+v, err=%v", spot, err)
 	}
-	// New Series wins: its member work has the most recently added album.
-	if spot.SeriesTitle != "New Series" {
+	if spot.SeriesTitle != "New Series" || spot.SeriesID != newSeries {
 		t.Fatalf("series = %q, want New Series", spot.SeriesTitle)
 	}
+	// Solo (w3) has no linked songs and is left off the card.
 	if len(spot.Works) != 1 || spot.Works[0].Work.Title != "Work Two" {
 		t.Fatalf("works = %+v", spot.Works)
 	}
@@ -287,28 +292,114 @@ func TestHomeSeriesSpotlight(t *testing.T) {
 	if len(w2view.RoleCounts) != 1 || w2view.RoleCounts[0].Role != "op" {
 		t.Fatalf("w2 roles = %+v", w2view.RoleCounts)
 	}
+
+	// Unknown series: nothing to show, no error.
+	if spot, err := store.HomeSeriesSpotlight(ctx, 9999); err != nil || spot != nil {
+		t.Fatalf("unknown series = %+v, %v", spot, err)
+	}
 }
 
-func TestHomeSeriesSpotlightFallback(t *testing.T) {
+// Issue #5: a series whose works are linked only through individual songs
+// (no whole-album link) must still be spotlighted, with the albums holding
+// those songs listed.
+func TestHomeSeriesSpotlightTrackLevelOnly(t *testing.T) {
+	store, ctx := newHomeFixture(t)
+	single, singleTracks := addHomeAlbum(t, store, ctx, "OP Single", 2024, "2024-03-01T00:00:00Z", "OP", "OP (Instrumental)")
+	compilation, compTracks := addHomeAlbum(t, store, ctx, "Best Of", 2025, "2024-04-01T00:00:00Z", "ED", "Other Song")
+	w1 := addHomeWork(t, store, ctx, "Season 1", "anime", 2024)
+	w2 := addHomeWork(t, store, ctx, "Season 2", "anime", 2025)
+	seriesID, err := store.CreateWorkSeries(ctx, "Track Saga", []int64{w1, w2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range []struct {
+		work, track int64
+		role        string
+	}{{w1, singleTracks[0], "op"}, {w1, compTracks[0], "insert"}, {w1, compTracks[0], "ed"}, {w2, compTracks[0], "ed"}} {
+		if err := store.AddWorkTrack(ctx, link.work, WorkTrackInput{TrackID: link.track, Role: link.role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pool, err := store.HomeSpotlightCandidates(ctx)
+	if err != nil || !pool.Series || len(pool.IDs) != 1 || pool.IDs[0] != seriesID {
+		t.Fatalf("pool = %+v, err=%v", pool, err)
+	}
+	spot, err := store.HomeSeriesSpotlight(ctx, seriesID)
+	if err != nil || spot == nil || spot.SeriesTitle != "Track Saga" || len(spot.Works) != 2 {
+		t.Fatalf("spotlight = %+v, err=%v", spot, err)
+	}
+	albums := spot.Works[0].Albums
+	if len(albums) != 2 || albums[0].AlbumID != single || albums[1].AlbumID != compilation {
+		t.Fatalf("w1 albums = %+v", albums)
+	}
+	if albums[0].Role != "op" || albums[0].AlbumRole != "" || albums[0].WorkID != w1 || albums[0].TrackCount != 2 || albums[0].Title != "OP Single" {
+		t.Fatalf("track-level album row = %+v", albums[0])
+	}
+	if albums[1].Role != "ed" || len(albums[1].TrackRoles) != 2 || albums[1].TrackRoles[0] != "ed" || albums[1].TrackRoles[1] != "insert" {
+		t.Fatalf("roles ranked = %+v", albums[1])
+	}
+
+	// A whole-album link is listed first and not repeated as a track-level row.
+	if err := store.AddWorkAlbum(ctx, w1, compilation, "other"); err != nil {
+		t.Fatal(err)
+	}
+	spot, err = store.HomeSeriesSpotlight(ctx, seriesID)
+	if err != nil || spot == nil {
+		t.Fatalf("spotlight = %+v, err=%v", spot, err)
+	}
+	albums = spot.Works[0].Albums
+	if len(albums) != 2 || albums[0].AlbumID != compilation || albums[0].AlbumRole != "other" || albums[1].AlbumID != single {
+		t.Fatalf("w1 albums with album link = %+v", albums)
+	}
+
+	// Songs that lost their files no longer count.
+	if _, err := store.db.ExecContext(ctx, `UPDATE audio_files SET status='missing'`); err != nil {
+		t.Fatal(err)
+	}
+	if pool, err := store.HomeSpotlightCandidates(ctx); err != nil || len(pool.IDs) != 0 {
+		t.Fatalf("pool after missing = %+v, %v", pool, err)
+	}
+	if spot, err := store.HomeSeriesSpotlight(ctx, seriesID); err != nil || spot != nil {
+		t.Fatalf("spotlight after missing = %+v, %v", spot, err)
+	}
+}
+
+func TestHomeSpotlightWorkFallback(t *testing.T) {
 	store, ctx := newHomeFixture(t)
 	_, tracks := addHomeAlbum(t, store, ctx, "A", 2020, "2024-01-01T00:00:00Z", "t1", "t2")
 	workID := addHomeWork(t, store, ctx, "No Series Work", "anime", 2020)
+	other := addHomeWork(t, store, ctx, "Second Work", "game", 2021)
+	addHomeWork(t, store, ctx, "Unlinked", "anime", 2022)
 	if err := store.AddWorkTrack(ctx, workID, WorkTrackInput{TrackID: tracks[0], Role: "op"}); err != nil {
 		t.Fatal(err)
 	}
-	spot, err := store.HomeSeriesSpotlight(ctx)
+	if err := store.AddWorkTrack(ctx, other, WorkTrackInput{TrackID: tracks[1], Role: "ed"}); err != nil {
+		t.Fatal(err)
+	}
+	// No series has linked songs: the pool holds the linked works.
+	pool, err := store.HomeSpotlightCandidates(ctx)
+	if err != nil || pool.Series || len(pool.IDs) != 2 || pool.IDs[0] != workID || pool.IDs[1] != other {
+		t.Fatalf("pool = %+v, err=%v", pool, err)
+	}
+	spot, err := store.HomeWorkSpotlight(ctx, workID)
 	if err != nil || spot == nil {
 		t.Fatalf("spotlight = %+v, err=%v", spot, err)
 	}
 	if spot.SeriesID != 0 || len(spot.Works) != 1 || spot.Works[0].Work.ID != workID {
 		t.Fatalf("fallback = %+v", spot)
 	}
+	if albums := spot.Works[0].Albums; len(albums) != 1 || albums[0].Title != "A" || albums[0].Role != "op" {
+		t.Fatalf("fallback albums = %+v", albums)
+	}
+	if spot, err := store.HomeWorkSpotlight(ctx, 9999); err != nil || spot != nil {
+		t.Fatalf("unknown work = %+v, %v", spot, err)
+	}
 
-	// Empty library: no spotlight at all.
+	// Empty library: nothing to spotlight.
 	store2, ctx2 := newHomeFixture(t)
-	spot, err = store2.HomeSeriesSpotlight(ctx2)
-	if err != nil || spot != nil {
-		t.Fatalf("empty library spotlight = %+v, err=%v", spot, err)
+	if pool, err := store2.HomeSpotlightCandidates(ctx2); err != nil || len(pool.IDs) != 0 {
+		t.Fatalf("empty library pool = %+v, err=%v", pool, err)
 	}
 }
 
