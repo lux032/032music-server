@@ -18,8 +18,8 @@ func (s *Store) ArtistDiscography(ctx context.Context, id int64) ([]ArtistReleas
 CASE WHEN EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?)
 THEN CASE WHEN (SELECT COUNT(DISTINCT artist_id) FROM album_artists aa WHERE aa.album_id=a.id)>1 THEN 'collaboration' ELSE 'personal' END
 ELSE 'appearance' END
-FROM albums a WHERE (EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=a.id AND aa.artist_id=?)
-OR EXISTS(SELECT 1 FROM tracks t JOIN track_artists ta ON ta.track_id=t.id WHERE t.album_id=a.id AND ta.artist_id=? AND ta.role='primary' AND `+trackVisibleSQL("t.id")+`))
+FROM albums a WHERE a.id IN (SELECT aa.album_id FROM album_artists aa WHERE aa.artist_id=?
+UNION SELECT t.album_id FROM track_artists ta JOIN tracks t ON t.id=ta.track_id WHERE ta.artist_id=? AND ta.role='primary' AND `+trackVisibleSQL("t.id")+`)
 AND `+albumVisibleSQL("a.id")+`
 ORDER BY `+albumOrder(Filters{Sort: "date"}), id, id, id)
 	if err != nil {

@@ -57,7 +57,7 @@ func albumWhere(f Filters) (string, []any) {
 		trackRole = " AND tax.role='primary'"
 	}
 	clauses = append(clauses,
-		"(?=0 OR EXISTS(SELECT 1 FROM album_artists ax WHERE ax.album_id=a.id AND ax.artist_id=?) OR EXISTS(SELECT 1 FROM tracks tx JOIN track_artists tax ON tax.track_id=tx.id WHERE tx.album_id=a.id AND tax.artist_id=?"+trackRole+"))",
+		"(?=0 OR a.id IN (SELECT ax.album_id FROM album_artists ax WHERE ax.artist_id=? UNION SELECT tx.album_id FROM track_artists tax JOIN tracks tx ON tx.id=tax.track_id WHERE tax.artist_id=?"+trackRole+"))",
 		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
 		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+albumHasEffectiveGenre+"))")
 	args = append(args, f.ArtistID, f.ArtistID, f.ArtistID, f.Year, f.Year, f.Genre, f.Genre)
