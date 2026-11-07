@@ -903,6 +903,12 @@ func (s *Store) ArtistsForAlbumTracks(ctx context.Context, albumID int64) (map[i
 	return result, rows.Err()
 }
 
+// ListTracks pages tracks in two stages like ListAlbums: stage one resolves
+// the page of track ids with the shared trackWhere predicate and a stable
+// ORDER BY (only t, a and the 1:1 playback_progress row), stage two loads the
+// display columns for those ids only. A single query would evaluate every
+// correlated display subquery for all rows before the OFFSET, so deep pages
+// grew linearly slower.
 func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	var canonicalErr error
 	f, canonicalErr = s.canonicalTrackFocus(ctx, f)
@@ -913,12 +919,34 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 	order := trackOrder(f)
 	where, args := trackWhere(f)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),`+effectiveTrackTypeSQL+`,COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` GROUP BY t.id ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	idRows, err := s.db.QueryContext(ctx, `SELECT t.id FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, limit)
+	for idRows.Next() {
+		var id int64
+		if err = idRows.Scan(&id); err != nil {
+			idRows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = idRows.Err(); err != nil {
+		idRows.Close()
+		return nil, err
+	}
+	idRows.Close()
+	if len(ids) == 0 {
+		return []Track{}, nil
+	}
+	placeholders, idArgs := inClause(ids)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,a.id,COALESCE(t.user_title,t.title),COALESCE(a.user_title,a.title),`+trackArtistSQL+`,COALESCE(a.user_release_year,a.release_year,0),COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(t.user_composer,t.composer,''),COALESCE(t.lyricist,''),COALESCE(t.arranger,''),`+effectiveTrackTypeSQL+`,COALESCE((SELECT GROUP_CONCAT(gx.name,',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id=ox.genre_id WHERE ox.track_id=t.id),(SELECT GROUP_CONCAT(gx.name,',' ORDER BY rx.position, gx.id) FROM track_genres rx JOIN genres gx ON gx.id=rx.genre_id WHERE rx.track_id=t.id),''),COALESCE(af.container,''),COALESCE(af.mime_type,''),COALESCE(af.relative_path,''),COALESCE(af.file_size,0),`+albumArtworkURLSQL+`,COALESCE(t.duration_ms,0),'/api/v1/tracks/'||t.id||'/stream',t.added_at,t.updated_at,t.is_favorite,COALESCE(pp.last_played_at,''),COALESCE(pp.position_ms,0),COALESCE(pp.play_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN audio_files af ON af.track_id=t.id AND af.status='available' LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id IN (`+placeholders+`) GROUP BY t.id`, idArgs...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	list := make([]Track, 0)
+	byID := make(map[int64]Track, len(ids))
 	for rows.Next() {
 		var v Track
 		var favorite int
@@ -926,12 +954,18 @@ func (s *Store) ListTracks(ctx context.Context, f Filters) ([]Track, error) {
 			return nil, err
 		}
 		v.IsFavorite = favorite != 0
-		list = append(list, v)
+		byID[v.ID] = v
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	rows.Close()
+	list := make([]Track, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := byID[id]; ok {
+			list = append(list, v)
+		}
+	}
 	return list, s.hydrateTracks(ctx, list)
 }
 func (s *Store) Genres(ctx context.Context) ([]string, error) {
