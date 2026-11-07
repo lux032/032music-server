@@ -1,7 +1,8 @@
 name: Go performance
 
 # Performance SLA CI: runs only the "performance"-tagged tests (50000-track
-# synthetic SimilarTracks / TrackPath fixture) in a normal optimized build.
+# synthetic SimilarTracks / TrackPath fixture, 30000-track artist page and
+# deep track page fixture) in a normal optimized build.
 # Never combined with -race; the full suite is not re-run here.
 
 on:
@@ -42,3 +43,9 @@ jobs:
           go test -tags=performance -count=1 -timeout=10m -v
           ./internal/storage
           -run '^TestSimilarTracksSyntheticPerformance$'
+
+      - name: Artist page and track paging synthetic performance (30000 tracks)
+        run: >-
+          go test -tags=performance -count=1 -timeout=10m -v
+          ./internal/storage
+          -run '^TestBrowseSyntheticPerformance$'
