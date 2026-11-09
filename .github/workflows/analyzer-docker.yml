@@ -75,6 +75,8 @@ jobs:
 
       - name: Build and optionally publish image
         uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_RECORD_RETENTION_DAYS: "3"
         with:
           context: ./analyzer
           push: ${{ github.event_name != 'pull_request' }}
