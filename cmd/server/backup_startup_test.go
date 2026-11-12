@@ -48,7 +48,17 @@ func TestStartupRestoreSkipsPreupgrade(t *testing.T) {
     key TEXT PRIMARY KEY CHECK (key IN ('admin_username', 'admin_password_hash', 'api_token_hash', 'media_token')),
     value TEXT NOT NULL CHECK (length(value) > 0),
     updated_at TEXT NOT NULL
-) STRICT;ALTER TABLE lastfm_scrobble_settings DROP COLUMN sync_loves;ALTER TABLE lastfm_scrobble_settings DROP COLUMN last_love_error;ALTER TABLE lastfm_scrobble_settings DROP COLUMN last_love_error_at`); e != nil {
+) STRICT;ALTER TABLE lastfm_scrobble_settings DROP COLUMN sync_loves;ALTER TABLE lastfm_scrobble_settings DROP COLUMN last_love_error;ALTER TABLE lastfm_scrobble_settings DROP COLUMN last_love_error_at;CREATE TABLE ai_usage_new (
+    day TEXT NOT NULL,
+    model TEXT NOT NULL,
+    purpose TEXT NOT NULL CHECK (purpose IN ('tag', 'review', 'sample', 'test', 'mix', 'translate')),
+    requests INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, model, purpose)
+) STRICT;INSERT INTO ai_usage_new SELECT * FROM ai_usage;DROP TABLE ai_usage;ALTER TABLE ai_usage_new RENAME TO ai_usage`); e != nil {
 		t.Fatal(e)
 	}
 	raw.Close()

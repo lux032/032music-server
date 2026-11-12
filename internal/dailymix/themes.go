@@ -89,6 +89,12 @@ type Theme struct {
 	Bridge []Candidate
 	// Lift is the listening-profile lift of the theme (1 = average).
 	Lift float64
+	// ArtistCap / AlbumCap override the per-artist / per-album limits when > 0, and
+	// ArtistCaps overrides the limit of the listed artists (prompt playlists that ask
+	// for specific artists or works).
+	ArtistCap  int
+	ArtistCaps map[int64]int
+	AlbumCap   int
 }
 
 // ID is the stable "type:key" identifier used for stats and the planner.

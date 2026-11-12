@@ -370,6 +370,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/capabilities", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCapabilities)))
 	mux.Handle("GET /api/v1/audio-analysis", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAudioAnalysisStatus)))
 	mux.Handle("GET /api/v1/ai/tagging", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAITaggingStatus)))
+	mux.Handle("POST /api/v1/ai/playlists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAIPlaylist)))
 	mux.Handle("GET /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackTags)))
 	mux.Handle("PUT /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIPutTrackTags)))
 	mux.Handle("GET /api/v1/daily-mixes", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIDailyMixes)))

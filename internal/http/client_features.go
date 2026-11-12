@@ -34,6 +34,8 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// /lyrics also looks up NetEase / LRCLIB; /lyrics/search, /lyrics/remote and PUT/DELETE /lyrics/source.
 			"lyricsOnline": a.onlineLyrics != nil,
 			"dailyMixes":   a.dailyMixesEnabled(r.Context()),
+			// POST /api/v1/ai/playlists: one sentence → unsaved playlist (needs the AI model service).
+			"aiPlaylists": a.aiPlaylistsEnabled(r.Context()),
 			// Playback sessions accept a start context (daily mix attribution, §7.1).
 			"playbackContext": true,
 		},

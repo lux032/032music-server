@@ -37,6 +37,9 @@ type Options struct {
 	// LLMTimeout bounds the title/planning call (default 6 s, within the 8 s budget of
 	// a first request).
 	LLMTimeout time.Duration
+	// PromptTimeout bounds the model call of a prompt playlist (default 30 s: the
+	// user is waiting for exactly this answer).
+	PromptTimeout time.Duration
 }
 
 // Service pre-generates the day's mixes at the configured hour, generates them
@@ -56,6 +59,7 @@ type Service struct {
 	// lastFeedback is when implicit playback feedback was last folded in.
 	lastFeedback time.Time
 	replace      sync.Mutex
+	prompt       chan struct{} // one prompt playlist generation at a time
 	wake         chan struct{}
 	wg           sync.WaitGroup
 }
@@ -73,7 +77,11 @@ func New(store *storage.Store, logger *slog.Logger, opts Options) *Service {
 		}
 	}
 	s := &Service{store: store, logger: logger, opts: opts, rootCtx: context.Background(), flights: map[string]chan struct{}{},
-		failedAt: map[string]time.Time{}, wake: make(chan struct{}, 1)}
+		failedAt: map[string]time.Time{}, wake: make(chan struct{}, 1), prompt: make(chan struct{}, 1)}
+	if opts.PromptTimeout <= 0 {
+		opts.PromptTimeout = 30 * time.Second
+		s.opts.PromptTimeout = opts.PromptTimeout
+	}
 	s.gen = &Generator{Store: store, Chat: opts.NewChat, LLMTimeout: opts.LLMTimeout}
 	return s
 }
@@ -384,4 +392,40 @@ func (s *Service) Snapshot(ctx context.Context) Snapshot {
 		snap.LastRun = &r
 	}
 	return snap
+}
+
+// ErrPromptBusy: another prompt playlist is being generated.
+var ErrPromptBusy = errors.New("a prompt playlist is already being generated")
+
+// FromPrompt generates an unsaved playlist for a one-sentence description (see
+// GenerateFromPrompt). It does not depend on daily mixes being enabled; it needs the
+// AI model service and works best once AI tagging has covered the library.
+func (s *Service) FromPrompt(ctx context.Context, prompt string, length int) (PromptPlaylist, error) {
+	select {
+	case s.prompt <- struct{}{}:
+		defer func() { <-s.prompt }()
+	default:
+		return PromptPlaylist{}, ErrPromptBusy
+	}
+	set, err := s.store.DailyMixSettings(ctx)
+	if err != nil {
+		return PromptPlaylist{}, err
+	}
+	ai, err := s.store.AISettings(ctx)
+	if err != nil {
+		return PromptPlaylist{}, err
+	}
+	gen := *s.gen
+	gen.LLMTimeout = s.opts.PromptTimeout
+	pl, err := gen.GenerateFromPrompt(ctx, s.opts.Now(), prompt, length, set, ai)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		s.logger.Info("prompt playlist not generated", "error", err, "note", pl.LLM.Note)
+	}
+	return pl, err
+}
+
+// PromptAvailable reports whether prompt playlists can be generated (model configured).
+func (s *Service) PromptAvailable(ctx context.Context) bool {
+	ai, err := s.store.AISettings(ctx)
+	return err == nil && ai.Configured()
 }

@@ -55,6 +55,7 @@
 | `POST` | `/api/v1/daily-mixes/{id}/save` | 另存为普通歌单（可选 `{"name":"…"}`）。 |
 | `PUT/DELETE` | `/api/v1/tracks/{id}/recommendation-block` | 不再推荐 / 恢复推荐。 |
 | `GET/PATCH` | `/api/v1/daily-mixes/settings` | 每日推荐设置（`enabled`、`mixCount` 1–8、`trackCount` 10–60、`explorePercent` 20–60、`pregenerateHour`、`regenerateLimit`、`allowSad`、`llmTitles`）。 |
+| `POST` | `/api/v1/ai/playlists` | AI 灵感歌单：`{"prompt":"深夜听的放松爵士","trackCount":30}`（`prompt` ≤200 字，`trackCount` 可省略，最多 50）→ `{title, description, titleSource, conditions:{moods[], styles[], people[{id,name}], works[{id,name}], energy, familiarity}, trackCount, durationMillis, tracks[{position,bucket,track}], note}`。模型只把描述解析为词表内的情绪/风格与曲库中的歌手、作品，选曲由服务端按每日推荐的算法完成；结果不保存，需要时用 `POST /api/v1/playlists {name,description,trackIds}` 另存。`capabilities.features.aiPlaylists` 表示已配置 AI 模型服务。错误：409 `ai_not_configured`、422 `no_match` / `too_few_tracks`、429 `busy`（同时只生成一个）、502 `model_failed`。 |
 
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 

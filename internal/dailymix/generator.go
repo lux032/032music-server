@@ -97,9 +97,28 @@ type prepared struct {
 	recentMx map[int64]string
 	affinity storage.RecAffinities
 	info     RunInfo
+	b        *builder
 }
 
 func (g *Generator) prepare(ctx context.Context, now time.Time, day string, set storage.DailyMixSettings) (*prepared, error) {
+	p, err := g.prepareBase(ctx, now, day, set)
+	if err != nil {
+		return nil, err
+	}
+	p.cands = p.b.Candidates()
+	p.info.Candidates = len(p.cands)
+	if p.stats, err = g.Store.ThemeStats(ctx); err != nil {
+		return nil, err
+	}
+	if p.recent, err = g.Store.RecentThemes(ctx, storage.DayAfter(day, -30)); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// prepareBase loads the library, acoustic index and listening profile without
+// computing the day's candidate themes (prompt playlists need no themes).
+func (g *Generator) prepareBase(ctx context.Context, now time.Time, day string, set storage.DailyMixSettings) (*prepared, error) {
 	lib, err := g.Store.RecLibrary(ctx)
 	if err != nil {
 		return nil, err
@@ -148,14 +167,7 @@ func (g *Generator) prepare(ctx context.Context, now time.Time, day string, set 
 			}
 			return out
 		}}
-	p.cands = b.Candidates()
-	p.info.Candidates = len(p.cands)
-	if p.stats, err = g.Store.ThemeStats(ctx); err != nil {
-		return nil, err
-	}
-	if p.recent, err = g.Store.RecentThemes(ctx, storage.DayAfter(day, -30)); err != nil {
-		return nil, err
-	}
+	p.b = b
 	if p.recentMx, err = g.Store.RecentMixTracks(ctx, storage.DayAfter(day, -14), day); err != nil {
 		return nil, err
 	}

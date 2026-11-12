@@ -184,6 +184,12 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 	case TypeWork, TypeComposer:
 		artistCap, albumCap = 4, 4
 	}
+	if th.ArtistCap > 0 {
+		artistCap = th.ArtistCap
+	}
+	if th.AlbumCap > 0 {
+		albumCap = th.AlbumCap
+	}
 	artists := map[int64]int{}
 	albums := map[int64]int{}
 	titles := map[string]bool{}
@@ -198,6 +204,9 @@ func (e *selectEnv) build(th *Theme, rng *rand.Rand) []Pick {
 			limit := artistCap
 			if th.Type == TypeArtist && a != th.RefID {
 				limit = 3
+			}
+			if c, ok := th.ArtistCaps[a]; ok {
+				limit = c
 			}
 			if artists[a] >= limit {
 				return false
