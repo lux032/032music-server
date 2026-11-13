@@ -416,6 +416,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/albums/{id}/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAlbumWorks)))
 	mux.Handle("GET /api/v1/tracks", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITracks)))
 	mux.Handle("GET /api/v1/tracks/{id}", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrack)))
+	mux.Handle("GET /api/v1/tracks/{id}/versions", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackVersions)))
 	mux.Handle("GET /api/v1/tracks/{id}/works", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackWorks)))
 	mux.Handle("GET /api/v1/tracks/{id}/similar", a.requireAPIOrAdmin(a.withSimilaritySlot(http.HandlerFunc(a.handleSimilarTracks))))
 	mux.Handle("GET /api/v1/tracks/path", a.requireAPIOrAdmin(a.withSimilaritySlot(http.HandlerFunc(a.handleTrackPath))))

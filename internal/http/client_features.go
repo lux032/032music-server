@@ -101,6 +101,15 @@ func (a *App) handleAPITrack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, value)
 }
 
+func (a *App) handleAPITrackVersions(w http.ResponseWriter, r *http.Request) {
+	seed, items, err := a.store.TrackVersions(r.Context(), parseInt64(r.PathValue("id")))
+	if err != nil {
+		a.writeFeatureError(w, r, err, "query_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"track": seed, "items": items})
+}
+
 func (a *App) handleSetAlbumFavorite(w http.ResponseWriter, r *http.Request) {
 	a.favoriteResult(w, r, a.store.SetAlbumFavorite(r.Context(), parseInt64(r.PathValue("id")), true))
 }

@@ -141,6 +141,7 @@ type Track struct {
 	PositionMillis int64  `json:"positionMillis"`
 	PlayCount      int64  `json:"playCount"`
 	IsFavorite     bool   `json:"isFavorite"`
+	VersionCount   int    `json:"versionCount,omitempty"`
 	TrackExtras
 	Artists []Artist      `json:"artists,omitempty"`
 	Credits []TrackCredit `json:"credits,omitempty"`

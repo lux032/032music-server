@@ -139,5 +139,8 @@ func (s *Store) hydrateTracks(ctx context.Context, items []Track) error {
 			track.Artists = append(track.Artists, artist)
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return s.hydrateTrackVersionCounts(ctx, items)
 }
