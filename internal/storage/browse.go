@@ -129,7 +129,7 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 	placeholders, args := inClause(ids)
 	byID := make(map[int64]*Album, len(ids))
 
-	base, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE(a.user_release_year,a.release_year,0),a.disc_count,COALESCE(a.user_performed_by,a.performed_by,''),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_version,a.version,''),a.added_at,a.updated_at,a.is_favorite,COALESCE(a.user_album_type,''),COALESCE(a.album_type,''),COALESCE(a.album_type_source,'') FROM albums a WHERE a.id IN (`+placeholders+`)`, args...)
+	base, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE(a.user_release_year,a.release_year,0),`+albumDiscCountSQL+`,COALESCE(a.user_performed_by,a.performed_by,''),COALESCE(a.user_album_type,a.album_type,'album'),COALESCE(a.user_version,a.version,''),a.added_at,a.updated_at,a.is_favorite,COALESCE(a.user_album_type,''),COALESCE(a.album_type,''),COALESCE(a.album_type_source,'') FROM albums a WHERE a.id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}

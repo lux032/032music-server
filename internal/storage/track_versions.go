@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// albumDiscCountSQL counts distinct visible disc numbers on the album instead of
+// trusting external enrichment or DISCTOTAL tags that may exceed local files.
+var albumDiscCountSQL = `COALESCE(NULLIF((SELECT COUNT(DISTINCT COALESCE(NULLIF(t.user_disc_number,0),NULLIF(t.disc_number,0),1)) FROM tracks t WHERE t.album_id=a.id AND ` + trackVisibleSQL("t.id") + `),0),a.disc_count,1)`
+
 // asciiLowerTrim matches SQLite's LOWER(TRIM(...)), which folds only ASCII A-Z.
 func asciiLowerTrim(s string) string {
 	s = strings.TrimSpace(s)
