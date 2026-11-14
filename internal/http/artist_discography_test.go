@@ -53,10 +53,10 @@ func TestArtistPageDiscography(t *testing.T) {
 		albumArtists, artists []string
 		composer              string
 	}{
-		{"ZZ newest personal", "2025-01-01", []string{"Singer"}, []string{"Singer"}, ""},
+		{"ZZ newest personal", "2025-01-01", []string{"Singer"}, []string{"Singer", "Other"}, ""},
 		{"AA older personal", "2021-01-01", []string{"Singer"}, []string{"Singer"}, ""},
 		{"Joint release", "2024-01-01", []string{"Singer", "Other"}, []string{"Singer"}, ""},
-		{"Guest release", "2023-01-01", []string{"Other"}, []string{"Singer"}, ""},
+		{"Guest release", "2023-01-01", []string{"Other"}, []string{"Singer", "Other"}, ""},
 		{"Composer release", "2026-01-01", []string{"Other"}, []string{"Other"}, "Singer"},
 	} {
 		if err = app.store.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: v.title + "/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Song", Album: v.title, Artists: v.artists, AlbumArtists: v.albumArtists, Composer: v.composer, DiscNumber: 1, TrackNumber: 1, Raw: map[string][]string{"DATE": {v.date}, "RELEASETYPE": {"album"}}}}); err != nil {

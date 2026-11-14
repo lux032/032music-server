@@ -53,7 +53,7 @@ func TestArtistDiscographyRelationsAndDateOrder(t *testing.T) {
 	for _, r := range releases {
 		got = append(got, r.Title+":"+r.Relation)
 	}
-	want := []string{"Edited:personal", "Guest:appearance", "Duet:collaboration", "Joint:collaboration", "Year only:personal", "Duet compilation:collaboration", "Multi compilation:appearance", "Various:appearance", "Solo best:personal", "Older personal:personal", "Undated:personal"}
+	want := []string{"Edited:personal", "Guest:appearance", "Duet:appearance", "Joint:collaboration", "Year only:personal", "Duet compilation:appearance", "Multi compilation:appearance", "Various:appearance", "Solo best:personal", "Older personal:personal", "Undated:personal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("releases = %v, want %v", got, want)
 	}
@@ -65,15 +65,15 @@ func TestArtistDiscographyRelationsAndDateOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, title := range []string{"Duet", "Duet compilation"} {
+	for title, relation := range map[string]string{"Duet": "personal", "Duet compilation": "appearance", "Joint": "collaboration"} {
 		found := false
 		for _, release := range otherReleases {
-			if release.Title == title && release.Relation == "collaboration" {
+			if release.Title == title && release.Relation == relation {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("%s must appear as a collaboration for both performers: %+v", title, otherReleases)
+			t.Fatalf("%s must appear as %s for Other: %+v", title, relation, otherReleases)
 		}
 	}
 	// The existing API keeps its album-credit-only contract, but shares date ordering.
