@@ -26,13 +26,14 @@ type ArtworkInput struct {
 }
 
 type ImportInput struct {
-	LibraryID              int64
-	RelativePath           string
-	FileSize, ModifiedAtNS int64
-	Metadata               metadata.AudioMetadata
-	Artwork                *ArtworkInput
-	AudioProps             metadata.AudioProps
-	HasExternalLRC         bool
+	LibraryID               int64
+	RelativePath            string
+	FileSize, ModifiedAtNS  int64
+	Metadata                metadata.AudioMetadata
+	Artwork                 *ArtworkInput
+	AudioProps              metadata.AudioProps
+	HasExternalLRC          bool
+	LegacyCreatorConversion bool
 }
 
 type ScanJob struct {
@@ -451,10 +452,10 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		{"producer", m.Producer},
 	}
 	for _, credit := range credits {
-		if credit.names == "" {
-			continue
+		creditNames, namesErr := creatorNamesForImport(ctx, tx, trackID, credit.role, credit.names, m.Raw, input.LegacyCreatorConversion)
+		if namesErr != nil {
+			return namesErr
 		}
-		creditNames := metadata.SplitPeople(credit.names)
 		creditIDs, cErr := ensureArtists(ctx, tx, creditNames)
 		if cErr != nil {
 			return cErr

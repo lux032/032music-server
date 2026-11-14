@@ -126,13 +126,13 @@ func Read(path string) (AudioMetadata, error) {
 			artistFields := map[string][]string{}
 			parseID3v2TextFrames(file, func(frame string, fields []string) {
 				switch frame {
-				case "TPE1", "TPE2":
+				case "TPE1", "TPE2", "TCOM", "TEXT":
 					artistFields[frame] = append(artistFields[frame], fields...)
 				case "TXXX":
 					if len(fields) > 1 {
 						key := strings.ToUpper(strings.TrimSpace(fields[0]))
 						switch key {
-						case "ARTISTS", "ALBUMARTISTS", "ALBUM_ARTISTS", "MUSICBRAINZ ARTIST ID", "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ALBUM ARTIST ID", "MUSICBRAINZ_ALBUMARTISTID":
+						case "COMPOSERS", "LYRICISTS", "ARRANGERS", "PRODUCERS", "COMPOSER", "LYRICIST", "ARRANGER", "PRODUCER", "ARTISTS", "ALBUMARTISTS", "ALBUM_ARTISTS", "MUSICBRAINZ ARTIST ID", "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ALBUM ARTIST ID", "MUSICBRAINZ_ALBUMARTISTID":
 							artistFields[key] = append(artistFields[key], fields[1:]...)
 						}
 					}
@@ -592,7 +592,7 @@ func parseID3v2TextFrames(r io.Reader, consume func(string, []string)) {
 		if tagUnsynchronised {
 			payload = removeID3Unsynchronisation(payload)
 		}
-		if !isInvolvedPeopleFrame(version, frameID) && frameID != "TXXX" && frameID != "TPE1" && frameID != "TPE2" {
+		if !isInvolvedPeopleFrame(version, frameID) && frameID != "TXXX" && frameID != "TPE1" && frameID != "TPE2" && frameID != "TCOM" && frameID != "TEXT" {
 			continue
 		}
 		flags := frameHeader[9]

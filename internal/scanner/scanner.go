@@ -137,14 +137,19 @@ func (m *Manager) RefreshAlbumWorks(ctx context.Context) (storage.RefreshStats, 
 func (m *Manager) Wait() { m.wg.Wait() }
 
 func (m *Manager) StartIdentityRebuild(ctx context.Context) (int64, error) {
-	return m.start(ctx, "full", true)
+	return m.start(ctx, "full", true, false)
 }
 
 func (m *Manager) Start(ctx context.Context, scanType string) (int64, error) {
-	return m.start(ctx, scanType, false)
+	return m.start(ctx, scanType, false, false)
 }
 
-func (m *Manager) start(ctx context.Context, scanType string, identity bool) (int64, error) {
+// StartLegacyCreatorConversion is an explicit one-shot compatibility scan.
+func (m *Manager) StartLegacyCreatorConversion(ctx context.Context) (int64, error) {
+	return m.start(ctx, "full", false, true)
+}
+
+func (m *Manager) start(ctx context.Context, scanType string, identity, legacyCreators bool) (int64, error) {
 	if scanType != "full" {
 		scanType = "incremental"
 	}
@@ -174,13 +179,13 @@ func (m *Manager) start(ctx context.Context, scanType string, identity bool) (in
 			}
 		}()
 		defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
-		m.run(m.baseCtx, jobID, scanType)
+		m.run(m.baseCtx, jobID, scanType, legacyCreators)
 		_ = m.store.CheckReleaseGroupRebuildFailure(m.baseCtx, jobID)
 	}()
 	return jobID, nil
 }
 
-func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
+func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyCreators bool) {
 	started := storage.ScanTimestamp()
 	paths, err := m.discover()
 	if err != nil {
@@ -270,7 +275,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string) {
 				if artErr != nil {
 					m.logger.Warn("cache artwork failed", "path", rel, "error", artErr)
 				}
-				if importErr := m.store.ImportTrack(ctx, storage.ImportInput{LibraryID: m.library.ID, RelativePath: rel, FileSize: info.Size(), ModifiedAtNS: info.ModTime().UnixNano(), Metadata: meta, Artwork: art, AudioProps: m.probe(path, meta.Container), HasExternalLRC: externalLRC(path)}); importErr != nil {
+				if importErr := m.store.ImportTrack(ctx, storage.ImportInput{LibraryID: m.library.ID, RelativePath: rel, FileSize: info.Size(), ModifiedAtNS: info.ModTime().UnixNano(), Metadata: meta, Artwork: art, AudioProps: m.probe(path, meta.Container), HasExternalLRC: externalLRC(path), LegacyCreatorConversion: legacyCreators}); importErr != nil {
 					failed++
 					m.recordError(ctx, jobID, rel, "import_failed", importErr)
 				} else {

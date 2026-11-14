@@ -970,7 +970,17 @@ func (a *App) handleStartScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", 403)
 		return
 	}
-	job, err := a.scanner.Start(r.Context(), r.FormValue("type"))
+	var job int64
+	var err error
+	if r.FormValue("legacyCreators") == "1" {
+		if r.FormValue("confirmLegacyCreators") != "1" {
+			http.Error(w, "请先确认旧幕后署名逗号拆分风险", http.StatusBadRequest)
+			return
+		}
+		job, err = a.scanner.StartLegacyCreatorConversion(r.Context())
+	} else {
+		job, err = a.scanner.Start(r.Context(), r.FormValue("type"))
+	}
 	if err != nil {
 		http.Redirect(w, r, "/admin?notice="+"扫描已在运行", 303)
 		return

@@ -104,6 +104,16 @@
             <button class="secondary-round">完整重扫</button>
           </form>
         </div>
+        <details>
+          <summary>旧文件兼容：拆分幕后署名</summary>
+          <p>仅本次完整扫描按英文/中文逗号拆分作词、作曲、编曲、制作。普通扫描不启用此规则；已有明确多值署名优先。名字本身含逗号可能误拆，请先备份数据库。</p>
+          <form method="post" action="/admin/scan">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="legacyCreators" value="1">
+            <label><input type="checkbox" name="confirmLegacyCreators" value="1" required> 我已备份并接受旧署名可能误拆的风险</label>
+            <button class="secondary-round">兼容旧幕后署名并完整重扫</button>
+          </form>
+        </details>
         {{with .LibraryWatch}}{{if .Available}}
         <div class="library-watch" id="library-watch">
           <div class="library-watch-head">
