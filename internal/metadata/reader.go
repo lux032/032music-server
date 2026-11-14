@@ -122,6 +122,26 @@ func Read(path string) (AudioMetadata, error) {
 		if _, seekErr := file.Seek(0, io.SeekStart); seekErr == nil {
 			result.InvolvedPeople = parseID3v2InvolvedPeople(file)
 		}
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr == nil {
+			artistFields := map[string][]string{}
+			parseID3v2TextFrames(file, func(frame string, fields []string) {
+				switch frame {
+				case "TPE1", "TPE2":
+					artistFields[frame] = append(artistFields[frame], fields...)
+				case "TXXX":
+					if len(fields) > 1 {
+						key := strings.ToUpper(strings.TrimSpace(fields[0]))
+						switch key {
+						case "ARTISTS", "ALBUMARTISTS", "ALBUM_ARTISTS", "MUSICBRAINZ ARTIST ID", "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ALBUM ARTIST ID", "MUSICBRAINZ_ALBUMARTISTID":
+							artistFields[key] = append(artistFields[key], fields[1:]...)
+						}
+					}
+				}
+			})
+			for key, values := range artistFields {
+				result.Raw[key] = values
+			}
+		}
 	} else {
 		result.InvolvedPeople = parseInvolvedPeopleRaw(raw)
 	}
@@ -494,44 +514,56 @@ func applyInvolvedPeople(result *AudioMetadata) {
 }
 
 func parseID3v2InvolvedPeople(r io.Reader) []InvolvedPerson {
+	var people []InvolvedPerson
+	parseID3v2TextFrames(r, func(frame string, fields []string) {
+		if frame != "IPLS" && frame != "TIPL" && frame != "TMCL" {
+			return
+		}
+		for i := 0; i+1 < len(fields); i += 2 {
+			people = appendInvolved(people, fields[i], fields[i+1])
+		}
+	})
+	return dedupeInvolved(people)
+}
+
+func parseID3v2TextFrames(r io.Reader, consume func(string, []string)) {
 	header := make([]byte, 10)
 	if _, err := io.ReadFull(r, header); err != nil || string(header[:3]) != "ID3" {
-		return nil
+		return
 	}
 	version := header[3]
 	if version != 3 && version != 4 {
-		return nil
+		return
 	}
 	tagSize, ok := synchsafeSize(header[6:10])
 	if !ok || tagSize <= 0 || tagSize > 32<<20 {
-		return nil
+		return
 	}
 	body := make([]byte, tagSize)
 	if _, err := io.ReadFull(r, body); err != nil {
-		return nil
+		return
 	}
 	tagUnsynchronised := header[5]&0x80 != 0
 	offset := 0
 	if header[5]&0x40 != 0 {
 		if len(body) < 4 {
-			return nil
+			return
 		}
 		if version == 3 {
 			extended := int(binary.BigEndian.Uint32(body[:4]))
 			if extended < 0 || extended > len(body)-4 {
-				return nil
+				return
 			}
 			offset = 4 + extended
 		} else {
 			extended, valid := synchsafeSize(body[:4])
 			if !valid || extended < 4 || extended > len(body) {
-				return nil
+				return
 			}
 			offset = extended
 		}
 	}
 
-	var people []InvolvedPerson
 	for offset+10 <= len(body) {
 		frameHeader := body[offset : offset+10]
 		if bytes.Equal(frameHeader[:4], []byte{0, 0, 0, 0}) {
@@ -560,7 +592,7 @@ func parseID3v2InvolvedPeople(r io.Reader) []InvolvedPerson {
 		if tagUnsynchronised {
 			payload = removeID3Unsynchronisation(payload)
 		}
-		if !isInvolvedPeopleFrame(version, frameID) {
+		if !isInvolvedPeopleFrame(version, frameID) && frameID != "TXXX" && frameID != "TPE1" && frameID != "TPE2" {
 			continue
 		}
 		flags := frameHeader[9]
@@ -594,11 +626,8 @@ func parseID3v2InvolvedPeople(r io.Reader) []InvolvedPerson {
 		if !valid {
 			continue
 		}
-		for i := 0; i+1 < len(fields); i += 2 {
-			people = appendInvolved(people, fields[i], fields[i+1])
-		}
+		consume(frameID, fields)
 	}
-	return dedupeInvolved(people)
 }
 
 func isInvolvedPeopleFrame(version byte, frameID string) bool {
@@ -708,6 +737,7 @@ func parseNumberPair(number, total string) (int, int) {
 
 func applyFallbacks(result AudioMetadata, path string) AudioMetadata {
 	result.Artists = ArtistNames(result.Raw, result.Artists)
+	result.AlbumArtists = AlbumArtistNames(result.Raw, result.AlbumArtists)
 	if result.TrackNumber < 0 {
 		result.TrackNumber = 0
 	}

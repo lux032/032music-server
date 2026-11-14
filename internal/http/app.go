@@ -572,6 +572,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+dailyMixPath+"/{id}/regenerate", a.requireAdmin(http.HandlerFunc(a.handleRegenerateDailyMixForm)))
 	mux.Handle("POST "+dailyMixPath+"/{id}/save", a.requireAdmin(http.HandlerFunc(a.handleSaveDailyMixForm)))
 	mux.Handle("POST /admin/tracks/{id}/recommendation-block", a.requireAdmin(http.HandlerFunc(a.handleAdminBlockTrack)))
+	mux.Handle("GET /admin/tracks/{id}/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistCorrection)))
+	mux.Handle("POST /admin/tracks/{id}/artists", a.requireAdmin(http.HandlerFunc(a.handleArtistCorrection)))
 	mux.Handle("GET /admin/tracks/{id}/tags", a.requireAdmin(http.HandlerFunc(a.handleTrackTagsPage)))
 	mux.Handle("POST /admin/tracks/{id}/tags", a.requireAdmin(http.HandlerFunc(a.handleSaveTrackTags)))
 	mux.Handle("POST /admin/tracks/{id}/tags/retag", a.requireAdmin(http.HandlerFunc(a.handleRetagTrack)))

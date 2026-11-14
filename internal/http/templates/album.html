@@ -86,7 +86,7 @@
               <div class="track-title-line">
                 <strong>{{.Title}}</strong>
               </div>
-              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{template "track-credits" .}}</small>
+              <small class="album-artist-links">{{range $index, $artist := .Artists}}{{if $index}}<span>、</span>{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{template "track-credits" .}} · <a href="/admin/tracks/{{.ID}}/artists">修正演唱者</a></small>
             </div>
             <div class="track-tieup-cell">
               {{if $tieups}}

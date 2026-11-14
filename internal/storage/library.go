@@ -257,6 +257,7 @@ func (s *Store) LatestScanJob(ctx context.Context) (ScanJob, error) {
 
 func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 	input.Metadata.Artists = metadata.ArtistNames(input.Metadata.Raw, input.Metadata.Artists)
+	input.Metadata.AlbumArtists = metadata.AlbumArtistNames(input.Metadata.Raw, input.Metadata.AlbumArtists)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -414,6 +415,28 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	for i, id := range artistIDs {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, "primary"); err != nil {
 			return err
+		}
+	}
+	if err = capturePrimaryArtistBase(ctx, tx, trackID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_artist_identities WHERE audio_file_id=?`, audioID); err != nil {
+		return err
+	}
+	mbids := metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
+	// Persist the proven file/name/identity alignment before merges or UI sorting
+	// can change relation positions. Ambiguous files supply no evidence.
+	if len(mbids) == len(m.Artists) && len(artistIDs) == len(m.Artists) {
+		seen := map[int64]bool{}
+		for _, id := range artistIDs {
+			seen[id] = true
+		}
+		if len(seen) == len(artistIDs) {
+			for i, id := range artistIDs {
+				if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?)`, audioID, id, mbids[i]); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	// Credits: lyricist, composer, arranger, producer (each as separate roles)

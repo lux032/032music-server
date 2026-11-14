@@ -3658,6 +3658,10 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 
 /* 声学分析页 */
 .audio-analysis-main .feature-card { display: grid; gap: 10px; margin-bottom: 20px; }
+.artist-correction-main .feature-card { display: grid; gap: 14px; margin-bottom: 20px; }
+.artist-correction-main form { display: grid; gap: 16px; }
+.artist-correction-main .work-picker { display: grid; gap: 6px; }
+.artist-correction-main .form-actions { justify-content: flex-start; }
 .audio-analysis-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .audio-analysis-head form { margin: 0; }
 .audio-analysis-status { border-left: 3px solid var(--line-strong); }

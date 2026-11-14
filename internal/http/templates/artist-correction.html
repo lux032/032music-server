@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>{{template "head" .}}<title>修正演唱者 · {{.Track.Title}} · 032</title></head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+{{template "sidebar" .}}{{template "nowplaying" .}}
+<main id="app-main" class="browser-main feature-main artist-correction-main">
+  <header class="browser-header">
+    <div><h1>修正演唱者</h1><p class="result-count">{{.Track.Title}} · {{.Track.Artist}}</p></div>
+    <a class="secondary-button" href="/admin/albums/{{.Track.AlbumID}}">返回专辑</a>
+  </header>
+  {{if .Notice}}<p class="toast" role="alert">{{.Notice}}</p>{{end}}
+  <section class="feature-card">
+    <h2>当前署名{{if .State.Active}} · 人工修正{{end}}</h2>
+    <p>{{range $i,$a := .State.Artists}}{{if $i}}、{{end}}<a href="/admin/artists/{{$a.ID}}">{{$a.Name}}</a>{{else}}使用专辑艺人{{end}}</p>
+    <p class="result-count">底层署名：{{range $i,$a := .State.Base}}{{if $i}}、{{end}}{{$a.Name}}{{else}}使用专辑艺人{{end}}</p>
+    <p>只修改这首歌的演唱者，不修改音乐文件、专辑艺人、作词作曲、收藏和播放记录。完整重扫后人工修正仍然有效。</p>
+  </section>
+  {{if .Preview}}
+  <section class="feature-card">
+    <h2>确认修改</h2>
+    {{if eq .Action "set"}}<p>修改为：{{range $i,$a := .Proposed}}{{if $i}}、{{end}}{{$a.Name}}{{end}}</p>{{else if eq .Action "reset"}}<p>关闭人工修正，使用上方最新底层署名。</p>{{else}}<p>撤销后：{{range $i,$a := .State.PreviousArtists}}{{if $i}}、{{end}}{{$a.Name}}{{else}}使用专辑艺人{{end}}</p><p>恢复上一次人工配置。期间标签如有更新，以最新底层结果为准。</p>{{end}}
+    <form method="post">
+      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="token" value="{{.State.Token}}">
+      <input type="hidden" name="action" value="{{.Action}}"><input type="hidden" name="confirm" value="1">
+      {{range .IDs}}<input type="hidden" name="artist" value="{{.}}">{{end}}
+      <div class="form-actions"><a class="secondary-button" href="/admin/tracks/{{.Track.ID}}/artists">取消</a><button>确认修改</button></div>
+    </form>
+  </section>
+  {{else}}
+  <section class="feature-card">
+    <h2>选择演唱者</h2>
+    <p>按署名顺序选择已有艺术家，留空的位置会忽略。不要把真实组合拆成个人。</p>
+    <form method="post">
+      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="token" value="{{.State.Token}}"><input type="hidden" name="action" value="set">
+      {{range $i := .State.Artists}}<div class="work-picker" data-work-picker="/admin/options/artists?role=all" data-work-limit="30" data-work-empty="没有匹配的艺术家">
+        <label>艺术家<input type="search" data-work-search autocomplete="off" placeholder="搜索艺术家" value="{{$i.Name}}"></label><input type="hidden" name="artist" data-work-id-input value="{{$i.ID}}"><div class="work-picker-results" data-work-results hidden></div>
+      </div>{{end}}
+      <div class="work-picker" data-work-picker="/admin/options/artists?role=all" data-work-limit="30" data-work-empty="没有匹配的艺术家"><label>添加艺术家<input type="search" data-work-search autocomplete="off" placeholder="搜索艺术家"></label><input type="hidden" name="artist" data-work-id-input><div class="work-picker-results" data-work-results hidden></div></div>
+      <div class="work-picker" data-work-picker="/admin/options/artists?role=all" data-work-limit="30" data-work-empty="没有匹配的艺术家"><label>添加艺术家<input type="search" data-work-search autocomplete="off" placeholder="搜索艺术家"></label><input type="hidden" name="artist" data-work-id-input><div class="work-picker-results" data-work-results hidden></div></div>
+      <button>预览修改</button>
+    </form>
+  </section>
+  <section class="feature-card">
+    <h2>恢复与撤销</h2>
+    <form method="post"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><input type="hidden" name="token" value="{{.State.Token}}"><button class="secondary-button" name="action" value="reset">预览恢复默认</button>{{if gt .State.Revision 0}}<button class="secondary-button" name="action" value="undo">预览撤销最近操作</button>{{end}}</form>
+  </section>
+  {{end}}
+</main>
+</body></html>

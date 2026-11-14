@@ -23,6 +23,8 @@ func TestArtistDiscographyRelationsAndDateOrder(t *testing.T) {
 	}
 	add("Older personal", "2021-01-01", 2021, []string{"Singer"}, []string{"Singer"}, nil)
 	add("Joint", "2024/05/01", 2024, []string{"Singer", "Other"}, []string{"Singer"}, nil)
+	add("Duet", "2024-11-01", 2024, []string{"Other"}, []string{"Singer", "Other"}, nil)
+	add("Duet compilation", "2023-03-01", 2023, []string{"Various Artists"}, []string{"Singer", "Other"}, map[string][]string{"COMPILATION": {"1"}})
 	add("Guest", "2024.12.01", 2024, []string{"Other"}, []string{"Singer"}, nil)
 	add("Various", "2023-01-01", 2023, []string{"Various Artists"}, []string{"Singer"}, nil)
 	add("Multi compilation", "2023-02-01", 2023, []string{"Singer", "Other"}, []string{"Singer"}, map[string][]string{"COMPILATION": {"1"}})
@@ -51,9 +53,28 @@ func TestArtistDiscographyRelationsAndDateOrder(t *testing.T) {
 	for _, r := range releases {
 		got = append(got, r.Title+":"+r.Relation)
 	}
-	want := []string{"Edited:personal", "Guest:appearance", "Joint:collaboration", "Year only:personal", "Multi compilation:appearance", "Various:appearance", "Solo best:personal", "Older personal:personal", "Undated:personal"}
+	want := []string{"Edited:personal", "Guest:appearance", "Duet:collaboration", "Joint:collaboration", "Year only:personal", "Duet compilation:collaboration", "Multi compilation:appearance", "Various:appearance", "Solo best:personal", "Older personal:personal", "Undated:personal"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("releases = %v, want %v", got, want)
+	}
+	var other int64
+	if err := f.store.db.QueryRowContext(f.ctx, `SELECT id FROM artists WHERE display_name='Other'`).Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+	otherReleases, err := f.store.ArtistDiscography(f.ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range []string{"Duet", "Duet compilation"} {
+		found := false
+		for _, release := range otherReleases {
+			if release.Title == title && release.Relation == "collaboration" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s must appear as a collaboration for both performers: %+v", title, otherReleases)
+		}
 	}
 	// The existing API keeps its album-credit-only contract, but shares date ordering.
 	albums, err := f.store.ArtistAlbums(f.ctx, singer)

@@ -707,6 +707,16 @@ func mergeArtistsTx(ctx context.Context, tx *sql.Tx, sourceID, targetID int64) (
 	if _, err = tx.ExecContext(ctx, `UPDATE artists SET merged_into_artist_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, targetID, sourceID); err != nil {
 		return 0, err
 	}
+	if err = reapplyPrimaryArtistCorrections(ctx, tx); err != nil {
+		return 0, err
+	}
+	guard, guardErr := correctionRevisionGuard(ctx, tx)
+	if guardErr != nil {
+		return 0, guardErr
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET correction_guard=? WHERE id=?`, guard, operationID); err != nil {
+		return 0, err
+	}
 	return operationID, nil
 }
 
@@ -724,6 +734,26 @@ func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) erro
 	}
 	if status != "merged" {
 		return errors.New("merge operation is not active")
+	}
+	var savedGuard string
+	if err = tx.QueryRowContext(ctx, `SELECT correction_guard FROM artist_merge_operations WHERE id=?`, operationID).Scan(&savedGuard); err != nil {
+		return err
+	}
+	guard, guardErr := correctionRevisionGuard(ctx, tx)
+	if guardErr != nil {
+		return guardErr
+	}
+	if savedGuard != "" && guard != savedGuard {
+		return errors.New("合并后演唱者修正已变化，不能回退覆盖后续编辑")
+	}
+	if savedGuard == "" {
+		var corrections int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM track_primary_artist_state`).Scan(&corrections); err != nil {
+			return err
+		}
+		if corrections > 0 {
+			return errors.New("旧合并没有署名版本记录，请先核对人工修正，不能直接回退")
+		}
 	}
 	var merged sql.NullInt64
 	if err = tx.QueryRowContext(ctx, `SELECT merged_into_artist_id FROM artists WHERE id=?`, sourceID).Scan(&merged); err != nil {
@@ -777,6 +807,9 @@ func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) erro
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE artists SET merged_into_artist_id=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, sourceID); err != nil {
+		return err
+	}
+	if err = reapplyPrimaryArtistCorrections(ctx, tx); err != nil {
 		return err
 	}
 	if favoriteSetByMerge == 1 {

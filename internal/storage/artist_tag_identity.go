@@ -8,7 +8,7 @@ import (
 // Only unambiguous primary credits provide identity evidence. Multi-person
 // positions cannot be aligned safely after name deduplication and artist merges.
 func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int64]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE ta.role='primary' AND (?=0 OR ta.artist_id=?) AND (SELECT COUNT(*) FROM track_artists p WHERE p.track_id=ta.track_id AND p.role='primary')=1 AND UPPER(tag.field_name) IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') ORDER BY ta.artist_id,af.id,tag.position`, artistID, artistID)
+	rows, err := s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE ta.role='primary' AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=ta.track_id AND st.active=1) AND (?=0 OR ta.artist_id=?) AND (SELECT COUNT(*) FROM track_artists p WHERE p.track_id=ta.track_id AND p.role='primary')=1 AND UPPER(tag.field_name) IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') ORDER BY ta.artist_id,af.id,tag.position`, artistID, artistID)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +46,29 @@ func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int6
 			inconsistent[file.artist] = true
 		}
 		result[file.artist] = id
+	}
+	// New scans preserve verified multi-person alignment separately from the
+	// materialized relations. Do not infer identity from their current positions.
+	evidence, err := s.db.QueryContext(ctx, `SELECT e.artist_id,e.mbid FROM audio_file_artist_identities e WHERE (?=0 OR e.artist_id=?) AND EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND UPPER(tag.field_name) IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') AND instr(lower(tag.value),e.mbid)>0) AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st JOIN audio_files af ON af.track_id=st.track_id WHERE af.id=e.audio_file_id AND st.active=1)`, artistID, artistID)
+	if err != nil {
+		return nil, err
+	}
+	for evidence.Next() {
+		var artist int64
+		var mbid string
+		if err = evidence.Scan(&artist, &mbid); err != nil {
+			evidence.Close()
+			return nil, err
+		}
+		if previous := result[artist]; previous != "" && previous != mbid {
+			inconsistent[artist] = true
+		}
+		result[artist] = mbid
+	}
+	err = evidence.Err()
+	evidence.Close()
+	if err != nil {
+		return nil, err
 	}
 	for artist := range inconsistent {
 		delete(result, artist)

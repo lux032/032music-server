@@ -200,6 +200,7 @@
                 <button class="secondary-button">{{if .IsFavorite}}取消收藏{{else}}加入收藏{{end}}</button>
               </form>
               <a class="secondary-button" href="/admin/tracks/{{.ID}}/tags?returnTo={{$.ReturnTo}}">AI 标签</a>
+              <a class="secondary-button" href="/admin/tracks/{{.ID}}/artists">修正演唱者</a>
             </div>
             <form class="drawer-form" method="post" action="/admin/tracks/{{.ID}}">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

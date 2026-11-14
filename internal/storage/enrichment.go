@@ -509,7 +509,10 @@ func ensureTrackArtistSource(ctx context.Context, tx *sql.Tx, trackID, artistID 
 
 func materializeTrackArtistSources(ctx context.Context, tx *sql.Tx, trackID int64) error {
 	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,join_phrase,role) SELECT s.track_id,s.artist_id,COALESCE((SELECT MIN(p.position) FROM track_artists p WHERE p.track_id=s.track_id AND p.role=s.role AND p.artist_id=s.artist_id),s.position),s.join_phrase,s.role FROM track_artist_sources s WHERE s.track_id=? ORDER BY CASE s.source WHEN 'manual' THEN 0 WHEN 'file_tag' THEN 1 ELSE 2 END,s.position`, trackID)
-	return err
+	if err != nil {
+		return err
+	}
+	return applyPrimaryArtistCorrection(ctx, tx, trackID)
 }
 
 // SaveTrackInvolvedPeople persists structured TIPL/TMCL-style credits and
@@ -614,6 +617,9 @@ func (s *Store) AddEnrichmentCredits(ctx context.Context, albumID int64, credits
 				return err
 			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position,join_phrase,role) VALUES(?,?,?,?,?) ON CONFLICT(track_id,artist_id,position,role) DO NOTHING`, c.TrackID, artistID, pos, c.JoinPhrase, role)
+			if err == nil {
+				err = applyPrimaryArtistCorrection(ctx, tx, c.TrackID)
+			}
 		} else {
 			_, err = tx.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position,join_phrase) VALUES(?,?,?,?) ON CONFLICT(album_id,artist_id,position) DO NOTHING`, albumID, artistID, pos, c.JoinPhrase)
 		}
