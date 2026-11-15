@@ -4,6 +4,8 @@
 
 项目使用自有 `/api/v1` API，**不要假定兼容 Subsonic/OpenSubsonic**。[路由注册](../../internal/http/app.go)和[能力接口实现](../../internal/http/client_features.go)可作为代码参考。
 
+统一搜索及人工歌手别名见：[搜索接口](search.md)。
+
 ## 认证方式
 
 | 接口 | 认证 |

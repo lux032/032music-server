@@ -27,6 +27,7 @@
 <aside class="sidebar" id="app-sidebar">
   <a class="wordmark" href="/admin/home"><img class="wordmark-icon" src="{{assetBrandIcon}}" alt="" width="28" height="28"><span>032</span><small>MUSIC</small></a>
   <nav aria-label="音乐库">
+    <a href="/admin/search" data-nav="search" class="{{if eq .Nav "search"}}active{{end}}"{{if eq .Nav "search"}} aria-current="page"{{end}} title="搜索" aria-label="搜索"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg> 搜索</a>
     <a href="/admin/home" data-nav="home" data-mp="1" class="{{if eq .Nav "home"}}active{{end}}"{{if eq .Nav "home"}} aria-current="page"{{end}} title="主页" aria-label="主页"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-home"></use></svg> 主页</a>
     <a href="/admin/albums" data-nav="albums" data-mp="1" class="{{if eq .Nav "albums"}}active{{end}}"{{if eq .Nav "albums"}} aria-current="page"{{end}} title="专辑" aria-label="专辑"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg> 专辑</a>
     <a href="/admin/artists/album" data-nav="artists" data-mp="1" class="{{if eq .Nav "artists"}}active{{end}}"{{if eq .Nav "artists"}} aria-current="page"{{end}} title="歌手" aria-label="歌手"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 歌手</a>
@@ -82,6 +83,7 @@
       the account/logout entry that the bottom bar cannot fit. */}}
   <div class="sidebar-more-sheet" id="sidebar-more-sheet" hidden>
     <nav aria-label="更多导航">
+    <a href="/admin/search" data-nav="search" class="{{if eq .Nav "search"}}active{{end}}"{{if eq .Nav "search"}} aria-current="page"{{end}} title="搜索" aria-label="搜索"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg> 搜索</a>
       <a href="/admin/credits" data-nav="credits" class="{{if eq .Nav "credits"}}active{{end}}"{{if eq .Nav "credits"}} aria-current="page"{{end}} title="幕后人员" aria-label="幕后人员"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg> 幕后人员</a>
       <a href="/admin/discover" data-nav="discover" title="发现" aria-label="发现" class="{{if eq .Nav "discover"}}active{{end}}"{{if eq .Nav "discover"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-sparkle"></use></svg> 发现</a>
       <a href="/admin/favorites" data-nav="favorites" class="{{if eq .Nav "favorites"}}active{{end}}"{{if eq .Nav "favorites"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-heart"></use></svg> 收藏</a>

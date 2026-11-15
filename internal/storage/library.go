@@ -725,14 +725,10 @@ func artistWhere(f Filters, role string) (string, []any) {
 	if f.Favorite {
 		clauses = append(clauses, "ar.is_favorite=1")
 	}
-	variants := SearchVariants(f.Query)
-	if len(variants) > 0 {
-		parts := make([]string, 0, len(variants)*2)
-		for _, variant := range variants {
-			parts = append(parts, "COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%'", "COALESCE(ar.reading_name,'') LIKE '%'||?||'%'")
-			args = append(args, variant, variant)
-		}
-		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	if strings.TrimSpace(f.Query) != "" {
+		condition, queryArgs := artistSearchCondition("ar.id", f.Query)
+		clauses = append(clauses, condition)
+		args = append(args, queryArgs...)
 	}
 	if condition, indexArgs := IndexCondition("COALESCE(NULLIF(ar.reading_name,''),ar.sort_name,COALESCE(ar.user_display_name,ar.display_name))", f.Index); condition != "" {
 		clauses = append(clauses, condition)

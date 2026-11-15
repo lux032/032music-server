@@ -77,7 +77,7 @@
           {{range .Tracks}}
           {{$tieups := index $.TrackTieups .ID}}
           {{if and $multiDisc (ne .DiscNumber $disc)}}{{$disc = .DiscNumber}}<div class="disc-head"><strong>Disc {{.DiscNumber}}</strong><span>{{discSummary $.Tracks .DiscNumber}}</span></div>{{end}}
-          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
+          <article id="track-{{.ID}}" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="playable-number">
               <span class="num-text" data-disc="{{.DiscNumber}}" data-track-no="{{.TrackNumber}}">{{if $multiDisc}}{{.TrackNumber}}{{else}}{{.DiscNumber}}.{{.TrackNumber}}{{end}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>

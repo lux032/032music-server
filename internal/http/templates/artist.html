@@ -145,6 +145,19 @@
           {{else}}<p>当前情况不适合直接合并：可能涉及合作署名，或身份所属歌手已合并到当前歌手。请打开已绑定歌手页面核对并解除错误身份；不要将个人歌手合并到合作署名。</p>{{end}}
         </section>
         {{end}}
+        <section class="identity-panel search-alias-panel" id="search-aliases" aria-labelledby="search-alias-heading">
+          <h2 id="search-alias-heading">搜索别名</h2>
+          <p class="field-hint">添加中文译名或其他常用名字，搜索时也能找到这位歌手。不会更改展示名称。</p>
+          <form class="search-alias-add" method="post" action="/admin/artists/{{.Artist.ID}}/search-aliases">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label for="search-alias-value">添加人工别名</label>
+            <div><input id="search-alias-value" name="value" maxlength="200" required placeholder="例如：星街彗星"><button type="submit">添加</button></div>
+          </form>
+          <ul class="search-alias-list">
+            {{range .SearchAliases}}<li><span>{{.Value}} <small>人工</small></span><form method="post" action="/admin/artists/{{$.Artist.ID}}/search-aliases/{{.ID}}/delete"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button type="submit" class="secondary-button" aria-label="删除搜索别名 {{.Value}}">删除</button></form></li>{{else}}<li class="field-hint">尚未添加人工别名</li>{{end}}
+          </ul>
+          {{range .Artist.Profiles}}{{if .Aliases}}<details class="search-external-aliases"><summary>{{.Source}} 别名（{{len .Aliases}}）</summary><ul>{{range .Aliases}}<li>{{.}}</li>{{end}}</ul></details>{{end}}{{end}}
+        </section>
         <section class="identity-panel">
           <p class="kicker">外部身份</p>
           {{range .Artist.Profiles}}

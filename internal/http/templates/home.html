@@ -15,9 +15,9 @@
       </div>
       {{if not .Empty}}
       <div class="h-head-tools">
-        <form class="h-search" method="get" action="/admin/albums" role="search">
+        <form class="h-search" method="get" action="/admin/search" role="search">
           <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
-          <input type="search" name="q" placeholder="搜索专辑或歌手（支持假名）" aria-label="搜索专辑或歌手">
+          <input type="search" name="q" placeholder="搜索歌手、专辑或歌曲" aria-label="搜索歌手、专辑或歌曲" maxlength="200">
           <kbd>/</kbd>
         </form>
       </div>

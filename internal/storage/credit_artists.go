@@ -23,13 +23,10 @@ func creditArtistWhere(f CreditArtistFilters) (string, []any) {
 	}
 	clauses := []string{"ar.merged_into_artist_id IS NULL"}
 	args := []any{role, role}
-	if variants := SearchVariants(f.Query); len(variants) > 0 {
-		parts := []string{}
-		for _, v := range variants {
-			parts = append(parts, "COALESCE(ar.user_display_name,ar.display_name) LIKE '%'||?||'%'", "COALESCE(ar.reading_name,'') LIKE '%'||?||'%'")
-			args = append(args, v, v)
-		}
-		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+	if strings.TrimSpace(f.Query) != "" {
+		condition, queryArgs := artistSearchCondition("ar.id", f.Query)
+		clauses = append(clauses, condition)
+		args = append(args, queryArgs...)
 	}
 	if c, a := IndexCondition("COALESCE(NULLIF(ar.reading_name,''),ar.sort_name,COALESCE(ar.user_display_name,ar.display_name))", f.Index); c != "" {
 		clauses = append(clauses, c)

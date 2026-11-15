@@ -24,6 +24,7 @@ type artistReleaseGroup struct {
 	Releases    []storage.Album
 }
 type identityPageData struct {
+	SearchAliases    []storage.ArtistSearchAlias
 	ActiveArtistRun  *artistRunView
 	LastArtistRun    *artistRunView
 	ArtistRunHistory []artistRunView
@@ -438,6 +439,11 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data.Artist = &detail
+	data.SearchAliases, err = a.store.ArtistSearchAliases(r.Context(), id)
+	if err != nil {
+		a.renderAdminFeatureError(w, "search aliases", err)
+		return
+	}
 
 	if candidateID := parseInt64(r.URL.Query().Get("identityConflict")); candidateID > 0 {
 		conflict, conflictErr := a.store.ArtistIdentityConflict(r.Context(), id, candidateID)
