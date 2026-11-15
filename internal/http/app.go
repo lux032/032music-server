@@ -21,6 +21,7 @@ import (
 
 	"github.com/lux032/032music-server/internal/acquisition"
 	"github.com/lux032/032music-server/internal/analysis"
+	"github.com/lux032/032music-server/internal/artistaliases"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/dailymix"
 	"github.com/lux032/032music-server/internal/discovery"
@@ -79,7 +80,8 @@ type App struct {
 	// audioAnalysis is the optional acoustic analysis worker (nil hides it).
 	audioAnalysis *analysis.Service
 	// aiTagging is the AI (OpenAI-compatible) mood/style tagging worker.
-	aiTagging *tagging.Service
+	aiTagging     *tagging.Service
+	artistAliases *artistaliases.Service
 	// dailyMixes generates the daily recommendation mixes (nil hides them).
 	dailyMixes *dailymix.Service
 	// newTranslationChat creates the lyrics translation model client (nil: OpenAI-compatible HTTP client).
@@ -551,6 +553,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+audioAnalysisPath+"/pause", a.requireAdmin(a.handleAudioAnalysisPause(true)))
 	mux.Handle("POST "+audioAnalysisPath+"/resume", a.requireAdmin(a.handleAudioAnalysisPause(false)))
 	mux.Handle("POST "+audioAnalysisPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAudioAnalysisRetry)))
+	mux.Handle("GET /admin/artist-aliases", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasPage)))
+	mux.Handle("GET /admin/artist-aliases/status", a.requireAdminJSON(http.HandlerFunc(a.handleArtistAliasStatus)))
+	mux.Handle("POST /admin/artist-aliases/{action}", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasAction)))
+	mux.Handle("POST /admin/artist-aliases/candidates/{candidateId}/{action}", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasReview)))
+	mux.Handle("GET /api/v1/artist-alias-completion", a.requireAPIOrAdmin(http.HandlerFunc(a.handleArtistAliasStatus)))
 	mux.Handle("GET "+aiTaggingPath, a.requireAdmin(http.HandlerFunc(a.handleAITaggingPage)))
 	mux.Handle("GET "+aiTaggingPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleAITaggingStatus)))
 	mux.Handle("POST "+aiTaggingPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveAITagging)))

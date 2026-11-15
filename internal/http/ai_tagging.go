@@ -216,7 +216,7 @@ type aiTaggingPageData struct {
 	Sample        *storage.AISampleRun
 }
 
-var aiPurposeLabels = map[string]string{"tag": "打标", "review": "复核", "sample": "抽样对比", "test": "连接测试", "mix": "歌单主题与标题", "translate": "歌词翻译", "playlist": "AI 灵感歌单"}
+var aiPurposeLabels = map[string]string{"tag": "打标", "review": "复核", "sample": "抽样对比", "test": "连接测试", "mix": "歌单主题与标题", "translate": "歌词翻译", "playlist": "AI 灵感歌单", "artist_alias": "中文别名补全"}
 
 func chipsFor(tags []storage.TrackTag, kind string) []aiTagChip {
 	var out []aiTagChip

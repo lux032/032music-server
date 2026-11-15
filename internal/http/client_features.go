@@ -13,7 +13,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		"apiVersion": "v1", "apiRevision": 3,
 		"features": map[string]bool{
 			"albums": true, "artists": true, "tracks": true, "search": true,
-			"unifiedSearch": true, "artistSearchAliases": true,
+			"unifiedSearch": true, "artistSearchAliases": true, "artistAliasCompletion": true,
 			"playlistItemOps": true, "playlistArtwork": true, "playlistRevision": true,
 			"favorites": true, "playlists": true, "playbackProgress": true,
 			"playbackHistory": true, "playbackEvents": true, "rangeStreaming": true,

@@ -13,6 +13,7 @@ import (
 
 	"github.com/lux032/032music-server/internal/acquisition"
 	"github.com/lux032/032music-server/internal/analysis"
+	"github.com/lux032/032music-server/internal/artistaliases"
 	"github.com/lux032/032music-server/internal/config"
 	"github.com/lux032/032music-server/internal/dailymix"
 	"github.com/lux032/032music-server/internal/discovery"
@@ -165,6 +166,12 @@ func run() error {
 		},
 	})
 	app.SetAITagging(taggingService)
+	aliasService, err := artistaliases.New(db, logger, artistaliases.Options{Sources: enrichmentManager.LoadArtistAliasSources})
+	if err != nil {
+		return fmt.Errorf("create artist alias service: %w", err)
+	}
+	app.SetArtistAliases(aliasService)
+	aliasService.Start(rootCtx)
 	// Online lyrics (NetEase, LRCLIB) for tracks without local lyrics; HTTP(S)_PROXY applies.
 	app.SetOnlineLyrics(lyricsonline.New())
 	taggingService.Start(rootCtx)
@@ -187,6 +194,7 @@ func run() error {
 		app.GCCustomImages(rootCtx)
 		analysisService.Wake()
 		taggingService.Wake()
+		aliasService.Wake()
 	})
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
@@ -269,6 +277,7 @@ func run() error {
 		lastFMService.Wait()
 		analysisService.Wait()
 		taggingService.Wait()
+		aliasService.Wait()
 		dailyMixService.Wait()
 		backups.Wait()
 		app.WaitTranscodes()

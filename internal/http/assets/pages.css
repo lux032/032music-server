@@ -3930,3 +3930,20 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
   .search-duration { display: none; }
   .search-tabs a { padding: 10px 12px; }
 }
+
+/* Chinese artist alias completion follows the existing admin forms. */
+.artist-aliases-main .inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.artist-aliases-main .inline > label { flex: 1 1 180px; min-width: 0; }
+.artist-aliases-main .inline input { width: 100%; min-width: 0; }
+.artist-aliases-main .feature-card { overflow-wrap: anywhere; }
+.artist-aliases-main .alias-review-item { padding-block: 20px; }
+.artist-aliases-main .alias-review-item h3 { margin-block: 0 8px; }
+.artist-aliases-main blockquote { margin: 12px 0; padding: 12px; background: var(--fill); border-radius: var(--radius-md); white-space: pre-wrap; }
+.artist-aliases-main details { margin-block: 12px; }
+.artist-aliases-main summary { cursor: pointer; }
+.artist-aliases-main nav a[aria-current="page"] { color: var(--text); font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+.artist-aliases-main .browser-header > div:first-child { display: block; }
+.artist-aliases-main .browser-header > a { flex: none; white-space: nowrap; }
+.artist-aliases-main a.secondary-button { display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-pill); font-size: var(--fs-sm); font-weight: 600; }
+.artist-aliases-main .alias-key-clear { display: flex; align-items: center; gap: 8px; }
+.artist-aliases-main .alias-key-clear input { width: auto; margin: 0; }

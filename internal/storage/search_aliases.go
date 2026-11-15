@@ -14,12 +14,13 @@ type ArtistSearchAlias struct {
 	ID       int64  `json:"id"`
 	ArtistID int64  `json:"artistId"`
 	Value    string `json:"value"`
+	Source   string `json:"source"`
 }
 
 // Search aliases stay on their original owner so merging and rolling back a
 // merge inherit and restore them without copying or losing user edits.
 func (s *Store) ArtistSearchAliases(ctx context.Context, artistID int64) ([]ArtistSearchAlias, error) {
-	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE members(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN members m ON a.merged_into_artist_id=m.id) SELECT x.id,x.artist_id,x.value FROM artist_search_aliases x JOIN members m ON m.id=x.artist_id ORDER BY x.value COLLATE NOCASE,x.id`, artistID)
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE members(id) AS (SELECT ? UNION SELECT a.id FROM artists a JOIN members m ON a.merged_into_artist_id=m.id) SELECT x.id,x.artist_id,x.value,x.source FROM artist_search_aliases x JOIN members m ON m.id=x.artist_id ORDER BY x.value COLLATE NOCASE,x.id`, artistID)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +28,7 @@ func (s *Store) ArtistSearchAliases(ctx context.Context, artistID int64) ([]Arti
 	result := []ArtistSearchAlias{}
 	for rows.Next() {
 		var item ArtistSearchAlias
-		if err := rows.Scan(&item.ID, &item.ArtistID, &item.Value); err != nil {
+		if err := rows.Scan(&item.ID, &item.ArtistID, &item.Value, &item.Source); err != nil {
 			return nil, err
 		}
 		result = append(result, item)

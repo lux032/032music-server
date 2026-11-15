@@ -789,3 +789,34 @@ document.addEventListener('submit', async (event) => {
   else pollRestart();
   document.addEventListener('032:pjax-applied', pollRestart);
 })();
+
+// Chinese artist alias completion: update state without replacing review forms
+// or discarding an in-progress manual edit. Full results refresh explicitly.
+(function () {
+  'use strict';
+  if (window.__032_artist_aliases_initialized) return;
+  window.__032_artist_aliases_initialized = true;
+  let timer = null;
+  let busy = false;
+  async function tick() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const state = document.getElementById('alias-worker-state');
+    if (!state || document.hidden || busy) return;
+    busy = true;
+    try {
+      const response = await fetch('/admin/artist-aliases/status', { credentials: 'same-origin' });
+      if (response.ok && document.getElementById('alias-worker-state') === state) {
+        const { settings, stats, detail } = await response.json();
+        state.textContent = !settings.enabled ? '尚未开启' : (settings.paused ? '已暂停 · ' : '') + (detail || '等待后台任务');
+        document.getElementById('alias-worker-progress').textContent = `待处理 ${stats.Queued} · 处理中 ${stats.Running} · 已处理中文名 ${stats.Filled} · 待审核 ${stats.Pending} · 未找到 ${stats.Missing} · 失败 ${stats.Failed}`;
+        document.getElementById('alias-worker-usage').textContent = `累计搜索 ${stats.Searches} 次 · 网页读取 ${stats.Fetches} 次 · 模型调用 ${stats.Models} 次（含失败尝试）`;
+      }
+    } catch (_) { /* Preserve rendered data; the refresh control remains usable. */ }
+    finally { busy = false; }
+    if (!document.hidden && document.getElementById('alias-worker-state')) timer = setTimeout(tick, 5000);
+  }
+  document.addEventListener('032:pjax-applied', tick);
+  document.addEventListener('visibilitychange', tick);
+  tick();
+})();

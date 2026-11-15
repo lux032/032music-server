@@ -110,3 +110,5 @@
 - 缓存 FLAC 首次转码完成后提供 Content-Length 和字节 Range。`maxSampleRate=48000` 可将高解析源降至 44.1/48 kHz 族。缓存位于 `<data>/transcode-cache`。
 - HEAD 不启动转码。缺少 ffmpeg/编码器时相应格式返回 503，应查询 capabilities 判断实际能力。
 
+
+- [歌手中文别名补全](artist-alias-completion.md)：后台联网补全、每位歌手限额与来源审核。

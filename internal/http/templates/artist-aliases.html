@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>{{template "head" .}}<title>中文别名补全 · 032</title></head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+ {{template "sidebar" .}}{{template "nowplaying" .}}
+ <main id="app-main" class="browser-main feature-main audio-analysis-main artist-aliases-main">
+  <header class="browser-header"><div><h1>中文别名补全</h1><p class="result-count">为歌手补充有来源依据的简体中文搜索别名。存量由你启动，新歌手确认身份后自动处理。</p></div><a class="secondary-button" href="/admin">返回控制台</a></header>
+  {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+  <section class="feature-card" aria-labelledby="alias-progress-heading">
+   <h2 id="alias-progress-heading">补全进度</h2>
+   <p id="alias-worker-state" class="result-count" role="status">{{if not .Settings.Enabled}}尚未开启{{else if .Settings.Paused}}已暂停 · {{.Detail}}{{else}}{{.Detail}}{{end}}</p>
+   <p id="alias-worker-progress">待处理 {{.Stats.Queued}} · 处理中 {{.Stats.Running}} · 已处理中文名 {{.Stats.Filled}} · 待审核 {{.Stats.Pending}} · 未找到 {{.Stats.Missing}} · 失败 {{.Stats.Failed}}</p>
+   <p class="field-hint">已确认身份且尚无中文搜索别名的歌手：{{.Eligible}} 位。再次手动启动会重试未找到或失败的歌手；已在队列中的歌手不会重复加入。</p>
+   <div class="inline">
+    <form method="post" action="/admin/artist-aliases/backfill"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button type="submit" {{if or (not .Settings.Enabled) (not .AIConfigured) (not .KeySet)}}disabled{{end}}>开始存量匹配</button></form>
+    <form method="post" action="/admin/artist-aliases/{{if .Settings.Paused}}resume{{else}}pause{{end}}"><input type="hidden" name="csrfToken" value="{{.CSRFToken}}"><button class="secondary-button" type="submit">{{if .Settings.Paused}}继续{{else}}暂停{{end}}</button></form>
+    <a class="secondary-button" href="/admin/artist-aliases">刷新进度</a>
+   </div>
+  </section>
+  <section class="feature-card" aria-labelledby="alias-settings-heading">
+   <h2 id="alias-settings-heading">自动补全设置</h2>
+   <form class="audio-analysis-form" method="post" action="/admin/artist-aliases/settings" autocomplete="off">
+    <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+    <label class="switch"><input type="checkbox" name="enabled" {{if .Settings.Enabled}}checked{{end}}>开启中文别名补全</label>
+    <p class="field-hint">开启后只自动处理此版本上线后新增、且已确认外部身份的歌手。已有歌手请手动启动存量匹配。</p>
+    <label>DeepSeek 联网 API Key<input type="password" name="deepseek_key" autocomplete="new-password" spellcheck="false" placeholder="{{if .KeySet}}已设置或可复用现有 DeepSeek 密钥，留空保持{{else}}填写 DeepSeek 官方 API Key{{end}}"></label>
+    {{if .KeySet}}<label class="alias-key-clear"><input type="checkbox" name="clear_key">清除本模块保存的联网密钥</label>{{end}}
+    <p class="field-hint">DeepSeek 负责搜索和读取网页，名称判断复用 <a href="/admin/ai-tagging">现有 AI 模型设置</a>。{{if not .AIConfigured}}<strong>请先配置模型服务。</strong>{{end}}歌手名称、外部身份和候选网页内容会发送给相应服务。</p>
+    <div class="inline">
+     <label>每位歌手每轮搜索上限<input type="number" name="search_limit" min="1" max="10" value="{{.Settings.SearchLimit}}" required></label>
+     <label>每位歌手每轮网页读取上限<input type="number" name="fetch_limit" min="1" max="20" value="{{.Settings.FetchLimit}}" required></label>
+     <label>每位歌手每轮模型调用上限<input type="number" name="model_limit" min="1" max="5" value="{{.Settings.ModelLimit}}" required></label>
+     <label>每分钟模型调用上限<input type="number" name="rpm" min="1" max="60" value="{{.Settings.RPM}}" required></label>
+    </div>
+    <p class="field-hint">逐位处理，不设每日额度。失败重试及主备切换均计入每位歌手的上限；暂停或重启不重置次数。搜索、网页读取和模型用量分别计费。</p>
+    <button type="submit">保存设置</button>
+   </form>
+  </section>
+  <section class="feature-card" aria-labelledby="alias-review-heading">
+   <h2 id="alias-review-heading">名称与来源</h2>
+   <nav class="inline" aria-label="别名审核状态"><a href="/admin/artist-aliases?status=pending" {{if eq .Filter "pending"}}aria-current="page"{{end}}>待审核</a><a href="/admin/artist-aliases?status=accepted" {{if eq .Filter "accepted"}}aria-current="page"{{end}}>已接受</a><a href="/admin/artist-aliases?status=rejected" {{if eq .Filter "rejected"}}aria-current="page"{{end}}>已拒绝</a></nav>
+   {{range .Candidates}}
+    <article class="alias-review-item">
+     <h3><a href="/admin/artists/{{.ArtistID}}?view=profile#search-aliases">{{.Name}}</a> · {{.Value}}</h3>
+     <p class="field-hint">原文：{{.OriginalValue}} · {{.Language}} · {{.Reason}}</p>
+     {{range .Evidence}}<details><summary>查看来源依据 · {{.Source}}</summary><p><a href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{if .Title}}{{.Title}}{{else}}打开来源页面{{end}}</a></p><blockquote>{{.Text}}</blockquote><p class="field-hint">获取时间：{{.RetrievedAt}}</p></details>{{end}}
+     {{if eq .Status "pending"}}
+      <form class="search-alias-add" method="post" action="/admin/artist-aliases/candidates/{{.ID}}/accept"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><label for="candidate-{{.ID}}">确认或修正中文别名</label><div><input id="candidate-{{.ID}}" name="value" value="{{.Value}}" maxlength="200" required><button type="submit">接受并生效</button></div></form>
+      <form method="post" action="/admin/artist-aliases/candidates/{{.ID}}/reject"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button class="secondary-button" type="submit" aria-label="拒绝 {{.Name}} 的别名 {{.Value}}">拒绝此名称</button></form>
+     {{end}}
+    </article>
+   {{else}}<p class="result-count">{{if eq .Filter "pending"}}暂无待审核名称。任务运行后，依据不足或来源冲突的结果会显示在这里。{{else}}暂无此状态的名称。{{end}}</p>{{end}}
+   <p class="field-hint">最多显示最近 100 个结果。人工拒绝或删除的名称不会被自动加回；歌手的展示名和外部身份保持不变。</p>
+  </section>
+  <section class="feature-card" aria-labelledby="alias-history-heading"><h2 id="alias-history-heading">任务记录与用量</h2>
+   <p id="alias-worker-usage">累计搜索 {{.Stats.Searches}} 次 · 网页读取 {{.Stats.Fetches}} 次 · 模型调用 {{.Stats.Models}} 次（含失败尝试）</p>
+   {{range .Usage}}<p class="field-hint">{{.Model}}：输入 {{.Usage.PromptTokens}} token · 输出 {{.Usage.CompletionTokens}} token</p>{{end}}
+   <details><summary>最近 50 项任务</summary><ul class="search-alias-list">{{range .Jobs}}<li><span><a href="/admin/artists/{{.ArtistID}}">{{.Name}}</a> · {{if eq .Status "queued"}}排队中{{else if eq .Status "running"}}处理中{{else if eq .Status "filled"}}已处理中文名{{else if eq .Status "missing"}}未找到{{else if eq .Status "review"}}待审核{{else if eq .Status "failed"}}失败{{else}}已跳过{{end}}<br><small>{{.Detail}} · 搜索 {{.SearchCalls}} / 读取 {{.FetchCalls}} / 模型 {{.ModelCalls}}</small></span></li>{{else}}<li>尚无任务记录</li>{{end}}</ul></details>
+  </section>
+ </main>
+</body></html>
