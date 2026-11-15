@@ -75,11 +75,10 @@ func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResult
 		}
 		candidates := searchCandidatesSQL(category)
 		var total int64
-		if err := s.db.QueryRowContext(ctx, cte+candidates+` SELECT COUNT(*) FROM ranked`, args...).Scan(&total); err != nil {
-			return result, err
-		}
+		// Count and page in one pass rather than rebuilding all alias and
+		// relationship sets for a separate COUNT query.
 		queryArgs := append(append([]any{}, args...), limit, offset)
-		rows, err := s.db.QueryContext(ctx, cte+candidates+` SELECT id,score FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`, queryArgs...)
+		rows, err := s.db.QueryContext(ctx, cte+candidates+` SELECT id,score,COUNT(*) OVER() FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`, queryArgs...)
 		if err != nil {
 			return result, err
 		}
@@ -88,7 +87,7 @@ func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResult
 		for rows.Next() {
 			var id int64
 			var score int
-			if err = rows.Scan(&id, &score); err != nil {
+			if err = rows.Scan(&id, &score, &total); err != nil {
 				rows.Close()
 				return result, err
 			}
@@ -99,6 +98,12 @@ func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResult
 		rows.Close()
 		if err != nil {
 			return result, err
+		}
+		// A page beyond the end has no row to carry the window count.
+		if len(ids) == 0 && offset > 0 {
+			if err := s.db.QueryRowContext(ctx, cte+candidates+` SELECT COUNT(*) FROM ranked`, args...).Scan(&total); err != nil {
+				return result, err
+			}
 		}
 		var candidate *SearchMatch
 		switch category {
@@ -167,6 +172,9 @@ func searchTitleRankSQL(fields ...string) string {
 	return `(SELECT MIN(CASE WHEN v.value=q.value COLLATE NOCASE THEN 0 WHEN v.value LIKE q.prefix ESCAPE '\' THEN 1 ELSE 2 END) FROM (` + strings.Join(values, " UNION ALL ") + `) v CROSS JOIN search_query q WHERE v.value LIKE q.contains ESCAPE '\')`
 }
 
+// Membership subqueries are deliberately uncorrelated: SQLite builds each
+// matching artist/album/track set once. A correlated EXISTS joining all primary
+// credits here can rescan the entire role index for every album in the library.
 func searchCandidatesSQL(category string) string {
 	switch category {
 	case "artists", "composers":
@@ -178,15 +186,15 @@ func searchCandidatesSQL(category string) string {
 		}
 		return `,ranked AS (SELECT ar.id,m.score,0 AS relation,COALESCE(ar.user_display_name,ar.display_name) AS title FROM search_matches m JOIN artists ar ON ar.id=m.root WHERE (` + albumCondition + `EXISTS(SELECT 1 FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE c.root=ar.id AND ta.role=` + role + ` AND ` + trackVisibleSQL("ta.track_id") + `)))`
 	case "albums":
-		return `,album_candidates AS (SELECT a.id,COALESCE(a.user_title,a.title) title,` + searchTitleRankSQL("COALESCE(a.user_title,a.title)", "a.reading_title") + ` AS score,
-   EXISTS(SELECT 1 FROM album_artists aa JOIN chain c ON c.id=aa.artist_id JOIN search_matches m ON m.root=c.root WHERE aa.album_id=a.id) AS album_match,
-   EXISTS(SELECT 1 FROM tracks t JOIN track_artists ta ON ta.track_id=t.id AND ta.role='primary' JOIN chain c ON c.id=ta.artist_id JOIN search_matches m ON m.root=c.root WHERE t.album_id=a.id AND ` + trackVisibleSQL("t.id") + `) AS track_match,
+		return `,album_candidates AS MATERIALIZED (SELECT a.id,COALESCE(a.user_title,a.title) title,` + searchTitleRankSQL("COALESCE(a.user_title,a.title)", "a.reading_title") + ` AS score,
+   a.id IN (SELECT aa.album_id FROM album_artists aa JOIN chain c ON c.id=aa.artist_id JOIN search_matches m ON m.root=c.root) AS album_match,
+   a.id IN (SELECT t.album_id FROM track_artists ta JOIN chain c ON c.id=ta.artist_id JOIN search_matches m ON m.root=c.root JOIN tracks t ON t.id=ta.track_id WHERE ta.role='primary' AND ` + trackVisibleSQL("t.id") + `) AS track_match,
    CASE WHEN COALESCE(a.user_is_compilation,a.is_compilation,0)=0 AND (SELECT COUNT(*) FROM album_artists aa WHERE aa.album_id=a.id)=1 THEN 0 ELSE 1 END AS collaboration
    FROM albums a WHERE ` + albumVisibleSQL("a.id") + `),ranked AS (SELECT id,COALESCE(score,3) score,CASE WHEN album_match THEN collaboration ELSE 2 END AS relation,title FROM album_candidates WHERE score IS NOT NULL OR album_match OR track_match)`
 	case "tracks":
-		return `,track_candidates AS (SELECT t.id,COALESCE(t.user_title,t.title) title,` + searchTitleRankSQL("COALESCE(t.user_title,t.title)") + ` AS score,
-   (EXISTS(SELECT 1 FROM track_artists ta JOIN chain c ON c.id=ta.artist_id JOIN search_matches m ON m.root=c.root WHERE ta.track_id=t.id AND ta.role='primary') OR
-   (NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.role='primary') AND EXISTS(SELECT 1 FROM album_artists aa JOIN chain c ON c.id=aa.artist_id JOIN search_matches m ON m.root=c.root WHERE aa.album_id=t.album_id))) AS performer_match
+		return `,track_candidates AS MATERIALIZED (SELECT t.id,COALESCE(t.user_title,t.title) title,` + searchTitleRankSQL("COALESCE(t.user_title,t.title)") + ` AS score,
+   (t.id IN (SELECT ta.track_id FROM track_artists ta JOIN chain c ON c.id=ta.artist_id JOIN search_matches m ON m.root=c.root WHERE ta.role='primary') OR
+   (NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.role='primary') AND t.album_id IN (SELECT aa.album_id FROM album_artists aa JOIN chain c ON c.id=aa.artist_id JOIN search_matches m ON m.root=c.root))) AS performer_match
    FROM tracks t WHERE ` + trackVisibleSQL("t.id") + `),ranked AS (SELECT id,COALESCE(score,3) score,0 AS relation,title FROM track_candidates WHERE score IS NOT NULL OR performer_match)`
 	}
 	panic("unvalidated search category")

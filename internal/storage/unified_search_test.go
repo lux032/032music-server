@@ -121,6 +121,11 @@ func TestUnifiedSearchPagingDoesNotTruncateArtistExpansion(t *testing.T) {
 	if len(seen) != 8 {
 		t.Fatal(len(seen))
 	}
+	beyond, err := s.Search(ctx, SearchOptions{Query: "Shared", Category: "albums", Limit: 3, Offset: 100})
+	if err != nil || beyond.Albums.Total != 8 || len(beyond.Albums.Items) != 0 {
+		t.Fatalf("beyond-end page=%+v err=%v", beyond.Albums, err)
+	}
+
 	// The preview must not choose arbitrarily between equal artist matches.
 	if preview.BestMatch != nil {
 		t.Fatalf("ambiguous artist best=%+v", preview.BestMatch)

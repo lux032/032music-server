@@ -1,7 +1,7 @@
 # 统一搜索与歌手搜索别名
 
 `GET /api/v1/search?q=星街彗星` 只查询本地曲库，不在搜索时调用外部服务。
-需要 API Bearer Token 或管理员会话。Web 入口为 `/admin/search`，主页搜索和导航均可进入。
+需要 API Bearer Token 或管理员会话。搜索请求最多执行 10 秒；超时返回 HTTP 503，JSON 接口的错误码为 `search_timeout`。Web 入口为 `/admin/search`，主页搜索和导航均可进入。
 
 ## 查询与结果
 

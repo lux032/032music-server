@@ -80,7 +80,7 @@ func searchArtistCTE(query string) (string, []any) {
 		escaped := literalSearchPattern(v)
 		args = append(args, v, escaped+"%", "%"+escaped+"%")
 	}
-	return artistMergeChainSQL + `, search_query(value,prefix,contains) AS (VALUES ` + strings.Join(values, ",") + `), search_names(root,value) AS (
+	return artistMergeChainSQL + `, search_query(value,prefix,contains) AS MATERIALIZED (VALUES ` + strings.Join(values, ",") + `), search_names(root,value) AS (
  SELECT c.root,a.display_name FROM chain c JOIN artists a ON a.id=c.id
  UNION ALL SELECT c.root,a.user_display_name FROM chain c JOIN artists a ON a.id=c.id WHERE a.user_display_name IS NOT NULL
  UNION ALL SELECT c.root,a.reading_name FROM chain c JOIN artists a ON a.id=c.id WHERE a.reading_name IS NOT NULL
@@ -89,7 +89,7 @@ func searchArtistCTE(query string) (string, []any) {
  UNION ALL SELECT c.root,p.display_name FROM chain c JOIN artist_external_profiles p ON p.artist_id=c.id
  UNION ALL SELECT c.root,p.sort_name FROM chain c JOIN artist_external_profiles p ON p.artist_id=c.id WHERE p.sort_name IS NOT NULL
  UNION ALL SELECT c.root,j.value FROM chain c JOIN artist_external_profiles p ON p.artist_id=c.id JOIN json_each(CASE WHEN json_valid(p.aliases_json) THEN p.aliases_json ELSE '[]' END) j WHERE j.type='text'
- ), search_matches(root,score) AS (
+ ), search_matches(root,score) AS MATERIALIZED (
  SELECT n.root,MIN(CASE WHEN n.value=q.value COLLATE NOCASE THEN 0 WHEN n.value LIKE q.prefix ESCAPE '\' THEN 1 ELSE 2 END)
  FROM search_names n CROSS JOIN search_query q WHERE n.value<>'' AND n.value LIKE q.contains ESCAPE '\' GROUP BY n.root
  ) `, args

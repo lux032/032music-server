@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
 )
@@ -147,5 +148,26 @@ func TestSearchAliasManagementAuthAndPersistence(t *testing.T) {
 	result, err := app.store.Search(ctx, storage.SearchOptions{Query: "星街彗星"})
 	if err != nil || result.Artists.Total != 0 {
 		t.Fatalf("deleted alias still searchable %+v %v", result, err)
+	}
+}
+
+func TestSearchExpiredRequestReturnsTimeout(t *testing.T) {
+	app, cookie, _ := csrfSessionApp(t)
+	handler := app.Handler()
+	for _, path := range []string{"/admin/search?q=test", "/api/v1/search?q=test"} {
+		t.Run(path, func(t *testing.T) {
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			req := httptest.NewRequest("GET", path, nil).WithContext(ctx)
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != 503 || !strings.Contains(rec.Body.String(), "搜索超时") {
+				t.Fatalf("timeout response: %d %s", rec.Code, rec.Body.String())
+			}
+			if strings.HasPrefix(path, "/api/") && !strings.Contains(rec.Body.String(), "search_timeout") {
+				t.Fatal("missing structured timeout code")
+			}
+		})
 	}
 }

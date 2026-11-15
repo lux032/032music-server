@@ -1,14 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
 )
+
+const searchRequestTimeout = 10 * time.Second
 
 type searchPageData struct {
 	Chrome
@@ -34,6 +38,9 @@ func searchURL(query, category string, page int) string {
 }
 
 func (a *App) handleSearchPage(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), searchRequestTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	category := r.URL.Query().Get("category")
 	page := 1
@@ -47,6 +54,11 @@ func (a *App) handleSearchPage(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.store.Search(r.Context(), storage.SearchOptions{Query: query, Category: category, Limit: 24, Offset: (page - 1) * 24})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			a.logger.Warn("library search timed out", "category", category)
+			http.Error(w, "搜索超时，请稍后重试或使用更具体的关键词。", http.StatusServiceUnavailable)
+			return
+		}
 		if errors.Is(err, storage.ErrInvalidSearch) {
 			http.Error(w, "搜索词最多 200 个字符，请选择有效的结果类别", http.StatusBadRequest)
 			return
@@ -97,6 +109,9 @@ func (a *App) handleSearchPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleAPISearch(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), searchRequestTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
 	limit, offset := pageValues(r)
 	for _, key := range []string{"limit", "offset"} {
 		if raw := r.URL.Query().Get(key); raw != "" {
@@ -109,6 +124,11 @@ func (a *App) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.store.Search(r.Context(), storage.SearchOptions{Query: r.URL.Query().Get("q"), Category: r.URL.Query().Get("category"), Limit: limit, Offset: offset})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			a.logger.Warn("library search timed out", "category", r.URL.Query().Get("category"))
+			writeAPIError(w, http.StatusServiceUnavailable, "search_timeout", "搜索超时，请稍后重试或使用更具体的关键词。")
+			return
+		}
 		if errors.Is(err, storage.ErrInvalidSearch) {
 			writeAPIError(w, 400, "invalid_search", err.Error())
 			return
