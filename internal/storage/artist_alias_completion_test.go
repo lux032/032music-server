@@ -190,3 +190,22 @@ func TestArtistAliasSubjectsLargeLibrary(t *testing.T) {
 		t.Fatal("no performer candidates")
 	}
 }
+
+func TestArtistAliasFailedTaskVisibleAheadOfQueuedHistory(t *testing.T) {
+	s, _ := aliasFixture(t)
+	ctx := context.Background()
+	j := aliasClaim(t, s)
+	if e := s.FinishArtistAliasJob(ctx, j, "failed", "DeepSeek 网页搜索失败（HTTP 401）"); e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < 5; i++ {
+		next := aliasClaim(t, s)
+		if e := s.FinishArtistAliasJob(ctx, next, "missing", ""); e != nil {
+			t.Fatal(e)
+		}
+	}
+	visible, e := s.ArtistAliasJobs(ctx, 3)
+	if e != nil || len(visible) != 3 || visible[0].ID != j.ID || visible[0].Status != "failed" {
+		t.Fatal(visible, e)
+	}
+}

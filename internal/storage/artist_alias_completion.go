@@ -160,7 +160,7 @@ func (s *Store) ReserveArtistAliasCall(ctx context.Context, j ArtistAliasJob, ki
 	return nil
 }
 func (s *Store) ArtistAliasJobs(ctx context.Context, limit int) ([]ArtistAliasJob, error) {
-	rows, e := s.db.QueryContext(ctx, `SELECT `+aliasJobColumns+` FROM artist_alias_jobs j JOIN artists a ON a.id=j.artist_id ORDER BY j.id DESC LIMIT ?`, limit)
+	rows, e := s.db.QueryContext(ctx, `SELECT `+aliasJobColumns+` FROM artist_alias_jobs j JOIN artists a ON a.id=j.artist_id ORDER BY CASE j.status WHEN 'running' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END,j.id DESC LIMIT ?`, limit)
 	if e != nil {
 		return nil, e
 	}

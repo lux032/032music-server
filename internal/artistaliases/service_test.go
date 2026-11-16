@@ -2,10 +2,15 @@ package artistaliases
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,4 +322,139 @@ func TestPauseInterruptsWorkerAndKeepsDurableQueue(t *testing.T) {
 	cancel()
 	svc.Wait()
 	t.Fatal("paused item was not retained")
+}
+
+type pageErrorWeb struct {
+	status            int
+	failSearch        bool
+	allPagesFail      bool
+	searches, fetches int
+}
+
+func (w *pageErrorWeb) Search(context.Context, string) ([]SearchResult, error) {
+	w.searches++
+	if w.failSearch {
+		return nil, &WebError{Status: w.status, Operation: "search"}
+	}
+	return []SearchResult{{URL: "https://bad.example/page"}, {URL: "https://good.example/artist"}}, nil
+}
+func (w *pageErrorWeb) Fetch(_ context.Context, url string) (string, error) {
+	w.fetches++
+	if w.allPagesFail || strings.Contains(url, "bad.example") {
+		return "", &WebError{Status: w.status, Operation: "fetch"}
+	}
+	return "星街すいせい，中文名星街彗星。", nil
+}
+func TestUnreadablePagesDoNotPauseAliasQueue(t *testing.T) {
+	for _, status := range []int{403, 404} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			chat := &fakeChat{content: `{"sameArtist":true,"aliases":[{"original":"星街彗星","language":"zh","page":0,"quote":"星街すいせい，中文名星街彗星。","explicitChinese":true}]}`}
+			svc, s, _ := testService(t, storage.ArtistAliasSourceData{OfficialURLs: []string{"https://bad.example/page"}, IdentityNames: []string{"星街すいせい"}}, &fakeWeb{}, chat)
+			web := &pageErrorWeb{status: status}
+			svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) { return web, nil }
+			if _, e := svc.Step(context.Background()); e != nil {
+				t.Fatal(e)
+			}
+			st, _ := s.ArtistAliasSettings(context.Background())
+			if st.Paused {
+				t.Fatal("unreadable page paused entire queue")
+			}
+			jobs, _ := s.ArtistAliasJobs(context.Background(), 10)
+			if len(jobs) != 1 || jobs[0].Status != "review" || chat.calls != 1 {
+				t.Fatal(jobs, chat.calls)
+			}
+			if web.fetches > 3 || web.searches > 2 {
+				t.Fatal(web)
+			}
+		})
+	}
+}
+func TestAllUnreadablePagesRecordFetchErrorWithoutCredentialPause(t *testing.T) {
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{}, &fakeChat{})
+	web := &pageErrorWeb{status: 404, allPagesFail: true}
+	svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) { return web, nil }
+	svc.Step(context.Background())
+	st, _ := s.ArtistAliasSettings(context.Background())
+	if st.Paused {
+		t.Fatal("page 404 treated as credentials")
+	}
+	jobs, _ := s.ArtistAliasJobs(context.Background(), 10)
+	if jobs[0].Status != "failed" || !strings.Contains(jobs[0].Detail, "网页读取失败（HTTP 404）") {
+		t.Fatal(jobs)
+	}
+}
+func TestSearchAuthenticationErrorStopsImmediatelyWithSpecificReason(t *testing.T) {
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{}, &fakeChat{})
+	web := &pageErrorWeb{status: 401, failSearch: true}
+	svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) { return web, nil }
+	svc.Step(context.Background())
+	st, _ := s.ArtistAliasSettings(context.Background())
+	if !st.Paused || web.searches != 1 || web.fetches != 0 {
+		t.Fatal(st.Paused, web)
+	}
+	jobs, _ := s.ArtistAliasJobs(context.Background(), 10)
+	if jobs[0].Status != "failed" || !strings.Contains(jobs[0].Detail, "网页搜索失败（HTTP 401）") {
+		t.Fatal(jobs)
+	}
+}
+func TestAliasModelCredentialsAreDiagnosedSeparately(t *testing.T) {
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{body: "歌手资料正文"}, &fakeChat{err: &tagging.LLMError{Kind: tagging.KindAuth, Status: 401}})
+	svc.Step(context.Background())
+	st, _ := s.ArtistAliasSettings(context.Background())
+	if !st.Paused {
+		t.Fatal("model auth should pause")
+	}
+	jobs, _ := s.ArtistAliasJobs(context.Background(), 10)
+	if !strings.Contains(jobs[0].Detail, "共享 AI 模型鉴权失败") || strings.Contains(jobs[0].Detail, "DeepSeek 联网密钥") {
+		t.Fatal(jobs)
+	}
+}
+
+func TestAliasJudgmentUsesSharedAIAndSeparateWebKey(t *testing.T) {
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{}, &fakeChat{})
+	_ = svc
+	ctx := context.Background()
+	called := false
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Header.Get("Authorization") != "Bearer model-secret" {
+			t.Error("model did not use shared AI credential")
+		}
+		var req struct{ Model string }
+		if e := json.NewDecoder(r.Body).Decode(&req); e != nil {
+			t.Error(e)
+		}
+		if req.Model != "shared-existing-model" {
+			t.Errorf("unexpected model %q", req.Model)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": `{"sameArtist":true,"aliases":[]}`}, "finish_reason": "stop"}}})
+	}))
+	defer model.Close()
+	ai, _ := s.AISettings(ctx)
+	ai.BaseURL = model.URL
+	ai.Model = "shared-existing-model"
+	if e := s.SaveAISettings(ctx, ai); e != nil {
+		t.Fatal(e)
+	}
+	separate, e := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{Sources: func(context.Context, string) (storage.ArtistAliasSourceData, error) {
+		return storage.ArtistAliasSourceData{}, nil
+	}, Web: func(st storage.ArtistAliasSettings, _ storage.AISettings) (Web, error) {
+		if st.DeepSeekKey != "web-secret" {
+			t.Error("web key changed")
+		}
+		return &fakeWeb{body: "歌手页面正文"}, nil
+	}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = separate.Step(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if !called {
+		t.Fatal("shared model was not called")
+	}
+	after, _ := s.AISettings(ctx)
+	if after.BaseURL != model.URL || after.Model != "shared-existing-model" || after.APIKey != "model-secret" {
+		t.Fatal("alias job overwrote shared AI config")
+	}
 }

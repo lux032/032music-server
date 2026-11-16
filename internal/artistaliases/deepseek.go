@@ -12,10 +12,19 @@ import (
 
 // Errors deliberately omit response bodies, URLs and provider text that could
 // reflect a submitted credential or private proxy information.
-type WebError struct{ Status int }
+type WebError struct {
+	Status    int
+	Operation string
+}
 
 func (e *WebError) Error() string {
-	return fmt.Sprintf("DeepSeek 联网请求失败（HTTP %d）", e.Status)
+	label := "联网请求"
+	if e.Operation == "search" {
+		label = "网页搜索"
+	} else if e.Operation == "fetch" {
+		label = "网页读取"
+	}
+	return fmt.Sprintf("DeepSeek %s失败（HTTP %d）", label, e.Status)
 }
 func (c *DeepSeekWeb) call(ctx context.Context, path string, body any, out any) error {
 	raw, e := json.Marshal(body)
@@ -40,7 +49,11 @@ func (c *DeepSeekWeb) call(ctx context.Context, path string, body any, out any) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return &WebError{resp.StatusCode}
+		operation := "search"
+		if strings.HasSuffix(path, "/fetch") {
+			operation = "fetch"
+		}
+		return &WebError{Status: resp.StatusCode, Operation: operation}
 	}
 	data, e := io.ReadAll(io.LimitReader(resp.Body, 2<<20+1))
 	if e != nil || len(data) > 2<<20 {

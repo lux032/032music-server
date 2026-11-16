@@ -228,6 +228,9 @@ func (s *Service) Step(ctx context.Context) (bool, error) {
 	if e = s.store.FinishArtistAliasJob(finishCtx, j, status, detail); e != nil {
 		return false, e
 	}
+	if status == "failed" {
+		s.logger.Warn("artist alias completion failed", "artistId", j.ArtistID, "jobId", j.ID, "reason", detail)
+	}
 	return true, nil
 }
 func validChinese(value string) bool {
@@ -310,10 +313,12 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 
 	evidence := []storage.ArtistAliasEvidence{}
 	seen := map[string]bool{}
+	var fatalWebErr error
+	var lastWebErr error
 	// Fetch at most the per-artist allowance, favoring identity-bound official
 	// pages. Search summaries never count as a verified name occurrence.
 	fetch := func(raw, title string) {
-		if s.remoteCooling() || seen[raw] || !safePageURL(raw) {
+		if fatalWebErr != nil || s.remoteCooling() || seen[raw] || !safePageURL(raw) {
 			return
 		}
 		seen[raw] = true
@@ -322,7 +327,10 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 		}
 		text, e := web.Fetch(ctx, raw)
 		if e != nil {
-			s.pauseCredentialError(ctx, e)
+			lastWebErr = e
+			if s.pauseCredentialError(ctx, e) {
+				fatalWebErr = e
+			}
 			return
 		}
 		if text == "" {
@@ -342,7 +350,7 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 		name = source.IdentityNames[0]
 	}
 	for _, query := range []string{name + " 歌手 中文名", name + " 中文 别名"} {
-		if s.remoteCooling() {
+		if fatalWebErr != nil || s.remoteCooling() {
 			break
 		}
 		if e = s.store.ReserveArtistAliasCall(ctx, j, "search", st.SearchLimit); e != nil {
@@ -350,7 +358,11 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 		}
 		results, e := web.Search(ctx, clip(query, 128))
 		if e != nil {
-			s.pauseCredentialError(ctx, e)
+			lastWebErr = e
+			if s.pauseCredentialError(ctx, e) {
+				fatalWebErr = e
+				break
+			}
 			continue
 		}
 		for _, r := range results {
@@ -363,7 +375,13 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 	if ctx.Err() != nil {
 		return "interrupted", ""
 	}
+	if fatalWebErr != nil {
+		return "failed", aliasFailureDetail(fatalWebErr)
+	}
 	if len(evidence) == 0 {
+		if lastWebErr != nil {
+			return "failed", aliasFailureDetail(lastWebErr)
+		}
 		return "missing", "未获得可核验的网页正文，可手动重试"
 	}
 	chat, e := s.opts.NewChat(ai)
@@ -406,7 +424,7 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 			}
 			req.Model = ai.FallbackModel
 		} else if callErr != nil && s.pauseCredentialError(ctx, callErr) {
-			return "failed", "模型密钥、余额或模型配置异常，任务已暂停；修改设置后继续"
+			return "failed", aliasFailureDetail(callErr)
 		}
 	}
 	if e != nil {
@@ -566,7 +584,8 @@ func (s *Service) pauseCredentialError(ctx context.Context, err error) bool {
 		if webErr.Status == 429 || webErr.Status >= 500 {
 			s.backoff(time.Minute)
 		}
-		blocked = webErr.Status == 401 || webErr.Status == 402 || webErr.Status == 403 || webErr.Status == 404
+		// Fetch 403/404 describe one unreadable target page, not the key.
+		blocked = webErr.Status == 401 || webErr.Status == 402 || (webErr.Operation == "search" && (webErr.Status == 403 || webErr.Status == 404))
 	}
 	var modelErr *tagging.LLMError
 	if errors.As(err, &modelErr) {
@@ -579,7 +598,7 @@ func (s *Service) pauseCredentialError(ctx context.Context, err error) bool {
 		if e := s.store.PauseArtistAliasJobs(ctx); e != nil {
 			s.logger.Error("pause artist alias credentials", "error", e)
 		}
-		s.setDetail("模型或联网密钥、权限、余额异常；检查设置后点击继续")
+		s.setDetail(aliasFailureDetail(err))
 	}
 	return blocked
 }
@@ -600,4 +619,42 @@ func (s *Service) remoteCooling() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return time.Now().Before(s.notBefore)
+}
+
+// Describe only known error classes/statuses. Provider body text can reflect
+// secrets and is deliberately never persisted into an admin-visible message.
+func aliasFailureDetail(err error) string {
+	var webErr *WebError
+	if errors.As(err, &webErr) {
+		switch webErr.Status {
+		case 401:
+			return webErr.Error() + "：请检查中文别名补全中的 DeepSeek 联网密钥，修改后继续"
+		case 402:
+			return webErr.Error() + "：DeepSeek 联网账户余额不足，充值后继续"
+		case 403:
+			if webErr.Operation == "fetch" {
+				return webErr.Error() + "：目标网页不允许读取，已跳过该页面"
+			}
+			return webErr.Error() + "：搜索接口访问被拒绝，请检查联网服务权限后继续"
+		case 404:
+			if webErr.Operation == "fetch" {
+				return webErr.Error() + "：目标网页不可用或没有可提取正文，已跳过该页面"
+			}
+			return webErr.Error() + "：搜索接口不可用，请检查联网服务配置后继续"
+		default:
+			return webErr.Error() + "：可稍后手动重试该歌手"
+		}
+	}
+	var modelErr *tagging.LLMError
+	if errors.As(err, &modelErr) {
+		switch modelErr.Kind {
+		case tagging.KindAuth:
+			return fmt.Sprintf("共享 AI 模型鉴权失败（HTTP %d）；请检查 AI 打标中的模型密钥后继续", modelErr.Status)
+		case tagging.KindQuota:
+			return fmt.Sprintf("共享 AI 模型额度不足（HTTP %d）；请检查 AI 打标中的模型账户后继续", modelErr.Status)
+		case tagging.KindModel:
+			return fmt.Sprintf("共享 AI 模型不可用（HTTP %d）；请检查 AI 打标中的模型名称和接口地址后继续", modelErr.Status)
+		}
+	}
+	return "联网调用未成功，可检查网络后手动重试该歌手"
 }
