@@ -18,10 +18,13 @@ func TestDeepSeekSearchFetchAndRedactedErrors(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&body)
 		switch r.URL.Path {
 		case "/v1/tools/search":
+			if body["need_content"] != true {
+				t.Error("search did not request full page content")
+			}
 			if body["count"] != float64(5) {
 				t.Error(body)
 			}
-			w.Write([]byte(`{"results":[{"url":"https://example.test/a","title":"artist"}]}`))
+			w.Write([]byte(`{"results":[{"url":"https://example.test/a","title":"artist","content":"actual page text","summary":"generated summary"}]}`))
 		case "/v1/tools/fetch":
 			w.Write([]byte(`{"content":"name 中文名"}`))
 		default:
@@ -32,7 +35,7 @@ func TestDeepSeekSearchFetchAndRedactedErrors(t *testing.T) {
 	defer server.Close()
 	c := &DeepSeekWeb{HTTP: server.Client(), Key: "secret", BaseURL: server.URL}
 	results, e := c.Search(context.Background(), "Singer 中文名")
-	if e != nil || len(results) != 1 {
+	if e != nil || len(results) != 1 || results[0].Content != "actual page text" {
 		t.Fatal(results, e)
 	}
 	body, e := c.Fetch(context.Background(), results[0].URL)

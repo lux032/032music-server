@@ -458,3 +458,105 @@ func TestAliasJudgmentUsesSharedAIAndSeparateWebKey(t *testing.T) {
 		t.Fatal("alias job overwrote shared AI config")
 	}
 }
+
+type contentWeb struct {
+	results []SearchResult
+	fetches int
+	body    string
+}
+
+func (w *contentWeb) Search(context.Context, string) ([]SearchResult, error) { return w.results, nil }
+func (w *contentWeb) Fetch(context.Context, string) (string, error) {
+	w.fetches++
+	if w.body == "" {
+		return "", &WebError{Status: 404, Operation: "fetch"}
+	}
+	return w.body, nil
+}
+func TestFullSearchContentReachesModelWithoutLiveFetch(t *testing.T) {
+	chat := &fakeChat{content: `{"sameArtist":true,"aliases":[{"original":"星街彗星","language":"zh","page":0,"quote":"星街すいせい，中文名星街彗星。","explicitChinese":true}]}`}
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{}, chat)
+	ctx := context.Background()
+	st, _ := s.ArtistAliasSettings(ctx)
+	st.FetchLimit = 1
+	s.SaveArtistAliasSettings(ctx, st)
+	web := &contentWeb{results: []SearchResult{{URL: "https://mirror.example/artist#1", Content: "星街すいせい，中文名星街彗星。"}}}
+	svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) { return web, nil }
+	if _, e := svc.Step(ctx); e != nil {
+		t.Fatal(e)
+	}
+	jobs, _ := s.ArtistAliasJobs(ctx, 10)
+	if jobs[0].Status != "review" || jobs[0].SearchCalls != 1 || jobs[0].FetchCalls != 0 || jobs[0].ModelCalls != 1 || web.fetches != 0 {
+		t.Fatal(jobs, web.fetches)
+	}
+	pending, e := s.ArtistAliasCandidates(ctx, "pending", 0, 10)
+	if e != nil || len(pending) != 1 || pending[0].Evidence[0].URL != "https://mirror.example/artist" {
+		t.Fatal(pending, e)
+	}
+}
+func TestSearchContentRecoversPreviouslyUnreadableOfficialPage(t *testing.T) {
+	chat := &fakeChat{content: `{"sameArtist":true,"aliases":[]}`}
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{OfficialURLs: []string{"https://official.example/artist#bio"}}, &fakeWeb{}, chat)
+	ctx := context.Background()
+	st, _ := s.ArtistAliasSettings(ctx)
+	st.FetchLimit = 1
+	s.SaveArtistAliasSettings(ctx, st)
+	web := &contentWeb{results: []SearchResult{{URL: "https://official.example/artist#1", Content: "这是搜索返回的完整歌手正文"}}}
+	svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) { return web, nil }
+	if _, e := svc.Step(ctx); e != nil {
+		t.Fatal(e)
+	}
+	jobs, _ := s.ArtistAliasJobs(ctx, 10)
+	if jobs[0].ModelCalls != 1 || jobs[0].FetchCalls != 1 || chat.calls != 1 {
+		t.Fatal(jobs, chat.calls)
+	}
+	st, _ = s.ArtistAliasSettings(ctx)
+	if st.Paused {
+		t.Fatal("404 page blocked returned search body")
+	}
+}
+func TestFragmentDuplicatesDoNotSpendExtraPageReads(t *testing.T) {
+	chat := &fakeChat{content: `{"aliases":[]}`}
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{}, chat)
+	web := &contentWeb{body: "歌手完整正文", results: []SearchResult{{URL: "https://example.test/artist#1"}, {URL: "https://example.test/artist#2"}, {URL: "https://example.test/artist#3"}}}
+	svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) { return web, nil }
+	svc.Step(context.Background())
+	jobs, _ := s.ArtistAliasJobs(context.Background(), 10)
+	if web.fetches != 1 || jobs[0].FetchCalls != 1 || chat.calls != 1 {
+		t.Fatal(web.fetches, jobs, chat.calls)
+	}
+}
+func TestSearchSummariesNeverReplaceMissingPageBodies(t *testing.T) {
+	chat := &fakeChat{}
+	svc, s, _ := testService(t, storage.ArtistAliasSourceData{}, &fakeWeb{}, chat)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/search") {
+			w.Write([]byte(`{"results":[{"url":"https://example.test/page","title":"星街彗星","summary":"星街すいせい中文名星街彗星","snippet":"中文名星街彗星"}]}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+	svc.opts.Web = func(storage.ArtistAliasSettings, storage.AISettings) (Web, error) {
+		return &DeepSeekWeb{HTTP: server.Client(), BaseURL: server.URL, Key: "synthetic"}, nil
+	}
+	svc.Step(context.Background())
+	if chat.calls != 0 {
+		t.Fatal("summary was sent as page evidence")
+	}
+	pending, _ := s.ArtistAliasCandidates(context.Background(), "pending", 0, 10)
+	if len(pending) != 0 {
+		t.Fatal(pending)
+	}
+}
+func TestHTTPPageContentNeedsReviewAndCannotBeOfficial(t *testing.T) {
+	if officialURL("http://official.example/page", []string{"https://official.example"}) {
+		t.Fatal("HTTP result inherited HTTPS official trust")
+	}
+	if pageURL("http://example.test/a#1") != "http://example.test/a" {
+		t.Fatal("valid HTTP provider page was dropped")
+	}
+	if pageURL("https://user:pass@example.test/a") != "" || pageURL("javascript:alert(1)") != "" {
+		t.Fatal("unsafe evidence URL")
+	}
+}

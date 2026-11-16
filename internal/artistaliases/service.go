@@ -313,27 +313,14 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 
 	evidence := []storage.ArtistAliasEvidence{}
 	seen := map[string]bool{}
+	evidenceURLs := map[string]bool{}
 	var fatalWebErr error
 	var lastWebErr error
-	// Fetch at most the per-artist allowance, favoring identity-bound official
-	// pages. Search summaries never count as a verified name occurrence.
-	fetch := func(raw, title string) {
-		if fatalWebErr != nil || s.remoteCooling() || seen[raw] || !safePageURL(raw) {
-			return
-		}
-		seen[raw] = true
-		if e = s.store.ReserveArtistAliasCall(ctx, j, "fetch", st.FetchLimit); e != nil {
-			return
-		}
-		text, e := web.Fetch(ctx, raw)
-		if e != nil {
-			lastWebErr = e
-			if s.pauseCredentialError(ctx, e) {
-				fatalWebErr = e
-			}
-			return
-		}
-		if text == "" {
+	// Search content is full retrieved page text, unlike snippet/summary.
+	// Retain at most the page allowance, regardless of how it was obtained.
+	addEvidence := func(raw, title, text string) {
+		raw = pageURL(raw)
+		if raw == "" || strings.TrimSpace(text) == "" || evidenceURLs[raw] || len(evidence) >= st.FetchLimit {
 			return
 		}
 		sourceType := "web"
@@ -341,6 +328,28 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 			sourceType = "official"
 		}
 		evidence = append(evidence, storage.ArtistAliasEvidence{URL: raw, Title: title, Text: clip(text, 24000), Source: sourceType, RetrievedAt: time.Now().UTC().Format(time.RFC3339)})
+		evidenceURLs[raw] = true
+	}
+	// Failed live reads do not suppress full content returned in a later
+	// search response for that same URL. Attempts and evidence are distinct.
+	fetch := func(raw, title string) {
+		raw = pageURL(raw)
+		if raw == "" || fatalWebErr != nil || s.remoteCooling() || seen[raw] || evidenceURLs[raw] || len(evidence) >= st.FetchLimit {
+			return
+		}
+		seen[raw] = true
+		if e = s.store.ReserveArtistAliasCall(ctx, j, "fetch", st.FetchLimit); e != nil {
+			return
+		}
+		text, err := web.Fetch(ctx, raw)
+		if err != nil {
+			lastWebErr = err
+			if s.pauseCredentialError(ctx, err) {
+				fatalWebErr = err
+			}
+			return
+		}
+		addEvidence(raw, title, text)
 	}
 	for _, raw := range source.OfficialURLs {
 		fetch(raw, "绑定的官方网站")
@@ -365,6 +374,11 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 			}
 			continue
 		}
+		// First consume all usable returned bodies so an unreadable early
+		// result cannot waste the budget before a later readable result.
+		for _, r := range results {
+			addEvidence(r.URL, r.Title, r.Content)
+		}
 		for _, r := range results {
 			fetch(r.URL, r.Title)
 		}
@@ -380,7 +394,7 @@ func (s *Service) process(ctx context.Context, j storage.ArtistAliasJob, st stor
 	}
 	if len(evidence) == 0 {
 		if lastWebErr != nil {
-			return "failed", aliasFailureDetail(lastWebErr)
+			return "failed", "本轮未获得可核验的网页正文，未调用模型；" + aliasFailureDetail(lastWebErr)
 		}
 		return "missing", "未获得可核验的网页正文，可手动重试"
 	}
@@ -519,11 +533,11 @@ func clip(v string, n int) string {
 }
 func safePageURL(raw string) bool {
 	u, e := url.Parse(raw)
-	return e == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil
+	return e == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Hostname() != "" && u.User == nil
 }
 func officialURL(raw string, official []string) bool {
 	u, e := url.Parse(raw)
-	if e != nil {
+	if e != nil || u.Scheme != "https" {
 		return false
 	}
 	for _, v := range official {
@@ -550,8 +564,9 @@ const aliasPrompt = `Extract established Chinese names for exactly this confirme
 
 // Keep the model-independent web contract injectable for deterministic tests.
 type SearchResult struct {
-	URL   string `json:"url"`
-	Title string `json:"title"`
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 type Web interface {
 	Search(context.Context, string) ([]SearchResult, error)
@@ -657,4 +672,15 @@ func aliasFailureDetail(err error) string {
 		}
 	}
 	return "联网调用未成功，可检查网络后手动重试该歌手"
+}
+
+// Anchor fragments do not identify different pages or justify extra reads.
+func pageURL(raw string) string {
+	if !safePageURL(raw) {
+		return ""
+	}
+	u, _ := url.Parse(raw)
+	u.Fragment = ""
+	u.RawFragment = ""
+	return u.String()
 }

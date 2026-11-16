@@ -68,7 +68,7 @@ func (c *DeepSeekWeb) Search(ctx context.Context, query string) ([]SearchResult,
 	var v struct {
 		Results []SearchResult `json:"results"`
 	}
-	e := c.call(ctx, "/v1/tools/search", map[string]any{"query": query, "count": 5}, &v)
+	e := c.call(ctx, "/v1/tools/search", map[string]any{"query": query, "count": 5, "need_content": true}, &v)
 	return v.Results, e
 }
 func (c *DeepSeekWeb) Fetch(ctx context.Context, url string) (string, error) {
