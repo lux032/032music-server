@@ -17,6 +17,7 @@ import (
 type matchReviewItem struct {
 	Artist     storage.Artist
 	Candidates []storage.ArtistCandidate
+	AI         *aiDecisionView
 }
 type artistReleaseGroup struct {
 	Title       string
@@ -54,6 +55,11 @@ type identityPageData struct {
 	MatchRuns       []storage.ArtistMatchRun
 	ImageBackfill   artistImageBackfillView
 	BioBackfill     artistBiographyBackfillView
+	AIConfigured    bool
+	AIReviewEnabled bool
+	ActiveAIRun     *storage.AIReviewRun
+	LastAIRun       *storage.AIReviewRun
+	AIApplied       []storage.AIReviewAppliedItem
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -669,13 +675,34 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	data.ReviewTotal, data.ReviewLimit, data.ReviewOffset = page.Total, page.Limit, page.Offset
 	data.ReviewPage = pageNumber
 	data.ReviewQuery, data.ReviewSource = r.URL.Query().Get("q"), source
+	var reviewIDs, creditIDs []int64
+	for _, item := range page.Items {
+		if item.NeedsCreditCorrection {
+			creditIDs = append(creditIDs, item.Artist.ID)
+		} else {
+			reviewIDs = append(reviewIDs, item.Artist.ID)
+		}
+	}
+	artistAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetArtistMatch, reviewIDs)
+	creditAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetCreditSplit, creditIDs)
 	for _, item := range page.Items {
 		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates}
 		if item.NeedsCreditCorrection {
+			if d, ok := creditAIMap[item.Artist.ID]; ok {
+				review.AI = buildAIDecisionView(d)
+			}
 			data.CreditCorrectionReview = append(data.CreditCorrectionReview, review)
 		} else {
+			if d, ok := artistAIMap[item.Artist.ID]; ok {
+				review.AI = buildAIDecisionView(d)
+			}
 			data.Review = append(data.Review, review)
 		}
+	}
+	artistAIScopes := []string{"artists_all", "artist_matches", "credit_splits"}
+	data.AIConfigured, data.AIReviewEnabled, data.ActiveAIRun, data.LastAIRun = a.aiReviewMeta(r.Context(), artistAIScopes)
+	if applied, err := a.store.RecentAIAppliedDecisions(r.Context(), []string{storage.AITargetArtistMatch}, 30); err == nil {
+		data.AIApplied = applied
 	}
 	// 头像补全区块：统计只读 DB+磁盘；失败只记日志，页面其余部分照常渲染。
 	if a.enrichment != nil {

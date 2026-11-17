@@ -49,6 +49,94 @@
       </div>
       {{end}}
     </nav>
+
+    <section class="feature-section ai-review-toolbar-card" data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=works" data-run-type="aiReview">
+      <div class="ai-review-head">
+        <div>
+          <strong>AI 存量预审助手</strong>
+          <p class="muted" style="margin:2px 0 0;font-size:var(--fs-xs);">
+            {{if not .AIConfigured}}尚未配置模型服务，请先前往 <a href="/admin/settings/ai">AI 设置</a> 配置接口与密钥。
+            {{else if not .AIReviewEnabled}}AI 初审总开关未开启，可在 <a href="/admin/settings/ai">AI 设置</a> 中启用后一键清理积压待审项。
+            {{else}}对当前积压的待审候选执行 AI 消歧：高置信自动确认落库，不确定或低置信项保留在列表并给出建议与理由。{{end}}
+          </p>
+        </div>
+        {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
+        <div class="ai-review-launch-group">
+          <form method="post" action="/admin/ai-review/run" class="ai-review-launch-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{if .BatchReturnTo}}{{.BatchReturnTo}}{{else}}/admin/work-review?tab={{.ActiveTab}}{{end}}">
+            <select name="scope" aria-label="AI 预审范围">
+              <option value="{{.ActiveTab}}" selected>仅当前页签（{{aiReviewScopeLabel .ActiveTab}}）</option>
+              <option value="works_all">全部作品关联待审（专辑+曲目+作品+系列）</option>
+            </select>
+            <label class="ai-inline-check" style="margin:0;font-size:var(--fs-xs);"><input type="checkbox" name="force"> 强制重评已评估项</label>
+            <button type="submit" class="primary-button">AI 处理存量待审</button>
+          </form>
+        </div>
+        {{end}}
+      </div>
+      {{with .ActiveAIRun}}
+      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}" style="margin-top:10px;">
+        <header>
+          <strong>AI 预审 #{{.ID}} · {{aiReviewScopeLabel .Scope}}</strong>
+          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+        </header>
+        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · AI 自动处理 {{.AutoApplied}} · 给建议 {{.Recommended}} · 不确定 {{.Uncertain}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+        <small class="muted" data-run-field="current">{{if .CurrentLabel}}当前：{{.CurrentLabel}}{{end}}</small>
+        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
+        <div class="run-actions">
+          <form method="post" action="/admin/ai-review/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/work-review?tab={{$.ActiveTab}}">
+            <button class="secondary-button">暂停</button>
+          </form>
+          <form method="post" action="/admin/ai-review/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/work-review?tab={{$.ActiveTab}}">
+            <button>继续</button>
+          </form>
+          <form method="post" action="/admin/ai-review/runs/{{.ID}}/cancel" data-run-action="cancel">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/work-review?tab={{$.ActiveTab}}">
+            <button class="secondary-button">停止</button>
+          </form>
+        </div>
+      </article>
+      {{else}}
+      {{with .LastAIRun}}
+      <p class="muted run-last" style="margin-top:8px;">最近一次 AI 预审：#{{.ID}}（{{aiReviewScopeLabel .Scope}}）· {{runStatusLabel .Status}} · 处理 {{.Processed}}/{{.Total}} · 自动处理 {{.AutoApplied}} · 建议 {{.Recommended}} · 不确定 {{.Uncertain}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      {{end}}
+      {{end}}
+
+      <div class="ai-filter-row">
+        <span class="muted" style="font-size:var(--fs-xs);">AI 筛选：</span>
+        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&ai=all" class="ai-filter-pill {{if eq .AIFilter "all"}}active{{end}}">全部</a>
+        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&ai=recommended" class="ai-filter-pill {{if eq .AIFilter "recommended"}}active{{end}}">AI 推荐接受</a>
+        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&ai=reject" class="ai-filter-pill {{if eq .AIFilter "reject"}}active{{end}}">AI 建议拒绝</a>
+        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&ai=uncertain" class="ai-filter-pill {{if eq .AIFilter "uncertain"}}active{{end}}">AI 不确定 / 未评估</a>
+      </div>
+
+      {{if .AIApplied}}
+      <details class="run-history" style="margin-top:10px;">
+        <summary>AI 最近自动处理记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
+        <ul class="ai-applied-list">
+          {{range .AIApplied}}
+          <li>
+            <span class="ai-decision-chip tone-auto">{{aiTargetKindLabel .Decision.TargetKind}}</span>
+            <a href="{{.TargetURL}}"><strong>{{.TargetTitle}}</strong></a>
+            <small class="muted">置信度 {{.Decision.Confidence}}% · {{.Decision.Reason}}</small>
+            <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" style="margin-left:auto;">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="/admin/work-review?tab={{$.ActiveTab}}">
+              <button type="submit" class="secondary-button">撤销</button>
+            </form>
+          </li>
+          {{end}}
+        </ul>
+      </details>
+      {{end}}
+    </section>
     {{if .ConflictWork}}<div class="toast">该条目已对齐到作品<a href="/admin/works/{{.ConflictWork.ID}}">《{{.ConflictWork.Title}}》</a></div>{{else if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
     {{if .BatchTotal}}
     {{/* Issue #3：批量审核栏。卡片复选框通过 form= 关联到本表单；页面脚本在
@@ -206,8 +294,15 @@
             <button type="submit" class="secondary-button">按指定条目对齐</button>
           </form>
           <div class="work-align-candidates">
+            {{if $item.AI}}
+            <div class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
+              <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">{{$item.AI.ActionLabel}} · {{$item.AI.Confidence}}%</span>
+              <span>{{$item.AI.Reason}}</span>
+              {{if $item.AI.WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
+            </div>
+            {{end}}
             {{range $item.Candidates}}
-            <div class="work-align-option">
+            <div class="work-align-option{{if and $item.AI (eq $item.AI.SelectedCandidateID .ID)}} is-ai-recommended{{end}}">
               <span class="work-type-chip">{{with workTypeLabel .Type}}{{.}}{{else}}作品{{end}}</span>
               <div class="work-align-info">
                 <strong>{{.Title}}</strong>
@@ -247,8 +342,18 @@
 </html>
 
 {{define "wrAlbumCandCard"}}
-<div class="review-candidate-body is-selectable">
+{{$card := .}}
+<div class="review-candidate-body is-selectable{{if .IsAIRecCandidate}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="album:{{.Cand.AlbumID}}:{{.Cand.ID}}" data-review-state-form="album-accept-{{.Cand.ID}}" data-review-album aria-label="选择专辑候选《{{.Cand.Title}}》"></label>
+  {{if .AI}}
+  {{if or (eq .AI.SelectedCandidateID .Cand.ID) (eq .AI.SelectedCandidateID 0)}}
+  <div class="ai-decision-banner tone-{{.AI.BadgeTone}}">
+    <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
+    <span>{{.AI.Reason}}</span>
+    {{if .AI.WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
+  </div>
+  {{end}}
+  {{end}}
   <div class="bgm-candidate-bar">
     <div class="bgm-candidate-title">
       <a class="bgm-link" href="https://bgm.tv/subject/{{.Cand.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Cand.Title}} ↗</a>
@@ -269,7 +374,7 @@
     <div class="candidate-tieup-list">
       {{range .Cand.Tieups}}
       <div class="candidate-tieup-row">
-        <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked title="勾选以接受">
+        <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" {{if $card.IsWorkChecked .SubjectID}}checked {{end}}title="勾选以接受">
         <div class="tieup-work-info">
           <strong>{{.Title}}</strong>
           <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
@@ -298,8 +403,18 @@
 {{end}}
 
 {{define "wrTrackCandCard"}}
-<div class="review-candidate-body is-selectable">
+{{$card := .}}
+<div class="review-candidate-body is-selectable{{if .IsAIRecCandidate}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="track:{{.Cand.TrackID}}:{{.Cand.ID}}" data-review-state-form="track-accept-{{.Cand.ID}}" aria-label="选择曲目候选《{{.Cand.TrackTitle}}》→《{{.Cand.Title}}》"></label>
+  {{if .AI}}
+  {{if or (eq .AI.SelectedCandidateID .Cand.ID) (eq .AI.SelectedCandidateID 0)}}
+  <div class="ai-decision-banner tone-{{.AI.BadgeTone}}">
+    <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
+    <span>{{.AI.Reason}}</span>
+    {{if .AI.WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
+  </div>
+  {{end}}
+  {{end}}
   <div class="review-track-line">
     <strong>{{.Cand.TrackTitle}}</strong>
     <span class="muted">{{if .Cand.TrackArtist}}{{.Cand.TrackArtist}} · {{end}}专辑《<a href="/admin/albums/{{.Cand.AlbumID}}">{{.Cand.AlbumTitle}}</a>》{{if .Cand.TrackNumber}} · 曲目 {{.Cand.DiscNumber}}.{{.Cand.TrackNumber}}{{end}}{{if .Cand.DurationMillis}} · {{formatDurationMillis .Cand.DurationMillis}}{{end}}</span>
@@ -323,8 +438,9 @@
     <input type="hidden" name="returnTo" value="/admin/work-review?tab=tracks&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
     <div class="candidate-tieup-list">
       {{range .Cand.Tieups}}
+      {{$effRole := $card.EffectiveRole .SubjectID .Role}}
       <div class="candidate-tieup-row">
-        <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" checked title="选择关联此作品">
+        <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" {{if $card.IsWorkChecked .SubjectID}}checked {{end}}title="选择关联此作品">
         <div class="tieup-work-info">
           <strong>{{.Title}}</strong>
           <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
@@ -333,14 +449,14 @@
         <label style="display:flex;align-items:center;gap:6px;margin:0;">
           <span class="muted" style="font-size:var(--fs-xs);">角色：</span>
           <select name="role-{{.SubjectID}}" class="role-select" aria-label="角色用途">
-            <option value="op" {{if eq .Role "op"}}selected{{end}}>片头曲 (OP)</option>
-            <option value="ed" {{if eq .Role "ed"}}selected{{end}}>片尾曲 (ED)</option>
-            <option value="insert" {{if eq .Role "insert"}}selected{{end}}>插入歌</option>
-            <option value="theme" {{if eq .Role "theme"}}selected{{end}}>主题曲</option>
-            <option value="character" {{if eq .Role "character"}}selected{{end}}>角色歌</option>
-            <option value="image_song" {{if eq .Role "image_song"}}selected{{end}}>印象曲</option>
-            <option value="ost" {{if eq .Role "ost"}}selected{{end}}>原声集 (OST)</option>
-            <option value="other" {{if eq .Role "other"}}selected{{end}}>相关</option>
+            <option value="op" {{if eq $effRole "op"}}selected{{end}}>片头曲 (OP)</option>
+            <option value="ed" {{if eq $effRole "ed"}}selected{{end}}>片尾曲 (ED)</option>
+            <option value="insert" {{if eq $effRole "insert"}}selected{{end}}>插入歌</option>
+            <option value="theme" {{if eq $effRole "theme"}}selected{{end}}>主题曲</option>
+            <option value="character" {{if eq $effRole "character"}}selected{{end}}>角色歌</option>
+            <option value="image_song" {{if eq $effRole "image_song"}}selected{{end}}>印象曲</option>
+            <option value="ost" {{if eq $effRole "ost"}}selected{{end}}>原声集 (OST)</option>
+            <option value="other" {{if eq $effRole "other"}}selected{{end}}>相关</option>
           </select>
         </label>
       </div>
@@ -364,8 +480,14 @@
 {{end}}
 
 {{define "wrSeriesSuggCard"}}
-<div class="review-candidate-body series-suggestion-card is-selectable">
+<div class="review-candidate-body series-suggestion-card is-selectable{{if and .AI (eq .AI.Action "recommend_accept")}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="series:{{.ID}}" data-review-state-form="series-accept-{{.ID}}" aria-label="选择系列建议《{{.WorkA.Title}}》与《{{.WorkB.Title}}》"></label>
+  {{if .AI}}
+  <div class="ai-decision-banner tone-{{.AI.BadgeTone}}">
+    <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
+    <span>{{.AI.Reason}}{{if .AI.SuggestedTitle}}（建议系列名：《{{.AI.SuggestedTitle}}》）{{end}}</span>
+  </div>
+  {{end}}
   <div class="series-suggestion-pair">
     <a href="/admin/works/{{.WorkA.ID}}" class="series-suggestion-work">
       <span class="work-type-chip">{{with workTypeLabel .WorkA.Type}}{{.}}{{else}}作品{{end}}</span>
@@ -397,7 +519,7 @@
       <span class="muted">两个系列都改过名，请选择合并后的名字：</span>
       <label><input type="radio" name="titleChoice" value="a" checked> 保留《{{.SeriesATitle}}》</label>
       <label><input type="radio" name="titleChoice" value="b"> 保留《{{.SeriesBTitle}}》</label>
-      <label><input type="radio" name="titleChoice" value="new"> 新名字：<input type="text" name="title" placeholder="输入合并后的系列名" aria-label="新系列名"></label>
+      <label><input type="radio" name="titleChoice" value="new"> 新名字：<input type="text" name="title" value="{{if .AI}}{{.AI.SuggestedTitle}}{{end}}" placeholder="输入合并后的系列名" aria-label="新系列名"></label>
     </div>
     {{else if eq .NamingMode "one"}}
     <input type="hidden" name="titleChoice" value="{{.DefaultTitleChoice}}">

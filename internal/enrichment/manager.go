@@ -49,6 +49,7 @@ type Manager struct {
 	phaseCancel         context.CancelFunc
 	phaseEndpoints      phase4Endpoints
 	confirmAlbumSubject func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error)
+	inlineAI            func(context.Context, string, int64) bool
 	posterMu            sync.Mutex
 	posterBackfilling   bool
 	posterLastResult    *PosterBackfillResult
@@ -157,6 +158,10 @@ func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dat
 		logger.Info("recovered interrupted artist biography backfill runs", "count", recovered)
 	}
 	return manager
+}
+
+func (m *Manager) SetInlineAIReviewer(fn func(context.Context, string, int64) bool) {
+	m.inlineAI = fn
 }
 
 // Wait blocks until all background enrichment work has finished. Call after
@@ -378,6 +383,9 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 			return MatchResult{}, err
 		}
 		if metadata.CompositeArtistCredit(input.Name) {
+			if m.inlineAI != nil {
+				m.inlineAI(ctx, storage.AITargetCreditSplit, artistID)
+			}
 			return MatchResult{SkipReason: "skipped_composite"}, nil
 		}
 	}
@@ -684,6 +692,11 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 			m.logger.Warn("cache artist biographies failed", "artistId", artistID, "error", err)
 		}
 		auto = true
+	}
+	if !auto && len(candidates) > 0 && m.inlineAI != nil && automatic {
+		if m.inlineAI(ctx, storage.AITargetArtistMatch, artistID) {
+			auto = true
+		}
 	}
 	return MatchResult{AutoMatched: auto, CandidateCount: len(candidates)}, nil
 }

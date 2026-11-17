@@ -174,6 +174,84 @@
       {{end}}
     </section>
 
+    <section class="feature-section ai-review-toolbar-card" data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview">
+      <div class="ai-review-head">
+        <div>
+          <strong>AI 艺术家预审与复合署名分析</strong>
+          <p class="muted" style="margin:2px 0 0;font-size:var(--fs-xs);">
+            {{if not .AIConfigured}}尚未配置模型服务，请先前往 <a href="/admin/settings/ai">AI 设置</a> 配置接口与密钥。
+            {{else if not .AIReviewEnabled}}AI 初审总开关未开启，可在 <a href="/admin/settings/ai">AI 设置</a> 中启用。
+            {{else}}批量消歧待审艺术家身份（高置信且无身份冲突时自动绑定），并为复合署名生成一键拆分方案。{{end}}
+          </p>
+        </div>
+        {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
+        <form method="post" action="/admin/ai-review/run" class="ai-review-launch-form">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/matches">
+          <select name="scope" aria-label="AI 预审范围">
+            <option value="artists_all" selected>全部（待审艺术家 + 复合署名）</option>
+            <option value="artist_matches">仅待审艺术家身份</option>
+            <option value="credit_splits">仅复合署名拆分建议</option>
+          </select>
+          <label class="ai-inline-check" style="margin:0;font-size:var(--fs-xs);"><input type="checkbox" name="force"> 强制重评</label>
+          <button type="submit" class="primary-button">AI 处理待审艺术家</button>
+        </form>
+        {{end}}
+      </div>
+      {{with .ActiveAIRun}}
+      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}" style="margin-top:10px;">
+        <header>
+          <strong>AI 预审 #{{.ID}} · {{aiReviewScopeLabel .Scope}}</strong>
+          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+        </header>
+        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · AI 自动处理 {{.AutoApplied}} · 给建议 {{.Recommended}} · 不确定 {{.Uncertain}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+        <small class="muted" data-run-field="current">{{if .CurrentLabel}}当前：{{.CurrentLabel}}{{end}}</small>
+        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
+        <div class="run-actions">
+          <form method="post" action="/admin/ai-review/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/matches">
+            <button class="secondary-button">暂停</button>
+          </form>
+          <form method="post" action="/admin/ai-review/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/matches">
+            <button>继续</button>
+          </form>
+          <form method="post" action="/admin/ai-review/runs/{{.ID}}/cancel" data-run-action="cancel">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/matches">
+            <button class="secondary-button">停止</button>
+          </form>
+        </div>
+      </article>
+      {{else}}
+      {{with .LastAIRun}}
+      <p class="muted run-last" style="margin-top:8px;">最近一次 AI 预审：#{{.ID}}（{{aiReviewScopeLabel .Scope}}）· {{runStatusLabel .Status}} · 处理 {{.Processed}}/{{.Total}} · 自动绑定 {{.AutoApplied}} · 建议 {{.Recommended}} · 不确定 {{.Uncertain}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      {{end}}
+      {{end}}
+      {{if .AIApplied}}
+      <details class="run-history" style="margin-top:10px;">
+        <summary>AI 最近自动绑定记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
+        <ul class="ai-applied-list">
+          {{range .AIApplied}}
+          <li>
+            <span class="ai-decision-chip tone-auto">{{aiTargetKindLabel .Decision.TargetKind}}</span>
+            <a href="{{.TargetURL}}"><strong>{{.TargetTitle}}</strong></a>
+            <small class="muted">置信度 {{.Decision.Confidence}}% · {{.Decision.Reason}}</small>
+            <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" style="margin-left:auto;">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="/admin/matches">
+              <button type="submit" class="secondary-button">撤销</button>
+            </form>
+          </li>
+          {{end}}
+        </ul>
+      </details>
+      {{end}}
+    </section>
+
     <section class="feature-section">
       <div class="section-title"><div><h2>待审核候选</h2></div></div>
       <form method="get" action="/admin/matches" class="review-filter">
@@ -196,9 +274,16 @@
           <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
           <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
         </header>
+        {{with $item.AI}}
+        <div class="ai-decision-banner tone-{{.BadgeTone}}" style="margin-bottom:10px;">
+          <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
+          <span>{{.Reason}}</span>
+          {{if .WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
+        </div>
+        {{end}}
         <div>
           {{range $item.Candidates}}
-          <section>
+          <section{{if and $item.AI (eq $item.AI.SelectedCandidateID .ID)}} class="is-ai-recommended"{{end}}>
             <b>{{.DisplayName}}</b><span class="status-badge warning">待审核</span>
             <span>{{.Source}} · 置信度 {{.Score}}</span>
             <small>{{.Disambiguation}} {{.Country}} {{.ArtistType}}</small>
@@ -242,7 +327,25 @@
           <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
           <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
         </header>
+        {{if $item.AI}}
+        <div class="ai-decision-banner tone-{{$item.AI.BadgeTone}}" style="margin:8px 0;">
+          <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">
+            {{if $item.AI.CreditIsComposite}}AI 建议拆分 · {{$item.AI.Confidence}}%{{else if eq $item.AI.Action "recommend_reject"}}AI 判定非复合署名 · {{$item.AI.Confidence}}%{{else}}AI 不确定 · {{$item.AI.Confidence}}%{{end}}
+          </span>
+          <span>{{$item.AI.Reason}}</span>
+        </div>
+        {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
+        <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="candidate-actions" style="margin-top:8px;align-items:center;gap:10px;flex-wrap:wrap;">
+          <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/matches">
+          <span>拆分为：<strong>{{$item.AI.CreditPartsCSV}}</strong></span>
+          {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
+          <button type="submit" class="primary-button">一键应用拆分到关联曲目</button>
+        </form>
+        {{end}}
+        {{else}}
         <p class="muted">疑似合作署名，需先修正艺术家关系。</p>
+        {{end}}
       </article>
       {{end}}
     </section>

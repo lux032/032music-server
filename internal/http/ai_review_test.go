@@ -1,0 +1,204 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lux032/032music-server/internal/aiclient"
+	"github.com/lux032/032music-server/internal/aireview"
+	"github.com/lux032/032music-server/internal/metadata"
+	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/tagging"
+)
+
+type fakeAIReviewChat struct {
+	fn func(tagging.ChatRequest) (tagging.ChatResult, error)
+}
+
+func (f fakeAIReviewChat) Complete(_ context.Context, req tagging.ChatRequest) (tagging.ChatResult, error) {
+	return f.fn(req)
+}
+
+func TestAISettingsPageAndSave(t *testing.T) {
+	store := credentialTestStore(t)
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	page := getAdmin(t, handler, cookie, "/admin/settings/ai")
+	for _, want := range []string{"AI 设置中心", `name="ai_review_enabled"`, `name="album_mode"`, `name="series_mode"`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("ai settings page missing %q", want)
+		}
+	}
+
+	rec := postSecurity(t, app, handler, cookie, "/admin/settings/ai", url.Values{
+		"base_url":          {"https://api.example.test/v1"},
+		"api_key":           {"sk-secret"},
+		"model":             {"gemini-2.5-flash-lite"},
+		"review_model":      {"gemini-2.5-flash"},
+		"fallback_model":    {"backup"},
+		"rpm":               {"120"},
+		"concurrency":       {"4"},
+		"ai_review_enabled": {"on"},
+		"ai_review_inline":  {"on"},
+		"album_mode":        {"auto"},
+		"track_mode":        {"recommend"},
+		"work_mode":         {"auto"},
+		"artist_mode":       {"auto"},
+		"credit_mode":       {"recommend"},
+		"series_mode":       {"recommend"},
+	})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), url.QueryEscape("AI 设置已保存")) {
+		t.Fatalf("unexpected save response: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	st, err := store.AISettings(context.Background())
+	if err != nil || !st.Configured() || st.ReviewModel != "gemini-2.5-flash" || st.RequestsPerMinute != 120 {
+		t.Fatalf("unexpected saved AI settings: %+v err=%v", st, err)
+	}
+	rev, err := store.AIReviewSettings(context.Background())
+	if err != nil || !rev.Enabled || !rev.InlineEnabled || rev.TrackMode != "recommend" {
+		t.Fatalf("unexpected saved AI review settings: %+v err=%v", rev, err)
+	}
+}
+
+func TestWorkReviewAndMatchReviewAIIntegration(t *testing.T) {
+	store := credentialTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureLibrary(ctx, "Music", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := store.LibraryByRoot(ctx, "/music")
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "A/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Song A", Album: "Album A", Artists: []string{"Aimer feat. Sawano"}, AlbumArtists: []string{"Aimer"}, DiscNumber: 1, TrackNumber: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAISettings(ctx, storage.AISettings{
+		BaseURL: "https://api.example.test/v1", APIKey: "sk-test", Model: "lite", ReviewModel: "pro", RequestsPerMinute: 6000, Concurrency: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rev := storage.DefaultAIReviewSettings()
+	rev.Enabled = true
+	if err := store.SaveAIReviewSettings(ctx, rev); err != nil {
+		t.Fatal(err)
+	}
+
+	albums, _ := store.ListAlbums(ctx, storage.Filters{})
+	albumID := albums[0].ID
+	_ = store.SaveAlbumSubjectCandidates(ctx, albumID, []storage.AlbumSubjectCandidate{{
+		ExternalID: "1234", Title: "Album A", Artist: "Aimer", Score: 75,
+		Tieups: []storage.BangumiTieup{{SubjectID: 9901, Title: "Anime X", Type: "anime", Role: "op"}},
+	}})
+	cands, _ := store.AlbumSubjectCandidates(ctx, albumID)
+
+	artists, _ := store.ListArtists(ctx, storage.Filters{})
+	var compositeID, normalID int64
+	for _, a := range artists {
+		if a.Name == "Aimer feat. Sawano" {
+			compositeID = a.ID
+		} else if a.Name == "Aimer" {
+			normalID = a.ID
+		}
+	}
+	_ = store.ReplaceArtistCandidatesForSources(ctx, compositeID, []storage.ArtistCandidate{{
+		Source: "musicbrainz", ExternalID: "mb-1", DisplayName: "Aimer", Score: 70,
+	}}, []string{"musicbrainz"})
+	_ = store.ReplaceArtistCandidatesForSources(ctx, normalID, []storage.ArtistCandidate{{
+		Source: "musicbrainz", ExternalID: "mb-aimer", DisplayName: "Aimer", Score: 85,
+	}}, []string{"musicbrainz"})
+
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	aiSvc := aireview.New(store, slog.New(slog.NewTextHandler(io.Discard, nil)), aireview.Options{
+		Limiter: aiclient.NewLimiter(6000),
+		NewChat: func(storage.AISettings) (tagging.Chat, error) {
+			return fakeAIReviewChat{fn: func(req tagging.ChatRequest) (tagging.ChatResult, error) {
+				if strings.Contains(req.System, "composite collaboration credit") {
+					return tagging.ChatResult{
+						Content: `{"isComposite":true,"parts":["Aimer","Sawano"],"confidence":95,"reason":"包含 feat. 合作署名"}`,
+						Usage:   storage.AIUsage{Requests: 1},
+					}, nil
+				}
+				return tagging.ChatResult{
+					Content: `{"decision":"select","candidateId":` + strconv.FormatInt(cands[0].ID, 10) + `,"workSubjectIds":[9901],"confidence":93,"needWebSearch":false,"searchQuery":"","quote":"","reason":"标题歌手一致","evidence":[]}`,
+					Usage:   storage.AIUsage{Requests: 1},
+				}, nil
+			}}, nil
+		},
+	})
+	app.SetAIReview(aiSvc)
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	// Work review page renders AI toolbar and start button.
+	wrBody := getAdmin(t, handler, cookie, "/admin/work-review?tab=albums")
+	if !strings.Contains(wrBody, "AI 处理存量待审") || !strings.Contains(wrBody, "/admin/ai-review/run") {
+		t.Fatal("work review page missing AI backlog toolbar")
+	}
+
+	// Start AI backlog run on albums tab.
+	rec := postSecurity(t, app, handler, cookie, "/admin/ai-review/run", url.Values{
+		"scope":    {"albums"},
+		"returnTo": {"/admin/work-review?tab=albums"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rec.Code)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		raw := getAdmin(t, handler, cookie, "/admin/ai-review/runs/active.json?group=works")
+		var payload struct {
+			Run *storage.AIReviewRun `json:"run"`
+		}
+		if json.Unmarshal([]byte(raw), &payload) == nil && payload.Run == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Album should now appear in AI recent applied list and revert should restore it.
+	wrAfter := getAdmin(t, handler, cookie, "/admin/work-review?tab=albums")
+	if !strings.Contains(wrAfter, "AI 最近自动处理记录") || !strings.Contains(wrAfter, "撤销") {
+		t.Fatal("expected AI recent applied list with revert button on work-review")
+	}
+	dec, ok, err := store.AIReviewDecisionByTarget(ctx, storage.AITargetAlbumSubject, albumID)
+	if err != nil || !ok || !dec.Applied {
+		t.Fatalf("expected applied album decision, ok=%v err=%v dec=%+v", ok, err, dec)
+	}
+	revRec := postSecurity(t, app, handler, cookie, "/admin/ai-review/decisions/"+strconv.FormatInt(dec.ID, 10)+"/revert", url.Values{
+		"returnTo": {"/admin/work-review?tab=albums"},
+	})
+	if revRec.Code != http.StatusSeeOther {
+		t.Fatalf("expected revert redirect, got %d", revRec.Code)
+	}
+
+	// Run AI on composite credit split and apply via HTTP endpoint.
+	if _, err := aiSvc.EvaluateTarget(ctx, storage.AITargetCreditSplit, compositeID, false); err != nil {
+		t.Fatal(err)
+	}
+	mrBody := getAdmin(t, handler, cookie, "/admin/matches")
+	if !strings.Contains(mrBody, "一键应用拆分到关联曲目") || !strings.Contains(mrBody, "Aimer / Sawano") {
+		t.Fatal("match review page missing AI credit split recommendation")
+	}
+	splitRec := postSecurity(t, app, handler, cookie, "/admin/artists/"+strconv.FormatInt(compositeID, 10)+"/apply-credit-split", url.Values{
+		"part":     {"Aimer", "Sawano"},
+		"returnTo": {"/admin/matches"},
+	})
+	if splitRec.Code != http.StatusSeeOther || !strings.Contains(splitRec.Header().Get("Location"), url.QueryEscape("更新 1 首曲目")) {
+		t.Fatalf("unexpected credit split apply response: code=%d loc=%q", splitRec.Code, splitRec.Header().Get("Location"))
+	}
+}

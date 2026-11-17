@@ -406,6 +406,9 @@ func (m *Manager) enrichBangumiWork(ctx context.Context, runID int64, work stora
 		if m.workGone(ctx, work.ID) {
 			return "skipped", nil
 		}
+		if setting.AutoMatch && m.inlineAI != nil && m.inlineAI(ctx, storage.AITargetWorkMatch, work.ID) {
+			return "succeeded", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
+		}
 		return "review", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")
 	}
 	return "skipped", m.store.DeleteWorkEnrichmentRetry(ctx, work.ID, "bangumi")

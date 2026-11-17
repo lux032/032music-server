@@ -43,7 +43,10 @@
     </section>
 
     <section class="feature-card audio-analysis-settings">
-      <p class="kicker">设置</p>
+      <div class="audio-analysis-head">
+        <p class="kicker">设置</p>
+        <a class="secondary-button" href="/admin/settings/ai">前往全局 AI 设置中心 →</a>
+      </div>
       <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/ai-tagging/settings" autocomplete="off">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <label class="switch"><input type="checkbox" name="enabled" {{if .Status.Enabled}}checked{{end}}> 开启 AI 打标</label>

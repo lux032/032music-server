@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/acquisition"
+	"github.com/lux032/032music-server/internal/aiclient"
+	"github.com/lux032/032music-server/internal/aireview"
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/artistaliases"
 	"github.com/lux032/032music-server/internal/config"
@@ -80,8 +82,10 @@ type App struct {
 	// audioAnalysis is the optional acoustic analysis worker (nil hides it).
 	audioAnalysis *analysis.Service
 	// aiTagging is the AI (OpenAI-compatible) mood/style tagging worker.
-	aiTagging     *tagging.Service
-	artistAliases *artistaliases.Service
+	aiTagging       *tagging.Service
+	aiReview        *aireview.Service
+	sharedAILimiter *aiclient.Limiter
+	artistAliases   *artistaliases.Service
 	// dailyMixes generates the daily recommendation mixes (nil hides them).
 	dailyMixes *dailymix.Service
 	// newTranslationChat creates the lyrics translation model client (nil: OpenAI-compatible HTTP client).
@@ -262,6 +266,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"playbackStateLabel":     playbackStateLabel,
 		"enrichmentRunProgress":  enrichmentRunProgress,
 		"enrichmentTargetLabel":  enrichmentTargetLabel,
+		"aiReviewScopeLabel":     aiReviewScopeLabel,
+		"aiTargetKindLabel":      aiTargetKindLabel,
 		"enrichmentStageLine":    enrichmentStageLine,
 		"runStatusLabel":         runStatusLabel,
 		"pauseReasonLabel":       pauseReasonLabel,
@@ -558,6 +564,16 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/artist-aliases/{action}", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasAction)))
 	mux.Handle("POST /admin/artist-aliases/candidates/{candidateId}/{action}", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasReview)))
 	mux.Handle("GET /api/v1/artist-alias-completion", a.requireAPIOrAdmin(http.HandlerFunc(a.handleArtistAliasStatus)))
+	mux.Handle("GET "+aiSettingsPath, a.requireAdmin(http.HandlerFunc(a.handleAISettingsPage)))
+	mux.Handle("POST "+aiSettingsPath, a.requireAdmin(http.HandlerFunc(a.handleSaveAISettings)))
+	mux.Handle("POST "+aiSettingsPath+"/test", a.requireAdmin(http.HandlerFunc(a.handleAISettingsTest)))
+	mux.Handle("POST /admin/ai-review/run", a.requireAdmin(http.HandlerFunc(a.handleStartAIReviewRun)))
+	mux.Handle("POST /admin/ai-review/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseAIReviewRun)))
+	mux.Handle("POST /admin/ai-review/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeAIReviewRun)))
+	mux.Handle("POST /admin/ai-review/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelAIReviewRun)))
+	mux.Handle("GET /admin/ai-review/runs/active.json", a.requireAdminJSON(http.HandlerFunc(a.handleActiveAIReviewRun)))
+	mux.Handle("POST /admin/ai-review/decisions/{id}/revert", a.requireAdmin(http.HandlerFunc(a.handleRevertAIReviewDecision)))
+	mux.Handle("POST /admin/artists/{id}/apply-credit-split", a.requireAdmin(http.HandlerFunc(a.handleApplyCreditSplit)))
 	mux.Handle("GET "+aiTaggingPath, a.requireAdmin(http.HandlerFunc(a.handleAITaggingPage)))
 	mux.Handle("GET "+aiTaggingPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleAITaggingStatus)))
 	mux.Handle("POST "+aiTaggingPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveAITagging)))
@@ -1205,7 +1221,7 @@ func (a *App) logRequests(next http.Handler) http.Handler {
 // quietAccessLogPath keeps high-frequency asset, artwork and polling
 // requests out of the Info log so real events stay visible.
 func quietAccessLogPath(path string) bool {
-	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/events" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/matches/biographies/runs/active.json" || path == "/admin/enrichment/runs/active.json" {
+	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/events" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/matches/biographies/runs/active.json" || path == "/admin/enrichment/runs/active.json" || path == "/admin/ai-review/runs/active.json" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/playlists/") && strings.HasSuffix(path, "/artwork") {

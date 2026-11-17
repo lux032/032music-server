@@ -53,6 +53,8 @@ type Options struct {
 	NewChat func(s storage.AISettings) (Chat, error)
 	// Lyrics 返回曲目的歌词原文；默认读取外置 .lrc，再回退到内嵌歌词。
 	Lyrics func(ctx context.Context, info storage.TaggingTrackInfo) string
+	// RateWait 可选共享限流器；为空时使用服务内部 limiter。
+	RateWait func(ctx context.Context, rpm int) error
 }
 
 // Current 是正在处理的曲目。
@@ -569,7 +571,11 @@ func (s *Service) call(ctx context.Context, chat Chat, st storage.AISettings, mo
 	var total storage.AIUsage
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := s.limit.wait(ctx); err != nil {
+		if s.opts.RateWait != nil {
+			if err := s.opts.RateWait(ctx, st.RequestsPerMinute); err != nil {
+				return Result{}, total, err
+			}
+		} else if err := s.limit.wait(ctx); err != nil {
 			return Result{}, total, err
 		}
 		s.mu.Lock()

@@ -26,6 +26,7 @@ type enrichmentRunRequest struct {
 type enrichmentWorkReview struct {
 	Work       storage.Work
 	Candidates []storage.WorkMatchCandidate
+	AI         *aiDecisionView
 }
 
 type enrichmentArtistReview struct {
@@ -70,11 +71,44 @@ type workReviewCtx struct {
 type albumCandCard struct {
 	Ctx  workReviewCtx
 	Cand storage.AlbumSubjectCandidate
+	AI   *aiDecisionView
+}
+
+func (c albumCandCard) IsAIRecCandidate() bool {
+	return c.AI != nil && c.AI.SelectedCandidateID == c.Cand.ID && c.AI.Action == storage.AIActionRecommendAccept
+}
+
+func (c albumCandCard) IsWorkChecked(subjectID int64) bool {
+	if c.AI == nil || c.AI.SelectedCandidateID != c.Cand.ID || len(c.AI.SelectedWorks) == 0 {
+		return true
+	}
+	return c.AI.SelectedWorks[subjectID]
 }
 
 type trackCandCard struct {
 	Ctx  workReviewCtx
 	Cand storage.TrackSubjectCandidate
+	AI   *aiDecisionView
+}
+
+func (c trackCandCard) IsAIRecCandidate() bool {
+	return c.AI != nil && c.AI.SelectedCandidateID == c.Cand.ID && c.AI.Action == storage.AIActionRecommendAccept
+}
+
+func (c trackCandCard) IsWorkChecked(subjectID int64) bool {
+	if c.AI == nil || c.AI.SelectedCandidateID != c.Cand.ID || len(c.AI.SelectedWorks) == 0 {
+		return true
+	}
+	return c.AI.SelectedWorks[subjectID]
+}
+
+func (c trackCandCard) EffectiveRole(subjectID int64, orig string) string {
+	if c.AI != nil && c.AI.SelectedCandidateID == c.Cand.ID {
+		if r := c.AI.SelectedRoles[subjectID]; r != "" {
+			return r
+		}
+	}
+	return orig
 }
 
 type workReviewAlbumGroup struct {
@@ -119,15 +153,24 @@ type workReviewPageData struct {
 	// 批量审核栏（Issue #3）：BatchTotal 是本页可勾选的卡片数，为 0 时不显示。
 	BatchTotal    int
 	BatchReturnTo string
+	// AI 初审与存量清理状态
+	AIConfigured    bool
+	AIReviewEnabled bool
+	ActiveAIRun     *storage.AIReviewRun
+	LastAIRun       *storage.AIReviewRun
+	AIFilter        string
+	AIApplied       []storage.AIReviewAppliedItem
+	AlbumAIMap      map[int64]*aiDecisionView
+	TrackAIMap      map[int64]*aiDecisionView
 }
 
 func (data *workReviewPageData) buildGroups() {
 	ctx := workReviewCtx{CSRFToken: data.CSRFToken, Group: data.Group, AlbumID: data.AlbumID}
 	wrapAlbum := func(c storage.AlbumSubjectCandidate) albumCandCard {
-		return albumCandCard{Ctx: ctx, Cand: c}
+		return albumCandCard{Ctx: ctx, Cand: c, AI: data.AlbumAIMap[c.AlbumID]}
 	}
 	wrapTrack := func(c storage.TrackSubjectCandidate) trackCandCard {
-		return trackCandCard{Ctx: ctx, Cand: c}
+		return trackCandCard{Ctx: ctx, Cand: c, AI: data.TrackAIMap[c.TrackID]}
 	}
 	if data.Group == "work" {
 		workMap := map[string]*workReviewWorkGroup{}
@@ -508,6 +551,12 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 		group = "album"
 	}
 	albumID := parseInt64(r.URL.Query().Get("albumId"))
+	aiFilter := r.URL.Query().Get("ai")
+	switch aiFilter {
+	case "recommended", "reject", "uncertain":
+	default:
+		aiFilter = "all"
+	}
 
 	data := workReviewPageData{
 		Chrome:    a.chromeFor(r.Context(), session, "work-review"),
@@ -515,6 +564,39 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 		Group:     group,
 		AlbumID:   albumID,
 		Notice:    r.URL.Query().Get("notice"),
+		AIFilter:  aiFilter,
+	}
+	workAIScopes := []string{"works_all", "albums", "tracks", "works", "series"}
+	data.AIConfigured, data.AIReviewEnabled, data.ActiveAIRun, data.LastAIRun = a.aiReviewMeta(r.Context(), workAIScopes)
+	if applied, err := a.store.RecentAIAppliedDecisions(r.Context(), []string{storage.AITargetAlbumSubject, storage.AITargetTrackSubject, storage.AITargetWorkMatch, storage.AITargetSeriesSuggestion}, 30); err == nil {
+		data.AIApplied = applied
+	}
+	matchAIFilter := func(ai *aiDecisionView) bool {
+		switch aiFilter {
+		case "recommended":
+			return ai != nil && ai.Action == storage.AIActionRecommendAccept
+		case "reject":
+			return ai != nil && ai.Action == storage.AIActionRecommendReject
+		case "uncertain":
+			return ai == nil || ai.Action == storage.AIActionUncertain
+		default:
+			return true
+		}
+	}
+	loadAIMap := func(kind string, ids []int64) map[int64]*aiDecisionView {
+		res := map[int64]*aiDecisionView{}
+		if len(ids) == 0 {
+			return res
+		}
+		raw, err := a.store.AIReviewDecisionsForTargets(r.Context(), kind, ids)
+		if err != nil {
+			a.logger.Error("load ai decisions", "kind", kind, "error", err)
+			return res
+		}
+		for id, d := range raw {
+			res[id] = buildAIDecisionView(d)
+		}
+		return res
 	}
 	if conflictID := parseInt64(r.URL.Query().Get("conflictWorkId")); conflictID > 0 {
 		if conflict, conflictErr := a.store.WorkByID(r.Context(), conflictID); conflictErr == nil {
@@ -554,7 +636,16 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "work review unavailable", http.StatusInternalServerError)
 			return
 		}
-		data.AlbumSubjects = cands
+		ids := make([]int64, 0, len(cands))
+		for _, c := range cands {
+			ids = append(ids, c.AlbumID)
+		}
+		data.AlbumAIMap = loadAIMap(storage.AITargetAlbumSubject, ids)
+		for _, c := range cands {
+			if matchAIFilter(data.AlbumAIMap[c.AlbumID]) {
+				data.AlbumSubjects = append(data.AlbumSubjects, c)
+			}
+		}
 		data.buildGroups()
 	case "tracks":
 		cands, err := a.store.PendingTrackSubjectCandidates(r.Context(), albumID, 200)
@@ -563,16 +654,36 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "work review unavailable", http.StatusInternalServerError)
 			return
 		}
-		data.TrackSubjects = cands
+		ids := make([]int64, 0, len(cands))
+		for _, c := range cands {
+			ids = append(ids, c.TrackID)
+		}
+		data.TrackAIMap = loadAIMap(storage.AITargetTrackSubject, ids)
+		for _, c := range cands {
+			if matchAIFilter(data.TrackAIMap[c.TrackID]) {
+				data.TrackSubjects = append(data.TrackSubjects, c)
+			}
+		}
 		data.buildGroups()
 	case "works":
 		// 作品对齐候选与专辑无关，按专辑分组/过滤没有意义：忽略 group 与 albumId。
 		var err error
-		data.WorkReviews, _, _, _, err = a.enrichmentReviews(r.Context())
+		reviews, _, _, _, err := a.enrichmentReviews(r.Context())
 		if err != nil {
 			a.logger.Error("work review work candidates", "error", err)
 			http.Error(w, "work review unavailable", http.StatusInternalServerError)
 			return
+		}
+		ids := make([]int64, 0, len(reviews))
+		for _, rv := range reviews {
+			ids = append(ids, rv.Work.ID)
+		}
+		workAIMap := loadAIMap(storage.AITargetWorkMatch, ids)
+		for _, rv := range reviews {
+			rv.AI = workAIMap[rv.Work.ID]
+			if matchAIFilter(rv.AI) {
+				data.WorkReviews = append(data.WorkReviews, rv)
+			}
 		}
 	case "series":
 		// 系列建议（D54）：与作品对齐 Tab 相同，忽略 group 与 albumId。
@@ -584,8 +695,27 @@ func (a *App) handleAdminWorkReview(w http.ResponseWriter, r *http.Request) {
 		}
 		// L2：超过 200 条时提示“仅显示前 200 条”（角标计数与列表同口径）。
 		data.SeriesTruncated = data.SeriesSuggestionCount > len(suggestions)
-		data.SeriesGroups, data.SeriesCards = a.seriesSuggestionCards(data.CSRFToken, suggestions)
-		data.BatchTotal = len(suggestions)
+		ids := make([]int64, 0, len(suggestions))
+		for _, sg := range suggestions {
+			ids = append(ids, sg.ID)
+		}
+		seriesAIMap := loadAIMap(storage.AITargetSeriesSuggestion, ids)
+		filteredSuggestions := make([]storage.SeriesSuggestion, 0, len(suggestions))
+		for _, sg := range suggestions {
+			if matchAIFilter(seriesAIMap[sg.ID]) {
+				filteredSuggestions = append(filteredSuggestions, sg)
+			}
+		}
+		data.SeriesGroups, data.SeriesCards = a.seriesSuggestionCards(data.CSRFToken, filteredSuggestions)
+		for i := range data.SeriesGroups {
+			for j := range data.SeriesGroups[i].Cards {
+				data.SeriesGroups[i].Cards[j].AI = seriesAIMap[data.SeriesGroups[i].Cards[j].ID]
+			}
+		}
+		for i := range data.SeriesCards {
+			data.SeriesCards[i].AI = seriesAIMap[data.SeriesCards[i].ID]
+		}
+		data.BatchTotal = len(filteredSuggestions)
 		data.BatchReturnTo = "/admin/work-review?tab=series"
 	}
 	switch tab {

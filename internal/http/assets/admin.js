@@ -353,6 +353,9 @@
     if (kind === 'artistBio') {
       return `处理 ${run.processed} / ${run.total} · 已补全 ${run.filled} · 无简介 ${run.missing} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
     }
+    if (kind === 'aiReview') {
+      return `处理 ${run.processed} / ${run.total} · AI 自动处理 ${run.autoApplied} · 给建议 ${run.recommended} · 不确定 ${run.uncertain} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+    }
     return `处理 ${run.processed} / ${run.total} · 成功 ${run.succeeded} · 跳过 ${run.skipped} · 审核 ${run.review} · 失败 ${run.failed}`;
   }
 
@@ -398,7 +401,8 @@
       bar.style.width = `${percent}%`;
     }
     setRunText(card, 'counts', runCountsText(kind, run));
-    setRunText(card, 'current', run.current ? `当前：${run.current}` : '');
+    const currentText = run.current || run.currentLabel || '';
+    setRunText(card, 'current', currentText ? `当前：${currentText}` : '');
     const wait = runField(card, 'wait');
     if (wait) {
       wait.dataset.waitSource = run.waitSource || '';
@@ -426,7 +430,7 @@
         if (!response.ok) throw new Error('fetch failed');
         const payload = await response.json();
         clearRunHint(container);
-        const result = updateRunCard(container, payload.run, container.getAttribute('data-run-kind'));
+        const result = updateRunCard(container, payload.run, container.getAttribute('data-run-type') || container.getAttribute('data-run-kind'));
         if (result === 'reload') { location.reload(); return 'reload'; }
       } catch (_) {
         failed = true;

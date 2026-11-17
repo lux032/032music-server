@@ -268,21 +268,27 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 	if err != nil {
 		return "", err
 	}
-	if multi || genericOnly {
+	reviewTrack := func() (string, error) {
+		if setting.AutoMatch && m.inlineAI != nil && m.inlineAI(ctx, storage.AITargetTrackSubject, track.ID) {
+			return "succeeded", nil
+		}
 		return "review", nil
+	}
+	if multi || genericOnly {
+		return reviewTrack()
 	}
 	chosen := hits[0]
 	signature := tieSignature(chosen.specific)
 	for _, hit := range hits[1:] {
 		if tieSignature(hit.specific) != signature {
-			return "review", nil
+			return reviewTrack()
 		}
 		if hit.subject.ID < chosen.subject.ID {
 			chosen = hit
 		}
 	}
 	if len(chosen.specific) != 1 {
-		return "review", nil
+		return reviewTrack()
 	}
 	for _, candidate := range stored {
 		if candidate.ExternalID != strconv.FormatInt(chosen.subject.ID, 10) || candidate.Status != "candidate" {
@@ -304,7 +310,7 @@ func (m *Manager) enrichBangumiTrack(ctx context.Context, runID int64, track sto
 		}
 		return outcome, nil
 	}
-	return "review", nil
+	return reviewTrack()
 }
 
 // renameMultiParts exposes each slash-separated song as its own name so the

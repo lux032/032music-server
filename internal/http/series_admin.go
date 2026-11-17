@@ -64,6 +64,7 @@ type seriesSuggestionCard struct {
 	SeriesBTitle       string
 	DefaultTitleChoice string // "a" | "b"（NamingMode=="one" 时的默认选中）
 	DefaultKeepTitle   string // 默认保留的名字（展示用）
+	AI                 *aiDecisionView
 }
 
 // seriesSuggestionGroup 把“同一部作品出现在多条建议中”的建议收拢到一个

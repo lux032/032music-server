@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>AI 设置 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main">
+    <header class="browser-header">
+      <div>
+        <h1>AI 设置中心</h1>
+        <p class="result-count">集中配置全局 OpenAI 兼容模型服务、限流配额、AI 自动审核策略与全库用量；曲目打标、歌词翻译、别名补全、每日推荐与审核助手共用此处连接配置。</p>
+      </div>
+      <a class="secondary-button" href="/admin">返回控制台</a>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="feature-card audio-analysis-settings">
+      <p class="kicker">全局模型与审核策略</p>
+      <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/settings/ai" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+
+        <fieldset class="ai-tagging-fields">
+          <legend>模型服务（OpenAI 兼容接口）</legend>
+          <label>接口地址
+            <input name="base_url" value="{{.BaseURL}}" list="ai-settings-base-urls" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" spellcheck="false">
+          </label>
+          <datalist id="ai-settings-base-urls">
+            <option value="https://generativelanguage.googleapis.com/v1beta/openai">Google Gemini</option>
+            <option value="https://api.openai.com/v1">OpenAI</option>
+            <option value="https://api.deepseek.com/v1">DeepSeek</option>
+            <option value="https://dashscope.aliyuncs.com/compatible-mode/v1">通义千问</option>
+            <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+            <option value="http://127.0.0.1:11434/v1">Ollama（本地）</option>
+          </datalist>
+          <label>API Key
+            <input type="password" name="api_key" value="" placeholder="{{if .KeySet}}已设置（留空保持不变）{{else}}未设置{{end}}" autocomplete="new-password" spellcheck="false">
+          </label>
+          {{if .KeySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_api_key"> 清除已保存的 API Key</label>{{end}}
+          <div class="inline">
+            <label>日常主模型
+              <input name="model" value="{{.Model}}" placeholder="例如 gemini-2.5-flash-lite" spellcheck="false">
+              <small>用于全库 AI 打标、每日推荐等高频任务。</small>
+            </label>
+            <label>后备模型（可选）
+              <input name="fallback_model" value="{{.FallbackModel}}" placeholder="留空不回退，复用同一接口" spellcheck="false">
+              <small>主模型限流、超时、配额耗尽或不可用时自动切换。</small>
+            </label>
+            <label>强推理 / 复核模型（可选）
+              <input name="review_model" value="{{.ReviewModel}}" placeholder="例如 gemini-2.5-flash" spellcheck="false">
+              <small>用于打标复核；AI 审核助手默认优先使用此模型。</small>
+            </label>
+          </div>
+          <label class="ai-inline-check"><input type="checkbox" name="review_enabled" {{if .ReviewEnabled}}checked{{end}}> 启用 AI 打标低置信复核（把拿不准的曲目交给复核模型重标）</label>
+          <label>代理（可选）
+            <input type="password" name="proxy_url" value="" placeholder="{{if .ProxySet}}已设置（留空保持不变）{{else}}例如 http://192.168.1.2:7890；留空使用容器 HTTP(S)_PROXY{{end}}" autocomplete="new-password" spellcheck="false">
+          </label>
+          {{if .ProxySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_proxy"> 清除已保存的代理</label>{{end}}
+          <div class="inline">
+            <label>全局每分钟请求上限 (RPM)
+              <input type="number" name="rpm" min="1" max="10000" value="{{.RPM}}">
+            </label>
+            <label>并发数
+              <input type="number" name="concurrency" min="1" max="16" value="{{.Concurrency}}">
+            </label>
+            <label>思考强度
+              <select name="reasoning_effort">
+                <option value="" {{if eq .Reasoning ""}}selected{{end}}>不发送（模型默认）</option>
+                <option value="none" {{if eq .Reasoning "none"}}selected{{end}}>none（关闭思考）</option>
+                <option value="minimal" {{if eq .Reasoning "minimal"}}selected{{end}}>minimal</option>
+                <option value="low" {{if eq .Reasoning "low"}}selected{{end}}>low</option>
+                <option value="medium" {{if eq .Reasoning "medium"}}selected{{end}}>medium</option>
+                <option value="high" {{if eq .Reasoning "high"}}selected{{end}}>high</option>
+              </select>
+            </label>
+          </div>
+          <p class="result-count">AI 打标与 AI 审核共享上述 RPM 限流配额，避免并发请求触发服务商 429。</p>
+        </fieldset>
+
+        <fieldset class="ai-tagging-fields">
+          <legend>AI 初审与审核助手</legend>
+          <label class="ai-inline-check"><input type="checkbox" name="ai_review_enabled" {{if .Review.Enabled}}checked{{end}}> 开启 AI 初审（支持对新入库待审项自动预审，以及在审核页一键清理积压数据）</label>
+          <label class="ai-inline-check"><input type="checkbox" name="ai_review_inline" {{if .Review.InlineEnabled}}checked{{end}}> 自动增强 / 艺术家匹配进入人工审核前先交由 AI 初审（仅处理未确定项，不覆写已有人工意图与抑制记录）</label>
+          <label class="ai-inline-check"><input type="checkbox" name="ai_review_web" {{if .Review.WebSearchEnabled}}checked{{end}}> 第一轮信息不足且不确定时允许联网补证（复用 <a href="/admin/artist-aliases">中文别名补全</a> 的 DeepSeek 联网密钥{{if .DeepSeekWebReady}}，当前已就绪{{else}}，当前尚未配置联网密钥{{end}}）</label>
+          <label>审核专用模型覆盖（可选）
+            <input name="ai_review_model" value="{{.Review.Model}}" placeholder="留空则优先使用上方的复核模型，再回退日常主模型" spellcheck="false">
+          </label>
+          <div class="inline">
+            <label>专辑作品关联
+              <select name="album_mode">
+                <option value="off" {{if eq .Review.AlbumMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.AlbumMode "recommend"}}selected{{end}}>仅给建议（预勾选，人工点确认）</option>
+                <option value="auto" {{if eq .Review.AlbumMode "auto"}}selected{{end}}>分级自治（≥88 分自动确认）</option>
+              </select>
+            </label>
+            <label>曲目作品关联
+              <select name="track_mode">
+                <option value="off" {{if eq .Review.TrackMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.TrackMode "recommend"}}selected{{end}}>仅给建议（预选作品与用途）</option>
+                <option value="auto" {{if eq .Review.TrackMode "auto"}}selected{{end}}>分级自治（≥88 分自动确认）</option>
+              </select>
+            </label>
+            <label>作品对齐匹配
+              <select name="work_mode">
+                <option value="off" {{if eq .Review.WorkMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.WorkMode "recommend"}}selected{{end}}>仅给建议</option>
+                <option value="auto" {{if eq .Review.WorkMode "auto"}}selected{{end}}>分级自治（≥90 分且无占用自动对齐）</option>
+              </select>
+            </label>
+            <label>艺术家身份匹配
+              <select name="artist_mode">
+                <option value="off" {{if eq .Review.ArtistMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.ArtistMode "recommend"}}selected{{end}}>仅给建议</option>
+                <option value="auto" {{if eq .Review.ArtistMode "auto"}}selected{{end}}>分级自治（≥90 分且无冲突自动绑定）</option>
+              </select>
+            </label>
+            <label>复合署名拆分
+              <select name="credit_mode">
+                <option value="off" {{if eq .Review.CreditMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.CreditMode "recommend"}}selected{{end}}>仅给建议（页面一键应用拆分）</option>
+              </select>
+            </label>
+            <label>作品系列建议
+              <select name="series_mode">
+                <option value="off" {{if eq .Review.SeriesMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.SeriesMode "recommend"}}selected{{end}}>仅给建议（含合并命名预填）</option>
+                <option value="auto" {{if eq .Review.SeriesMode "auto"}}selected{{end}}>分级自治（≥92 分且无命名冲突自动合并）</option>
+              </select>
+            </label>
+          </div>
+          <p class="result-count">安全铁律：AI 永远不会自动写入“永久拒绝/抑制记录”。任何 AI 自动落库的条目都可在审核页一键撤销退回待审。</p>
+        </fieldset>
+
+        <button class="primary-button">保存全部 AI 设置</button>
+      </form>
+
+      <form class="ai-tagging-test" method="post" action="/admin/settings/ai/test">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button class="secondary-button"{{if not .Configured}} disabled{{end}}>测试连接与模型</button>
+        <span class="result-count">测试主模型、复核模型与审核模型是否正常响应结构化输出。</span>
+      </form>
+    </section>
+
+    <section class="feature-card">
+      <p class="kicker">各 AI 功能入口</p>
+      <div class="inline" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+        <a class="secondary-button" href="/admin/work-review">作品关联审核（含 AI 存量预审）→</a>
+        <a class="secondary-button" href="/admin/matches">艺术家匹配审核（含署名拆分）→</a>
+        <a class="secondary-button" href="/admin/ai-tagging">AI 曲库打标（{{if .TaggingEnabled}}已开启{{else}}未开启{{end}}）→</a>
+        <a class="secondary-button" href="/admin/lyrics-translations">AI 歌词翻译（{{if .TranslationEnabled}}已开启{{else}}未开启{{end}}）→</a>
+        <a class="secondary-button" href="/admin/artist-aliases">歌手中文别名补全（{{if .ArtistAliasSettings.Enabled}}已开启{{else}}未开启{{end}}）→</a>
+        <a class="secondary-button" href="/admin/daily-mixes">每日推荐 AI 主题 →</a>
+      </div>
+    </section>
+
+    {{if .Usage}}
+    <section class="feature-card ai-tagging-usage">
+      <p class="kicker">全库 AI 用量统计</p>
+      {{if .UsageTotal}}<p class="audio-analysis-line audio-analysis-meta">{{.UsageTotal}}</p>{{end}}
+      <table class="ai-tagging-table">
+        <thead><tr><th>模型</th><th>用途</th><th>请求</th><th>输入</th><th>缓存命中</th><th>输出</th><th>思考</th></tr></thead>
+        <tbody>
+          {{range .Usage}}<tr><td><code>{{.Model}}</code></td><td>{{.Purpose}}</td><td>{{.Requests}}</td><td>{{.Prompt}}</td><td>{{.Cached}}</td><td>{{.Completion}}</td><td>{{.Thinking}}</td></tr>{{end}}
+        </tbody>
+      </table>
+    </section>
+    {{end}}
+  </main>
+</body>
+</html>

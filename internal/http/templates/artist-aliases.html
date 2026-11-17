@@ -25,7 +25,7 @@
     <p class="field-hint">开启后只自动处理此版本上线后新增、且已确认外部身份的歌手。已有歌手请手动启动存量匹配。</p>
     <label>DeepSeek 联网 API Key<input type="password" name="deepseek_key" autocomplete="new-password" spellcheck="false" placeholder="{{if .KeySet}}已设置或可复用现有 DeepSeek 密钥，留空保持{{else}}填写 DeepSeek 官方 API Key{{end}}"></label>
     {{if .KeySet}}<label class="alias-key-clear"><input type="checkbox" name="clear_key">清除本模块保存的联网密钥</label>{{end}}
-    <p class="field-hint">DeepSeek 负责搜索和读取网页，名称判断复用 <a href="/admin/ai-tagging">现有 AI 模型设置</a>。{{if not .AIConfigured}}<strong>请先配置模型服务。</strong>{{end}}歌手名称、外部身份和候选网页内容会发送给相应服务。</p>
+    <p class="field-hint">DeepSeek 负责搜索和读取网页，名称判断复用 <a href="/admin/settings/ai">全局 AI 模型设置</a>。{{if not .AIConfigured}}<strong>请先配置模型服务。</strong>{{end}}歌手名称、外部身份和候选网页内容会发送给相应服务。</p>
     <div class="inline">
      <label>每位歌手每轮搜索上限<input type="number" name="search_limit" min="1" max="10" value="{{.Settings.SearchLimit}}" required></label>
      <label>每位歌手每轮网页读取上限<input type="number" name="fetch_limit" min="1" max="20" value="{{.Settings.FetchLimit}}" required></label>

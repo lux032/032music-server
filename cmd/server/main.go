@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/acquisition"
+	"github.com/lux032/032music-server/internal/aiclient"
+	"github.com/lux032/032music-server/internal/aireview"
 	"github.com/lux032/032music-server/internal/analysis"
 	"github.com/lux032/032music-server/internal/artistaliases"
 	"github.com/lux032/032music-server/internal/config"
@@ -156,6 +158,28 @@ func run() error {
 		},
 	})
 	app.SetAudioAnalysis(analysisService)
+	sharedAILimiter := aiclient.NewLimiter(60)
+	if aiSt, aiErr := db.AISettings(context.Background()); aiErr == nil && aiSt.RequestsPerMinute > 0 {
+		sharedAILimiter.SetRate(aiSt.RequestsPerMinute)
+	}
+	app.SetSharedAILimiter(sharedAILimiter)
+	aiReviewService := aireview.New(db, logger, aireview.Options{
+		Limiter: sharedAILimiter,
+		OnWorkConfirmed: func(_ context.Context, workID int64) {
+			enrichmentManager.QueueWorkPoster(workID)
+		},
+		OnArtistConfirmed: func(ctx context.Context, artistID int64) {
+			if imgErr := enrichmentManager.CacheArtistImage(ctx, artistID); imgErr != nil {
+				logger.Warn("ai artist image cache failed", "artistId", artistID, "error", imgErr)
+			}
+			if bioErr := enrichmentManager.RefreshArtistBiographies(ctx, artistID, false); bioErr != nil {
+				logger.Debug("ai artist biography refresh", "artistId", artistID, "error", bioErr)
+			}
+		},
+	})
+	app.SetAIReview(aiReviewService)
+	enrichmentManager.SetInlineAIReviewer(aiReviewService.EvaluateInline)
+
 	taggingService = tagging.New(db, logger, tagging.Options{
 		AudioActive: func(ctx context.Context) bool {
 			if !analysisService.Configured() {
@@ -163,6 +187,10 @@ func run() error {
 			}
 			settings, err := db.AudioAnalysisSettings(ctx)
 			return err == nil && settings.Enabled
+		},
+		RateWait: func(ctx context.Context, rpm int) error {
+			sharedAILimiter.SetRate(rpm)
+			return sharedAILimiter.Wait(ctx)
 		},
 	})
 	app.SetAITagging(taggingService)

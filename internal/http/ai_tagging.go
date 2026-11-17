@@ -216,8 +216,6 @@ type aiTaggingPageData struct {
 	Sample        *storage.AISampleRun
 }
 
-var aiPurposeLabels = map[string]string{"tag": "打标", "review": "复核", "sample": "抽样对比", "test": "连接测试", "mix": "歌单主题与标题", "translate": "歌词翻译", "playlist": "AI 灵感歌单", "artist_alias": "中文别名补全"}
-
 func chipsFor(tags []storage.TrackTag, kind string) []aiTagChip {
 	var out []aiTagChip
 	for _, t := range tags {
@@ -250,24 +248,7 @@ func (a *App) handleAITaggingPage(w http.ResponseWriter, r *http.Request) {
 	data := aiTaggingPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: r.URL.Query().Get("notice"), Status: snap, View: buildAITaggingView(snap),
 		BaseURL: st.BaseURL, Model: st.Model, FallbackModel: st.FallbackModel, ReviewModel: st.ReviewModel, ReviewEnabled: st.ReviewEnabled, KeySet: st.APIKey != "", ProxySet: st.ProxyURL != "",
 		Reasoning: st.ReasoningEffort, IncludeLyrics: st.IncludeLyrics, RPM: st.RequestsPerMinute, Concurrency: st.Concurrency, FirstEnabled: st.FirstEnabledAt}
-	usage, err := a.store.AIUsageTotals(ctx, "")
-	if err != nil {
-		a.logger.Error("AI usage", "error", err)
-	}
-	var total storage.AIUsage
-	for _, u := range usage {
-		total.Add(u.Usage)
-		data.Usage = append(data.Usage, aiUsageRowView{Model: u.Model, Purpose: aiPurposeLabels[u.Purpose], Requests: u.Usage.Requests,
-			Prompt: storage.FormatTokenCount(u.Usage.PromptTokens), Cached: storage.FormatTokenCount(u.Usage.CachedTokens),
-			Completion: storage.FormatTokenCount(u.Usage.CompletionTokens), Thinking: storage.FormatTokenCount(u.Usage.ReasoningTokens)})
-	}
-	if total.Requests > 0 {
-		data.UsageTotal = fmt.Sprintf("累计 %d 次请求 · 输入 %s（其中缓存命中 %s）· 输出 %s", total.Requests,
-			storage.FormatTokenCount(total.PromptTokens), storage.FormatTokenCount(total.CachedTokens), storage.FormatTokenCount(total.CompletionTokens))
-		if total.ReasoningTokens > 0 {
-			data.UsageTotal += fmt.Sprintf("（含思考 %s，按输出计费）", storage.FormatTokenCount(total.ReasoningTokens))
-		}
-	}
+	data.Usage, data.UsageTotal = a.buildAIUsageView(ctx)
 	if data.Failures, err = a.store.TaggingFailures(ctx, 50); err != nil {
 		a.logger.Error("AI tagging failures", "error", err)
 	}

@@ -557,6 +557,16 @@ func (m *Manager) generateSeriesSuggestions(ctx context.Context, runID int64, se
 	if err = m.store.ReplaceSeriesSuggestions(ctx, runID, inputs, processedList); err != nil {
 		return 0, err
 	}
+	if m.inlineAI != nil && len(inputs) > 0 {
+		if ids, listErr := m.store.PendingSeriesSuggestionIDs(ctx); listErr == nil {
+			for _, id := range ids {
+				if ctx.Err() != nil {
+					break
+				}
+				m.inlineAI(ctx, storage.AITargetSeriesSuggestion, id)
+			}
+		}
+	}
 	return len(inputs), nil
 }
 

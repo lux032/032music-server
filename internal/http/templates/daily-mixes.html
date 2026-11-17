@@ -114,7 +114,7 @@
               <input type="number" name="regenerate_limit" min="0" max="10" value="{{.Settings.RegenerateLimit}}">
             </label>
           </div>
-          <label class="ai-inline-check"><input type="checkbox" name="llm_titles" {{if .Settings.LLMTitles}}checked{{end}}> 让模型挑选主题并起标题{{if not .AIConfigured}}（需要先在 <a href="/admin/ai-tagging">AI 打标</a> 中配置模型服务；未配置时使用模板标题）{{end}}</label>
+          <label class="ai-inline-check"><input type="checkbox" name="llm_titles" {{if .Settings.LLMTitles}}checked{{end}}> 让模型挑选主题并起标题{{if not .AIConfigured}}（需要先在 <a href="/admin/settings/ai">AI 设置</a> 中配置模型服务；未配置时使用模板标题）{{end}}</label>
           <label class="ai-inline-check"><input type="checkbox" name="allow_sad" {{if .Settings.AllowSad}}checked{{end}}> 允许伤感类曲目进入歌单（默认不允许）</label>
         </fieldset>
         <p class="result-count">推荐日在每天的预生成时刻切换：之前打开看到的仍是前一天的歌单。情绪/风格类主题约占三分之二，其余为作品、创作者、歌手电台和“好久不见”。每个歌单至少 12 首、60–120 分钟；同一歌手最多 3 首、同一专辑最多 2 首，当天各歌单之间不重复。</p>

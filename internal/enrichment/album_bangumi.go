@@ -401,6 +401,9 @@ func (m *Manager) enrichBangumiAlbum(ctx context.Context, runID int64, album sto
 			return outcome, nil
 		}
 	}
+	if setting.AutoMatch && m.inlineAI != nil && m.inlineAI(ctx, storage.AITargetAlbumSubject, album.ID) {
+		return "succeeded", nil
+	}
 	return "review", nil
 }
 
