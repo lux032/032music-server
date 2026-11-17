@@ -53,7 +53,7 @@ func TestUnifiedSearchLargeLibrary(t *testing.T) {
 	s := largeSearchTestStore(t)
 	for _, query := range []string{"ナナヲアカリ", "no-such-artist", "Artist"} {
 		t.Run(query, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), largeSearchQueryTimeout)
 			defer cancel()
 			start := time.Now()
 			result, err := s.Search(ctx, SearchOptions{Query: query})
