@@ -632,9 +632,10 @@ func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request
 	}
 	sourceID := parseInt64(r.PathValue("id"))
 	candidateID := parseInt64(r.PathValue("candidate"))
-	returnTo := artistProfilePath(sourceID) + "&identityConflict=" + strconv.FormatInt(candidateID, 10)
+	defaultErrReturn := artistProfilePath(sourceID) + "&identityConflict=" + strconv.FormatInt(candidateID, 10)
+	errReturn := safeAdminReturnTo(r.FormValue("returnTo"), defaultErrReturn)
 	if r.FormValue("confirm") != "1" {
-		redirectWithNotice(w, r, returnTo, "请核对歌手并二次确认，尚未执行合并")
+		redirectWithNotice(w, r, errReturn, "请核对歌手并二次确认，尚未执行合并")
 		return
 	}
 	targetID := parseInt64(r.FormValue("expectedTarget"))
@@ -646,10 +647,11 @@ func (a *App) handleMergeIdentityConflict(w http.ResponseWriter, r *http.Request
 		} else {
 			a.logger.Error("merge identity conflict", "artistId", sourceID, "error", err)
 		}
-		redirectWithNotice(w, r, returnTo, message)
+		redirectWithNotice(w, r, errReturn, message)
 		return
 	}
-	redirectWithNotice(w, r, artistProfilePath(targetID), fmt.Sprintf("歌手合并完成（操作 #%d），可在合并历史回退；未新增或迁移候选身份绑定", operation))
+	successReturn := safeAdminReturnTo(r.FormValue("returnTo"), artistProfilePath(targetID))
+	redirectWithNotice(w, r, successReturn, fmt.Sprintf("歌手合并完成（操作 #%d），可在合并历史回退；未新增或迁移候选身份绑定", operation))
 }
 
 func (a *App) handleMergeHistory(w http.ResponseWriter, r *http.Request) {

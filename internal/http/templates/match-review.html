@@ -319,7 +319,23 @@
             </div>
             {{if or .Disambiguation .Country .ArtistType}}<small>{{.Disambiguation}}{{if and .Disambiguation (or .Country .ArtistType)}} · {{end}}{{.Country}}{{if and .Country .ArtistType}} · {{end}}{{.ArtistType}}</small>{{end}}
             {{with $conflict}}
-            <p class="conflict-hint-pill">⚠ 该身份已绑定至 <a href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">《{{.TargetName}}》</a>，如需合并请点击处理</p>
+            <div class="conflict-hint-pill">
+              <p class="conflict-hint-text">⚠ 该身份已绑定至 <a href="/admin/artists/{{.TargetArtistID}}?view=profile" target="_blank" rel="noopener noreferrer">《{{.TargetName}}》</a>（点击查看目标歌手）</p>
+              {{if .CanMerge}}
+              <div class="conflict-actions">
+                <form method="post" action="/admin/artists/{{$item.Artist.ID}}/identity-conflict/{{.CandidateID}}/merge">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
+                  <input type="hidden" name="confirm" value="1">
+                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                  <button type="submit" class="secondary-button compact-button">将 {{$item.Artist.Name}} 并入对方</button>
+                </form>
+                <a class="conflict-detail-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">去歌手页核对</a>
+              </div>
+              {{else}}
+              <p class="conflict-hint-text">当前状态不支持直接合并，请<a href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">前往歌手页核对</a></p>
+              {{end}}
+            </div>
             {{end}}
             <div class="candidate-actions">
               {{if not $conflict}}

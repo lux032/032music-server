@@ -3981,8 +3981,12 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .is-ai-recommended { background: color-mix(in oklab, var(--accent) 6%, transparent); border-color: var(--accent) !important; box-shadow: inset 3px 0 0 var(--accent); }
 .candidate-tieup-row.is-ai-picked { border-color: color-mix(in oklab, var(--accent) 55%, transparent); background: color-mix(in oklab, var(--accent) 7%, transparent); }
 .candidate-tieup-row.is-ai-unpicked { opacity: 0.58; }
-.conflict-hint-pill { margin: 2px 0; padding: 6px 10px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--warning) 12%, transparent); border: 1px solid color-mix(in oklab, var(--warning) 35%, transparent); color: var(--warning); font-size: var(--fs-xs); }
+.conflict-hint-pill { margin: 2px 0; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--warning) 12%, transparent); border: 1px solid color-mix(in oklab, var(--warning) 35%, transparent); color: var(--warning); font-size: var(--fs-xs); display: grid; gap: 6px; }
+.conflict-hint-text { margin: 0; line-height: 1.45; }
 .conflict-hint-pill a { color: var(--text); text-decoration: underline; font-weight: 600; }
+.conflict-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.conflict-actions form { margin: 0; }
+.conflict-detail-link { font-size: var(--fs-xs); font-weight: 500 !important; color: var(--muted) !important; }
 .ai-applied-list { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
 .ai-applied-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--line); }
 

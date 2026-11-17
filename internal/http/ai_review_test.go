@@ -313,3 +313,76 @@ func TestMatchReviewSourceLinksReturnToAndRejectAll(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchReviewIdentityConflictLinksAndDirectMerge(t *testing.T) {
+	store := credentialTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureLibrary(ctx, "Music", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := store.LibraryByRoot(ctx, "/music")
+	for i, name := range []string{"Amane", "Amane Oikawa"} {
+		if err := store.ImportTrack(ctx, storage.ImportInput{
+			LibraryID: lib.ID, RelativePath: fmt.Sprintf("C%d/01.flac", i), FileSize: 100, ModifiedAtNS: 1,
+			Metadata: metadata.AudioMetadata{
+				Title: fmt.Sprintf("Track %d", i), Album: fmt.Sprintf("Album %d", i), Artists: []string{name}, AlbumArtists: []string{name}, DiscNumber: 1, TrackNumber: 1,
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artists, _ := store.ListArtists(ctx, storage.Filters{})
+	var sourceID, targetID int64
+	for _, a := range artists {
+		switch a.Name {
+		case "Amane":
+			sourceID = a.ID
+		case "Amane Oikawa":
+			targetID = a.ID
+		}
+	}
+	if err := store.UpsertExternalArtistProfile(ctx, targetID, storage.ExternalArtistProfile{
+		Source: "musicbrainz", ExternalID: "mb-amane-oikawa", DisplayName: "Amane Oikawa",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceArtistCandidatesForSources(ctx, sourceID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-amane-oikawa", DisplayName: "Amane Oikawa", Score: 100},
+	}, []string{"musicbrainz"}); err != nil {
+		t.Fatal(err)
+	}
+	cands, _ := store.ArtistCandidates(ctx, sourceID)
+	candID := cands[0].ID
+
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	// Target artist name links directly to targetID, alongside direct merge action.
+	body := getAdmin(t, handler, cookie, "/admin/matches?q=Amane")
+	for _, want := range []string{
+		fmt.Sprintf(`href="/admin/artists/%d?view=profile" target="_blank" rel="noopener noreferrer">《Amane Oikawa》</a>`, targetID),
+		fmt.Sprintf(`/admin/artists/%d/identity-conflict/%d/merge`, sourceID, candID),
+		fmt.Sprintf(`name="expectedTarget" value="%d"`, targetID),
+		`将 Amane 并入对方`,
+		fmt.Sprintf(`href="/admin/artists/%d?view=profile&amp;identityConflict=%d"`, sourceID, candID),
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in match-review body", want)
+		}
+	}
+
+	// Submitting direct merge from match-review merges Amane -> Amane Oikawa and stays on returnTo.
+	rec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/identity-conflict/%d/merge", sourceID, candID), url.Values{
+		"expectedTarget": {strconv.FormatInt(targetID, 10)},
+		"confirm":        {"1"},
+		"returnTo":       {"/admin/matches?q=Amane"},
+	})
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/admin/matches?q=Amane&notice=") {
+		t.Fatalf("direct merge redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	detail, err := store.ArtistDetail(ctx, sourceID)
+	if err != nil || detail.MergedIntoID != targetID {
+		t.Fatalf("expected source merged into %d, got detail=%+v err=%v", targetID, detail, err)
+	}
+}
