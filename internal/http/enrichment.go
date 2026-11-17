@@ -29,6 +29,18 @@ type enrichmentWorkReview struct {
 	AI         *aiDecisionView
 }
 
+func (w enrichmentWorkReview) AIRecommendedCandidate() *storage.WorkMatchCandidate {
+	if w.AI == nil || w.AI.SelectedCandidateID <= 0 {
+		return nil
+	}
+	for i := range w.Candidates {
+		if w.Candidates[i].ID == w.AI.SelectedCandidateID {
+			return &w.Candidates[i]
+		}
+	}
+	return nil
+}
+
 type enrichmentArtistReview struct {
 	Artist     storage.Artist
 	Candidates []storage.ArtistRelationCandidate
@@ -85,6 +97,27 @@ func (c albumCandCard) IsWorkChecked(subjectID int64) bool {
 	return c.AI.SelectedWorks[subjectID]
 }
 
+func (c albumCandCard) HasAIPick() bool {
+	return c.IsAIRecCandidate() && len(c.AI.SelectedWorks) > 0
+}
+
+func (c albumCandCard) IsWorkAIPicked(subjectID int64) bool {
+	return c.HasAIPick() && c.AI.SelectedWorks[subjectID]
+}
+
+func (c albumCandCard) AIWorkNames() string {
+	if !c.HasAIPick() {
+		return ""
+	}
+	var names []string
+	for _, t := range c.Cand.Tieups {
+		if c.AI.SelectedWorks[t.SubjectID] {
+			names = append(names, "《"+t.Title+"》")
+		}
+	}
+	return strings.Join(names, "、")
+}
+
 type trackCandCard struct {
 	Ctx  workReviewCtx
 	Cand storage.TrackSubjectCandidate
@@ -109,6 +142,28 @@ func (c trackCandCard) EffectiveRole(subjectID int64, orig string) string {
 		}
 	}
 	return orig
+}
+
+func (c trackCandCard) HasAIPick() bool {
+	return c.IsAIRecCandidate() && len(c.AI.SelectedWorks) > 0
+}
+
+func (c trackCandCard) IsWorkAIPicked(subjectID int64) bool {
+	return c.HasAIPick() && c.AI.SelectedWorks[subjectID]
+}
+
+func (c trackCandCard) AIWorkSummary() string {
+	if !c.HasAIPick() {
+		return ""
+	}
+	var parts []string
+	for _, t := range c.Cand.Tieups {
+		if c.AI.SelectedWorks[t.SubjectID] {
+			role := c.EffectiveRole(t.SubjectID, t.Role)
+			parts = append(parts, "《"+t.Title+"》("+workRoleShortLabel(role)+")")
+		}
+	}
+	return strings.Join(parts, "、")
 }
 
 type workReviewAlbumGroup struct {

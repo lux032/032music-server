@@ -423,11 +423,11 @@ func (s *Store) ConfirmArtistCandidateByAI(ctx context.Context, artistID, candid
 			return err
 		}
 
-		rejectedIDs, err := candidateSiblingIDsTx(ctx, tx, `SELECT id FROM artist_match_candidates WHERE artist_id=? AND source=? AND id<>? AND status='candidate'`, artistID, p.Source, candidateID)
+		rejectedIDs, err := candidateSiblingIDsTx(ctx, tx, `SELECT id FROM artist_match_candidates WHERE artist_id=? AND id<>? AND status='candidate'`, artistID, candidateID)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND source=? AND status='candidate'`, candidateID, artistID, p.Source); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND status='candidate'`, candidateID, artistID); err != nil {
 			return err
 		}
 		if err = tx.Commit(); err != nil {

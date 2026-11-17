@@ -17,7 +17,35 @@ import (
 type matchReviewItem struct {
 	Artist     storage.Artist
 	Candidates []storage.ArtistCandidate
+	Conflicts  map[int64]storage.ArtistIdentityConflict
 	AI         *aiDecisionView
+}
+
+func (m matchReviewItem) ConflictFor(candidateID int64) *storage.ArtistIdentityConflict {
+	if m.Conflicts == nil {
+		return nil
+	}
+	if c, ok := m.Conflicts[candidateID]; ok {
+		return &c
+	}
+	return nil
+}
+
+func (m matchReviewItem) AIRecommendedCandidate() *storage.ArtistCandidate {
+	if m.AI == nil || m.AI.SelectedCandidateID <= 0 {
+		return nil
+	}
+	for i := range m.Candidates {
+		if m.Candidates[i].ID == m.AI.SelectedCandidateID {
+			return &m.Candidates[i]
+		}
+	}
+	return nil
+}
+
+func (m matchReviewItem) CanQuickAcceptAI() bool {
+	return m.AI != nil && m.AI.Action == storage.AIActionRecommendAccept &&
+		m.AIRecommendedCandidate() != nil && m.ConflictFor(m.AI.SelectedCandidateID) == nil
 }
 type artistReleaseGroup struct {
 	Title       string
@@ -686,7 +714,7 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	artistAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetArtistMatch, reviewIDs)
 	creditAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetCreditSplit, creditIDs)
 	for _, item := range page.Items {
-		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates}
+		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts}
 		if item.NeedsCreditCorrection {
 			if d, ok := creditAIMap[item.Artist.ID]; ok {
 				review.AI = buildAIDecisionView(d)

@@ -407,6 +407,53 @@ func TestArtistConflictAndSeriesSuggestion(t *testing.T) {
 	if srRes.Applied || srRes.Action != storage.AIActionRecommendAccept {
 		t.Fatalf("series suggestion default mode should recommend only, got %+v", srRes)
 	}
+
+	// Artist with both MusicBrainz and Last.fm candidates: AI confirming MB must
+	// clear the artist completely from PendingArtistReviewPage (no leftover Last.fm row).
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "D/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "Song C", Album: "Album C", Artists: []string{"Coro"}, AlbumArtists: []string{"Coro"}, DiscNumber: 1, TrackNumber: 1},
+	})
+	artists2, _ := s.ListArtists(ctx, storage.Filters{})
+	var coroID int64
+	for _, a := range artists2 {
+		if a.Name == "Coro" {
+			coroID = a.ID
+		}
+	}
+	_ = s.ReplaceArtistCandidatesForSources(ctx, coroID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-coro", DisplayName: "Coro", Score: 85},
+		{Source: "lastfm", ExternalID: "lfm-coro", DisplayName: "Coro Menap", Score: 82},
+	}, []string{"musicbrainz", "lastfm"})
+	coroCands, _ := s.ArtistCandidates(ctx, coroID)
+	var mbCandID int64
+	for _, c := range coroCands {
+		if c.Source == "musicbrainz" {
+			mbCandID = c.ID
+		}
+	}
+	svcCoro := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		Limiter: aiclient.NewLimiter(6000),
+		NewChat: func(storage.AISettings) (tagging.Chat, error) {
+			return fakeChat{fn: func(tagging.ChatRequest) (tagging.ChatResult, error) {
+				return tagging.ChatResult{
+					Content: `{"decision":"select","candidateId":` + itoa(mbCandID) + `,"confidence":95,"needWebSearch":false,"searchQuery":"","quote":"","reason":"名称吻合","evidence":[]}`,
+					Usage:   storage.AIUsage{Requests: 1},
+				}, nil
+			}}, nil
+		},
+	})
+	coroRes, err := svcCoro.EvaluateTarget(ctx, storage.AITargetArtistMatch, coroID, false)
+	if err != nil || !coroRes.Applied {
+		t.Fatalf("expected coro auto confirm, got %+v err=%v", coroRes, err)
+	}
+	page, err := s.PendingArtistReviewPage(ctx, storage.ArtistReviewFilter{Query: "Coro", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("confirmed artist should disappear from pending review page, got %+v", page.Items)
+	}
 }
 
 func itoa(v int64) string {

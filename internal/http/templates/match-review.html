@@ -275,23 +275,43 @@
           <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
         </header>
         {{with $item.AI}}
-        <div class="ai-decision-banner tone-{{.BadgeTone}}" style="margin-bottom:10px;">
-          <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
-          <span>{{.Reason}}</span>
-          {{if .WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
-        </div>
+        <aside class="ai-decision-banner tone-{{.BadgeTone}}">
+          <div class="ai-decision-main">
+            <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
+            {{with $item.AIRecommendedCandidate}}
+            <span class="ai-target-pointer">推荐指向：<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）</span>
+            {{end}}
+            <p class="ai-decision-reason">{{.Reason}}{{if .WebSearched}} <span class="muted">（已联网核验）</span>{{end}}</p>
+          </div>
+          {{if $item.CanQuickAcceptAI}}
+          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.SelectedCandidateID}}" class="ai-quick-accept-form">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <button type="submit" class="primary-button">采纳 AI 推荐</button>
+          </form>
+          {{end}}
+        </aside>
         {{end}}
         <div>
           {{range $item.Candidates}}
-          <section{{if and $item.AI (eq $item.AI.SelectedCandidateID .ID)}} class="is-ai-recommended"{{end}}>
-            <b>{{.DisplayName}}</b><span class="status-badge warning">待审核</span>
-            <span>{{.Source}} · 置信度 {{.Score}}</span>
-            <small>{{.Disambiguation}} {{.Country}} {{.ArtistType}}</small>
+          {{$isRec := and $item.AI (eq $item.AI.SelectedCandidateID .ID)}}
+          {{$conflict := $item.ConflictFor .ID}}
+          <section{{if $isRec}} class="is-ai-recommended"{{end}}>
+            <div class="candidate-head-row">
+              <b>{{.DisplayName}}</b>
+              {{if $isRec}}<span class="status-badge ai-rec-pill">★ AI 推荐</span>{{else}}<span class="status-badge warning">待审核</span>{{end}}
+            </div>
+            <span>{{.Source}} · 匹配分 {{.Score}}</span>
+            {{if or .Disambiguation .Country .ArtistType}}<small>{{.Disambiguation}}{{if and .Disambiguation (or .Country .ArtistType)}} · {{end}}{{.Country}}{{if and .Country .ArtistType}} · {{end}}{{.ArtistType}}</small>{{end}}
+            {{with $conflict}}
+            <p class="conflict-hint-pill">⚠ 该身份已绑定至 <a href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">《{{.TargetName}}》</a>，如需合并请点击处理</p>
+            {{end}}
             <div class="candidate-actions">
+              {{if not $conflict}}
               <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button>确认</button>
+                <button{{if $isRec}} class="primary-button"{{end}}>确认</button>
               </form>
+              {{end}}
               <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <button class="secondary-button">拒绝</button>
@@ -328,21 +348,25 @@
           <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
         </header>
         {{if $item.AI}}
-        <div class="ai-decision-banner tone-{{$item.AI.BadgeTone}}" style="margin:8px 0;">
-          <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">
-            {{if $item.AI.CreditIsComposite}}AI 建议拆分 · {{$item.AI.Confidence}}%{{else if eq $item.AI.Action "recommend_reject"}}AI 判定非复合署名 · {{$item.AI.Confidence}}%{{else}}AI 不确定 · {{$item.AI.Confidence}}%{{end}}
-          </span>
-          <span>{{$item.AI.Reason}}</span>
-        </div>
-        {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
-        <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="candidate-actions" style="margin-top:8px;align-items:center;gap:10px;flex-wrap:wrap;">
-          <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-          <input type="hidden" name="returnTo" value="/admin/matches">
-          <span>拆分为：<strong>{{$item.AI.CreditPartsCSV}}</strong></span>
-          {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
-          <button type="submit" class="primary-button">一键应用拆分到关联曲目</button>
-        </form>
-        {{end}}
+        <aside class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
+          <div class="ai-decision-main">
+            <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">
+              {{if $item.AI.CreditIsComposite}}AI 建议拆分 · {{$item.AI.Confidence}}%{{else if eq $item.AI.Action "recommend_reject"}}AI 判定非复合署名 · {{$item.AI.Confidence}}%{{else}}AI 不确定 · {{$item.AI.Confidence}}%{{end}}
+            </span>
+            {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
+            <span class="ai-target-pointer">拆分结果：<strong>{{$item.AI.CreditPartsCSV}}</strong></span>
+            {{end}}
+            <p class="ai-decision-reason">{{$item.AI.Reason}}</p>
+          </div>
+          {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
+          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/matches">
+            {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
+            <button type="submit" class="primary-button">一键应用拆分到关联曲目</button>
+          </form>
+          {{end}}
+        </aside>
         {{else}}
         <p class="muted">疑似合作署名，需先修正艺术家关系。</p>
         {{end}}

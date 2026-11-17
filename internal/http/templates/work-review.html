@@ -295,17 +295,25 @@
           </form>
           <div class="work-align-candidates">
             {{if $item.AI}}
-            <div class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
-              <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">{{$item.AI.ActionLabel}} · {{$item.AI.Confidence}}%</span>
-              <span>{{$item.AI.Reason}}</span>
-              {{if $item.AI.WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
-            </div>
+            <aside class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
+              <div class="ai-decision-main">
+                <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">{{$item.AI.ActionLabel}} · {{$item.AI.Confidence}}%</span>
+                {{with $item.AIRecommendedCandidate}}
+                <span class="ai-target-pointer">推荐对齐：<strong>{{.Title}}</strong>{{if .TranslatedTitle}}（{{.TranslatedTitle}}）{{end}}</span>
+                {{end}}
+                <p class="ai-decision-reason">{{$item.AI.Reason}}{{if $item.AI.WebSearched}} <span class="muted">（已联网核验）</span>{{end}}</p>
+              </div>
+            </aside>
             {{end}}
             {{range $item.Candidates}}
-            <div class="work-align-option{{if and $item.AI (eq $item.AI.SelectedCandidateID .ID)}} is-ai-recommended{{end}}">
+            {{$isWorkRec := and $item.AI (eq $item.AI.SelectedCandidateID .ID)}}
+            <div class="work-align-option{{if $isWorkRec}} is-ai-recommended{{end}}">
               <span class="work-type-chip">{{with workTypeLabel .Type}}{{.}}{{else}}作品{{end}}</span>
               <div class="work-align-info">
-                <strong>{{.Title}}</strong>
+                <div class="candidate-head-row">
+                  <strong>{{.Title}}</strong>
+                  {{if $isWorkRec}}<span class="status-badge ai-rec-pill">★ AI 推荐对齐</span>{{end}}
+                </div>
                 {{if .TranslatedTitle}}<span class="cn-title">{{.TranslatedTitle}}</span>{{end}}
                 <div class="meta-line">
                   <span class="score-pill {{if lt .Score 50}}medium{{end}}">匹配分 {{.Score}} / 100</span>
@@ -347,11 +355,20 @@
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="album:{{.Cand.AlbumID}}:{{.Cand.ID}}" data-review-state-form="album-accept-{{.Cand.ID}}" data-review-album aria-label="选择专辑候选《{{.Cand.Title}}》"></label>
   {{if .AI}}
   {{if or (eq .AI.SelectedCandidateID .Cand.ID) (eq .AI.SelectedCandidateID 0)}}
-  <div class="ai-decision-banner tone-{{.AI.BadgeTone}}">
-    <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
-    <span>{{.AI.Reason}}</span>
-    {{if .AI.WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
-  </div>
+  <aside class="ai-decision-banner tone-{{.AI.BadgeTone}}">
+    <div class="ai-decision-main">
+      <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{if .IsAIRecCandidate}}★ AI 推荐此条目{{else}}{{.AI.ActionLabel}}{{end}} · {{.AI.Confidence}}%</span>
+      {{if .AIWorkNames}}<span class="ai-target-pointer">推荐勾选作品：<strong>{{.AIWorkNames}}</strong></span>{{end}}
+      <p class="ai-decision-reason">{{.AI.Reason}}{{if .AI.WebSearched}} <span class="muted">（已联网核验）</span>{{end}}</p>
+    </div>
+  </aside>
+  {{else}}
+  <aside class="ai-decision-banner tone-uncertain">
+    <div class="ai-decision-main">
+      <span class="ai-decision-chip tone-uncertain">非 AI 首选 · {{.AI.Confidence}}%</span>
+      <p class="ai-decision-reason">AI 在本组中更推荐另一条候选：{{.AI.Reason}}</p>
+    </div>
+  </aside>
   {{end}}
   {{end}}
   <div class="bgm-candidate-bar">
@@ -373,10 +390,10 @@
     <input type="hidden" name="returnTo" value="/admin/work-review?tab=albums&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
     <div class="candidate-tieup-list">
       {{range .Cand.Tieups}}
-      <div class="candidate-tieup-row">
+      <div class="candidate-tieup-row{{if $card.HasAIPick}}{{if $card.IsWorkAIPicked .SubjectID}} is-ai-picked{{else}} is-ai-unpicked{{end}}{{end}}">
         <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" {{if $card.IsWorkChecked .SubjectID}}checked {{end}}title="勾选以接受">
         <div class="tieup-work-info">
-          <strong>{{.Title}}</strong>
+          <strong>{{.Title}}{{if $card.IsWorkAIPicked .SubjectID}} <span class="status-badge ai-rec-pill">★ AI 勾选</span>{{end}}</strong>
           <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
         </div>
         <span class="format-pill">{{workTypeLabel .Type}}</span>
@@ -408,11 +425,20 @@
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="track:{{.Cand.TrackID}}:{{.Cand.ID}}" data-review-state-form="track-accept-{{.Cand.ID}}" aria-label="选择曲目候选《{{.Cand.TrackTitle}}》→《{{.Cand.Title}}》"></label>
   {{if .AI}}
   {{if or (eq .AI.SelectedCandidateID .Cand.ID) (eq .AI.SelectedCandidateID 0)}}
-  <div class="ai-decision-banner tone-{{.AI.BadgeTone}}">
-    <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
-    <span>{{.AI.Reason}}</span>
-    {{if .AI.WebSearched}}<span class="muted">（已联网核验）</span>{{end}}
-  </div>
+  <aside class="ai-decision-banner tone-{{.AI.BadgeTone}}">
+    <div class="ai-decision-main">
+      <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{if .IsAIRecCandidate}}★ AI 推荐此条目{{else}}{{.AI.ActionLabel}}{{end}} · {{.AI.Confidence}}%</span>
+      {{if .AIWorkSummary}}<span class="ai-target-pointer">推荐关联与用途：<strong>{{.AIWorkSummary}}</strong></span>{{end}}
+      <p class="ai-decision-reason">{{.AI.Reason}}{{if .AI.WebSearched}} <span class="muted">（已联网核验）</span>{{end}}</p>
+    </div>
+  </aside>
+  {{else}}
+  <aside class="ai-decision-banner tone-uncertain">
+    <div class="ai-decision-main">
+      <span class="ai-decision-chip tone-uncertain">非 AI 首选 · {{.AI.Confidence}}%</span>
+      <p class="ai-decision-reason">AI 在本组中更推荐另一条候选：{{.AI.Reason}}</p>
+    </div>
+  </aside>
   {{end}}
   {{end}}
   <div class="review-track-line">
@@ -439,10 +465,10 @@
     <div class="candidate-tieup-list">
       {{range .Cand.Tieups}}
       {{$effRole := $card.EffectiveRole .SubjectID .Role}}
-      <div class="candidate-tieup-row">
+      <div class="candidate-tieup-row{{if $card.HasAIPick}}{{if $card.IsWorkAIPicked .SubjectID}} is-ai-picked{{else}} is-ai-unpicked{{end}}{{end}}">
         <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" {{if $card.IsWorkChecked .SubjectID}}checked {{end}}title="选择关联此作品">
         <div class="tieup-work-info">
-          <strong>{{.Title}}</strong>
+          <strong>{{.Title}}{{if $card.IsWorkAIPicked .SubjectID}} <span class="status-badge ai-rec-pill">★ AI 勾选</span>{{end}}</strong>
           <small>{{if .NameCN}}{{.NameCN}} · {{end}}{{workTypeLabel .Type}}{{if .Date}} · {{.Date}}{{end}}</small>
         </div>
         <span class="format-pill">{{workTypeLabel .Type}}</span>
@@ -483,10 +509,13 @@
 <div class="review-candidate-body series-suggestion-card is-selectable{{if and .AI (eq .AI.Action "recommend_accept")}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="series:{{.ID}}" data-review-state-form="series-accept-{{.ID}}" aria-label="选择系列建议《{{.WorkA.Title}}》与《{{.WorkB.Title}}》"></label>
   {{if .AI}}
-  <div class="ai-decision-banner tone-{{.AI.BadgeTone}}">
-    <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
-    <span>{{.AI.Reason}}{{if .AI.SuggestedTitle}}（建议系列名：《{{.AI.SuggestedTitle}}》）{{end}}</span>
-  </div>
+  <aside class="ai-decision-banner tone-{{.AI.BadgeTone}}">
+    <div class="ai-decision-main">
+      <span class="ai-decision-chip tone-{{.AI.BadgeTone}}">{{.AI.ActionLabel}} · {{.AI.Confidence}}%</span>
+      {{if .AI.SuggestedTitle}}<span class="ai-target-pointer">建议系列名：<strong>《{{.AI.SuggestedTitle}}》</strong></span>{{end}}
+      <p class="ai-decision-reason">{{.AI.Reason}}</p>
+    </div>
+  </aside>
   {{end}}
   <div class="series-suggestion-pair">
     <a href="/admin/works/{{.WorkA.ID}}" class="series-suggestion-work">

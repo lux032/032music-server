@@ -16,6 +16,7 @@ type ArtistReviewFilter struct {
 type ArtistReviewItem struct {
 	Artist                Artist
 	Candidates            []ArtistCandidate
+	Conflicts             map[int64]ArtistIdentityConflict
 	NeedsCreditCorrection bool
 }
 type ArtistReviewPage struct {
@@ -36,7 +37,7 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 		f.Offset = 0
 	}
 	page := ArtistReviewPage{Limit: f.Limit, Offset: f.Offset}
-	where := `ar.merged_into_artist_id IS NULL AND (?='' OR instr(lower(COALESCE(ar.user_display_name,ar.display_name)),lower(?))>0) AND EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate' AND (?='' OR c.source=?))`
+	where := `ar.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM ai_review_decisions d WHERE d.target_kind='artist_match' AND d.target_id=ar.id AND d.applied=1 AND d.reverted=0) AND (?='' OR instr(lower(COALESCE(ar.user_display_name,ar.display_name)),lower(?))>0) AND EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate' AND (?='' OR c.source=?))`
 	args := []any{strings.TrimSpace(f.Query), strings.TrimSpace(f.Query), f.Source, f.Source}
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artists ar WHERE `+where, args...).Scan(&page.Total); err != nil {
 		return page, err
@@ -85,6 +86,12 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 		}
 		i := positions[c.ArtistID]
 		page.Items[i].Candidates = append(page.Items[i].Candidates, c)
+		if conflict, conflictErr := artistIdentityConflict(ctx, s.db, c.ArtistID, c.ID); conflictErr == nil {
+			if page.Items[i].Conflicts == nil {
+				page.Items[i].Conflicts = map[int64]ArtistIdentityConflict{}
+			}
+			page.Items[i].Conflicts[c.ID] = conflict
+		}
 	}
 	return page, candidates.Err()
 }
