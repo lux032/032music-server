@@ -1147,3 +1147,79 @@ func TestRefreshArtistBiographiesNoLanguages(t *testing.T) {
 		t.Fatal("empty language list must not touch the network")
 	}
 }
+
+func TestArtistBiographyBackfillConfirmedLastFMOnly(t *testing.T) {
+	bt := newBioTransport()
+	bt.lastfmBody = bioLastFMBody
+	manager, artist := bioBackfillManager(t, bt, "Local Alias Name")
+	ctx := context.Background()
+	enableBackfillSource(t, manager.store, "lastfm", true)
+	if err := manager.store.UpsertExternalArtistProfile(ctx, artist, storage.ExternalArtistProfile{
+		Source:      "lastfm",
+		ExternalID:  "https://www.last.fm/music/Confirmed+LastFM+Artist",
+		DisplayName: "Confirmed LastFM Artist",
+		PageURL:     "https://www.last.fm/music/Confirmed+LastFM+Artist",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var queries []url.Values
+	bt.onRequest = func(r *http.Request) {
+		if strings.Contains(r.URL.Host, "audioscrobbler.com") {
+			mu.Lock()
+			queries = append(queries, r.URL.Query())
+			mu.Unlock()
+		}
+	}
+	runID, err := manager.StartArtistBiographyBackfill(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitBioBackfillRun(t, manager.store, runID)
+	manager.Wait()
+	if finished.Status != "completed" || finished.Filled != 1 {
+		t.Fatalf("run=%+v", finished)
+	}
+	if bt.mbReqs.Load()+bt.wikidataReqs.Load()+bt.wikiReqs.Load() != 0 {
+		t.Fatalf("Last.fm-only identity must not query MB/Wikidata/Wikipedia, got mb=%d wikidata=%d wiki=%d", bt.mbReqs.Load(), bt.wikidataReqs.Load(), bt.wikiReqs.Load())
+	}
+	mu.Lock()
+	if len(queries) != 3 {
+		mu.Unlock()
+		t.Fatalf("lastfm requests=%d, want 3", len(queries))
+	}
+	for _, q := range queries {
+		if q.Get("artist") != "Confirmed LastFM Artist" || q.Get("autocorrect") != "0" {
+			mu.Unlock()
+			t.Fatalf("expected exact confirmed name with autocorrect=0, got %v", q)
+		}
+	}
+	mu.Unlock()
+
+	// Confirmed Last.fm profile storing a UUID MBID anchors Last.fm requests via mbid.
+	artistUUID := bioImportArtist(t, manager.store, "Local UUID Artist")
+	const uuidID = "11111111-1111-4111-8111-111111111111"
+	if err := manager.store.UpsertExternalArtistProfile(ctx, artistUUID, storage.ExternalArtistProfile{
+		Source:      "lastfm",
+		ExternalID:  uuidID,
+		DisplayName: "Confirmed UUID Artist",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	queries = nil
+	mu.Unlock()
+	if err := manager.RefreshArtistBiographies(ctx, artistUUID, true); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(queries) != 3 {
+		t.Fatalf("uuid lastfm requests=%d, want 3", len(queries))
+	}
+	for _, q := range queries {
+		if q.Get("mbid") != uuidID || q.Get("artist") != "" {
+			t.Fatalf("expected mbid-anchored query without artist param, got %v", q)
+		}
+	}
+}

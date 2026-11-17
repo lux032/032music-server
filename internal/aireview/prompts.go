@@ -120,8 +120,9 @@ Rules:
 2. Only pick candidateId from the input candidates.
 3. If needsSplit=true or a matching candidate has conflictOwnerId > 0, NEVER return decision="select" with high confidence; return decision="uncertain" and explain the split or identity conflict in reason.
 4. Use sampleAlbums, sampleTracks, country, artistType, disambiguation, aliases, and tags to disambiguate homonymous artists across Japanese/Chinese/Western scenes and romanized vs native scripts.
-5. Set decision="reject_all" if all candidates clearly belong to different artists. Set needWebSearch=true with a short searchQuery only when webPages are absent and homonymous ambiguity cannot be resolved from local releases.
-6. Write reason and evidence in concise Simplified Chinese.`
+5. Prefer source="musicbrainz" over source="lastfm" whenever candidates from both sources accurately represent the same artist (MusicBrainz enables alias, Wikidata, and Wikipedia enrichment); only select source="lastfm" if no accurate MusicBrainz candidate is present.
+6. Set decision="reject_all" if all candidates clearly belong to different artists. Set needWebSearch=true with a short searchQuery only when webPages are absent and homonymous ambiguity cannot be resolved from local releases.
+7. Write reason and evidence in concise Simplified Chinese.`
 
 const creditSplitPrompt = `You analyze a music artist display string flagged as a potential composite collaboration credit.
 Input JSON contains name, sampleTracks, sampleAlbums, and existingArtists in the library.

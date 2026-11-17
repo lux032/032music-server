@@ -163,6 +163,54 @@ func (s *Store) ArtistBiographyIdentity(ctx context.Context, artistID int64) (Ar
 	return v, err
 }
 
+// ArtistBiographySourceIdentity captures whichever confirmed identity drives
+// artist biography lookup along the merge chain: confirmed MusicBrainz MBID
+// takes priority (unlocking Wikipedia + MBID-anchored Last.fm), falling back to
+// an explicitly confirmed Last.fm profile when no MusicBrainz identity exists.
+type ArtistBiographySourceIdentity struct {
+	OwnerID     int64
+	Source      string // "musicbrainz" or "lastfm"
+	ExternalID  string
+	DisplayName string
+}
+
+type biographyRowQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func resolveArtistBiographySource(ctx context.Context, q biographyRowQuerier, artistID int64) (ArtistBiographySourceIdentity, error) {
+	var owner int64
+	var mbid string
+	err := q.QueryRowContext(ctx, artistConfirmedIdentitySQL, artistID, artistID, artistID).Scan(&owner, &mbid)
+	if err == nil && mbid != "" {
+		return ArtistBiographySourceIdentity{OwnerID: owner, Source: "musicbrainz", ExternalID: mbid}, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ArtistBiographySourceIdentity{}, err
+	}
+	var lfOwner int64
+	var lfExtID, lfName string
+	err = q.QueryRowContext(ctx, artistConfirmedLastFMIdentitySQL, artistID, artistID, artistID).Scan(&lfOwner, &lfExtID, &lfName)
+	if err != nil {
+		return ArtistBiographySourceIdentity{}, err
+	}
+	if lfExtID == "" && lfName == "" {
+		return ArtistBiographySourceIdentity{}, sql.ErrNoRows
+	}
+	return ArtistBiographySourceIdentity{
+		OwnerID:     lfOwner,
+		Source:      "lastfm",
+		ExternalID:  lfExtID,
+		DisplayName: lfName,
+	}, nil
+}
+
+// ArtistBiographySource resolves the highest-priority confirmed biography
+// identity (MusicBrainz first, then confirmed Last.fm) along the merge chain.
+func (s *Store) ArtistBiographySource(ctx context.Context, artistID int64) (ArtistBiographySourceIdentity, error) {
+	return resolveArtistBiographySource(ctx, s.db, artistID)
+}
+
 // ArtistBiographyFoundExists 报告规范歌手（含合并来源继承）是否已有可用
 // 的 found 简介版本行，供补全项区分 filled/missing 终态。
 func (s *Store) ArtistBiographyFoundExists(ctx context.Context, artistID int64) (bool, error) {
@@ -180,6 +228,20 @@ func (s *Store) ArtistBiographyFoundExists(ctx context.Context, artistID int64) 
 // ErrArtistBiographyBackfillState，调用方按 skipped_state 处理。
 func (s *Store) UpsertArtistBiographyGuarded(ctx context.Context, artistID, ownerID int64, expectedMBID string, value ArtistBiography, c *ArtistBiographyBackfillCheckpoint) error {
 	if expectedMBID == "" || ownerID == 0 {
+		return ErrArtistBiographyBackfillState
+	}
+	return s.UpsertArtistBiographyForIdentityGuarded(ctx, artistID, ArtistBiographySourceIdentity{
+		OwnerID:    ownerID,
+		Source:     "musicbrainz",
+		ExternalID: expectedMBID,
+	}, value, c)
+}
+
+// UpsertArtistBiographyForIdentityGuarded validates both backfill checkpoint
+// state and the resolved confirmed identity snapshot (MusicBrainz or Last.fm)
+// inside a single write transaction before persisting a biography row.
+func (s *Store) UpsertArtistBiographyForIdentityGuarded(ctx context.Context, artistID int64, expected ArtistBiographySourceIdentity, value ArtistBiography, c *ArtistBiographyBackfillCheckpoint) error {
+	if expected.OwnerID == 0 || expected.Source == "" || (expected.ExternalID == "" && expected.DisplayName == "") {
 		return ErrArtistBiographyBackfillState
 	}
 	value.Source = strings.ToLower(strings.TrimSpace(value.Source))
@@ -210,20 +272,14 @@ func (s *Store) UpsertArtistBiographyGuarded(ctx context.Context, artistID, owne
 	if !canonical {
 		return ErrArtistBiographyBackfillState
 	}
-	// P2-3：事务内以与 ArtistBiographyIdentity 相同的 CTE 重解当前生效身份，
-	// 要求仍等于快照 (ownerID, expectedMBID)。网络窗口内规范歌手本行被确认
-	// 了（优先级更高的）本行身份、属主身份被解除/改认、或合并链脱链时，
-	// 迟到的旧身份简介一律拒绝，绝不覆盖新身份确认流程写入的内容。
-	var currentOwner int64
-	var currentMBID string
-	err = tx.QueryRowContext(ctx, artistConfirmedIdentitySQL, artistID, artistID, artistID).Scan(&currentOwner, &currentMBID)
+	current, err := resolveArtistBiographySource(ctx, tx, artistID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrArtistBiographyBackfillState
 	}
 	if err != nil {
 		return err
 	}
-	if currentOwner != ownerID || currentMBID != expectedMBID {
+	if current.OwnerID != expected.OwnerID || current.Source != expected.Source || current.ExternalID != expected.ExternalID {
 		return ErrArtistBiographyBackfillState
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_biographies(artist_id,source,language,biography,page_url,status) VALUES(?,?,?,?,?,?) ON CONFLICT(artist_id,source,language) DO UPDATE SET biography=excluded.biography,page_url=excluded.page_url,status=excluded.status,fetched_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, artistID, value.Source, value.Language, value.Biography, value.PageURL, value.Status); err != nil {
@@ -611,3 +667,5 @@ func (s *Store) ArtistBiographyBackfillRunsAwaitingAutoResume(ctx context.Contex
 }
 
 const artistConfirmedIdentitySQL = `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT p.artist_id,p.external_id FROM artist_external_profiles p WHERE p.source='musicbrainz' AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)) ORDER BY (p.artist_id=?) DESC,p.artist_id LIMIT 1`
+
+const artistConfirmedLastFMIdentitySQL = `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT p.artist_id,p.external_id,COALESCE(NULLIF(p.display_name,''),'') FROM artist_external_profiles p WHERE p.source='lastfm' AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)) ORDER BY (p.artist_id=?) DESC,p.artist_id LIMIT 1`

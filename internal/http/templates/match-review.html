@@ -132,7 +132,7 @@
 
     <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio">
       <div class="section-title"><div><h2>歌手简介补全</h2></div></div>
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">歌手 {{.BioBackfill.Total}} 位 · 缺简介待补 {{.BioBackfill.Missing}}。补全只使用歌手已确认的 MusicBrainz 身份抓取 Wikipedia / Last.fm 简介，不做身份匹配；未确认身份的歌手会计入跳过。人工填写的简介不会被覆盖；补全后按简介优先级展示，可在歌手页固定版本。</p>
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">歌手 {{.BioBackfill.Total}} 位 · 缺简介待补 {{.BioBackfill.Missing}}。补全使用已确认的 MusicBrainz 身份抓取 Wikipedia / Last.fm 简介（若仅确认 Last.fm 身份则按精确身份拉取 Last.fm 简介），不做身份匹配；未确认身份的歌手会计入跳过。人工填写的简介不会被覆盖；补全后按简介优先级展示，可在歌手页固定版本。</p>
       {{with .BioBackfill.Active}}
       <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
         <header>

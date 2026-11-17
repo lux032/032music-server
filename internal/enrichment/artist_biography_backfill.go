@@ -253,20 +253,24 @@ func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkp
 	if !wikipediaEnabled && !lastFMEnabled {
 		return "skipped_source_disabled", "所有简介来源均已禁用或未配置密钥", nil
 	}
-	wikipediaNeeded := wikipediaEnabled && m.biographySourceNeedsRefresh(ctx, item.ArtistID, "wikipedia", languages, settings.CacheDays)
+
+	identity, identityErr := m.store.ArtistBiographySource(ctx, item.ArtistID)
+	if identityErr != nil && !errors.Is(identityErr, sql.ErrNoRows) {
+		return "failed", identityErr.Error(), nil
+	}
+	if identityErr != nil {
+		// 无已确认外部身份（含合并继承）：计跳过、绝不匹配身份、零网络请求。
+		return "skipped_no_mbid", "未确认 MusicBrainz 身份，无法补全简介", nil
+	}
+	if identity.Source != "musicbrainz" && !lastFMEnabled {
+		return "skipped_no_mbid", "仅确认 Last.fm 身份且未启用 Last.fm 来源，无法补全简介", nil
+	}
+
+	wikipediaNeeded := identity.Source == "musicbrainz" && wikipediaEnabled && m.biographySourceNeedsRefresh(ctx, item.ArtistID, "wikipedia", languages, settings.CacheDays)
 	lastFMNeeded := lastFMEnabled && m.biographySourceNeedsRefresh(ctx, item.ArtistID, "lastfm", languages, settings.CacheDays)
 	if !wikipediaNeeded && !lastFMNeeded {
 		// M4：fresh missing 同样在缓存窗口内跳过，绝不每次点按钮反复打源。
 		return "skipped_fresh", "", nil
-	}
-
-	identity, identityErr := m.store.ArtistBiographyIdentity(ctx, item.ArtistID)
-	if identityErr != nil && !errors.Is(identityErr, sql.ErrNoRows) {
-		return "failed", identityErr.Error(), nil
-	}
-	if identityErr != nil || identity.MBID == "" {
-		// 无已确认 MBID（含合并继承）：计跳过、绝不匹配身份、零网络请求。
-		return "skipped_no_mbid", "未确认 MusicBrainz 身份，无法补全简介", nil
 	}
 
 	if m.testBioBackfillHook != nil {

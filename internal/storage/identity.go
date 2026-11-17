@@ -24,6 +24,7 @@ type ArtistMatchInput struct {
 	Name, TaggedMBID    string
 	LastFMQueryMBID     string
 	LastFMQueryCaptured bool
+	LastFMNoAutocorrect bool
 }
 
 type ArtistCandidate struct {

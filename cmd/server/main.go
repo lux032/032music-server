@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -169,11 +170,11 @@ func run() error {
 			enrichmentManager.QueueWorkPoster(workID)
 		},
 		OnArtistConfirmed: func(ctx context.Context, artistID int64) {
-			if imgErr := enrichmentManager.CacheArtistImage(ctx, artistID); imgErr != nil {
-				logger.Warn("ai artist image cache failed", "artistId", artistID, "error", imgErr)
+			if imgErr := enrichmentManager.RefreshConfirmedArtistImage(ctx, artistID); imgErr != nil && !errors.Is(imgErr, sql.ErrNoRows) {
+				logger.Warn("ai artist image refresh failed", "artistId", artistID, "error", enrichment.RedactSourceError(imgErr))
 			}
-			if bioErr := enrichmentManager.RefreshArtistBiographies(ctx, artistID, false); bioErr != nil {
-				logger.Debug("ai artist biography refresh", "artistId", artistID, "error", bioErr)
+			if bioErr := enrichmentManager.RefreshArtistBiographies(ctx, artistID, false); bioErr != nil && !errors.Is(bioErr, sql.ErrNoRows) && !errors.Is(bioErr, enrichment.ErrNoBiographyLanguages) {
+				logger.Warn("ai artist biography refresh failed", "artistId", artistID, "error", enrichment.RedactSourceError(bioErr))
 			}
 		},
 	})

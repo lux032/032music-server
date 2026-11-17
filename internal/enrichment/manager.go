@@ -875,6 +875,9 @@ func (m *Manager) lastFMInfoLanguage(ctx context.Context, artist storage.ArtistM
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, err
 	}
 	query := url.Values{"method": {"artist.getinfo"}, "artist": {artist.Name}, "api_key": {setting.APIKey}, "format": {"json"}, "autocorrect": {"1"}, "lang": {normalizeLanguage(language)}}
+	if artist.LastFMNoAutocorrect {
+		query.Set("autocorrect", "0")
+	}
 	if mbid := artist.LastFMQueryMBID; mbid != "" {
 		query.Del("artist")
 		query.Set("mbid", mbid)
@@ -1041,20 +1044,29 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 	if err != nil {
 		return err
 	}
-	identity, identityErr := m.store.ArtistBiographyIdentity(ctx, canonicalID)
+	identity, identityErr := m.store.ArtistBiographySource(ctx, canonicalID)
 	if identityErr != nil && !errors.Is(identityErr, sql.ErrNoRows) {
 		return identityErr
 	}
-	if identityErr != nil || identity.MBID == "" {
+	if identityErr != nil {
 		return sql.ErrNoRows
 	}
-	// P1-2：Last.fm 简介请求锚定本次身份快照的 MBID（含合并继承来源），
-	// 绝不按名字 autocorrect；与事务守卫使用同一快照，也消除了本行身份
-	// 场景的“二次读取”不一致（LastFMQueryCaptured 使 ArtistMatchQueryContext
-	// 不再回读）。
-	artist.LastFMQueryMBID, artist.LastFMQueryCaptured = identity.MBID, true
+	if identity.Source != "musicbrainz" {
+		// Wikipedia lookup relies on MusicBrainz url-rels -> Wikidata; when only
+		// a Last.fm identity is confirmed, restrict to anchored Last.fm bios.
+		wikipediaNeeded = false
+		if !lastFMNeeded {
+			if lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != "" {
+				return nil
+			}
+			return sql.ErrNoRows
+		}
+	}
+	if !configureArtistForBiographySource(&artist, identity) {
+		return sql.ErrNoRows
+	}
 	upsert := func(value storage.ArtistBiography) error {
-		return m.store.UpsertArtistBiographyGuarded(ctx, canonicalID, identity.OwnerID, identity.MBID, value, checkpoint)
+		return m.store.UpsertArtistBiographyForIdentityGuarded(ctx, canonicalID, identity, value, checkpoint)
 	}
 
 	var wikidataResource string
@@ -1064,7 +1076,7 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 		mbSetting, settingErr := m.store.MetadataSourceSetting(ctx, "musicbrainz")
 		if settingErr == nil {
 			var value mbArtistResponse
-			endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(identity.MBID) + "?inc=url-rels&fmt=json"
+			endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(identity.ExternalID) + "?inc=url-rels&fmt=json"
 			if lookupErr := m.mbRequest(ctx, endpoint, mbSetting, &value); lookupErr != nil {
 				if asRateLimited(lookupErr) != nil {
 					return lookupErr
@@ -1163,6 +1175,77 @@ func (m *Manager) biographySourceNeedsRefresh(ctx context.Context, artistID int6
 		}
 	}
 	return false
+}
+
+func configureArtistForBiographySource(artist *storage.ArtistMatchInput, identity storage.ArtistBiographySourceIdentity) bool {
+	if artist == nil {
+		return false
+	}
+	if identity.Source == "musicbrainz" {
+		if identity.ExternalID == "" {
+			return false
+		}
+		artist.LastFMQueryMBID = identity.ExternalID
+		artist.LastFMQueryCaptured = true
+		artist.LastFMNoAutocorrect = false
+		return true
+	}
+	if identity.Source == "lastfm" {
+		artist.LastFMQueryCaptured = true
+		if isUUIDString(identity.ExternalID) {
+			artist.LastFMQueryMBID = strings.TrimSpace(identity.ExternalID)
+			artist.LastFMNoAutocorrect = false
+			return true
+		}
+		name := strings.TrimSpace(identity.DisplayName)
+		if name == "" {
+			name = lastFMNameFromExternalID(identity.ExternalID)
+		}
+		if name == "" {
+			return false
+		}
+		artist.Name = name
+		artist.LastFMQueryMBID = ""
+		artist.LastFMNoAutocorrect = true
+		return true
+	}
+	return false
+}
+
+func isUUIDString(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 36 {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func lastFMNameFromExternalID(externalID string) string {
+	idx := strings.Index(externalID, "/music/")
+	if idx < 0 {
+		return ""
+	}
+	slug := externalID[idx+len("/music/"):]
+	if q := strings.IndexAny(slug, "?#"); q >= 0 {
+		slug = slug[:q]
+	}
+	slug = strings.Trim(slug, "/")
+	if decoded, err := url.PathUnescape(slug); err == nil {
+		return strings.TrimSpace(decoded)
+	}
+	return strings.TrimSpace(slug)
 }
 
 func (m *Manager) wikidataSitelinks(ctx context.Context, resource string) (map[string]string, error) {
