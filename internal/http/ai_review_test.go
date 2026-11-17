@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -200,5 +201,115 @@ func TestWorkReviewAndMatchReviewAIIntegration(t *testing.T) {
 	})
 	if splitRec.Code != http.StatusSeeOther || !strings.Contains(splitRec.Header().Get("Location"), url.QueryEscape("更新 1 首曲目")) {
 		t.Fatalf("unexpected credit split apply response: code=%d loc=%q", splitRec.Code, splitRec.Header().Get("Location"))
+	}
+}
+
+func TestMatchReviewSourceLinksReturnToAndRejectAll(t *testing.T) {
+	store := credentialTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureLibrary(ctx, "Music", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := store.LibraryByRoot(ctx, "/music")
+	for i, name := range []string{"Aimer", "Sawano"} {
+		if err := store.ImportTrack(ctx, storage.ImportInput{
+			LibraryID: lib.ID, RelativePath: fmt.Sprintf("T%d/01.flac", i), FileSize: 100, ModifiedAtNS: 1,
+			Metadata: metadata.AudioMetadata{
+				Title: "Song", Album: fmt.Sprintf("Album %d", i), Artists: []string{name}, AlbumArtists: []string{name}, DiscNumber: 1, TrackNumber: 1,
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artists, _ := store.ListArtists(ctx, storage.Filters{})
+	var aimerID, sawanoID int64
+	for _, a := range artists {
+		switch a.Name {
+		case "Aimer":
+			aimerID = a.ID
+		case "Sawano":
+			sawanoID = a.ID
+		}
+	}
+	if err := store.ReplaceArtistCandidatesForSources(ctx, aimerID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-aimer-1", DisplayName: "Aimer (JP)", Score: 90, MBID: "mb-aimer-1"},
+		{Source: "lastfm", ExternalID: "lf-aimer", DisplayName: "Aimer", Score: 70, Payload: []byte(`{"pageUrl":"https://www.last.fm/music/Aimer"}`)},
+	}, []string{"musicbrainz", "lastfm"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceArtistCandidatesForSources(ctx, sawanoID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-sawano-1", DisplayName: "Hiroyuki Sawano", Score: 85},
+		{Source: "lastfm", ExternalID: "lf-sawano", DisplayName: "Sawano", Score: 60},
+	}, []string{"musicbrainz", "lastfm"}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	// /admin/matches renders clickable external source links, reject-all button, and returnTo hidden inputs.
+	returnTarget := "/admin/matches?q=Aimer"
+	body := getAdmin(t, handler, cookie, returnTarget)
+	for _, want := range []string{
+		`https://musicbrainz.org/artist/mb-aimer-1`,
+		`https://www.last.fm/music/Aimer`,
+		`来源主页 ↗`,
+		`/admin/artists/` + strconv.FormatInt(aimerID, 10) + `/reject-all`,
+		`name="returnTo" value="/admin/matches?q=Aimer"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("match review missing %q", want)
+		}
+	}
+
+	aimerCands, _ := store.ArtistCandidates(ctx, aimerID)
+	var mbCandID, lfCandID int64
+	for _, c := range aimerCands {
+		if c.Source == "musicbrainz" {
+			mbCandID = c.ID
+		} else {
+			lfCandID = c.ID
+		}
+	}
+
+	// Rejecting single candidate with returnTo redirects back to /admin/matches?q=Aimer.
+	rejRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/reject/%d", aimerID, lfCandID), url.Values{
+		"returnTo": {returnTarget},
+	})
+	if rejRec.Code != http.StatusSeeOther || !strings.HasPrefix(rejRec.Header().Get("Location"), returnTarget+"&notice=") {
+		t.Fatalf("reject redirect = %d %q, want prefix %q", rejRec.Code, rejRec.Header().Get("Location"), returnTarget+"&notice=")
+	}
+
+	// Confirming candidate with returnTo redirects back to /admin/matches?q=Aimer.
+	confRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/confirm/%d", aimerID, mbCandID), url.Values{
+		"returnTo": {returnTarget},
+	})
+	if confRec.Code != http.StatusSeeOther || !strings.HasPrefix(confRec.Header().Get("Location"), returnTarget+"&notice=") {
+		t.Fatalf("confirm redirect = %d %q, want prefix %q", confRec.Code, confRec.Header().Get("Location"), returnTarget+"&notice=")
+	}
+
+	// Confirming/rejecting without returnTo (or unsafe external URL) still redirects to artist profile.
+	sawanoCands, _ := store.ArtistCandidates(ctx, sawanoID)
+	unsafeRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/reject/%d", sawanoID, sawanoCands[0].ID), url.Values{
+		"returnTo": {"https://evil.example.test/phish"},
+	})
+	wantArtistLoc := fmt.Sprintf("/admin/artists/%d?view=profile&notice=", sawanoID)
+	if unsafeRec.Code != http.StatusSeeOther || !strings.HasPrefix(unsafeRec.Header().Get("Location"), wantArtistLoc) {
+		t.Fatalf("unsafe returnTo redirect = %d %q, want prefix %q", unsafeRec.Code, unsafeRec.Header().Get("Location"), wantArtistLoc)
+	}
+
+	// Reject-all clears remaining pending candidates for Sawano and honors returnTo.
+	allRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/reject-all", sawanoID), url.Values{
+		"returnTo": {"/admin/matches?page=2"},
+	})
+	if allRec.Code != http.StatusSeeOther || !strings.HasPrefix(allRec.Header().Get("Location"), "/admin/matches?page=2&notice=") {
+		t.Fatalf("reject-all redirect = %d %q", allRec.Code, allRec.Header().Get("Location"))
+	}
+	afterSawano, _ := store.ArtistCandidates(ctx, sawanoID)
+	for _, c := range afterSawano {
+		if c.Status != "rejected" {
+			t.Fatalf("expected all candidates rejected after reject-all, got %+v", afterSawano)
+		}
 	}
 }

@@ -18,6 +18,7 @@ type matchReviewItem struct {
 	Artist     storage.Artist
 	Candidates []storage.ArtistCandidate
 	Conflicts  map[int64]storage.ArtistIdentityConflict
+	PageURLs   map[int64]string
 	AI         *aiDecisionView
 }
 
@@ -29,6 +30,13 @@ func (m matchReviewItem) ConflictFor(candidateID int64) *storage.ArtistIdentityC
 		return &c
 	}
 	return nil
+}
+
+func (m matchReviewItem) CandidateURL(candidateID int64) string {
+	if m.PageURLs == nil {
+		return ""
+	}
+	return m.PageURLs[candidateID]
 }
 
 func (m matchReviewItem) AIRecommendedCandidate() *storage.ArtistCandidate {
@@ -332,14 +340,15 @@ func (a *App) handleSearchArtistCandidates(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *App) confirmArtistCandidate(w http.ResponseWriter, r *http.Request, id, candidateID int64) {
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), artistProfilePath(id))
 	if err := a.store.ConfirmArtistCandidate(r.Context(), id, candidateID); err != nil {
 		var conflict *storage.ArtistExternalIDConflictError
 		if errors.As(err, &conflict) {
 			http.Redirect(w, r, artistProfilePath(id)+"&identityConflict="+strconv.FormatInt(candidateID, 10), http.StatusSeeOther)
 		} else if errors.Is(err, storage.ErrCompositeArtistIdentity) {
-			redirectWithNotice(w, r, artistProfilePath(id), err.Error())
+			redirectWithNotice(w, r, returnTo, err.Error())
 		} else if errors.Is(err, sql.ErrNoRows) {
-			redirectWithNotice(w, r, artistProfilePath(id), "候选不存在或已变化，请重新匹配")
+			redirectWithNotice(w, r, returnTo, "候选不存在或已变化，请重新匹配")
 		} else {
 			a.logger.Error("confirm artist identity", "artistId", id, "error", err)
 			http.Error(w, "确认身份失败，请稍后重试", http.StatusInternalServerError)
@@ -347,23 +356,25 @@ func (a *App) confirmArtistCandidate(w http.ResponseWriter, r *http.Request, id,
 		return
 	}
 	rateLimitedSource := ""
-	if err := a.enrichment.RefreshConfirmedArtistImage(r.Context(), id); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		if source, ok := enrichment.RateLimitedSourceName(err); ok {
-			rateLimitedSource = source
+	if a.enrichment != nil {
+		if err := a.enrichment.RefreshConfirmedArtistImage(r.Context(), id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			if source, ok := enrichment.RateLimitedSourceName(err); ok {
+				rateLimitedSource = source
+			}
+			a.logger.Warn("cache confirmed artist image", "artistId", id, "error", enrichment.RedactSourceError(err))
 		}
-		a.logger.Warn("cache confirmed artist image", "artistId", id, "error", enrichment.RedactSourceError(err))
-	}
-	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		if source, ok := enrichment.RateLimitedSourceName(err); ok && rateLimitedSource == "" {
-			rateLimitedSource = source
+		if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			if source, ok := enrichment.RateLimitedSourceName(err); ok && rateLimitedSource == "" {
+				rateLimitedSource = source
+			}
+			a.logger.Warn("cache confirmed artist biographies", "artistId", id, "error", enrichment.RedactSourceError(err))
 		}
-		a.logger.Warn("cache confirmed artist biographies", "artistId", id, "error", enrichment.RedactSourceError(err))
 	}
 	message := "外部身份已经人工确认"
 	if rateLimitedSource != "" {
 		message = fmt.Sprintf("已确认匹配；%s 限流中，头像可稍后在“艺术家匹配与审核”页用“已匹配艺术家头像补全”补齐，简介可稍后手动刷新", rateLimitedSource)
 	}
-	redirectWithNotice(w, r, artistProfilePath(id), message)
+	redirectWithNotice(w, r, returnTo, message)
 }
 
 func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Request) {
@@ -426,11 +437,31 @@ func (a *App) handleRejectArtistMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), artistProfilePath(id))
 	if err := a.store.RejectArtistCandidate(r.Context(), id, parseInt64(r.PathValue("candidate"))); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	redirectWithNotice(w, r, artistProfilePath(id), "候选已拒绝")
+	redirectWithNotice(w, r, returnTo, "候选已拒绝")
+}
+
+func (a *App) handleRejectAllArtistMatches(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", 403)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), artistProfilePath(id))
+	count, err := a.store.RejectAllArtistCandidates(r.Context(), id, strings.TrimSpace(r.FormValue("source")))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	message := "没有待拒绝的候选"
+	if count > 0 {
+		message = fmt.Sprintf("已全部拒绝 %d 个候选", count)
+	}
+	redirectWithNotice(w, r, returnTo, message)
 }
 
 func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
@@ -714,7 +745,7 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	artistAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetArtistMatch, reviewIDs)
 	creditAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetCreditSplit, creditIDs)
 	for _, item := range page.Items {
-		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts}
+		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs}
 		if item.NeedsCreditCorrection {
 			if d, ok := creditAIMap[item.Artist.ID]; ok {
 				review.AI = buildAIDecisionView(d)

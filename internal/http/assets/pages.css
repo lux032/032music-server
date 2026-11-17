@@ -853,11 +853,15 @@ img.artist-portrait { object-fit: cover; color: inherit; }
 .review-list > article { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
 .review-list > article > header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid var(--line);
   padding: 15px 20px;
 }
+.review-card-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; min-width: 0; }
+.review-reject-all-form { margin: 0; flex: 0 0 auto; }
+.compact-button { padding: 5px 12px; font-size: var(--fs-xs); min-height: 0; }
 .review-list > article > header a { color: var(--text); }
 .review-list > article > header a:hover { color: var(--accent); }
 .review-list > article > header span { color: var(--muted); font-size: var(--fs-xs); }
@@ -3970,6 +3974,9 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .ai-decision-chip.tone-reject { color: var(--danger); }
 .ai-decision-chip.tone-uncertain { color: var(--warning); }
 .candidate-head-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.candidate-meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: var(--fs-xs); color: var(--muted); }
+.candidate-source-link { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: var(--fs-xs); font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.candidate-source-link:hover { background: color-mix(in oklab, var(--accent) 10%, transparent); border-color: var(--accent); }
 .ai-rec-pill { background: color-mix(in oklab, var(--accent) 16%, transparent); color: var(--accent); border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent); }
 .is-ai-recommended { background: color-mix(in oklab, var(--accent) 6%, transparent); border-color: var(--accent) !important; box-shadow: inset 3px 0 0 var(--accent); }
 .candidate-tieup-row.is-ai-picked { border-color: color-mix(in oklab, var(--accent) 55%, transparent); background: color-mix(in oklab, var(--accent) 7%, transparent); }

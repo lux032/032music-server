@@ -242,7 +242,7 @@
             <small class="muted">置信度 {{.Decision.Confidence}}% · {{.Decision.Reason}}</small>
             <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" style="margin-left:auto;">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="returnTo" value="/admin/matches">
+              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
               <button type="submit" class="secondary-button">撤销</button>
             </form>
           </li>
@@ -271,21 +271,32 @@
       {{range $item := .Review}}
       <article>
         <header>
-          <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
-          <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+          <div class="review-card-title">
+            <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
+            <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+          </div>
+          {{if gt (len $item.Candidates) 0}}
+          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="source" value="{{$.ReviewSource}}">
+            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+            <button type="submit" class="secondary-button compact-button">全部拒绝</button>
+          </form>
+          {{end}}
         </header>
         {{with $item.AI}}
         <aside class="ai-decision-banner tone-{{.BadgeTone}}">
           <div class="ai-decision-main">
             <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
             {{with $item.AIRecommendedCandidate}}
-            <span class="ai-target-pointer">推荐指向：<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）</span>
+            <span class="ai-target-pointer">推荐指向：<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）{{with ($item.CandidateURL .ID)}} <a class="candidate-source-link" href="{{.}}" target="_blank" rel="noopener noreferrer">来源主页 ↗</a>{{end}}</span>
             {{end}}
             <p class="ai-decision-reason">{{.Reason}}{{if .WebSearched}} <span class="muted">（已联网核验）</span>{{end}}</p>
           </div>
           {{if $item.CanQuickAcceptAI}}
           <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.SelectedCandidateID}}" class="ai-quick-accept-form">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
             <button type="submit" class="primary-button">采纳 AI 推荐</button>
           </form>
           {{end}}
@@ -300,7 +311,12 @@
               <b>{{.DisplayName}}</b>
               {{if $isRec}}<span class="status-badge ai-rec-pill">★ AI 推荐</span>{{else}}<span class="status-badge warning">待审核</span>{{end}}
             </div>
-            <span>{{.Source}} · 匹配分 {{.Score}}</span>
+            <div class="candidate-meta-row">
+              <span>{{.Source}} · 匹配分 {{.Score}}</span>
+              {{with ($item.CandidateURL .ID)}}
+              <a class="candidate-source-link" href="{{.}}" target="_blank" rel="noopener noreferrer">来源主页 ↗</a>
+              {{end}}
+            </div>
             {{if or .Disambiguation .Country .ArtistType}}<small>{{.Disambiguation}}{{if and .Disambiguation (or .Country .ArtistType)}} · {{end}}{{.Country}}{{if and .Country .ArtistType}} · {{end}}{{.ArtistType}}</small>{{end}}
             {{with $conflict}}
             <p class="conflict-hint-pill">⚠ 该身份已绑定至 <a href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">《{{.TargetName}}》</a>，如需合并请点击处理</p>
@@ -309,11 +325,13 @@
               {{if not $conflict}}
               <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
                 <button{{if $isRec}} class="primary-button"{{end}}>确认</button>
               </form>
               {{end}}
               <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
                 <button class="secondary-button">拒绝</button>
               </form>
             </div>
@@ -344,8 +362,18 @@
       {{range $item := .CreditCorrectionReview}}
       <article>
         <header>
-          <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
-          <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+          <div class="review-card-title">
+            <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
+            <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+          </div>
+          {{if gt (len $item.Candidates) 0}}
+          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form">
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <input type="hidden" name="source" value="{{$.ReviewSource}}">
+            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+            <button type="submit" class="secondary-button compact-button">全部拒绝</button>
+          </form>
+          {{end}}
         </header>
         {{if $item.AI}}
         <aside class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
@@ -361,7 +389,7 @@
           {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
           <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/matches">
+            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
             {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
             <button type="submit" class="primary-button">一键应用拆分到关联曲目</button>
           </form>

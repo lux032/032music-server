@@ -215,7 +215,12 @@
           {{else if eq .Status "rejected"}}{{$rejected = 1}}
           {{end}}
           {{end}}
-          {{if eq $pending 0}}<p class="result-count">没有待审核候选。匹配错误时可先解除错误身份，或在上方手动搜索。</p>{{end}}
+          {{if eq $pending 0}}<p class="result-count">没有待审核候选。匹配错误时可先解除错误身份，或在上方手动搜索。</p>{{else}}
+          <form method="post" action="/admin/artists/{{.Artist.ID}}/reject-all" class="review-reject-all-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button type="submit" class="secondary-button compact-button">全部拒绝待审候选</button>
+          </form>
+          {{end}}
           {{if eq $rejected 1}}
           <details class="biography-versions rejected-candidates">
             <summary>已排除的候选</summary>

@@ -420,6 +420,16 @@ func (s *Store) RejectArtistCandidate(ctx context.Context, artistID, candidateID
 	return nil
 }
 
+// RejectAllArtistCandidates marks all pending match candidates for an artist
+// (optionally scoped to source when non-empty) as rejected.
+func (s *Store) RejectAllArtistCandidates(ctx context.Context, artistID int64, source string) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate' AND (?='' OR source=?)`, artistID, source, source)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *Store) MarkArtistCandidatesConfirmed(ctx context.Context, artistID int64, externalID, mbid string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN external_id=? OR (?<>'' AND mbid=?) THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND status='candidate'`, externalID, mbid, mbid, artistID)
 	return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/lux032/032music-server/internal/metadata"
@@ -17,7 +18,30 @@ type ArtistReviewItem struct {
 	Artist                Artist
 	Candidates            []ArtistCandidate
 	Conflicts             map[int64]ArtistIdentityConflict
+	PageURLs              map[int64]string
 	NeedsCreditCorrection bool
+}
+
+func candidateExternalURL(source, externalID, mbid, displayName, rawPageURL string) string {
+	if trimmed := strings.TrimSpace(rawPageURL); trimmed != "" {
+		if parsed, err := url.Parse(trimmed); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+			return trimmed
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(source), "musicbrainz") {
+		if id := strings.TrimSpace(externalID); id != "" {
+			return "https://musicbrainz.org/artist/" + url.PathEscape(id)
+		}
+	}
+	if trimmedMBID := strings.TrimSpace(mbid); trimmedMBID != "" {
+		return "https://musicbrainz.org/artist/" + url.PathEscape(trimmedMBID)
+	}
+	if strings.EqualFold(strings.TrimSpace(source), "lastfm") {
+		if name := strings.TrimSpace(displayName); name != "" {
+			return "https://www.last.fm/music/" + url.PathEscape(name)
+		}
+	}
+	return ""
 }
 type ArtistReviewPage struct {
 	Items                []ArtistReviewItem
@@ -70,15 +94,15 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 	if err != nil {
 		return page, err
 	}
-	candidates, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,status FROM artist_match_candidates WHERE status='candidate' AND artist_id IN (SELECT value FROM json_each(?)) AND (?='' OR source=?) ORDER BY score DESC,id`, string(encoded), f.Source, f.Source)
+	candidates, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,status,COALESCE(json_extract(payload_json,'$.pageUrl'),'') FROM artist_match_candidates WHERE status='candidate' AND artist_id IN (SELECT value FROM json_each(?)) AND (?='' OR source=?) ORDER BY score DESC,id`, string(encoded), f.Source, f.Source)
 	if err != nil {
 		return page, err
 	}
 	defer candidates.Close()
 	for candidates.Next() {
 		var c ArtistCandidate
-		var evidence string
-		if err = candidates.Scan(&c.ID, &c.ArtistID, &c.Source, &c.ExternalID, &c.DisplayName, &c.SortName, &c.Disambiguation, &c.Country, &c.ArtistType, &c.MBID, &c.Score, &evidence, &c.Status); err != nil {
+		var evidence, rawPageURL string
+		if err = candidates.Scan(&c.ID, &c.ArtistID, &c.Source, &c.ExternalID, &c.DisplayName, &c.SortName, &c.Disambiguation, &c.Country, &c.ArtistType, &c.MBID, &c.Score, &evidence, &c.Status, &rawPageURL); err != nil {
 			return page, err
 		}
 		if err = json.Unmarshal([]byte(evidence), &c.Evidence); err != nil {
@@ -86,6 +110,12 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 		}
 		i := positions[c.ArtistID]
 		page.Items[i].Candidates = append(page.Items[i].Candidates, c)
+		if extURL := candidateExternalURL(c.Source, c.ExternalID, c.MBID, c.DisplayName, rawPageURL); extURL != "" {
+			if page.Items[i].PageURLs == nil {
+				page.Items[i].PageURLs = map[int64]string{}
+			}
+			page.Items[i].PageURLs[c.ID] = extURL
+		}
 		if conflict, conflictErr := artistIdentityConflict(ctx, s.db, c.ArtistID, c.ID); conflictErr == nil {
 			if page.Items[i].Conflicts == nil {
 				page.Items[i].Conflicts = map[int64]ArtistIdentityConflict{}
