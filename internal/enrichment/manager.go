@@ -638,60 +638,58 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 		} else if best.Source == "lastfm" && lastProfile != nil {
 			profile = *lastProfile
 		}
-		if profile.Source == "" || profile.ExternalID != best.ExternalID {
-			return MatchResult{CandidateCount: len(candidates)}, nil
-		}
-		var bound bool
-		var bindErr error
-		if checkpoint != nil {
-			bound, bindErr = m.store.AutoBindArtistRunCandidate(ctx, artistID, profile, *checkpoint)
-		} else {
-			bound, bindErr = m.store.AutoBindArtistCandidate(ctx, artistID, profile)
-		}
-		if bindErr != nil {
-			return MatchResult{AutoMatched: auto}, bindErr
-		}
-		if !bound {
-			return MatchResult{AutoMatched: auto, CandidateCount: len(candidates)}, nil
-		}
-		// Independently corroborated sources bind through their own transaction.
-		// A secondary manual decision/conflict cannot roll back the primary;
-		// real storage errors still propagate with the persisted primary result.
-		if !auto && lastProfile != nil && best.Source == "musicbrainz" && lastProfile.ExternalID == best.MBID {
-			for _, candidate := range candidates {
-				if candidate.Source == "lastfm" && candidate.ExternalID == lastProfile.ExternalID && candidate.Score >= 92 {
-					bindSecondary := func() (bool, error) {
-						if checkpoint != nil {
-							return m.store.AutoBindArtistRunCandidate(ctx, artistID, *lastProfile, *checkpoint)
+		if profile.Source != "" && profile.ExternalID == best.ExternalID {
+			var bound bool
+			var bindErr error
+			if checkpoint != nil {
+				bound, bindErr = m.store.AutoBindArtistRunCandidate(ctx, artistID, profile, *checkpoint)
+			} else {
+				bound, bindErr = m.store.AutoBindArtistCandidate(ctx, artistID, profile)
+			}
+			if bindErr != nil {
+				return MatchResult{AutoMatched: auto}, bindErr
+			}
+			if bound {
+				// Independently corroborated sources bind through their own transaction.
+				// A secondary manual decision/conflict cannot roll back the primary;
+				// real storage errors still propagate with the persisted primary result.
+				if !auto && lastProfile != nil && best.Source == "musicbrainz" && lastProfile.ExternalID == best.MBID {
+					for _, candidate := range candidates {
+						if candidate.Source == "lastfm" && candidate.ExternalID == lastProfile.ExternalID && candidate.Score >= 92 {
+							bindSecondary := func() (bool, error) {
+								if checkpoint != nil {
+									return m.store.AutoBindArtistRunCandidate(ctx, artistID, *lastProfile, *checkpoint)
+								}
+								return m.store.AutoBindArtistCandidate(ctx, artistID, *lastProfile)
+							}
+							if _, secondaryErr := bindSecondary(); secondaryErr != nil {
+								return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, &ArtistMatchPartialError{Source: "lastfm", Cause: secondaryErr}
+							}
+							break
 						}
-						return m.store.AutoBindArtistCandidate(ctx, artistID, *lastProfile)
 					}
-					if _, secondaryErr := bindSecondary(); secondaryErr != nil {
-						return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, &ArtistMatchPartialError{Source: "lastfm", Cause: secondaryErr}
-					}
-					break
 				}
+				if automatic {
+					return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, nil
+				}
+				if err = m.CacheArtistImage(ctx, artistID); err != nil {
+					if asRateLimited(err) != nil {
+						// The confirmation is already persisted; report AutoMatched so
+						// interactive callers can say the match succeeded but the
+						// image/biography fetch was deferred by the rate limit.
+						return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
+					}
+					m.logger.Warn("cache artist image failed", "artistId", artistID, "error", err)
+				}
+				if err = m.RefreshArtistBiographies(ctx, artistID, false); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					if asRateLimited(err) != nil {
+						return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
+					}
+					m.logger.Warn("cache artist biographies failed", "artistId", artistID, "error", err)
+				}
+				auto = true
 			}
 		}
-		if automatic {
-			return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, nil
-		}
-		if err = m.CacheArtistImage(ctx, artistID); err != nil {
-			if asRateLimited(err) != nil {
-				// The confirmation is already persisted; report AutoMatched so
-				// interactive callers can say the match succeeded but the
-				// image/biography fetch was deferred by the rate limit.
-				return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
-			}
-			m.logger.Warn("cache artist image failed", "artistId", artistID, "error", err)
-		}
-		if err = m.RefreshArtistBiographies(ctx, artistID, false); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			if asRateLimited(err) != nil {
-				return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
-			}
-			m.logger.Warn("cache artist biographies failed", "artistId", artistID, "error", err)
-		}
-		auto = true
 	}
 	if !auto && len(candidates) > 0 && m.inlineAI != nil && automatic {
 		if m.inlineAI(ctx, storage.AITargetArtistMatch, artistID) {

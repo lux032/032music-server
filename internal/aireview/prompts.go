@@ -90,7 +90,7 @@ Rules:
 4. Character-name / VA / unit aliases can match when track titles and creators confirm it.
 5. Set decision="reject_all" if none of the candidates match this album. Set decision="uncertain" when evidence is ambiguous; set needWebSearch=true and a concise searchQuery only if webPages are not already provided and web lookup could resolve it.
 6. If webPages are provided and used, copy a short exact supporting substring into quote.
-7. Write reason and evidence in concise Simplified Chinese.`
+7. Write reason and evidence in concise Simplified Chinese, referring to candidates by title/name rather than raw numeric IDs.`
 
 const trackReviewPrompt = `You are a music metadata reviewer disambiguating Bangumi single/tie-up candidates for a local track.
 Input JSON contains track metadata (title, artist, albumTitle, albumWorks, composer, lyricist, lyricsHead) and pending Bangumi candidates (id, title, matchKind, artist, tieups).
@@ -101,7 +101,7 @@ Rules:
 4. When Bangumi tieup role is already specific (op, ed, insert, character), preserve it. When it is generic (other, theme, image_song), refine it to op/ed/insert/character/ost only if clearly supported by albumWorks, track metadata, or webPages; otherwise keep the generic role.
 5. Set decision="reject_all" if candidates are clearly wrong songs/artists; set decision="uncertain" if unsure. Set needWebSearch=true with a concise searchQuery only if webPages are absent and searching could confirm role or A/B split.
 6. If webPages are provided and used, copy a short exact supporting substring into quote.
-7. Write reason and evidence in concise Simplified Chinese.`
+7. Write reason and evidence in concise Simplified Chinese, referring to candidates by title/name rather than raw numeric IDs.`
 
 const workReviewPrompt = `You are an anime/game metadata reviewer matching a local Work entry to Bangumi subject candidates.
 Input JSON contains local work metadata (title, translatedTitle, type, year, linked albums, sampleTracks) and pending Bangumi candidates (id, title, translatedTitle, type, year, ownerWorkId).
@@ -111,7 +111,7 @@ Rules:
 3. NEVER select a candidate whose ownerWorkId > 0 for confirmation — if it looks like the same work, return decision="uncertain" and explain in reason that it is already bound to another work.
 4. Carefully distinguish seasons/sequels/movies vs album volumes: an album titled "OST Vol.2" belongs to the original work, NOT "Season 2". Compare Japanese original titles, Chinese/English translated titles, release year, and linked albums.
 5. Set decision="reject_all" if no candidate represents the same anime/game/movie. Set decision="uncertain" if unsure.
-6. Write reason and evidence in concise Simplified Chinese.`
+6. Write reason and evidence in concise Simplified Chinese, referring to candidates by title/name rather than raw numeric IDs.`
 
 const artistReviewPrompt = `You are a music artist identity reviewer matching a local artist to MusicBrainz / Last.fm candidates.
 Input JSON contains local artist metadata (name, needsSplit, knownAliases, sampleAlbums, sampleTracks) and candidates (id, source, displayName, disambiguation, country, artistType, aliases, tags, conflictOwnerId).
@@ -122,7 +122,7 @@ Rules:
 4. Use sampleAlbums, sampleTracks, country, artistType, disambiguation, aliases, and tags to disambiguate homonymous artists across Japanese/Chinese/Western scenes and romanized vs native scripts.
 5. Prefer source="musicbrainz" over source="lastfm" whenever candidates from both sources accurately represent the same artist (MusicBrainz enables alias, Wikidata, and Wikipedia enrichment); only select source="lastfm" if no accurate MusicBrainz candidate is present.
 6. Set decision="reject_all" if all candidates clearly belong to different artists. Set needWebSearch=true with a short searchQuery only when webPages are absent and homonymous ambiguity cannot be resolved from local releases.
-7. Write reason and evidence in concise Simplified Chinese.`
+7. Write reason and evidence in concise Simplified Chinese, referring to candidates by title/name rather than raw numeric IDs.`
 
 const creditSplitPrompt = `You analyze a music artist display string flagged as a potential composite collaboration credit.
 Input JSON contains name, sampleTracks, sampleAlbums, and existingArtists in the library.

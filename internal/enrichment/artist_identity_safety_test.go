@@ -307,6 +307,43 @@ func TestMatchArtistOwnerConflictRemainsReview(t *testing.T) {
 	}
 }
 
+func TestMatchArtistOwnerConflictStillCallsInlineAI(t *testing.T) {
+	manager, artist := independentArtistManager(t, false)
+	ctx := context.Background()
+	s := manager.store
+	libraryID := libraryForSafetyTest(t, s, ctx)
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: libraryID, RelativePath: "Other/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Other", Album: "Other", Artists: []string{"Other"}, AlbumArtists: []string{"Other"}, DiscNumber: 1, TrackNumber: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range artists {
+		if owner.ID != artist {
+			if err := s.UpsertExternalArtistProfile(ctx, owner.ID, storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: safetyMBID, DisplayName: "Other"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var aiCalls int
+	var aiKind string
+	var aiTarget int64
+	manager.SetInlineAIReviewer(func(_ context.Context, kind string, targetID int64) bool {
+		aiCalls++
+		aiKind = kind
+		aiTarget = targetID
+		return false
+	})
+	result, err := manager.matchArtist(ctx, artist, true)
+	if err != nil || result.AutoMatched || result.CandidateCount == 0 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if aiCalls != 1 || aiKind != storage.AITargetArtistMatch || aiTarget != artist {
+		t.Fatalf("inlineAI not invoked on >=92 conflict fallback: calls=%d kind=%q target=%d want=%d", aiCalls, aiKind, aiTarget, artist)
+	}
+}
+
 func libraryForSafetyTest(t *testing.T, s *storage.Store, ctx context.Context) int64 {
 	t.Helper()
 	library, err := s.LibraryByRoot(ctx, "/music")
