@@ -481,6 +481,20 @@ func TestM4AFreeformAtomStripsLocaleAndOggKeepsMultiValues(t *testing.T) {
 		t.Fatal("expected CRC-corrupt Ogg to return an explicit error")
 	}
 
+	// Unsupported Ogg page version (version=1 with valid CRC) must be rejected with an explicit error.
+	badVerPage := oggSerialPage(1, 0, 0x02, idPkt.Bytes())
+	badVerPage[4] = 1
+	binary.LittleEndian.PutUint32(badVerPage[22:26], 0)
+	binary.LittleEndian.PutUint32(badVerPage[22:26], oggCRC(badVerPage))
+	badVerOgg := append(badVerPage, oggSerialPage(1, 1, 0x00, buildVC("TITLE=BadVer"))...)
+	badVerPath := filepath.Join(t.TempDir(), "bad_ver.ogg")
+	if err := os.WriteFile(badVerPath, badVerOgg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(badVerPath); err == nil {
+		t.Fatal("expected unsupported Ogg stream structure version to return an explicit error")
+	}
+
 	// Case-insensitive MP4 namespaces: com.apple.iTunes=a conflicts with ORG.MUSICBRAINZ.ITUNES=b.
 	mixedCaseIlst := box("ilst", append(
 		append(mbFreeform("Com.Apple.iTunes", "COMPOSERS", "Comp Mixed"), mbFreeform("com.apple.iTunes", "MUSICBRAINZ_COMPOSERID", a)...),

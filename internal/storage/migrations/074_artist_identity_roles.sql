@@ -54,7 +54,20 @@ INSERT INTO audio_file_artist_identities_new(audio_file_id, artist_id, role, mbi
 INSERT OR IGNORE INTO audio_file_artist_identities_new(audio_file_id, artist_id, role, mbid, status)
     SELECT DISTINCT old.audio_file_id, old.artist_id,
            CASE
+               WHEN EXISTS (
+                   SELECT 1 FROM audio_files af
+                   JOIN track_artists ta ON ta.track_id = af.track_id AND ta.artist_id = old.artist_id
+                   WHERE af.id = old.audio_file_id AND ta.role = 'primary'
+               ) AND NOT EXISTS (
+                   SELECT 1 FROM audio_files af
+                   JOIN track_artists ta ON ta.track_id = af.track_id AND ta.artist_id = old.artist_id
+                   WHERE af.id = old.audio_file_id AND ta.role <> 'primary'
+               ) THEN 'primary'
                WHEN NOT EXISTS (
+                   SELECT 1 FROM audio_files af
+                   JOIN track_artists ta ON ta.track_id = af.track_id AND ta.artist_id = old.artist_id
+                   WHERE af.id = old.audio_file_id
+               ) AND NOT EXISTS (
                    SELECT 1 FROM audio_file_tags tc
                    WHERE tc.audio_file_id = old.audio_file_id
                      AND UPPER(tc.field_name) IN (
@@ -63,10 +76,6 @@ INSERT OR IGNORE INTO audio_file_artist_identities_new(audio_file_id, artist_id,
                          'MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID','----:ORG.MUSICBRAINZ.ITUNES:MUSICBRAINZ_ARRANGERID','----:ORG.MUSICBRAINZ.ITUNES:MUSICBRAINZ ARRANGER ID',
                          'MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID','----:ORG.MUSICBRAINZ.ITUNES:MUSICBRAINZ_PRODUCERID','----:ORG.MUSICBRAINZ.ITUNES:MUSICBRAINZ PRODUCER ID'
                      )
-               ) AND NOT EXISTS (
-                   SELECT 1 FROM audio_files af
-                   JOIN track_artists ta ON ta.track_id = af.track_id AND ta.artist_id = old.artist_id
-                   WHERE af.id = old.audio_file_id AND ta.role <> 'primary'
                ) THEN 'primary'
                ELSE 'composer'
            END,

@@ -325,6 +325,9 @@ func readOggVorbisComments(file *os.File) (raw map[string][]string, status oggPa
 		if string(header[:4]) != "OggS" {
 			return nil, oggStatusError, fmt.Errorf("invalid ogg capture pattern")
 		}
+		if header[4] != 0 {
+			return nil, oggStatusError, fmt.Errorf("unsupported ogg stream structure version %d", header[4])
+		}
 		segments := int(header[26])
 		laces := make([]byte, segments)
 		if _, err = io.ReadFull(file, laces); err != nil {

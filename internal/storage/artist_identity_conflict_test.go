@@ -684,7 +684,7 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 		idY = "22222222-2222-4222-8222-222222222222"
 		idZ = "33333333-3333-4333-8333-333333333333"
 	)
-	for _, path := range []string{"073_to_075", "buggy_074_to_075"} {
+	for _, path := range []string{"073_to_076", "buggy_074_to_076", "9e9eb31_075_to_076"} {
 		t.Run(path, func(t *testing.T) {
 			s, ctx := openEnrichmentTestStore(t)
 			album, track1, _, artistA := seedEnrichmentEntities(t, s, ctx)
@@ -695,12 +695,17 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 				t.Fatal(err)
 			}
 			artistB, _ := resB.LastInsertId()
+			resC, err := s.db.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('Composer C','composer c','composerc')`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			artistC, _ := resC.LastInsertId()
 			tr2, err := s.db.ExecContext(ctx, `INSERT INTO tracks(album_id,disc_number,track_number,title,sort_title) VALUES(?,1,2,'Track 2','track 2')`, album)
 			if err != nil {
 				t.Fatal(err)
 			}
 			track2, _ := tr2.LastInsertId()
-			if _, err := s.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,role) VALUES(?,?,'primary'),(?,?,'primary'),(?,?,'primary')`, track1, artistA, track2, artistA, track2, artistB); err != nil {
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,role) VALUES(?,?,'primary'),(?,?,'primary'),(?,?,'primary'),(?,?,'composer')`, track1, artistA, track2, artistA, track2, artistB, track2, artistC); err != nil {
 				t.Fatal(err)
 			}
 			af1, err := s.db.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(?,?,'01.flac',1,1)`, lib, track1)
@@ -713,22 +718,33 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 				t.Fatal(err)
 			}
 			file2, _ := af2.LastInsertId()
-			if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_tags(audio_file_id,field_name,value,position) VALUES(?,'MUSICBRAINZ_ARTISTID',?,0),(?,'MUSICBRAINZ_ARTISTID',?,0)`, file1, idX, file2, idY+"; "+idZ); err != nil {
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_tags(audio_file_id,field_name,value,position) VALUES(?,'MUSICBRAINZ_ARTISTID',?,0),(?,'MUSICBRAINZ_ARTISTID',?,0),(?,'MUSICBRAINZ_COMPOSERID',?,0)`, file1, idX, file2, idY+"; "+idZ, file2, idZ); err != nil {
 				t.Fatal(err)
 			}
 
-			if path == "073_to_075" {
+			switch path {
+			case "073_to_076":
 				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version>=74`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?),(?,?,?)`, file1, artistA, idX, file2, artistA, idY); err != nil {
 					t.Fatal(err)
 				}
-			} else {
+			case "buggy_074_to_076":
 				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DELETE FROM schema_migrations WHERE version>=75`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'primary',?,'valid')`, file1, artistA, idX, file2, artistA, idY); err != nil {
+					t.Fatal(err)
+				}
+			case "9e9eb31_075_to_076":
+				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DELETE FROM schema_migrations WHERE version>=76`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid')`, file1, artistA, idX); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_identity_checks(audio_file_id,role,status) VALUES(?,'primary','verified'),(?,'primary','blocked'),(?,'composer','blocked')`, file1, file2, file2); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -750,7 +766,8 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 				}
 			}
 
-			// Primary override on track2 isolates file2's primary conflict and lets track1's X pass.
+			// Primary override on track2 isolates file2's primary conflict and lets track1's X pass,
+			// even when file2 also has another artist C with a composer credit+MBID.
 			if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, track2); err != nil {
 				t.Fatal(err)
 			}
@@ -759,7 +776,8 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 				t.Fatalf("%s expected track1 X when track2 primary overridden, got %+v err=%v", path, overridden, err)
 			}
 
-			// Undo override and rescan file2 cleanly with matching X; Z -> reverify cleared, X passes.
+			// Undo override, then run a degraded rescan (UnsafeIdentity=true, Unknown Artist):
+			// reverify block must NOT be cleared by an untrusted degraded scan.
 			if _, err := s.db.ExecContext(ctx, `DELETE FROM track_primary_artist_state WHERE track_id=?`, track2); err != nil {
 				t.Fatal(err)
 			}
@@ -768,6 +786,30 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 				RelativePath: "02.flac",
 				FileSize:     2,
 				ModifiedAtNS: 2,
+				Metadata: metadata.AudioMetadata{
+					Title:          "Track 2",
+					Album:          "Existing Album",
+					DiscNumber:     1,
+					TrackNumber:    2,
+					Artists:        []string{"Unknown Artist"},
+					Container:      "ogg",
+					UnsafeIdentity: true,
+					Raw:            map[string][]string{},
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			afterDegraded, err := s.ArtistForMatching(ctx, artistA)
+			if err != nil || afterDegraded.TaggedMBID != "" {
+				t.Fatalf("%s degraded rescan unlocked track1 MBID=%q err=%v", path, afterDegraded.TaggedMBID, err)
+			}
+
+			// Clean rescan of file2 with matching X; Z clears reverify and restores X.
+			if err := s.ImportTrack(ctx, ImportInput{
+				LibraryID:    lib,
+				RelativePath: "02.flac",
+				FileSize:     3,
+				ModifiedAtNS: 3,
 				Metadata: metadata.AudioMetadata{
 					Title:       "Track 2",
 					Album:       "Existing Album",
