@@ -822,3 +822,75 @@ func TestCompositeNormalizationEvidenceUnique(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestCreatorOnlyArtistAutoMatchesViaTaggedMBID(t *testing.T) {
+	const composerMBID = "22222222-2222-4222-8222-222222222222"
+	manager := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) { return http.DefaultTransport.RoundTrip(r) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, composerMBID) {
+			io.WriteString(w, `{"id":"`+composerMBID+`","name":"田中秀和","sort-name":"Tanaka, Hidekazu","aliases":[],"tags":[],"relations":[]}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	manager.musicBrainzBase = server.URL
+	s := manager.store
+	ctx := context.Background()
+	if err := s.EnsureLibrary(ctx, "Test", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	library, err := s.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID:    library.ID,
+		RelativePath: "Album/01.flac",
+		FileSize:     1,
+		ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title:        "Song",
+			Album:        "Album",
+			Artists:      []string{"Performer"},
+			AlbumArtists: []string{"Performer"},
+			Composer:     "田中秀和",
+			DiscNumber:   1,
+			TrackNumber:  1,
+			Raw: map[string][]string{
+				"COMPOSERS":              {"田中秀和"},
+				"MUSICBRAINZ_COMPOSERID": {composerMBID},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setting, _ := s.MetadataSourceSetting(ctx, "musicbrainz")
+	setting.Enabled = true
+	setting.AutoMatch = true
+	if err = s.SaveMetadataSourceSetting(ctx, setting); err != nil {
+		t.Fatal(err)
+	}
+	var composerID int64
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range artists {
+		if a.Name == "田中秀和" {
+			composerID = a.ID
+		}
+	}
+	if composerID == 0 {
+		t.Fatalf("composer not found in %+v", artists)
+	}
+	result, err := manager.MatchArtist(ctx, composerID)
+	if err != nil || !result.AutoMatched {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	gotMBID, err := s.ArtistExternalID(ctx, composerID, "musicbrainz")
+	if err != nil || gotMBID != composerMBID {
+		t.Fatalf("gotMBID=%q err=%v", gotMBID, err)
+	}
+}

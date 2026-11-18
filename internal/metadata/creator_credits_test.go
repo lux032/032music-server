@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 )
@@ -49,5 +50,33 @@ func TestCreatorNamesLegacyAndStructured(t *testing.T) {
 	}
 	if got := ArtistNames(map[string][]string{"ARTIST": {"A, B"}}, nil); !reflect.DeepEqual(got, []string{"A, B"}) {
 		t.Fatalf("performer rule changed: %v", got)
+	}
+}
+
+func TestCreatorMusicBrainzIDsAndID3TXXX(t *testing.T) {
+	const a = "11111111-1111-4111-8111-111111111111"
+	const b = "22222222-2222-4222-8222-222222222222"
+	frames := append(makeID3Frame(4, "TXXX", []byte("\x03MUSICBRAINZ_COMPOSERID\x00"+a+"; "+b), 0),
+		makeID3Frame(4, "TXXX", []byte("\x03MUSICBRAINZ_ARRANGERID\x00"+b), 0)...)
+	raw := map[string][]string{}
+	parseID3v2TextFrames(bytes.NewReader(makeID3Tag(4, frames)), func(frame string, fields []string) {
+		if frame == "TXXX" && len(fields) > 1 {
+			raw[fields[0]] = fields[1:]
+		}
+	})
+	if got := CreatorMusicBrainzIDs(raw, "composer"); !reflect.DeepEqual(got, []string{a, b}) {
+		t.Fatalf("composer ids=%v", got)
+	}
+	if got := CreatorMusicBrainzIDs(raw, "arranger"); !reflect.DeepEqual(got, []string{b}) {
+		t.Fatalf("arranger ids=%v", got)
+	}
+	if got := CreatorMusicBrainzIDs(map[string][]string{"----:com.apple.iTunes:MUSICBRAINZ_LYRICISTID": {a + "; " + b}}, "lyricist"); !reflect.DeepEqual(got, []string{a, b}) {
+		t.Fatalf("mp4 lyricist ids=%v", got)
+	}
+	if got := CreatorMusicBrainzIDs(map[string][]string{"MUSICBRAINZ PRODUCER ID": {a}}, "producer"); !reflect.DeepEqual(got, []string{a}) {
+		t.Fatalf("producer ids=%v", got)
+	}
+	if got := CreatorMusicBrainzIDs(map[string][]string{"MUSICBRAINZ_COMPOSERID": {a + "; bad"}}, "composer"); got != nil {
+		t.Fatalf("invalid id accepted: %v", got)
 	}
 }

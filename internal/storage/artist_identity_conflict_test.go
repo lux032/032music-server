@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/lux032/032music-server/internal/metadata"
 )
 
 func TestArtistIdentityConflictMergeAndRollback(t *testing.T) {
@@ -190,5 +192,97 @@ func TestArtistTaggedMBIDConservativeSingleAndBatch(t *testing.T) {
 				check("")
 			}
 		})
+	}
+}
+
+func TestCreatorTaggedMBIDAlignmentAndOverrides(t *testing.T) {
+	const singerID = "11111111-1111-4111-8111-111111111111"
+	const comp1ID = "22222222-2222-4222-8222-222222222222"
+	const comp2ID = "33333333-3333-4333-8333-333333333333"
+	const lyrID = "44444444-4444-4444-8444-444444444444"
+	const arrID = "55555555-5555-4555-8555-555555555555"
+
+	s, ctx := openEnrichmentTestStore(t)
+	if err := s.EnsureLibrary(ctx, "Test", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.ImportTrack(ctx, ImportInput{
+		LibraryID:    lib.ID,
+		RelativePath: "Album/01.flac",
+		FileSize:     100,
+		ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title:        "Song",
+			Album:        "Album",
+			Artists:      []string{"Singer"},
+			AlbumArtists: []string{"Singer"},
+			Composer:     "Comp One, Comp Two",
+			Lyricist:     "Lyricist One",
+			Arranger:     "Arranger One",
+			DiscNumber:   1,
+			TrackNumber:  1,
+			Raw: map[string][]string{
+				"MUSICBRAINZ_ARTISTID":   {singerID},
+				"COMPOSERS":              {"Comp One; Comp Two"},
+				"MUSICBRAINZ_COMPOSERID": {comp1ID + "; " + comp2ID},
+				"LYRICISTS":              {"Lyricist One"},
+				"MUSICBRAINZ_LYRICISTID": {lyrID},
+				"ARRANGERS":              {"Arranger One"},
+				"MUSICBRAINZ_ARRANGERID": {arrID},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]string{}
+	all, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range all {
+		got[a.Name] = a.TaggedMBID
+		single, err := s.ArtistForMatching(ctx, a.ID)
+		if err != nil || single.TaggedMBID != a.TaggedMBID {
+			t.Fatalf("single=%+v batch=%+v err=%v", single, a, err)
+		}
+	}
+	want := map[string]string{
+		"Singer":       singerID,
+		"Comp One":     comp1ID,
+		"Comp Two":     comp2ID,
+		"Lyricist One": lyrID,
+		"Arranger One": arrID,
+	}
+	for name, wantMBID := range want {
+		if got[name] != wantMBID {
+			t.Fatalf("%s TaggedMBID=%q want %q (all=%v)", name, got[name], wantMBID, got)
+		}
+	}
+
+	// Primary artist override suppresses primary identity evidence, but keeps
+	// verified creator MBIDs on the same file.
+	var trackID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM tracks LIMIT 1`).Scan(&trackID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, trackID); err != nil {
+		t.Fatal(err)
+	}
+	all, err = s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotAfterOverride := map[string]string{}
+	for _, a := range all {
+		gotAfterOverride[a.Name] = a.TaggedMBID
+	}
+	if gotAfterOverride["Singer"] != "" || gotAfterOverride["Comp One"] != comp1ID || gotAfterOverride["Arranger One"] != arrID {
+		t.Fatalf("unexpected override result: %v", gotAfterOverride)
 	}
 }

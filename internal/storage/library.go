@@ -424,22 +424,9 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_artist_identities WHERE audio_file_id=?`, audioID); err != nil {
 		return err
 	}
-	mbids := metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
-	// Persist the proven file/name/identity alignment before merges or UI sorting
-	// can change relation positions. Ambiguous files supply no evidence.
-	if len(mbids) == len(m.Artists) && len(artistIDs) == len(m.Artists) {
-		seen := map[int64]bool{}
-		for _, id := range artistIDs {
-			seen[id] = true
-		}
-		if len(seen) == len(artistIDs) {
-			for i, id := range artistIDs {
-				if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?)`, audioID, id, mbids[i]); err != nil {
-					return err
-				}
-			}
-		}
-	}
+	fileIdentities := map[int64]string{}
+	conflictedIdentities := map[int64]bool{}
+	collectFileArtistIdentities(fileIdentities, conflictedIdentities, m.Artists, artistIDs, metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID"))
 	// Credits: lyricist, composer, arranger, producer (each as separate roles)
 	type creditEntry struct {
 		role  string
@@ -465,6 +452,15 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, credit.role); err != nil {
 				return err
 			}
+		}
+		collectFileArtistIdentities(fileIdentities, conflictedIdentities, creditNames, creditIDs, metadata.CreatorMusicBrainzIDs(m.Raw, credit.role))
+	}
+	for id := range conflictedIdentities {
+		delete(fileIdentities, id)
+	}
+	for id, mbid := range fileIdentities {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?)`, audioID, id, mbid); err != nil {
+			return err
 		}
 	}
 	// Replace scanner-owned structured involved-people credits while retaining
@@ -605,6 +601,29 @@ func ensureArtists(ctx context.Context, tx *sql.Tx, names []string) ([]int64, er
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+// collectFileArtistIdentities records proven file/name/MBID alignment before merges
+// or UI sorting can change relation positions. Ambiguous or conflicting alignments
+// are suppressed so enrichment never auto-binds the wrong artist.
+func collectFileArtistIdentities(identities map[int64]string, conflicted map[int64]bool, names []string, artistIDs []int64, mbids []string) {
+	if len(mbids) == 0 || len(mbids) != len(names) || len(artistIDs) != len(names) {
+		return
+	}
+	seen := map[int64]bool{}
+	for _, id := range artistIDs {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+	}
+	for i, id := range artistIDs {
+		if prev, exists := identities[id]; exists && prev != mbids[i] {
+			conflicted[id] = true
+			continue
+		}
+		identities[id] = mbids[i]
+	}
 }
 
 func (s *Store) CountAvailableAudioFiles(ctx context.Context, libraryID int64) (int64, error) {

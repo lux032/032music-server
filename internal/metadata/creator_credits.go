@@ -45,3 +45,19 @@ func CreatorNames(raw map[string][]string, role, fallback string, legacy bool) [
 	}
 	return cleanPeople(names, false)
 }
+
+// CreatorMusicBrainzIDs returns aligned MusicBrainz artist IDs for a creator role.
+func CreatorMusicBrainzIDs(raw map[string][]string, role string) []string {
+	switch role {
+	case "composer":
+		return ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_COMPOSERID", "MUSICBRAINZ COMPOSER ID")
+	case "lyricist":
+		return ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_LYRICISTID", "MUSICBRAINZ LYRICIST ID")
+	case "arranger":
+		return ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_ARRANGERID", "MUSICBRAINZ ARRANGER ID")
+	case "producer":
+		return ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_PRODUCERID", "MUSICBRAINZ PRODUCER ID")
+	default:
+		return nil
+	}
+}
