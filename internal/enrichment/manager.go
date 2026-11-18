@@ -229,6 +229,13 @@ func (m *Manager) StartAuto(ctx context.Context) {
 }
 
 func (m *Manager) StartAll(ctx context.Context) (int64, error) {
+	return m.StartAllWithMode(ctx, storage.ArtistScanIncremental)
+}
+
+func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanMode) (int64, error) {
+	if mode != storage.ArtistScanFull {
+		mode = storage.ArtistScanIncremental
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.running {
@@ -260,14 +267,20 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 	var eligible, composites []storage.ArtistMatchInput
 	for _, artist := range artists {
 		if metadata.CompositeArtistCredit(artist.Name) {
-			composites = append(composites, artist)
+			needed, e := m.store.ArtistCompositeCheckNeeded(ctx, artist, mode)
+			if e != nil {
+				return 0, e
+			}
+			if needed {
+				composites = append(composites, artist)
+			}
 			continue
 		}
 		for _, setting := range settings {
 			if setting.Source != "musicbrainz" && setting.Source != "lastfm" {
 				continue
 			}
-			check, e := m.store.ArtistSourceCheckNeeded(ctx, artist, setting)
+			check, e := m.store.ArtistSourceCheckNeededForMode(ctx, artist, setting, mode)
 			if e != nil {
 				return 0, e
 			}
@@ -293,7 +306,7 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	runID, err := m.store.CreateDurableArtistRun(ctx, snapshots)
+	runID, err := m.store.CreateDurableArtistRunWithMode(ctx, snapshots, mode)
 	if err != nil {
 		return 0, err
 	}
@@ -355,6 +368,10 @@ func (m *Manager) MatchArtist(ctx context.Context, artistID int64) (MatchResult,
 type artistCheckpointKey struct{}
 
 func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic bool) (result MatchResult, matchErr error) {
+	return m.matchArtistWithMode(ctx, artistID, automatic, storage.ArtistScanIncremental)
+}
+
+func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, automatic bool, scanMode storage.ArtistScanMode) (result MatchResult, matchErr error) {
 	checkpoint, _ := ctx.Value(artistCheckpointKey{}).(*storage.ArtistRunCheckpoint)
 
 	defer func() {
@@ -385,6 +402,9 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 		if metadata.CompositeArtistCredit(input.Name) {
 			if m.inlineAI != nil {
 				m.inlineAI(ctx, storage.AITargetCreditSplit, artistID)
+			}
+			if err := m.store.SaveArtistCompositeSkip(ctx, input, checkpoint); err != nil {
+				return MatchResult{}, err
 			}
 			return MatchResult{SkipReason: "skipped_composite"}, nil
 		}
@@ -438,7 +458,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	if automatic {
 		for _, source := range []string{"musicbrainz", "lastfm"} {
 			if setting, ok := bySource[source]; ok {
-				check, e := m.store.ArtistSourceCheckNeeded(ctx, artist, setting)
+				check, e := m.store.ArtistSourceCheckNeededForMode(ctx, artist, setting, scanMode)
 				if e != nil {
 					return MatchResult{}, e
 				}
@@ -446,7 +466,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 					ik, ck := storage.ArtistMatchKeys(artist, setting)
 					saved, savedErr := m.store.ArtistRunItemSource(ctx, checkpoint.ItemID, source, ik, ck, setting.CacheDays)
 					if savedErr == nil {
-						if _, identityErr := m.store.ArtistExternalID(ctx, artistID, source); errors.Is(identityErr, sql.ErrNoRows) {
+						if _, identityErr := m.store.ArtistEffectiveExternalID(ctx, artistID, source); errors.Is(identityErr, sql.ErrNoRows) {
 							check.Snapshot = &saved
 							check.Eligible = false
 							recoveredSources++
@@ -463,7 +483,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 						return MatchResult{}, existsErr
 					}
 					if hasCheckpoint && check.Snapshot == nil && !check.Eligible {
-						if _, identityErr := m.store.ArtistExternalID(ctx, artistID, source); errors.Is(identityErr, sql.ErrNoRows) {
+						if _, identityErr := m.store.ArtistEffectiveExternalID(ctx, artistID, source); errors.Is(identityErr, sql.ErrNoRows) {
 							check.Eligible = true
 						} else if identityErr != nil {
 							return MatchResult{}, identityErr
@@ -586,7 +606,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 	if queriedSources > 0 && successfulSources+recoveredSources == 0 {
 		return MatchResult{}, errors.New("all enabled metadata sources failed")
 	}
-	confirmedMBID, _ := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
+	confirmedMBID, _ := m.store.ArtistEffectiveExternalID(ctx, artistID, "musicbrainz")
 	independentLastFM := confirmedMBID == "" && lastFMIndependent
 	for i := range candidates {
 		if independentLastFM && candidates[i].Source == "musicbrainz" && candidates[i].MBID != "" && lastProfile != nil && lastProfile.ExternalID == candidates[i].MBID && artistProfileNameMatches(artist.Name, *lastProfile) {
@@ -692,12 +712,16 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 			}
 		}
 	}
-	if !auto && len(candidates) > 0 && m.inlineAI != nil && automatic {
+	pendingCount, err := m.store.PendingArtistCandidateCount(ctx, artistID)
+	if err != nil {
+		return MatchResult{AutoMatched: auto}, err
+	}
+	if !auto && pendingCount > 0 && m.inlineAI != nil && automatic {
 		if m.inlineAI(ctx, storage.AITargetArtistMatch, artistID) {
 			auto = true
 		}
 	}
-	return MatchResult{AutoMatched: auto, CandidateCount: len(candidates)}, nil
+	return MatchResult{AutoMatched: auto, CandidateCount: pendingCount}, nil
 }
 
 type mbSearchResponse struct {

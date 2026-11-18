@@ -13,15 +13,22 @@
         <h1>艺术家匹配与审核</h1>
         <p class="result-count">以 MusicBrainz / Last.fm 为来源扫描艺术家身份；低于自动确认阈值的候选在这里人工审核。</p>
       </div>
-      <form method="post" action="/admin/matches/run">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <button>扫描未匹配与需检查的艺术家</button>
-      </form>
+      <div class="header-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+        <form method="post" action="/admin/matches/run">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button>扫描未检查的艺术家</button>
+        </form>
+        <form method="post" action="/admin/matches/run">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="mode" value="full">
+          <button class="secondary-button">全局补全扫描</button>
+        </form>
+      </div>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="feature-section">
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">扫描只检查尚未匹配或来源配置变化需要复查的艺术家，不会覆盖已确认的身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">“扫描未检查的艺术家”及服务启动自动扫描仅检查从未初次扫描过的艺术家（已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家均保持不动）；“全局补全扫描”会对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
     </section>
 
     <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist">
@@ -29,7 +36,7 @@
       {{with .ActiveArtistRun}}
       <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
         <header>
-          <strong>匹配任务 #{{.ID}}</strong>
+          <strong>匹配任务 #{{.ID}} · {{artistScanModeLabel .ScanMode}}</strong>
           <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
         </header>
         <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
@@ -57,7 +64,7 @@
       <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的任务。</p>
       {{end}}
       {{with .LastArtistRun}}
-      <p class="muted run-last">最近任务：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      <p class="muted run-last">最近任务：#{{.ID}} · {{artistScanModeLabel .ScanMode}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
       {{end}}
       <details class="run-history">
         <summary>任务记录（共 {{$.ArtistRunsTotal}} 条）</summary>
@@ -65,7 +72,7 @@
           {{range .ArtistRunHistory}}
           <article>
             <header>
-              <strong>匹配任务 #{{.ID}}</strong>
+              <strong>匹配任务 #{{.ID}} · {{artistScanModeLabel .ScanMode}}</strong>
               <span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span>
             </header>
             <div class="progress"><span style="width:{{percentDone .Processed .Total}}%"></span></div>

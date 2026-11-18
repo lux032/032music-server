@@ -230,6 +230,13 @@ func (a *App) handleCancelArtistMatching(w http.ResponseWriter, r *http.Request)
 	redirectWithNotice(w, r, "/admin/matches", message)
 }
 
+func artistScanModeLabel(mode string) string {
+	if storage.ParseArtistScanMode(mode) == storage.ArtistScanFull {
+		return "全局补全"
+	}
+	return "初次增量"
+}
+
 func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", 403)
@@ -239,10 +246,15 @@ func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 		redirectWithNotice(w, r, "/admin/matches", "任务服务不可用")
 		return
 	}
-	if _, err := a.enrichment.StartAll(r.Context()); err != nil {
+	mode := storage.ParseArtistScanMode(r.FormValue("mode"))
+	if _, err := a.enrichment.StartAllWithMode(r.Context(), mode); err != nil {
 		message := "启动任务失败，请稍后重试"
 		if errors.Is(err, enrichment.ErrNoEligibleArtists) {
-			message = "没有需要检查的艺术家"
+			if mode == storage.ArtistScanFull {
+				message = "没有需要全局补全扫描的艺术家"
+			} else {
+				message = "没有未初次扫描的艺术家"
+			}
 		} else if errors.Is(err, storage.ErrArtistRunState) || errors.Is(err, enrichment.ErrRunNotActive) {
 			message = "已有活动或暂停任务，请查看任务并手动继续"
 			if run, e := a.store.UnfinishedDurableArtistRun(r.Context()); e == nil && storage.ArtistRunAutoResumeEligible(run) {
@@ -255,6 +267,10 @@ func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if mode == storage.ArtistScanFull {
+		redirectWithNotice(w, r, "/admin/matches", "全局补全扫描任务已启动")
+		return
+	}
 	redirectWithNotice(w, r, "/admin/matches", "自动匹配任务已启动")
 }
 

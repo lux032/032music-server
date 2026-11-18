@@ -90,8 +90,15 @@ func requireArtistCheckpoint(ctx context.Context, tx *sql.Tx, c *ArtistRunCheckp
 	return nil
 }
 func (s *Store) CreateDurableArtistRun(ctx context.Context, items []ArtistRunItemInput) (int64, error) {
+	return s.CreateDurableArtistRunWithMode(ctx, items, ArtistScanIncremental)
+}
+
+func (s *Store) CreateDurableArtistRunWithMode(ctx context.Context, items []ArtistRunItemInput, mode ArtistScanMode) (int64, error) {
 	if len(items) == 0 {
 		return 0, ErrArtistRunState
+	}
+	if mode != ArtistScanFull {
+		mode = ArtistScanIncremental
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -114,6 +121,9 @@ func (s *Store) CreateDurableArtistRun(ctx context.Context, items []ArtistRunIte
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_run_modes(run_id,scan_mode) VALUES(?,?)`, id, string(mode)); err != nil {
 		return 0, err
 	}
 	for _, item := range items {
@@ -325,7 +335,7 @@ func (s *Store) RecoverDurableArtistRuns(ctx context.Context) (int64, error) {
 }
 func (s *Store) DurableArtistRun(ctx context.Context, id int64) (DurableArtistRun, error) {
 	var r DurableArtistRun
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,skipped_artists,no_result_artists,COALESCE(current_artist,''),COALESCE(error_message,''),durable_version,pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_match_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Total, &r.Processed, &r.Matched, &r.Review, &r.Failed, &r.Skipped, &r.NoResult, &r.Current, &r.ErrorMessage, &r.DurableVersion, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
+	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.status,COALESCE((SELECT m.scan_mode FROM artist_match_run_modes m WHERE m.run_id=r.id),'incremental'),r.total_artists,r.processed_artists,r.matched_artists,r.review_artists,r.failed_artists,r.skipped_artists,r.no_result_artists,COALESCE(r.current_artist,''),COALESCE(r.error_message,''),r.durable_version,r.pause_reason,r.wait_source,COALESCE(r.waiting_until,''),r.wait_total_ms,r.budget_baseline_ms,r.auto_resume_count FROM artist_match_runs r WHERE r.id=?`, id).Scan(&r.ID, &r.Status, &r.ScanMode, &r.Total, &r.Processed, &r.Matched, &r.Review, &r.Failed, &r.Skipped, &r.NoResult, &r.Current, &r.ErrorMessage, &r.DurableVersion, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
 	return r, err
 }
 

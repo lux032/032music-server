@@ -866,7 +866,7 @@ func (s *Store) PendingWorkReviewTargetIDs(ctx context.Context) ([]int64, error)
 }
 
 func (s *Store) PendingArtistReviewTargetIDs(ctx context.Context) ([]int64, error) {
-	return s.queryInt64List(ctx, `SELECT DISTINCT c.artist_id FROM artist_match_candidates c JOIN artists ar ON ar.id=c.artist_id WHERE c.status='candidate' AND ar.merged_into_artist_id IS NULL ORDER BY c.artist_id`)
+	return s.queryInt64List(ctx, `SELECT DISTINCT c.artist_id FROM artist_match_candidates c JOIN artists ar ON ar.id=c.artist_id WHERE c.status='candidate' AND ar.merged_into_artist_id IS NULL AND NOT EXISTS(WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=c.artist_id UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT 1 FROM artist_external_profiles p WHERE p.source=c.source AND (p.artist_id=c.artist_id OR p.artist_id IN (SELECT id FROM src))) ORDER BY c.artist_id`)
 }
 
 func (s *Store) PendingCreditSplitArtistIDs(ctx context.Context) ([]int64, error) {

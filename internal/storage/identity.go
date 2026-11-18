@@ -72,13 +72,13 @@ type MergeOperation struct {
 
 type ArtistMatchRun struct {
 	ID                                                           int64
-	Status                                                       string
+	Status, ScanMode                                             string
 	Total, Processed, Matched, Review, Failed, Skipped, NoResult int
 	Current, ErrorMessage                                        string
 }
 
 func (s *Store) ListArtistMatchRuns(ctx context.Context, limit int) ([]ArtistMatchRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,status,total_artists,processed_artists,matched_artists,review_artists,failed_artists,COALESCE(current_artist,''),COALESCE(error_message,''),skipped_artists,no_result_artists FROM artist_match_runs ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.status,COALESCE((SELECT m.scan_mode FROM artist_match_run_modes m WHERE m.run_id=r.id),'incremental'),r.total_artists,r.processed_artists,r.matched_artists,r.review_artists,r.failed_artists,COALESCE(r.current_artist,''),COALESCE(r.error_message,''),r.skipped_artists,r.no_result_artists FROM artist_match_runs r ORDER BY r.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (s *Store) ListArtistMatchRuns(ctx context.Context, limit int) ([]ArtistMat
 	var result []ArtistMatchRun
 	for rows.Next() {
 		var v ArtistMatchRun
-		if err = rows.Scan(&v.ID, &v.Status, &v.Total, &v.Processed, &v.Matched, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage, &v.Skipped, &v.NoResult); err != nil {
+		if err = rows.Scan(&v.ID, &v.Status, &v.ScanMode, &v.Total, &v.Processed, &v.Matched, &v.Review, &v.Failed, &v.Current, &v.ErrorMessage, &v.Skipped, &v.NoResult); err != nil {
 			return nil, err
 		}
 		result = append(result, v)
@@ -412,28 +412,188 @@ func (s *Store) confirmArtistCandidate(ctx context.Context, artistID, candidateI
 }
 
 func (s *Store) RejectArtistCandidate(ctx context.Context, artistID, candidateID int64) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE id=? AND artist_id=? AND status='candidate'`, candidateID, artistID)
-	if err != nil {
+	input, err := s.ArtistForMatching(ctx, artistID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if changed == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return withBusyRetry(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var candidateSource string
+		if err = tx.QueryRowContext(ctx, `SELECT source FROM artist_match_candidates WHERE id=? AND artist_id=? AND status='candidate'`, candidateID, artistID).Scan(&candidateSource); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE id=? AND artist_id=? AND status='candidate'`, candidateID, artistID); err != nil {
+			return err
+		}
+		if input.ID > 0 {
+			if err = markArtistSourcesRejectedTx(ctx, tx, input, []string{candidateSource}, false); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 // RejectAllArtistCandidates marks all pending match candidates for an artist
-// (optionally scoped to source when non-empty) as rejected.
+// (optionally scoped to source when non-empty) as rejected, and records
+// outcome='rejected' so incremental scans skip the artist until manually re-run.
 func (s *Store) RejectAllArtistCandidates(ctx context.Context, artistID int64, source string) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate' AND (?='' OR source=?)`, artistID, source, source)
-	if err != nil {
+	input, err := s.ArtistForMatching(ctx, artistID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	return result.RowsAffected()
+	var changed int64
+	err = withBusyRetry(ctx, func() error {
+		changed = 0
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT source FROM artist_match_candidates WHERE artist_id=? AND status='candidate' AND (?='' OR source=?)`, artistID, source, source)
+		if err != nil {
+			return err
+		}
+		var sources []string
+		for rows.Next() {
+			var src string
+			if err = rows.Scan(&src); err != nil {
+				rows.Close()
+				return err
+			}
+			sources = append(sources, src)
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		result, err := tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate' AND (?='' OR source=?)`, artistID, source, source)
+		if err != nil {
+			return err
+		}
+		changed, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed > 0 && input.ID > 0 {
+			if err = markArtistSourcesRejectedTx(ctx, tx, input, sources, strings.TrimSpace(source) == ""); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
+	return changed, err
+}
+
+func markArtistSourcesRejectedTx(ctx context.Context, tx *sql.Tx, input ArtistMatchInput, sources []string, markAllEnabled bool) error {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=? AND merged_into_artist_id IS NULL`, input.ID).Scan(&input.Name); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	mbid, err := artistEffectiveExternalIDTx(ctx, tx, input.ID, "musicbrainz")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	input.LastFMQueryMBID = mbid
+	input.LastFMQueryCaptured = true
+
+	settingsMap := map[string]MetadataSourceSetting{}
+	sRows, err := tx.QueryContext(ctx, `SELECT source,enabled,priority,COALESCE(api_key,''),language,application_name,application_version,COALESCE(contact,''),auto_match,cache_days FROM metadata_source_settings`)
+	if err != nil {
+		return err
+	}
+	for sRows.Next() {
+		var v MetadataSourceSetting
+		var enabled, auto int
+		if err = sRows.Scan(&v.Source, &enabled, &v.Priority, &v.APIKey, &v.Language, &v.ApplicationName, &v.ApplicationVersion, &v.Contact, &auto, &v.CacheDays); err != nil {
+			sRows.Close()
+			return err
+		}
+		v.Enabled = enabled != 0
+		v.AutoMatch = auto != 0
+		v.HasAPIKey = v.APIKey != ""
+		settingsMap[v.Source] = v
+	}
+	if err = sRows.Err(); err != nil {
+		sRows.Close()
+		return err
+	}
+	sRows.Close()
+
+	toMark := map[string]bool{}
+	for _, src := range sources {
+		var hasPending bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_match_candidates WHERE artist_id=? AND source=? AND status='candidate')`, input.ID, src).Scan(&hasPending); err != nil {
+			return err
+		}
+		if hasPending {
+			continue
+		}
+		if _, err = artistEffectiveExternalIDTx(ctx, tx, input.ID, src); err == nil {
+			continue
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		toMark[src] = true
+	}
+	if markAllEnabled {
+		for _, src := range []string{"musicbrainz", "lastfm"} {
+			setting, ok := settingsMap[src]
+			if !ok || !setting.Enabled || !setting.AutoMatch || toMark[src] {
+				continue
+			}
+			if _, err = artistEffectiveExternalIDTx(ctx, tx, input.ID, src); err == nil {
+				continue
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			var hasPending bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_match_candidates WHERE artist_id=? AND source=? AND status='candidate')`, input.ID, src).Scan(&hasPending); err != nil {
+				return err
+			}
+			if hasPending {
+				continue
+			}
+			var outcome string
+			err = tx.QueryRowContext(ctx, `SELECT outcome FROM artist_source_match_state WHERE artist_id=? AND source=?`, input.ID, src).Scan(&outcome)
+			if errors.Is(err, sql.ErrNoRows) || (err == nil && (outcome == "review" || outcome == "error")) {
+				toMark[src] = true
+			} else if err != nil {
+				return err
+			}
+		}
+	}
+
+	now := time.Now().UTC()
+	for src := range toMark {
+		setting, ok := settingsMap[src]
+		if !ok {
+			setting = MetadataSourceSetting{Source: src}
+		}
+		if err = upsertArtistMatchStateTx(ctx, tx, input, setting, "rejected", now); err != nil {
+			return err
+		}
+	}
+	if metadata.CompositeArtistCredit(input.Name) {
+		var anyPending bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_match_candidates WHERE artist_id=? AND status='candidate')`, input.ID).Scan(&anyPending); err != nil {
+			return err
+		}
+		if !anyPending {
+			if err = upsertArtistMatchStateTx(ctx, tx, input, MetadataSourceSetting{Source: compositeStateSource}, "rejected", now); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) MarkArtistCandidatesConfirmed(ctx context.Context, artistID int64, externalID, mbid string) error {
@@ -451,6 +611,28 @@ func (s *Store) ArtistExternalID(ctx context.Context, artistID int64, source str
 	var externalID string
 	err := s.db.QueryRowContext(ctx, `SELECT external_id FROM artist_external_profiles WHERE artist_id=? AND source=?`, artistID, source).Scan(&externalID)
 	return externalID, err
+}
+
+// ArtistEffectiveExternalID returns the confirmed external ID on the artist
+// itself or inherited from any artist recursively merged into it.
+func (s *Store) ArtistEffectiveExternalID(ctx context.Context, artistID int64, source string) (string, error) {
+	return artistEffectiveExternalIDTx(ctx, s.db, artistID, source)
+}
+
+func artistEffectiveExternalIDTx(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, artistID int64, source string) (string, error) {
+	var externalID string
+	err := q.QueryRowContext(ctx, `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT p.external_id FROM artist_external_profiles p WHERE p.source=? AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)) ORDER BY (p.artist_id=?) DESC,p.artist_id LIMIT 1`, artistID, source, artistID, artistID).Scan(&externalID)
+	return externalID, err
+}
+
+// PendingArtistCandidateCount returns the number of status='candidate' rows
+// for artistID whose source does not already have an effective external profile.
+func (s *Store) PendingArtistCandidateCount(ctx context.Context, artistID int64) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=? UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT COUNT(*) FROM artist_match_candidates c WHERE c.artist_id=? AND c.status='candidate' AND NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.source=c.source AND (p.artist_id=? OR p.artist_id IN (SELECT id FROM src)))`, artistID, artistID, artistID).Scan(&count)
+	return count, err
 }
 
 func (s *Store) ArtistImageCheckNeeded(ctx context.Context, artistID int64) (bool, error) {
@@ -947,6 +1129,13 @@ func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p Exter
 		}
 		if (refreshOnly || status == "confirmed") && errors.Is(err, sql.ErrNoRows) {
 			return nil
+		}
+		if errors.Is(err, sql.ErrNoRows) && !refreshOnly && status == "candidate" {
+			if _, effErr := artistEffectiveExternalIDTx(ctx, tx, artistID, p.Source); effErr == nil {
+				return nil
+			} else if !errors.Is(effErr, sql.ErrNoRows) {
+				return effErr
+			}
 		}
 		if err == nil && existing != p.ExternalID {
 			return nil

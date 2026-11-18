@@ -90,7 +90,7 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 					return
 				}
 			}
-			result, matchErr := m.matchArtist(runCtx, item.ObjectID, true)
+			result, matchErr := m.matchArtistWithMode(runCtx, item.ObjectID, true, storage.ParseArtistScanMode(r.ScanMode))
 			if ctx.Err() != nil {
 				if m.baseCtx.Err() != nil {
 					m.storePauseShutdown(runID)

@@ -61,7 +61,8 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 		f.Offset = 0
 	}
 	page := ArtistReviewPage{Limit: f.Limit, Offset: f.Offset}
-	where := `ar.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM ai_review_decisions d WHERE d.target_kind='artist_match' AND d.target_id=ar.id AND d.applied=1 AND d.reverted=0) AND (?='' OR instr(lower(COALESCE(ar.user_display_name,ar.display_name)),lower(?))>0) AND EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate' AND (?='' OR c.source=?))`
+	effectiveProfileMissingSQL := `NOT EXISTS(WITH RECURSIVE src(id) AS (SELECT a.id FROM artists a WHERE a.merged_into_artist_id=c.artist_id UNION SELECT a.id FROM artists a JOIN src s ON a.merged_into_artist_id=s.id) SELECT 1 FROM artist_external_profiles p WHERE p.source=c.source AND (p.artist_id=c.artist_id OR p.artist_id IN (SELECT id FROM src)))`
+	where := `ar.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM ai_review_decisions d WHERE d.target_kind='artist_match' AND d.target_id=ar.id AND d.applied=1 AND d.reverted=0) AND (?='' OR instr(lower(COALESCE(ar.user_display_name,ar.display_name)),lower(?))>0) AND EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate' AND (?='' OR c.source=?) AND ` + effectiveProfileMissingSQL + `)`
 	args := []any{strings.TrimSpace(f.Query), strings.TrimSpace(f.Query), f.Source, f.Source}
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artists ar WHERE `+where, args...).Scan(&page.Total); err != nil {
 		return page, err
@@ -94,7 +95,7 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 	if err != nil {
 		return page, err
 	}
-	candidates, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,status,COALESCE(json_extract(payload_json,'$.pageUrl'),'') FROM artist_match_candidates WHERE status='candidate' AND artist_id IN (SELECT value FROM json_each(?)) AND (?='' OR source=?) ORDER BY score DESC,id`, string(encoded), f.Source, f.Source)
+	candidates, err := s.db.QueryContext(ctx, `SELECT c.id,c.artist_id,c.source,c.external_id,c.display_name,COALESCE(c.sort_name,''),COALESCE(c.disambiguation,''),COALESCE(c.country,''),COALESCE(c.artist_type,''),COALESCE(c.mbid,''),c.score,c.evidence_json,c.status,COALESCE(json_extract(c.payload_json,'$.pageUrl'),'') FROM artist_match_candidates c WHERE c.status='candidate' AND c.artist_id IN (SELECT value FROM json_each(?)) AND (?='' OR c.source=?) AND `+effectiveProfileMissingSQL+` ORDER BY c.score DESC,c.id`, string(encoded), f.Source, f.Source)
 	if err != nil {
 		return page, err
 	}

@@ -52,7 +52,8 @@ func TestMatchReviewPageRunTasksUI(t *testing.T) {
 	body := adminGetBody(t, handler, cookie, "/admin/matches")
 	for _, want := range []string{
 		"艺术家匹配与审核",
-		"扫描未匹配与需检查的艺术家",
+		"扫描未检查的艺术家",
+		"全局补全扫描",
 		"元数据匹配，不是文件扫描",
 		"当前任务",
 		"已暂停",

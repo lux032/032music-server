@@ -14,6 +14,7 @@ import (
 type artistRunView struct {
 	ID               int64  `json:"id"`
 	Status           string `json:"status"`
+	ScanMode         string `json:"scanMode"`
 	Total            int    `json:"total"`
 	Processed        int    `json:"processed"`
 	Matched          int    `json:"matched"`
@@ -32,7 +33,7 @@ type artistRunView struct {
 }
 
 func artistRunDTO(r storage.DurableArtistRun) artistRunView {
-	return artistRunView{r.ID, r.Status, r.Total, r.Processed, r.Matched, r.Review, r.NoResult, r.Skipped, r.Failed, r.Current, r.ErrorMessage, r.PauseReason, r.WaitSource, r.WaitingUntil, r.WaitTotalMS, r.BudgetBaselineMS, r.DurableVersion == 1 && r.Status == "paused"}
+	return artistRunView{r.ID, r.Status, string(storage.ParseArtistScanMode(r.ScanMode)), r.Total, r.Processed, r.Matched, r.Review, r.NoResult, r.Skipped, r.Failed, r.Current, r.ErrorMessage, r.PauseReason, r.WaitSource, r.WaitingUntil, r.WaitTotalMS, r.BudgetBaselineMS, r.DurableVersion == 1 && r.Status == "paused"}
 }
 func writeArtistJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")

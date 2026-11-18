@@ -527,7 +527,8 @@ test('matches/enrichment run-task pages: naming, collapsed history, no polling s
   page.on('request', (req) => { if (req.url().includes('/runs/active.json')) activeRequests.push(req.url()); });
   await page.goto('/admin/matches');
   await expect(page.locator('main h1')).toHaveText('艺术家匹配与审核');
-  await expect(page.getByRole('button', { name: '扫描未匹配与需检查的艺术家' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '扫描未检查的艺术家' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '全局补全扫描' })).toBeVisible();
   await expect(page.locator('[data-run-tasks][data-run-kind="artist"]')).toBeVisible();
   await expect(page.locator('[data-run-tasks][data-run-kind="artist"] [data-run-empty]')).toBeVisible();
   const history = page.locator('[data-run-kind="artist"] .run-history');
