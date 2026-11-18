@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lux032/032music-server/internal/metadata"
@@ -284,5 +285,161 @@ func TestCreatorTaggedMBIDAlignmentAndOverrides(t *testing.T) {
 	}
 	if gotAfterOverride["Singer"] != "" || gotAfterOverride["Comp One"] != comp1ID || gotAfterOverride["Arranger One"] != arrID {
 		t.Fatalf("unexpected override result: %v", gotAfterOverride)
+	}
+}
+
+func TestCreatorCrossRoleConflictAndPrimaryOverrideIsolation(t *testing.T) {
+	const idX = "11111111-1111-4111-8111-111111111111"
+	const idY = "22222222-2222-4222-8222-222222222222"
+	const idZ = "33333333-3333-4333-8333-333333333333"
+
+	// Case 1: Cross-role conflict (A is X in primary A;B and Z in single composer A)
+	// must NOT fall back to single-composer Z.
+	s, ctx := openEnrichmentTestStore(t)
+	_ = s.EnsureLibrary(ctx, "Test", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+	if err := s.ImportTrack(ctx, ImportInput{
+		LibraryID: lib.ID, RelativePath: "01.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "S1", Album: "A1", Artists: []string{"ArtistA", "ArtistB"}, AlbumArtists: []string{"ArtistA"},
+			Composer: "ArtistA", DiscNumber: 1, TrackNumber: 1,
+			Raw: map[string][]string{
+				"ARTISTS":                {"ArtistA; ArtistB"},
+				"MUSICBRAINZ_ARTISTID":   {idX + "; " + idY},
+				"COMPOSERS":              {"ArtistA"},
+				"MUSICBRAINZ_COMPOSERID": {idZ},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	byName := func() map[string]string {
+		all, err := s.ArtistsForMatching(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]string{}
+		for _, a := range all {
+			m[a.Name] = a.TaggedMBID
+		}
+		return m
+	}
+	got := byName()
+	if got["ArtistA"] != "" || got["ArtistB"] != idY {
+		t.Fatalf("cross-role conflict leaked: %v", got)
+	}
+
+	// Case 2: After primary artist override, ArtistA's primary conflict is suppressed
+	// so ArtistA's composer identity Z can take effect, while another file's
+	// overridden primary X cannot borrow composer C's X via instr().
+	var t1 int64
+	_ = s.db.QueryRowContext(ctx, `SELECT id FROM tracks LIMIT 1`).Scan(&t1)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, t1); err != nil {
+		t.Fatal(err)
+	}
+	got = byName()
+	if got["ArtistA"] != idZ || got["ArtistB"] != "" {
+		t.Fatalf("after override expected ArtistA=Z ArtistB='': %v", got)
+	}
+
+	// Track 2: primary P1; P2 -> X; Y, composer C -> X, then override Track 2 primary.
+	// Neither P1 nor P2 may get X!
+	if err := s.ImportTrack(ctx, ImportInput{
+		LibraryID: lib.ID, RelativePath: "02.flac", FileSize: 2, ModifiedAtNS: 2,
+		Metadata: metadata.AudioMetadata{
+			Title: "S2", Album: "A2", Artists: []string{"P1", "P2"}, AlbumArtists: []string{"P1"},
+			Composer: "CompC", DiscNumber: 1, TrackNumber: 1,
+			Raw: map[string][]string{
+				"ARTISTS":                {"P1; P2"},
+				"MUSICBRAINZ_ARTISTID":   {idX + "; " + idY},
+				"COMPOSERS":              {"CompC"},
+				"MUSICBRAINZ_COMPOSERID": {idX},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var t2 int64
+	_ = s.db.QueryRowContext(ctx, `SELECT track_id FROM audio_files WHERE relative_path='02.flac'`).Scan(&t2)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, t2); err != nil {
+		t.Fatal(err)
+	}
+	got = byName()
+	if got["P1"] != "" || got["P2"] != "" || got["CompC"] != idX {
+		t.Fatalf("primary override bypassed via composer X: %v", got)
+	}
+}
+
+func TestCreatorDuplicateAndLegacyGuessBlockedFromMBID(t *testing.T) {
+	const idX = "11111111-1111-4111-8111-111111111111"
+	const idY = "22222222-2222-4222-8222-222222222222"
+	s, ctx := openEnrichmentTestStore(t)
+	_ = s.EnsureLibrary(ctx, "Test", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+
+	// Duplicate raw name slot "DupA; DupA; DupB" with 2 IDs must not misalign.
+	if err := s.ImportTrack(ctx, ImportInput{
+		LibraryID: lib.ID, RelativePath: "dup.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Dup", Album: "Alb", Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"},
+			Composer: "DupA, DupB", DiscNumber: 1, TrackNumber: 1,
+			Raw: map[string][]string{
+				"COMPOSERS":              {"DupA; DupA; DupB"},
+				"MUSICBRAINZ_COMPOSERID": {idX + "; " + idY},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// LegacyCreatorConversion comma guess must never align MBIDs (nor on rescan).
+	legacyInput := ImportInput{
+		LibraryID: lib.ID, RelativePath: "legacy.flac", FileSize: 2, ModifiedAtNS: 2, LegacyCreatorConversion: true,
+		Metadata: metadata.AudioMetadata{
+			Title: "Leg", Album: "Alb", Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"},
+			Composer: "LegA, LegB", DiscNumber: 1, TrackNumber: 2,
+			Raw: map[string][]string{
+				"COMPOSER":               {"LegA, LegB"},
+				"MUSICBRAINZ_COMPOSERID": {idX + "; " + idY},
+			},
+		},
+	}
+	if err := s.ImportTrack(ctx, legacyInput); err != nil {
+		t.Fatal(err)
+	}
+	legacyInput.LegacyCreatorConversion = false
+	if err := s.ImportTrack(ctx, legacyInput); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range all {
+		if a.Name != "Singer" && a.TaggedMBID != "" {
+			t.Fatalf("unexpected TaggedMBID for %s: %s", a.Name, a.TaggedMBID)
+		}
+	}
+}
+
+func TestArtistTaggedMBIDSingleArtistQueryUsesIndex(t *testing.T) {
+	s, ctx := openEnrichmentTestStore(t)
+	rows, err := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE e.artist_id=?`, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plans []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err = rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plans = append(plans, detail)
+	}
+	joined := strings.Join(plans, "\n")
+	if !strings.Contains(joined, "idx_file_artist_identity_artist") || strings.Contains(joined, "USE TEMP B-TREE") {
+		t.Fatalf("unexpected query plan:\n%s", joined)
 	}
 }

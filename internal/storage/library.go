@@ -424,9 +424,46 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_artist_identities WHERE audio_file_id=?`, audioID); err != nil {
 		return err
 	}
-	fileIdentities := map[int64]string{}
-	conflictedIdentities := map[int64]bool{}
-	collectFileArtistIdentities(fileIdentities, conflictedIdentities, m.Artists, artistIDs, metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID"))
+	type fileRoleIdentity struct {
+		artistID int64
+		role     string
+		mbid     string
+		status   string
+	}
+	var identityRows []fileRoleIdentity
+	recordRoleIdentities := func(role string, roleIDs []int64, rawNames []string, rawProven bool, mbids []string, hasTag bool) error {
+		if len(roleIDs) == 0 {
+			return nil
+		}
+		if rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
+			rawIDs, rErr := ensureArtists(ctx, tx, rawNames)
+			if rErr != nil {
+				return rErr
+			}
+			if len(rawIDs) == len(mbids) && sameUniqueArtistSet(roleIDs, rawIDs) {
+				for i, id := range rawIDs {
+					identityRows = append(identityRows, fileRoleIdentity{artistID: id, role: role, mbid: mbids[i], status: "valid"})
+				}
+				return nil
+			}
+		}
+		if hasTag {
+			seen := map[int64]bool{}
+			for _, id := range roleIDs {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				identityRows = append(identityRows, fileRoleIdentity{artistID: id, role: role, mbid: "", status: "conflict"})
+			}
+		}
+		return nil
+	}
+	primaryRawNames, primaryProven := metadata.RawPrimaryArtistNamesForIdentity(m.Raw, m.Artists)
+	primaryMBIDs := metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
+	if err = recordRoleIdentities("primary", artistIDs, primaryRawNames, primaryProven, primaryMBIDs, metadata.HasTagKey(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")); err != nil {
+		return err
+	}
 	// Credits: lyricist, composer, arranger, producer (each as separate roles)
 	type creditEntry struct {
 		role  string
@@ -453,13 +490,14 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 				return err
 			}
 		}
-		collectFileArtistIdentities(fileIdentities, conflictedIdentities, creditNames, creditIDs, metadata.CreatorMusicBrainzIDs(m.Raw, credit.role))
+		rawCreditNames, rawCreditProven := metadata.RawCreatorNamesForIdentity(m.Raw, credit.role, credit.names)
+		creditMBIDs := metadata.CreatorMusicBrainzIDs(m.Raw, credit.role)
+		if err = recordRoleIdentities(credit.role, creditIDs, rawCreditNames, rawCreditProven, creditMBIDs, metadata.HasCreatorMusicBrainzTag(m.Raw, credit.role)); err != nil {
+			return err
+		}
 	}
-	for id := range conflictedIdentities {
-		delete(fileIdentities, id)
-	}
-	for id, mbid := range fileIdentities {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?)`, audioID, id, mbid); err != nil {
+	for _, row := range identityRows {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,?,?,?)`, audioID, row.artistID, row.role, row.mbid, row.status); err != nil {
 			return err
 		}
 	}
@@ -603,27 +641,26 @@ func ensureArtists(ctx context.Context, tx *sql.Tx, names []string) ([]int64, er
 	return ids, nil
 }
 
-// collectFileArtistIdentities records proven file/name/MBID alignment before merges
-// or UI sorting can change relation positions. Ambiguous or conflicting alignments
-// are suppressed so enrichment never auto-binds the wrong artist.
-func collectFileArtistIdentities(identities map[int64]string, conflicted map[int64]bool, names []string, artistIDs []int64, mbids []string) {
-	if len(mbids) == 0 || len(mbids) != len(names) || len(artistIDs) != len(names) {
-		return
+// sameUniqueArtistSet checks that rawIDs are distinct canonical artists matching
+// the materialized creditIDs set (preventing legacy comma-guessed splits from
+// inheriting raw MBID alignment).
+func sameUniqueArtistSet(creditIDs, rawIDs []int64) bool {
+	if len(creditIDs) != len(rawIDs) {
+		return false
 	}
-	seen := map[int64]bool{}
-	for _, id := range artistIDs {
-		if seen[id] {
-			return
+	rawSet := make(map[int64]bool, len(rawIDs))
+	for _, id := range rawIDs {
+		if rawSet[id] {
+			return false
 		}
-		seen[id] = true
+		rawSet[id] = true
 	}
-	for i, id := range artistIDs {
-		if prev, exists := identities[id]; exists && prev != mbids[i] {
-			conflicted[id] = true
-			continue
+	for _, id := range creditIDs {
+		if !rawSet[id] {
+			return false
 		}
-		identities[id] = mbids[i]
 	}
+	return len(rawSet) == len(creditIDs)
 }
 
 func (s *Store) CountAvailableAudioFiles(ctx context.Context, libraryID int64) (int64, error) {

@@ -46,7 +46,8 @@ type ArtistIdentityConflict struct {
 func artistIdentityConflict(ctx context.Context, db artistIdentityQuerier, artistID, candidateID int64) (ArtistIdentityConflict, error) {
 	var v ArtistIdentityConflict
 	v.CandidateID = candidateID
-	err := db.QueryRowContext(ctx, `SELECT c.source,c.external_id,p.artist_id,COALESCE(a.user_display_name,a.display_name) FROM artist_match_candidates c JOIN artist_external_profiles p ON p.source=c.source AND p.external_id=c.external_id JOIN artists a ON a.id=p.artist_id WHERE c.id=? AND c.artist_id=? AND c.status='candidate' AND p.artist_id<>?`, candidateID, artistID, artistID).Scan(&v.Source, &v.ExternalID, &v.OwnerArtistID, &v.OwnerName)
+	var manualOnly int
+	err := db.QueryRowContext(ctx, `SELECT c.source,c.external_id,c.requires_manual_review,p.artist_id,COALESCE(a.user_display_name,a.display_name) FROM artist_match_candidates c JOIN artist_external_profiles p ON p.source=c.source AND p.external_id=c.external_id JOIN artists a ON a.id=p.artist_id WHERE c.id=? AND c.artist_id=? AND c.status='candidate' AND p.artist_id<>?`, candidateID, artistID, artistID).Scan(&v.Source, &v.ExternalID, &manualOnly, &v.OwnerArtistID, &v.OwnerName)
 	if err != nil {
 		return v, err
 	}
@@ -65,8 +66,8 @@ func artistIdentityConflict(ctx context.Context, db artistIdentityQuerier, artis
 	if err = db.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, artistID).Scan(&sourceName); err != nil {
 		return v, err
 	}
-	// A formatted collaboration is not an alias of one of its contributors.
-	v.CanMerge = !sourceMerged.Valid && v.TargetArtistID != artistID && !metadata.CompositeArtistCredit(v.TargetName) && !metadata.CompositeArtistCredit(sourceName)
+	// A formatted collaboration or unsafe tagged identity is not auto-mergeable.
+	v.CanMerge = manualOnly == 0 && !sourceMerged.Valid && v.TargetArtistID != artistID && !metadata.CompositeArtistCredit(v.TargetName) && !metadata.CompositeArtistCredit(sourceName)
 	return v, nil
 }
 func (s *Store) ArtistIdentityConflict(ctx context.Context, artistID, candidateID int64) (ArtistIdentityConflict, error) {

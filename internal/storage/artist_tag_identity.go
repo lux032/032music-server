@@ -2,20 +2,67 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 )
 
-// Only unambiguous single-person-per-role credits or import-verified alignments
-// provide identity evidence. Multi-person positions cannot be aligned safely
-// after name deduplication and artist merges.
+// Only unambiguous single-person-per-role credits (pre-074 legacy rows) or
+// import-verified per-role alignments provide identity evidence.
 func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int64]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,ta.role,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE (?=0 OR ta.artist_id=?) AND (
-		(ta.role='primary' AND UPPER(tag.field_name) IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=ta.track_id AND st.active=1))
-		OR (ta.role='composer' AND UPPER(tag.field_name) IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID'))
-		OR (ta.role='lyricist' AND UPPER(tag.field_name) IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID'))
-		OR (ta.role='arranger' AND UPPER(tag.field_name) IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID'))
-		OR (ta.role='producer' AND UPPER(tag.field_name) IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID'))
-	) AND (SELECT COUNT(*) FROM track_artists p WHERE p.track_id=ta.track_id AND p.role=ta.role)=1 ORDER BY ta.artist_id,af.id,ta.role,tag.position`, artistID, artistID)
+	result := map[int64]string{}
+	inconsistent := map[int64]bool{}
+
+	record := func(artist int64, mbid string) {
+		if previous := result[artist]; previous != "" && previous != mbid {
+			inconsistent[artist] = true
+		}
+		result[artist] = mbid
+	}
+
+	// 1. Import-verified per-(audio_file, artist, role) identities and conflicts.
+	var evidence *sql.Rows
+	var err error
+	if artistID > 0 {
+		evidence, err = s.db.QueryContext(ctx, `SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE e.artist_id=? AND (e.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1)) AND (e.status='conflict' OR EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND ((e.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID')) OR (e.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (e.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (e.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (e.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID'))) AND instr(lower(tag.value),e.mbid)>0))`, artistID)
+	} else {
+		evidence, err = s.db.QueryContext(ctx, `SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE (e.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1)) AND (e.status='conflict' OR EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND ((e.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID')) OR (e.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (e.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (e.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (e.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID'))) AND instr(lower(tag.value),e.mbid)>0))`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for evidence.Next() {
+		var artist int64
+		var role, mbid, status string
+		if err = evidence.Scan(&artist, &role, &mbid, &status); err != nil {
+			evidence.Close()
+			return nil, err
+		}
+		_ = role
+		if status == "conflict" {
+			inconsistent[artist] = true
+			continue
+		}
+		if normalized := normalizedArtistMBID(mbid); normalized != "" {
+			record(artist, normalized)
+		}
+	}
+	if err = evidence.Err(); err != nil {
+		evidence.Close()
+		return nil, err
+	}
+	evidence.Close()
+
+	// 2. Legacy fallback for pre-074 databases/rows where (audio_file, role) has
+	// no recorded import evidence. Blocked if any conflict exists for the artist
+	// on that file, or if track_artists was modified by remote/manual sources.
+	var rows *sql.Rows
+	const legacyTagPred = `((ta.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=ta.track_id AND st.active=1)) OR (ta.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (ta.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (ta.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (ta.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID')))`
+	const legacyGuard = `NOT EXISTS(SELECT 1 FROM audio_file_artist_identities e WHERE e.audio_file_id=af.id AND e.role=ta.role) AND NOT EXISTS(SELECT 1 FROM audio_file_artist_identities c WHERE c.audio_file_id=af.id AND c.artist_id=ta.artist_id AND c.status='conflict') AND NOT EXISTS(SELECT 1 FROM track_artist_sources s WHERE s.track_id=ta.track_id AND s.role=ta.role AND s.source<>'file_tag') AND (SELECT COUNT(*) FROM track_artists p WHERE p.track_id=ta.track_id AND p.role=ta.role)=1`
+	if artistID > 0 {
+		rows, err = s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE ta.artist_id=? AND `+legacyTagPred+` AND `+legacyGuard, artistID)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM audio_file_tags tag JOIN audio_files af ON af.id=tag.audio_file_id JOIN track_artists ta ON ta.track_id=af.track_id WHERE tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID','MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID','MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID','MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID','MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID') AND `+legacyTagPred+` AND `+legacyGuard)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -26,61 +73,51 @@ func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int6
 	}
 	type fileEvidence struct {
 		artist int64
-		values []string
+		byKey  map[string][]string
 	}
 	files := map[fileRoleKey]*fileEvidence{}
 	for rows.Next() {
 		var artist, file int64
-		var role, value string
-		if err = rows.Scan(&artist, &file, &role, &value); err != nil {
+		var role, fieldName, value string
+		if err = rows.Scan(&artist, &file, &role, &fieldName, &value); err != nil {
 			return nil, err
 		}
 		key := fileRoleKey{artist: artist, file: file, role: role}
 		if files[key] == nil {
-			files[key] = &fileEvidence{artist: artist}
+			files[key] = &fileEvidence{artist: artist, byKey: map[string][]string{}}
 		}
-		files[key].values = append(files[key].values, strings.Split(value, ";")...)
+		upperKey := strings.ToUpper(strings.TrimSpace(fieldName))
+		files[key].byKey[upperKey] = append(files[key].byKey[upperKey], strings.Split(value, ";")...)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	result := map[int64]string{}
-	inconsistent := map[int64]bool{}
 	for _, file := range files {
-		if len(file.values) != 1 {
-			continue
+		agreed := ""
+		ambiguous := false
+		for _, vals := range file.byKey {
+			if len(vals) != 1 {
+				ambiguous = true
+				break
+			}
+			id := normalizedArtistMBID(vals[0])
+			if id == "" {
+				ambiguous = true
+				break
+			}
+			if agreed != "" && agreed != id {
+				ambiguous = true
+				break
+			}
+			agreed = id
 		}
-		id := normalizedArtistMBID(file.values[0])
-		if id == "" {
-			continue
-		}
-		if previous := result[file.artist]; previous != "" && previous != id {
+		if ambiguous {
 			inconsistent[file.artist] = true
+			continue
 		}
-		result[file.artist] = id
-	}
-	// New scans preserve verified multi-person alignment separately from the
-	// materialized relations. Do not infer identity from their current positions.
-	evidence, err := s.db.QueryContext(ctx, `SELECT e.artist_id,e.mbid FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE (?=0 OR e.artist_id=?) AND EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND UPPER(tag.field_name) IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID','MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID','MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID','MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID','MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID') AND instr(lower(tag.value),e.mbid)>0) AND (NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1) OR EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND UPPER(tag.field_name) IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID','MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID','MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID','MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID') AND instr(lower(tag.value),e.mbid)>0))`, artistID, artistID)
-	if err != nil {
-		return nil, err
-	}
-	for evidence.Next() {
-		var artist int64
-		var mbid string
-		if err = evidence.Scan(&artist, &mbid); err != nil {
-			evidence.Close()
-			return nil, err
+		if agreed != "" {
+			record(file.artist, agreed)
 		}
-		if previous := result[artist]; previous != "" && previous != mbid {
-			inconsistent[artist] = true
-		}
-		result[artist] = mbid
-	}
-	err = evidence.Err()
-	evidence.Close()
-	if err != nil {
-		return nil, err
 	}
 	for artist := range inconsistent {
 		delete(result, artist)

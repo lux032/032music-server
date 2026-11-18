@@ -102,6 +102,25 @@ func Read(path string) (AudioMetadata, error) {
 	result.TrackNumber, result.TrackTotal = parsed.Track()
 	result.DiscNumber, result.DiscTotal = parsed.Disc()
 
+	switch result.Container {
+	case "m4a", "mp4":
+		for key, values := range readMP4CustomAtoms(file) {
+			result.Raw[key] = values
+		}
+	case "ogg", "oga", "opus":
+		readOggVorbisComments(file, &result)
+		if len(result.Raw["COMPOSER"]) > 0 {
+			result.Composer = result.Raw["COMPOSER"][0]
+		}
+		if len(result.Raw["GENRE"]) > 0 {
+			var genres []string
+			for _, v := range result.Raw["GENRE"] {
+				genres = append(genres, splitValues(v)...)
+			}
+			result.Genres = genres
+		}
+	}
+
 	// Extract credits and sort keys from raw tags (ID3v2 / MP4). Values may
 	// carry NUL separators and C0 control characters, so the same cleaning
 	// rule as the storage layer (D62) applies via internal/tagclean (D-19).

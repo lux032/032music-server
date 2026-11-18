@@ -390,9 +390,10 @@ func (s *Store) ConfirmArtistCandidateByAI(ctx context.Context, artistID, candid
 
 		var p ExternalArtistProfile
 		var status, aliases, tags, raw string
-		err = tx.QueryRowContext(ctx, `SELECT status,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(json_extract(payload_json,'$.pageUrl'),''),COALESCE(json_extract(payload_json,'$.imageUrl'),''),COALESCE(json_extract(payload_json,'$.biography'),''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(disambiguation,''),COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),payload_json FROM artist_match_candidates WHERE id=? AND artist_id=?`, candidateID, artistID).
-			Scan(&status, &p.Source, &p.ExternalID, &p.DisplayName, &p.SortName, &p.PageURL, &p.RemoteImageURL, &p.Biography, &p.Country, &p.ArtistType, &p.Disambiguation, &aliases, &tags, &raw)
-		if errors.Is(err, sql.ErrNoRows) || status != "candidate" {
+		var manualOnly int
+		err = tx.QueryRowContext(ctx, `SELECT status,requires_manual_review,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(json_extract(payload_json,'$.pageUrl'),''),COALESCE(json_extract(payload_json,'$.imageUrl'),''),COALESCE(json_extract(payload_json,'$.biography'),''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(disambiguation,''),COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),payload_json FROM artist_match_candidates WHERE id=? AND artist_id=?`, candidateID, artistID).
+			Scan(&status, &manualOnly, &p.Source, &p.ExternalID, &p.DisplayName, &p.SortName, &p.PageURL, &p.RemoteImageURL, &p.Biography, &p.Country, &p.ArtistType, &p.Disambiguation, &aliases, &tags, &raw)
+		if errors.Is(err, sql.ErrNoRows) || status != "candidate" || manualOnly != 0 {
 			return nil
 		}
 		if err != nil {

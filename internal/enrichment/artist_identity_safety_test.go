@@ -1,13 +1,17 @@
 package enrichment
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -892,5 +896,139 @@ func TestCreatorOnlyArtistAutoMatchesViaTaggedMBID(t *testing.T) {
 	gotMBID, err := s.ArtistExternalID(ctx, composerID, "musicbrainz")
 	if err != nil || gotMBID != composerMBID {
 		t.Fatalf("gotMBID=%q err=%v", gotMBID, err)
+	}
+}
+
+func TestTaggedMismatchMarksCandidateRequiresManualReviewAndBlocksMerge(t *testing.T) {
+	const mbid = "11111111-1111-4111-8111-111111111111"
+	manager := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) { return http.DefaultTransport.RoundTrip(r) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id":"`+mbid+`","name":"Wrong Performer","sort-name":"Wrong Performer","aliases":[],"tags":[],"relations":[]}`)
+	}))
+	defer server.Close()
+	manager.musicBrainzBase = server.URL
+	s := manager.store
+	ctx := context.Background()
+	_ = s.EnsureLibrary(ctx, "Test", "/music")
+	library, _ := s.LibraryByRoot(ctx, "/music")
+	// Owner artist already holds mbid.
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "Owner/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "S1", Album: "A1", Artists: []string{"Wrong Performer"}, AlbumArtists: []string{"Wrong Performer"}, DiscNumber: 1, TrackNumber: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "Bad/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "S2", Album: "A2", Artists: []string{"Local Artist"}, AlbumArtists: []string{"Local Artist"}, DiscNumber: 1, TrackNumber: 1, Raw: map[string][]string{"MUSICBRAINZ_ARTISTID": {mbid}}}}); err != nil {
+		t.Fatal(err)
+	}
+	artists, _ := s.ArtistsForMatching(ctx)
+	var ownerID, badID int64
+	for _, a := range artists {
+		if a.Name == "Wrong Performer" {
+			ownerID = a.ID
+		} else if a.Name == "Local Artist" {
+			badID = a.ID
+		}
+	}
+	if err := s.UpsertExternalArtistProfile(ctx, ownerID, storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: mbid, DisplayName: "Wrong Performer"}); err != nil {
+		t.Fatal(err)
+	}
+	setting, _ := s.MetadataSourceSetting(ctx, "musicbrainz")
+	setting.Enabled = true
+	setting.AutoMatch = true
+	_ = s.SaveMetadataSourceSetting(ctx, setting)
+
+	res, err := manager.MatchArtist(ctx, badID)
+	if err != nil || res.AutoMatched {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	cands, _ := s.ArtistCandidates(ctx, badID)
+	if len(cands) != 1 || !cands[0].RequiresManualReview {
+		t.Fatalf("expected RequiresManualReview=true, got %+v", cands)
+	}
+	conflict, err := s.ArtistIdentityConflict(ctx, badID, cands[0].ID)
+	if err != nil || conflict.CanMerge {
+		t.Fatalf("expected CanMerge=false on mismatched tagged identity, got %+v err=%v", conflict, err)
+	}
+	if bound, _, err := s.ConfirmArtistCandidateByAI(ctx, badID, cands[0].ID); err != nil || bound {
+		t.Fatalf("expected AI confirm blocked, got bound=%v err=%v", bound, err)
+	}
+}
+
+func TestM4AAndFLACSerializedCreatorMBIDEndToEnd(t *testing.T) {
+	const singerID = "11111111-1111-4111-8111-111111111111"
+	const comp1ID = "22222222-2222-4222-8222-222222222222"
+	const comp2ID = "33333333-3333-4333-8333-333333333333"
+
+	manager := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) { return http.DefaultTransport.RoundTrip(r) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, comp1ID):
+			io.WriteString(w, `{"id":"`+comp1ID+`","name":"Comp A","sort-name":"Comp A","aliases":[],"tags":[],"relations":[]}`)
+		case strings.Contains(r.URL.Path, comp2ID):
+			io.WriteString(w, `{"id":"`+comp2ID+`","name":"Comp B","sort-name":"Comp B","aliases":[],"tags":[],"relations":[]}`)
+		case strings.Contains(r.URL.Path, singerID):
+			io.WriteString(w, `{"id":"`+singerID+`","name":"Singer A","sort-name":"Singer A","aliases":[],"tags":[],"relations":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	manager.musicBrainzBase = server.URL
+	s := manager.store
+	ctx := context.Background()
+	_ = s.EnsureLibrary(ctx, "Test", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+
+	// Serialized M4A with 8-byte data headers (including 4-byte NUL locale)
+	box := func(kind string, payload []byte) []byte {
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.BigEndian, uint32(8+len(payload)))
+		buf.WriteString(kind)
+		buf.Write(payload)
+		return buf.Bytes()
+	}
+	freeform := func(name, val string) []byte {
+		mean := box("mean", append([]byte{0, 0, 0, 0}, []byte("com.apple.iTunes")...))
+		nm := box("name", append([]byte{0, 0, 0, 0}, []byte(name)...))
+		dt := box("data", append([]byte{0, 0, 0, 1, 0, 0, 0, 0}, []byte(val)...))
+		return box("----", append(append(mean, nm...), dt...))
+	}
+	ilst := box("ilst", bytes.Join([][]byte{
+		freeform("ARTISTS", "Singer A"),
+		freeform("MUSICBRAINZ_ARTISTID", singerID),
+		freeform("COMPOSERS", "Comp A; Comp B"),
+		freeform("MUSICBRAINZ_COMPOSERID", comp1ID+"; "+comp2ID),
+	}, nil))
+	meta := box("meta", append([]byte{0, 0, 0, 0}, ilst...))
+	m4aPath := filepath.Join(t.TempDir(), "track.m4a")
+	if err := os.WriteFile(m4aPath, append(box("ftyp", []byte("M4A \x00\x00\x00\x00isomiso2")), box("moov", box("udta", meta))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedM4A, err := metadata.Read(m4aPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: "01.m4a", FileSize: 1, ModifiedAtNS: 1, Metadata: parsedM4A}); err != nil {
+		t.Fatal(err)
+	}
+
+	setting, _ := s.MetadataSourceSetting(ctx, "musicbrainz")
+	setting.Enabled = true
+	setting.AutoMatch = true
+	_ = s.SaveMetadataSourceSetting(ctx, setting)
+
+	artists, _ := s.ArtistsForMatching(ctx)
+	gotBound := map[string]string{}
+	for _, a := range artists {
+		res, err := manager.MatchArtist(ctx, a.ID)
+		if err != nil || !res.AutoMatched {
+			t.Fatalf("%s match failed: res=%+v err=%v", a.Name, res, err)
+		}
+		mbid, err := s.ArtistExternalID(ctx, a.ID, "musicbrainz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotBound[a.Name] = mbid
+	}
+	if gotBound["Singer A"] != singerID || gotBound["Comp A"] != comp1ID || gotBound["Comp B"] != comp2ID {
+		t.Fatalf("unexpected bound mbids: %v", gotBound)
 	}
 }

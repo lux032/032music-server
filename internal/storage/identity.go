@@ -31,6 +31,7 @@ type ArtistCandidate struct {
 	ID, ArtistID                                                                                 int64
 	Source, ExternalID, DisplayName, SortName, Disambiguation, Country, ArtistType, MBID, Status string
 	Score                                                                                        int
+	RequiresManualReview                                                                         bool
 	Evidence                                                                                     []string
 	Payload                                                                                      json.RawMessage
 }
@@ -291,7 +292,7 @@ func replaceArtistCandidatesTx(ctx context.Context, tx *sql.Tx, artistID int64, 
 		if len(v.Payload) == 0 {
 			v.Payload = json.RawMessage(`{}`)
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,sort_name,disambiguation,country,artist_type,mbid,score,evidence_json,payload_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'candidate') ON CONFLICT(artist_id,source,external_id) DO UPDATE SET display_name=excluded.display_name,sort_name=excluded.sort_name,disambiguation=excluded.disambiguation,country=excluded.country,artist_type=excluded.artist_type,mbid=excluded.mbid,score=excluded.score,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status=artist_match_candidates.status`, artistID, v.Source, v.ExternalID, v.DisplayName, v.SortName, v.Disambiguation, v.Country, v.ArtistType, v.MBID, v.Score, string(evidence), string(v.Payload)); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,sort_name,disambiguation,country,artist_type,mbid,score,requires_manual_review,evidence_json,payload_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'candidate') ON CONFLICT(artist_id,source,external_id) DO UPDATE SET display_name=excluded.display_name,sort_name=excluded.sort_name,disambiguation=excluded.disambiguation,country=excluded.country,artist_type=excluded.artist_type,mbid=excluded.mbid,score=excluded.score,requires_manual_review=excluded.requires_manual_review,evidence_json=excluded.evidence_json,payload_json=excluded.payload_json,status=artist_match_candidates.status`, artistID, v.Source, v.ExternalID, v.DisplayName, v.SortName, v.Disambiguation, v.Country, v.ArtistType, v.MBID, v.Score, boolInt(v.RequiresManualReview), string(evidence), string(v.Payload)); err != nil {
 			return err
 		}
 	}
@@ -299,7 +300,7 @@ func replaceArtistCandidatesTx(ctx context.Context, tx *sql.Tx, artistID int64, 
 }
 
 func (s *Store) ArtistCandidates(ctx context.Context, artistID int64) ([]ArtistCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,payload_json,status FROM artist_match_candidates WHERE artist_id=? ORDER BY status='confirmed' DESC,score DESC,id`, artistID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,requires_manual_review,evidence_json,payload_json,status FROM artist_match_candidates WHERE artist_id=? ORDER BY status='confirmed' DESC,score DESC,id`, artistID)
 	if err != nil {
 		return nil, err
 	}
@@ -308,9 +309,11 @@ func (s *Store) ArtistCandidates(ctx context.Context, artistID int64) ([]ArtistC
 	for rows.Next() {
 		var v ArtistCandidate
 		var evidence, payload string
-		if err = rows.Scan(&v.ID, &v.ArtistID, &v.Source, &v.ExternalID, &v.DisplayName, &v.SortName, &v.Disambiguation, &v.Country, &v.ArtistType, &v.MBID, &v.Score, &evidence, &payload, &v.Status); err != nil {
+		var manualOnly int
+		if err = rows.Scan(&v.ID, &v.ArtistID, &v.Source, &v.ExternalID, &v.DisplayName, &v.SortName, &v.Disambiguation, &v.Country, &v.ArtistType, &v.MBID, &v.Score, &manualOnly, &evidence, &payload, &v.Status); err != nil {
 			return nil, err
 		}
+		v.RequiresManualReview = manualOnly != 0
 		_ = json.Unmarshal([]byte(evidence), &v.Evidence)
 		v.Payload = json.RawMessage(payload)
 		list = append(list, v)
@@ -321,7 +324,7 @@ func (s *Store) ArtistCandidates(ctx context.Context, artistID int64) ([]ArtistC
 // PendingArtistCandidates returns all status='candidate' matches for every
 // artist in a single query (N+1 fix for the match-review page).
 func (s *Store) PendingArtistCandidates(ctx context.Context) (map[int64][]ArtistCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,payload_json,status FROM artist_match_candidates WHERE status='candidate' ORDER BY score DESC,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,requires_manual_review,evidence_json,payload_json,status FROM artist_match_candidates WHERE status='candidate' ORDER BY score DESC,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -330,9 +333,11 @@ func (s *Store) PendingArtistCandidates(ctx context.Context) (map[int64][]Artist
 	for rows.Next() {
 		var v ArtistCandidate
 		var evidence, payload string
-		if err = rows.Scan(&v.ID, &v.ArtistID, &v.Source, &v.ExternalID, &v.DisplayName, &v.SortName, &v.Disambiguation, &v.Country, &v.ArtistType, &v.MBID, &v.Score, &evidence, &payload, &v.Status); err != nil {
+		var manualOnly int
+		if err = rows.Scan(&v.ID, &v.ArtistID, &v.Source, &v.ExternalID, &v.DisplayName, &v.SortName, &v.Disambiguation, &v.Country, &v.ArtistType, &v.MBID, &v.Score, &manualOnly, &evidence, &payload, &v.Status); err != nil {
 			return nil, err
 		}
+		v.RequiresManualReview = manualOnly != 0
 		_ = json.Unmarshal([]byte(evidence), &v.Evidence)
 		v.Payload = json.RawMessage(payload)
 		result[v.ArtistID] = append(result[v.ArtistID], v)

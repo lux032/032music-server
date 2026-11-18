@@ -708,7 +708,7 @@ func (s *Store) LoadArtistAIContext(ctx context.Context, artistID int64) (Artist
 		trkRows.Close()
 	}
 
-	cRows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,evidence_json,COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),status FROM artist_match_candidates WHERE artist_id=? AND status='candidate' ORDER BY score DESC,id`, artistID)
+	cRows, err := s.db.QueryContext(ctx, `SELECT id,artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(disambiguation,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(mbid,''),score,requires_manual_review,evidence_json,COALESCE(json_extract(payload_json,'$.aliases'),'[]'),COALESCE(json_extract(payload_json,'$.tags'),'[]'),status FROM artist_match_candidates WHERE artist_id=? AND status='candidate' ORDER BY score DESC,id`, artistID)
 	if err != nil {
 		return c, err
 	}
@@ -716,9 +716,11 @@ func (s *Store) LoadArtistAIContext(ctx context.Context, artistID int64) (Artist
 	for cRows.Next() {
 		var cand ArtistCandidateAIView
 		var evJSON, alJSON, tagJSON string
-		if err = cRows.Scan(&cand.ID, &cand.ArtistID, &cand.Source, &cand.ExternalID, &cand.DisplayName, &cand.SortName, &cand.Disambiguation, &cand.Country, &cand.ArtistType, &cand.MBID, &cand.Score, &evJSON, &alJSON, &tagJSON, &cand.Status); err != nil {
+		var manualOnly int
+		if err = cRows.Scan(&cand.ID, &cand.ArtistID, &cand.Source, &cand.ExternalID, &cand.DisplayName, &cand.SortName, &cand.Disambiguation, &cand.Country, &cand.ArtistType, &cand.MBID, &cand.Score, &manualOnly, &evJSON, &alJSON, &tagJSON, &cand.Status); err != nil {
 			return c, err
 		}
+		cand.RequiresManualReview = manualOnly != 0
 		_ = json.Unmarshal([]byte(evJSON), &cand.Evidence)
 		_ = json.Unmarshal([]byte(alJSON), &cand.Aliases)
 		_ = json.Unmarshal([]byte(tagJSON), &cand.Tags)

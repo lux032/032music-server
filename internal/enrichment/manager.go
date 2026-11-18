@@ -523,6 +523,7 @@ func (m *Manager) matchArtist(ctx context.Context, artistID int64, automatic boo
 					if !artistProfileNameMatches(artist.Name, profile) {
 						unsafeTaggedIdentity = true
 						candidate.Score = 85
+						candidate.RequiresManualReview = true
 						candidate.Evidence = append(candidate.Evidence, "标签身份与歌手名称不一致，需要人工核对")
 					}
 					found = append(found, candidate)
@@ -1459,6 +1460,9 @@ func normalizeArtistCandidates(candidates []storage.ArtistCandidate, unsafe, com
 		return
 	}
 	for i := range candidates {
+		if unsafe {
+			candidates[i].RequiresManualReview = true
+		}
 		if composite {
 			evidence := "疑似合作署名，禁止自动绑定个人身份；请先修正艺术家关系"
 			found := false

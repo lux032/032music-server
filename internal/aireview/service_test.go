@@ -456,6 +456,50 @@ func TestArtistConflictAndSeriesSuggestion(t *testing.T) {
 	}
 }
 
+func TestArtistMatchBlocksAutoConfirmOnRequiresManualReview(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	_ = s.EnsureLibrary(ctx, "Music", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "a.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "Song", Album: "Album", Artists: []string{"LocalSinger"}, AlbumArtists: []string{"LocalSinger"}, DiscNumber: 1, TrackNumber: 1},
+	})
+	artists, _ := s.ListArtists(ctx, storage.Filters{})
+	artistID := artists[0].ID
+	_ = s.ReplaceArtistCandidates(ctx, artistID, []storage.ArtistCandidate{{
+		Source: "musicbrainz", ExternalID: "mb-unsafe", MBID: "mb-unsafe",
+		DisplayName: "Different Name", Score: 85, RequiresManualReview: true,
+		Evidence: []string{"标签身份与歌手名称不一致，需要人工核对"},
+	}})
+	cands, _ := s.ArtistCandidates(ctx, artistID)
+	candID := cands[0].ID
+
+	rev, _ := s.AIReviewSettings(ctx)
+	rev.Enabled = true
+	rev.ArtistMode = storage.AIReviewModeAuto
+	_ = s.SaveAIReviewSettings(ctx, rev)
+
+	svc := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		Limiter: aiclient.NewLimiter(6000),
+		NewChat: func(storage.AISettings) (tagging.Chat, error) {
+			return fakeChat{fn: func(tagging.ChatRequest) (tagging.ChatResult, error) {
+				return tagging.ChatResult{
+					Content: `{"decision":"select","candidateId":` + itoa(candID) + `,"confidence":99,"needWebSearch":false,"searchQuery":"","quote":"","reason":"test","evidence":[]}`,
+					Usage:   storage.AIUsage{Requests: 1},
+				}, nil
+			}}, nil
+		},
+	})
+	res, err := svc.EvaluateTarget(ctx, storage.AITargetArtistMatch, artistID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Applied || res.Action != storage.AIActionUncertain {
+		t.Fatalf("expected uncertain and not applied, got %+v", res)
+	}
+}
+
 func itoa(v int64) string {
 	return string(func() []byte {
 		if v == 0 {

@@ -89,12 +89,65 @@ func cleanPeople(values []string, legacy bool) []string {
 	return names
 }
 
+func allTagValues(raw map[string][]string, aliases ...string) [][]string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var groups [][]string
+	for _, alias := range aliases {
+		for _, key := range keys {
+			normalized := strings.ToUpper(strings.TrimSpace(key))
+			if i := strings.LastIndex(normalized, ":"); i >= 0 {
+				normalized = normalized[i+1:]
+			}
+			if normalized == alias && len(raw[key]) > 0 {
+				groups = append(groups, raw[key])
+			}
+		}
+	}
+	return groups
+}
+
+// HasTagKey reports whether any of the given tag aliases exists with a non-empty value list.
+func HasTagKey(raw map[string][]string, aliases ...string) bool {
+	return len(allTagValues(raw, aliases...)) > 0
+}
+
 // ArtistMusicBrainzIDs retains order and rejects the entire list on malformed,
-// empty or duplicate identities rather than shifting the name/ID alignment.
+// empty or duplicate identities, or conflicting alias keys.
 func ArtistMusicBrainzIDs(raw map[string][]string, aliases ...string) []string {
+	groups := allTagValues(raw, aliases...)
+	if len(groups) == 0 {
+		return nil
+	}
+	var agreed []string
+	for _, group := range groups {
+		parsed := parseStrictMBIDGroup(group)
+		if len(parsed) == 0 {
+			return nil
+		}
+		if agreed == nil {
+			agreed = parsed
+			continue
+		}
+		if len(agreed) != len(parsed) {
+			return nil
+		}
+		for i := range agreed {
+			if agreed[i] != parsed[i] {
+				return nil
+			}
+		}
+	}
+	return agreed
+}
+
+func parseStrictMBIDGroup(values []string) []string {
 	var result []string
 	seen := map[string]bool{}
-	for _, value := range tagValues(raw, aliases...) {
+	for _, value := range values {
 		value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "\ufeff"))
 		for _, part := range strings.Split(strings.NewReplacer("\x00", ";", "/", ";").Replace(value), ";") {
 			id, valid := NormalizeMusicBrainzID(part)
@@ -106,6 +159,86 @@ func ArtistMusicBrainzIDs(raw map[string][]string, aliases ...string) []string {
 		}
 	}
 	return result
+}
+
+// RawPrimaryArtistNamesForIdentity returns raw, non-deduplicated primary artist
+// slots when the file tags prove exact positional alignment.
+func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string) ([]string, bool) {
+	if values := tagValues(raw, "ARTISTS"); len(values) > 0 {
+		return strictRawSlots(splitRawSlots(values, false))
+	}
+	values := tagValues(raw, "ARTIST", "TPE1", "TP1", "\xa9ART", "©ART")
+	if len(values) == 0 {
+		if len(fallback) == 0 {
+			return nil, false
+		}
+		if len(fallback) == 1 && CompositeArtistCredit(fallback[0]) {
+			return nil, false
+		}
+		return strictRawSlots(fallback)
+	}
+	if len(values) > 1 {
+		return strictRawSlots(splitRawSlots(values, false))
+	}
+	slots := splitRawSlots(values, true)
+	if len(slots) > 1 {
+		return strictRawSlots(slots)
+	}
+	if len(slots) == 1 {
+		ids := ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
+		if len(ids) > 1 {
+			parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(slots[0]), "\ufeff")), ", ")
+			if len(parts) == len(ids) {
+				return strictRawSlots(parts)
+			}
+			return nil, false
+		}
+		if len(ids) == 1 {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(slots[0]), "\ufeff"))
+			if trimmed != "" && !CompositeArtistCredit(trimmed) {
+				return []string{trimmed}, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func splitRawSlots(values []string, legacy bool) []string {
+	separators := []string{"\x00", ";"}
+	if legacy {
+		separators = append(separators, " / ", "、")
+	}
+	var slots []string
+	for _, value := range values {
+		parts := []string{value}
+		for _, sep := range separators {
+			var next []string
+			for _, part := range parts {
+				next = append(next, strings.Split(part, sep)...)
+			}
+			parts = next
+		}
+		slots = append(slots, parts...)
+	}
+	return slots
+}
+
+func strictRawSlots(slots []string) ([]string, bool) {
+	if len(slots) == 0 {
+		return nil, false
+	}
+	cleaned := make([]string, 0, len(slots))
+	seen := map[string]bool{}
+	for _, slot := range slots {
+		name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(slot), "\ufeff"))
+		key := Normalize(name)
+		if key == "" || seen[key] {
+			return nil, false
+		}
+		seen[key] = true
+		cleaned = append(cleaned, name)
+	}
+	return cleaned, true
 }
 
 // CompositeArtistCredit flags display credits, not a license to split them.

@@ -661,7 +661,7 @@ func (s *Service) evalArtist(ctx context.Context, ai storage.AISettings, rev sto
 	var selectedID int64
 	if selectedCand != nil {
 		selectedID = selectedCand.ID
-		if info.NeedsSplit || selectedCand.ConflictOwnerID != 0 {
+		if info.NeedsSplit || selectedCand.ConflictOwnerID != 0 || selectedCand.RequiresManualReview {
 			action = storage.AIActionUncertain
 		}
 	} else if out.Decision == "select" {
@@ -670,7 +670,7 @@ func (s *Service) evalArtist(ctx context.Context, ai storage.AISettings, rev sto
 
 	applied := false
 	var snap json.RawMessage
-	if mode == storage.AIReviewModeAuto && action == storage.AIActionRecommendAccept && out.Confidence >= autoThresholdArtist && selectedCand != nil && !info.NeedsSplit && selectedCand.ConflictOwnerID == 0 {
+	if mode == storage.AIReviewModeAuto && action == storage.AIActionRecommendAccept && out.Confidence >= autoThresholdArtist && selectedCand != nil && !info.NeedsSplit && selectedCand.ConflictOwnerID == 0 && !selectedCand.RequiresManualReview {
 		if !webSearched || quoteGroundedInPages(out.Quote, pages) {
 			bound, sRaw, bindErr := s.store.ConfirmArtistCandidateByAI(ctx, artistID, selectedCand.ID)
 			if bindErr != nil {

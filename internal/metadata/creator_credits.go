@@ -61,3 +61,60 @@ func CreatorMusicBrainzIDs(raw map[string][]string, role string) []string {
 		return nil
 	}
 }
+
+// HasCreatorMusicBrainzTag reports whether any MBID tag exists for the given creator role.
+func HasCreatorMusicBrainzTag(raw map[string][]string, role string) bool {
+	switch role {
+	case "composer":
+		return HasTagKey(raw, "MUSICBRAINZ_COMPOSERID", "MUSICBRAINZ COMPOSER ID")
+	case "lyricist":
+		return HasTagKey(raw, "MUSICBRAINZ_LYRICISTID", "MUSICBRAINZ LYRICIST ID")
+	case "arranger":
+		return HasTagKey(raw, "MUSICBRAINZ_ARRANGERID", "MUSICBRAINZ ARRANGER ID")
+	case "producer":
+		return HasTagKey(raw, "MUSICBRAINZ_PRODUCERID", "MUSICBRAINZ PRODUCER ID")
+	default:
+		return false
+	}
+}
+
+// RawCreatorNamesForIdentity returns raw, non-deduplicated creator slots for
+// identity alignment. Comma-guessed splits are never accepted as identity proof.
+func RawCreatorNamesForIdentity(raw map[string][]string, role, fallback string) ([]string, bool) {
+	var structured, fields []string
+	switch role {
+	case "composer":
+		structured = []string{"COMPOSERS"}
+		fields = []string{"COMPOSER", "TCOM", "TCM", "\xa9WRT", "©WRT"}
+	case "lyricist":
+		structured = []string{"LYRICISTS"}
+		fields = []string{"LYRICIST", "TEXT", "TXT"}
+	case "arranger":
+		structured = []string{"ARRANGERS"}
+		fields = []string{"ARRANGER"}
+	case "producer":
+		structured = []string{"PRODUCERS"}
+		fields = []string{"PRODUCER"}
+	default:
+		return nil, false
+	}
+	if values := tagValues(raw, structured...); len(values) > 0 {
+		return strictRawSlots(splitRawSlots(values, false))
+	}
+	values := tagValues(raw, fields...)
+	if len(values) == 0 {
+		single := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(fallback), "\ufeff"))
+		if Normalize(single) == "" || CompositeArtistCredit(single) || strings.ContainsAny(single, ",，") {
+			return nil, false
+		}
+		return []string{single}, true
+	}
+	if len(values) > 1 || (len(values) == 1 && strings.ContainsAny(values[0], "\x00;")) {
+		return strictRawSlots(splitRawSlots(values, false))
+	}
+	single := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(values[0]), "\ufeff"))
+	if Normalize(single) == "" || CompositeArtistCredit(single) || strings.ContainsAny(single, ",，") {
+		return nil, false
+	}
+	return []string{single}, true
+}
