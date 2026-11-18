@@ -613,9 +613,13 @@ func TestMigration075Fixes26f747bMisclassifiedRolesAndPrimaryOverride(t *testing
 	if err != nil || len(cands) != 1 || !cands[0].RequiresManualReview {
 		t.Fatalf("expected 075 to backfill RequiresManualReview, got %+v err=%v", cands, err)
 	}
+	var reverifyRole string
+	if err := s.db.QueryRowContext(ctx, `SELECT role FROM audio_file_artist_reverify WHERE audio_file_id=? AND artist_id=?`, fileID, artistA).Scan(&reverifyRole); err != nil || reverifyRole != "composer" {
+		t.Fatalf("expected composer reverify marker until rescan, got %q err=%v", reverifyRole, err)
+	}
 	beforeOverride, err := s.ArtistForMatching(ctx, artistA)
-	if err != nil || beforeOverride.TaggedMBID != idX {
-		t.Fatalf("expected valid primary TaggedMBID before override, got %+v err=%v", beforeOverride, err)
+	if err != nil || beforeOverride.TaggedMBID != "" {
+		t.Fatalf("expected ambiguous composer to hold reverify block before rescan, got %+v err=%v", beforeOverride, err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, track); err != nil {
 		t.Fatal(err)
@@ -830,5 +834,112 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 				t.Fatalf("%s expected TaggedMBID=%s after clean rescan of file2, got %+v err=%v", path, idX, afterRescan, err)
 			}
 		})
+	}
+}
+
+func TestMigration076KeepsBlockedRoleReverifyAcrossSameArtistValidRole(t *testing.T) {
+	const (
+		idX = "11111111-1111-4111-8111-111111111111"
+		idY = "22222222-2222-4222-8222-222222222222"
+	)
+	s, ctx := openEnrichmentTestStore(t)
+	album, track1, _, artistA := seedEnrichmentEntities(t, s, ctx)
+	var lib int64
+	_ = s.db.QueryRowContext(ctx, `SELECT library_id FROM albums WHERE id=?`, album).Scan(&lib)
+	resB, err := s.db.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('Collab B','collab b','collabb')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artistB, _ := resB.LastInsertId()
+	tr2, err := s.db.ExecContext(ctx, `INSERT INTO tracks(album_id,disc_number,track_number,title,sort_title) VALUES(?,1,2,'Track 2','track 2')`, album)
+	if err != nil {
+		t.Fatal(err)
+	}
+	track2, _ := tr2.LastInsertId()
+	// File 1: primary A->X. File 2: primary A; B -> Y; X (blocked) AND composer A -> X (valid).
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,role) VALUES(?,?,'primary'),(?,?,'primary'),(?,?,'primary'),(?,?,'composer')`, track1, artistA, track2, artistA, track2, artistB, track2, artistA); err != nil {
+		t.Fatal(err)
+	}
+	af1, err := s.db.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(?,?,'01.flac',1,1)`, lib, track1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file1, _ := af1.LastInsertId()
+	af2, err := s.db.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(?,?,'02.flac',1,1)`, lib, track2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file2, _ := af2.LastInsertId()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_tags(audio_file_id,field_name,value,position) VALUES(?,'MUSICBRAINZ_ARTISTID',?,0),(?,'MUSICBRAINZ_ARTISTID',?,0),(?,'MUSICBRAINZ_COMPOSERID',?,0)`, file1, idX, file2, idY+"; "+idX, file2, idX); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate DB already migrated on 9e9eb31's 075 where file2 composer survived and primary was marked blocked.
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DELETE FROM schema_migrations WHERE version>=76`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'composer',?,'valid')`, file1, artistA, idX, file2, artistA, idX); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_identity_checks(audio_file_id,role,status) VALUES(?,'primary','verified'),(?,'primary','blocked'),(?,'composer','verified')`, file1, file2, file2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without primary override on file2, A's blocked primary (Y; X) must still hold reverify even though X appears for B.
+	single, err := s.ArtistForMatching(ctx, artistA)
+	if err != nil || single.TaggedMBID != "" {
+		t.Fatalf("076 falsely exempted blocked primary via composer instr match: %+v err=%v", single, err)
+	}
+	batch, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range batch {
+		if a.ID == artistA && a.TaggedMBID != "" {
+			t.Fatalf("076 batch falsely exempted blocked primary via composer instr match: %+v", a)
+		}
+	}
+
+	// Overriding primary on file2 isolates the blocked primary role cleanly and unlocks A->X.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, track2); err != nil {
+		t.Fatal(err)
+	}
+	overridden, err := s.ArtistForMatching(ctx, artistA)
+	if err != nil || overridden.TaggedMBID != idX {
+		t.Fatalf("expected X when file2 primary overridden, got %+v err=%v", overridden, err)
+	}
+	// Undo override and cleanly rescan file2 with A->Y, B->X and composer A->X: Y!=X keeps TaggedMBID empty.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM track_primary_artist_state WHERE track_id=?`, track2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, ImportInput{
+		LibraryID:    lib,
+		RelativePath: "02.flac",
+		FileSize:     2,
+		ModifiedAtNS: 2,
+		Metadata: metadata.AudioMetadata{
+			Title:       "Track 2",
+			Album:       "Existing Album",
+			DiscNumber:  1,
+			TrackNumber: 2,
+			Artists:     []string{"Manual Artist", "Collab B"},
+			Composer:    "Manual Artist",
+			Container:   "flac",
+			Raw: map[string][]string{
+				"ARTIST":                 {"Manual Artist", "Collab B"},
+				"MUSICBRAINZ_ARTISTID":   {idY, idX},
+				"COMPOSER":               {"Manual Artist"},
+				"MUSICBRAINZ_COMPOSERID": {idX},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterConflictRescan, err := s.ArtistForMatching(ctx, artistA)
+	if err != nil || afterConflictRescan.TaggedMBID != "" {
+		t.Fatalf("expected real conflict Y!=X after trusted rescan, got %+v err=%v", afterConflictRescan, err)
 	}
 }
