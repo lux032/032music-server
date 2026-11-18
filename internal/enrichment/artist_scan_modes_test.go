@@ -123,10 +123,10 @@ func TestArtistScanIncrementalSkipsRejectedExpiredAndCompositesWhileFullRescans(
 
 	// Explicit full scan ("全局补全扫描") re-scans Rejected Artist, Miss Artist, and composite Alpha & Beta,
 	// while never re-scanning already-matched Fresh Artist and preserving rejected status on mbid-rejected-1.
-	inlineCalled := false
+	var inlineCalled atomic.Bool
 	manager.SetInlineAIReviewer(func(ctx context.Context, kind string, id int64) bool {
 		if kind == storage.AITargetArtistMatch {
-			inlineCalled = true
+			inlineCalled.Store(true)
 		}
 		return false
 	})
@@ -136,8 +136,8 @@ func TestArtistScanIncrementalSkipsRejectedExpiredAndCompositesWhileFullRescans(
 	}
 	manager.Wait()
 	r3, _ := s.DurableArtistRun(ctx, run3)
-	if r3.ScanMode != "full" || r3.Total != 3 || r3.NoResult != 2 || r3.Skipped != 1 || inlineCalled {
-		t.Fatalf("expected full scan to re-check 3 unconfirmed artists without AI review when all candidates rejected, got %+v inlineAI=%v", r3, inlineCalled)
+	if r3.ScanMode != "full" || r3.Total != 3 || r3.NoResult != 2 || r3.Skipped != 1 || inlineCalled.Load() {
+		t.Fatalf("expected full scan to re-check 3 unconfirmed artists without AI review when all candidates rejected, got %+v inlineAI=%v", r3, inlineCalled.Load())
 	}
 
 	// If full scan discovers a NEW external candidate, previously rejected ID stays rejected while new ID appears as candidate.
