@@ -86,14 +86,34 @@ func Read(path string) (AudioMetadata, error) {
 	}
 
 	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
-	var (
-		mp4Res     mp4CustomResult
-		oggRaw     map[string][]string
-		oggOK      bool
-		oggHandled bool
-	)
-	switch container {
-	case "m4a", "mp4":
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	if container == "ogg" || container == "oga" || container == "opus" {
+		oggRaw, status, oggErr := readOggVorbisComments(file)
+		if status == oggStatusError {
+			return AudioMetadata{}, oggErr
+		}
+		result := AudioMetadata{
+			Container:      container,
+			MIMEType:       mimeType,
+			Raw:            map[string][]string{},
+			DurationMillis: probeDuration(path, container),
+		}
+		if status == oggStatusDegraded {
+			result.UnsafeIdentity = true
+			return applyFallbacks(result, path), nil
+		}
+		applyVorbisCommentFields(&result, oggRaw)
+		oggInterfaceRaw := make(map[string]interface{}, len(result.Raw))
+		for k, v := range result.Raw {
+			oggInterfaceRaw[k] = v
+		}
+		finalizeExtractedTags(&result, file, false, oggInterfaceRaw)
+		return applyFallbacks(result, path), nil
+	}
+
+	var mp4Res mp4CustomResult
+	tagSource := io.ReadSeeker(file)
+	if container == "m4a" || container == "mp4" {
 		mp4Res = readMP4CustomAtoms(file)
 		if mp4Res.limitTripped {
 			return AudioMetadata{}, fmt.Errorf("MP4 metadata exceeds safety limits")
@@ -101,19 +121,10 @@ func Read(path string) (AudioMetadata, error) {
 		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
 			return AudioMetadata{}, fmt.Errorf("rewind MP4 metadata: %w", seekErr)
 		}
-	case "ogg", "oga", "opus":
-		var oggLimit bool
-		oggRaw, oggOK, oggLimit = readOggVorbisComments(file)
-		oggHandled = true
-		if oggLimit {
-			return AudioMetadata{}, fmt.Errorf("ogg comment packet exceeds safety limits")
-		}
-		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
-			return AudioMetadata{}, fmt.Errorf("rewind ogg metadata: %w", seekErr)
-		}
+		tagSource = &budgetReadSeeker{rs: file, remaining: mp4Res.remainingBudget}
 	}
 
-	parsed, err := tag.ReadFrom(file)
+	parsed, err := tag.ReadFrom(tagSource)
 	if err != nil {
 		return AudioMetadata{}, fmt.Errorf("read embedded metadata: %w", err)
 	}
@@ -126,7 +137,7 @@ func Read(path string) (AudioMetadata, error) {
 		Lyrics:       strings.TrimSpace(parsed.Lyrics()),
 		Year:         parsed.Year(),
 		Container:    container,
-		MIMEType:     mime.TypeByExtension(strings.ToLower(filepath.Ext(path))),
+		MIMEType:     mimeType,
 		Raw:          flattenRaw(raw),
 		Artists:      splitPeople(parsed.Artist()),
 		AlbumArtists: splitPeople(parsed.AlbumArtist()),
@@ -135,9 +146,8 @@ func Read(path string) (AudioMetadata, error) {
 	result.TrackNumber, result.TrackTotal = parsed.Track()
 	result.DiscNumber, result.DiscTotal = parsed.Disc()
 
-	switch result.Container {
-	case "m4a", "mp4":
-		stripMP4ManagedKeys(result.Raw, raw)
+	if container == "m4a" || container == "mp4" {
+		stripMP4ManagedKeys(result.Raw, raw, mp4Res.freeformNames)
 		if mp4Res.identityBad {
 			result.UnsafeIdentity = true
 		}
@@ -147,22 +157,22 @@ func Read(path string) (AudioMetadata, error) {
 				raw[key] = values
 			}
 		}
-	case "ogg", "oga", "opus":
-		if !oggOK {
-			// Do not inherit tag values (such as a second logical stream) when
-			// target stream packet reassembly or CRC validation fails.
-			result.UnsafeIdentity = true
-			result.Raw = map[string][]string{}
-			result.Composer = ""
-			result.Artists = nil
-			result.AlbumArtists = nil
-			result.Genres = nil
-		} else {
-			applyVorbisCommentFields(&result, oggRaw)
-		}
 	}
 
-	// Extract credits and sort keys from raw tags (ID3v2 / MP4). Values may
+	finalizeExtractedTags(&result, file, strings.EqualFold(filepath.Ext(path), ".mp3"), raw)
+
+	if picture := parsed.Picture(); picture != nil && len(picture.Data) > 0 {
+		result.Artwork = picture.Data
+		result.ArtworkMIME = strings.TrimSpace(picture.MIMEType)
+		result.ArtworkExt = extensionForMIME(result.ArtworkMIME)
+	}
+	result.DurationMillis = probeDuration(path, result.Container)
+
+	return applyFallbacks(result, path), nil
+}
+
+func finalizeExtractedTags(result *AudioMetadata, file *os.File, isMP3 bool, raw map[string]interface{}) {
+	// Extract credits and sort keys from raw tags (ID3v2 / MP4 / Vorbis). Values may
 	// carry NUL separators and C0 control characters, so the same cleaning
 	// rule as the storage layer (D62) applies via internal/tagclean (D-19).
 	// 回退语义（与 D62 一致）：键存在即不再回退到下一个键（例如 LYRICIST
@@ -175,7 +185,7 @@ func Read(path string) (AudioMetadata, error) {
 	result.Lyricist = rawFirst("LYRICIST", "TEXT")
 	result.Arranger = rawFirst("ARRANGER")
 	result.Producer = rawFirst("PRODUCER")
-	if strings.EqualFold(filepath.Ext(path), ".mp3") {
+	if isMP3 {
 		// dhowden/tag flattens text frames and loses the NUL separators which
 		// define TIPL/TMCL/IPLS role/name pairs, so MP3 credits must come from
 		// the original ID3v2 frame bytes rather than parsed.Raw().
@@ -202,29 +212,14 @@ func Read(path string) (AudioMetadata, error) {
 				result.Raw[key] = values
 			}
 		}
-	} else if oggHandled {
-		oggInterfaceRaw := make(map[string]interface{}, len(result.Raw))
-		for k, v := range result.Raw {
-			oggInterfaceRaw[k] = v
-		}
-		result.InvolvedPeople = parseInvolvedPeopleRaw(oggInterfaceRaw)
 	} else {
 		result.InvolvedPeople = parseInvolvedPeopleRaw(raw)
 	}
-	applyInvolvedPeople(&result)
+	applyInvolvedPeople(result)
 	result.ArtistSort = rawFirst("ARTISTSORT", "SOAR", "TSOP")
 	result.AlbumArtistSort = rawFirst("ALBUMARTISTSORT", "SOAA", "TSO2")
 	result.TitleSort = rawFirst("TITLESORT", "SONM", "TSOT")
 	result.AlbumSort = rawFirst("ALBUMSORT", "SOAL", "TSOA")
-
-	if picture := parsed.Picture(); picture != nil && len(picture.Data) > 0 {
-		result.Artwork = picture.Data
-		result.ArtworkMIME = strings.TrimSpace(picture.MIMEType)
-		result.ArtworkExt = extensionForMIME(result.ArtworkMIME)
-	}
-	result.DurationMillis = probeDuration(path, result.Container)
-
-	return applyFallbacks(result, path), nil
 }
 
 // maxLeadingID3Tags bounds how many stacked ID3v2 tags are skipped before the

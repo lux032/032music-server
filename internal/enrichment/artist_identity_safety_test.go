@@ -1251,4 +1251,49 @@ func TestEndToEndMP4OrgMusicBrainzNamespaceAndID3v24(t *testing.T) {
 	if len(want) != 0 {
 		t.Fatalf("missing expected artists: %v", want)
 	}
+
+	// End-to-end mixed-case MP4 namespace conflict (com.apple.iTunes vs ORG.MUSICBRAINZ.ITUNES)
+	// plus 5 MiB non-identity binary freeform atom: conflict must block TaggedMBID and binary blob must not persist.
+	const (
+		mixX = "55555555-5555-4555-8555-555555555555"
+		mixY = "66666666-6666-4666-8666-666666666666"
+	)
+	bigBin := box("----", bytes.Join([][]byte{
+		box("mean", append([]byte{0, 0, 0, 0}, []byte("com.apple.iTunes")...)),
+		box("name", append([]byte{0, 0, 0, 0}, []byte("BIGBIN")...)),
+		box("data", append([]byte{0, 0, 0, 0, 0, 0, 0, 0}, make([]byte, 5<<20)...)),
+	}, nil))
+	mixedIlst := box("ilst", bytes.Join([][]byte{
+		freeform("Com.Apple.iTunes", "COMPOSERS", "Mixed Comp"),
+		freeform("com.apple.iTunes", "MUSICBRAINZ_COMPOSERID", mixX),
+		freeform("ORG.MUSICBRAINZ.ITUNES", "MUSICBRAINZ_COMPOSERID", mixY),
+		bigBin,
+	}, nil))
+	mixedPath := filepath.Join(t.TempDir(), "mixed_big.m4a")
+	if err := os.WriteFile(mixedPath, append(box("ftyp", []byte("M4A \x00\x00\x00\x00isomiso2")), box("moov", box("udta", box("meta", append([]byte{0, 0, 0, 0}, mixedIlst...))))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedMixed, err := metadata.Read(mixedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: "mixed_big.m4a", FileSize: 3, ModifiedAtNS: 3, Metadata: parsedMixed}); err != nil {
+		t.Fatal(err)
+	}
+	afterMixed, _ := s.ArtistsForMatching(ctx)
+	var mixedID int64
+	for _, a := range afterMixed {
+		if a.Name == "Mixed Comp" {
+			mixedID = a.ID
+			if a.TaggedMBID != "" {
+				t.Fatalf("mixed-case conflicting MP4 leaked TaggedMBID=%q in batch", a.TaggedMBID)
+			}
+		}
+	}
+	if mixedID == 0 {
+		t.Fatal("missing Mixed Comp artist")
+	}
+	if singleMixed, err := s.ArtistForMatching(ctx, mixedID); err != nil || singleMixed.TaggedMBID != "" {
+		t.Fatalf("mixed-case conflicting MP4 leaked TaggedMBID=%q err=%v", singleMixed.TaggedMBID, err)
+	}
 }

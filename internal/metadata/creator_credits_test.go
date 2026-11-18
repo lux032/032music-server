@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -434,5 +435,112 @@ func TestM4AFreeformAtomStripsLocaleAndOggKeepsMultiValues(t *testing.T) {
 	}
 	if !badUTF16Meta.UnsafeIdentity {
 		t.Fatalf("unpaired UTF-16BE surrogate did not set UnsafeIdentity=true: %+v", badUTF16Meta)
+	}
+
+	// Dual Ogg streams: Stream 2 finishes first with DATE=2000 and cover artwork;
+	// Stream 1 finishes second without DATE or artwork -> Year==0 and empty Artwork.
+	var picBlock bytes.Buffer
+	binary.Write(&picBlock, binary.BigEndian, uint32(3))
+	binary.Write(&picBlock, binary.BigEndian, uint32(9))
+	picBlock.WriteString("image/png")
+	binary.Write(&picBlock, binary.BigEndian, uint32(0))
+	binary.Write(&picBlock, binary.BigEndian, uint32(1))
+	binary.Write(&picBlock, binary.BigEndian, uint32(1))
+	binary.Write(&picBlock, binary.BigEndian, uint32(24))
+	binary.Write(&picBlock, binary.BigEndian, uint32(0))
+	binary.Write(&picBlock, binary.BigEndian, uint32(4))
+	picBlock.Write([]byte{0x89, 'P', 'N', 'G'})
+	b64Pic := base64.StdEncoding.EncodeToString(picBlock.Bytes())
+
+	var dualYearCover bytes.Buffer
+	dualYearCover.Write(oggSerialPage(1, 0, 0x02, idPkt.Bytes()))
+	dualYearCover.Write(oggSerialPage(2, 0, 0x02, idPkt.Bytes()))
+	dualYearCover.Write(oggSerialPage(2, 1, 0x00, buildVC("TITLE=Stream2", "DATE=2000", "METADATA_BLOCK_PICTURE="+b64Pic)))
+	dualYearCover.Write(oggSerialPage(1, 1, 0x00, buildVC("TITLE=Stream1", "COMPOSER=Only Comp")))
+	dualYCPath := filepath.Join(t.TempDir(), "dual_year_cover.ogg")
+	if err := os.WriteFile(dualYCPath, dualYearCover.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dualYCMeta, err := Read(dualYCPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dualYCMeta.Year != 0 || len(dualYCMeta.Artwork) != 0 {
+		t.Fatalf("stream 1 leaked Year=%d or Artwork=%d from stream 2", dualYCMeta.Year, len(dualYCMeta.Artwork))
+	}
+
+	// Corrupt CRC in Ogg page must be rejected with an error (not downgraded silently).
+	badCRCOgg := oggSerialPage(1, 0, 0x02, idPkt.Bytes())
+	badCRCOgg = append(badCRCOgg, oggSerialPage(1, 1, 0x00, buildVC("TITLE=CRC"))...)
+	badCRCOgg[len(badCRCOgg)-1] ^= 0xff
+	badCRCPath := filepath.Join(t.TempDir(), "bad_crc.ogg")
+	if err := os.WriteFile(badCRCPath, badCRCOgg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(badCRCPath); err == nil {
+		t.Fatal("expected CRC-corrupt Ogg to return an explicit error")
+	}
+
+	// Case-insensitive MP4 namespaces: com.apple.iTunes=a conflicts with ORG.MUSICBRAINZ.ITUNES=b.
+	mixedCaseIlst := box("ilst", append(
+		append(mbFreeform("Com.Apple.iTunes", "COMPOSERS", "Comp Mixed"), mbFreeform("com.apple.iTunes", "MUSICBRAINZ_COMPOSERID", a)...),
+		mbFreeform("ORG.MUSICBRAINZ.ITUNES", "MUSICBRAINZ_COMPOSERID", b)...,
+	))
+	mixedCaseM4A := filepath.Join(t.TempDir(), "mixed_ns.m4a")
+	if err := os.WriteFile(mixedCaseM4A, append(ftyp, box("moov", box("udta", box("meta", append([]byte{0, 0, 0, 0}, mixedCaseIlst...))))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mixedMeta, err := Read(mixedCaseM4A)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CreatorMusicBrainzIDs(mixedMeta.Raw, "composer"); got != nil {
+		t.Fatalf("conflicting mixed-case MP4 namespaces accepted: %v", got)
+	}
+
+	// Large non-identity binary freeform atom (5 MiB) must not be kept in Raw while valid MBIDs succeed;
+	// cumulative freeform atoms exceeding 16 MiB must abort via the shared read budget.
+	bigPayload := make([]byte, 5<<20)
+	bigFreeform := func(name string, size int) []byte {
+		mean := box("mean", append([]byte{0, 0, 0, 0}, []byte("com.apple.iTunes")...))
+		nm := box("name", append([]byte{0, 0, 0, 0}, []byte(name)...))
+		dt := box("data", append([]byte{0, 0, 0, 0, 0, 0, 0, 0}, make([]byte, size)...))
+		return box("----", append(append(mean, nm...), dt...))
+	}
+	_ = bigPayload
+	singleBigIlst := box("ilst", bytes.Join([][]byte{
+		mbFreeform("com.apple.iTunes", "COMPOSERS", "Comp Safe"),
+		mbFreeform("com.apple.iTunes", "MUSICBRAINZ_COMPOSERID", a),
+		bigFreeform("BIG_BINARY_BLOB", 5<<20),
+	}, nil))
+	singleBigM4A := filepath.Join(t.TempDir(), "big_bin.m4a")
+	if err := os.WriteFile(singleBigM4A, append(ftyp, box("moov", box("udta", box("meta", append([]byte{0, 0, 0, 0}, singleBigIlst...))))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bigMeta, err := Read(singleBigM4A)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CreatorMusicBrainzIDs(bigMeta.Raw, "composer"); !reflect.DeepEqual(got, []string{a}) {
+		t.Fatalf("expected valid composer MBID alongside 5 MiB binary atom, got %v", got)
+	}
+	if _, exists := bigMeta.Raw["BIG_BINARY_BLOB"]; exists {
+		t.Fatalf("skipped 5 MiB binary atom retained in Raw: len=%d", len(bigMeta.Raw["BIG_BINARY_BLOB"]))
+	}
+
+	overBudgetIlst := box("ilst", bytes.Join([][]byte{
+		mbFreeform("com.apple.iTunes", "COMPOSERS", "Comp Over"),
+		mbFreeform("com.apple.iTunes", "MUSICBRAINZ_COMPOSERID", a),
+		bigFreeform("BLOB1", 5<<20),
+		bigFreeform("BLOB2", 5<<20),
+		bigFreeform("BLOB3", 5<<20),
+		bigFreeform("BLOB4", 5<<20),
+	}, nil))
+	overBudgetM4A := filepath.Join(t.TempDir(), "over_budget.m4a")
+	if err := os.WriteFile(overBudgetM4A, append(ftyp, box("moov", box("udta", box("meta", append([]byte{0, 0, 0, 0}, overBudgetIlst...))))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(overBudgetM4A); err == nil {
+		t.Fatal("expected MP4 with 20 MiB freeform atoms to exceed shared 16 MiB budget")
 	}
 }

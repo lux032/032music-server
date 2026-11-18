@@ -2,7 +2,9 @@ package metadata
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -19,16 +21,47 @@ const (
 )
 
 type mp4CustomResult struct {
-	atoms        map[string][]string
-	identityBad  bool
-	limitTripped bool
+	atoms           map[string][]string
+	freeformNames   map[string]bool
+	remainingBudget int64
+	identityBad     bool
+	limitTripped    bool
+}
+
+// budgetReadSeeker enforces a cumulative read byte budget across multiple
+// metadata parsing passes while allowing unbounded Seek jumps (e.g. over mdat).
+type budgetReadSeeker struct {
+	rs        io.ReadSeeker
+	remaining int64
+	exceeded  bool
+}
+
+func (b *budgetReadSeeker) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		b.exceeded = true
+		return 0, fmt.Errorf("metadata read exceeds safety byte budget")
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.rs.Read(p)
+	b.remaining -= int64(n)
+	return n, err
+}
+
+func (b *budgetReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	return b.rs.Seek(offset, whence)
 }
 
 // readMP4CustomAtoms parses iTunes freeform ("----") atoms from an MP4/M4A file,
 // skipping the full 8-byte data header (4-byte type/flags + 4-byte locale) and
 // keeping distinct namespaces separate.
 func readMP4CustomAtoms(file *os.File) mp4CustomResult {
-	res := mp4CustomResult{atoms: map[string][]string{}}
+	res := mp4CustomResult{
+		atoms:           map[string][]string{},
+		freeformNames:   map[string]bool{},
+		remainingBudget: maxMP4TotalReadBytes,
+	}
 	info, err := file.Stat()
 	if err != nil {
 		res.limitTripped = true
@@ -36,6 +69,7 @@ func readMP4CustomAtoms(file *os.File) mp4CustomResult {
 	}
 	budget := int64(maxMP4TotalReadBytes)
 	walkMP4CustomAtoms(file, 0, info.Size(), 0, &budget, &res)
+	res.remainingBudget = budget
 	return res
 }
 
@@ -87,7 +121,10 @@ func walkMP4CustomAtoms(file *os.File, start, end int64, depth int, budget *int6
 				return false
 			}
 		case "----":
-			key, values, ok, limited := parseMP4FreeformAtom(file, payloadStart, payloadEnd, budget)
+			key, rawName, values, ok, limited := parseMP4FreeformAtom(file, payloadStart, payloadEnd, budget)
+			if rawName != "" {
+				res.freeformNames[rawName] = true
+			}
 			if limited {
 				res.limitTripped = true
 				return false
@@ -103,7 +140,7 @@ func walkMP4CustomAtoms(file *os.File, start, end int64, depth int, budget *int6
 	return true
 }
 
-func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key string, values []string, ok bool, limited bool) {
+func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key string, rawUpperName string, values []string, ok bool, limited bool) {
 	var mean, name string
 	type rawDataSlice struct {
 		offset int64
@@ -113,23 +150,23 @@ func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key s
 	for offset := start; offset+8 <= end; {
 		var header [8]byte
 		if _, err := file.ReadAt(header[:], offset); err != nil {
-			return "", nil, false, false
+			return "", "", nil, false, false
 		}
 		size := int64(binary.BigEndian.Uint32(header[:4]))
 		kind := string(header[4:8])
 		if size < 8 || offset+size > end {
-			return "", nil, false, false
+			return "", "", nil, false, false
 		}
 		payloadLen := size - 8
 		switch kind {
 		case "mean", "name":
 			if payloadLen > maxMP4SingleAtomSize || payloadLen > *budget {
-				return "", nil, false, true
+				return "", "", nil, false, true
 			}
 			*budget -= payloadLen
 			buf := make([]byte, payloadLen)
 			if _, err := file.ReadAt(buf, offset+8); err != nil || len(buf) < 4 {
-				return "", nil, false, false
+				return "", "", nil, false, false
 			}
 			if kind == "mean" {
 				mean = string(buf[4:])
@@ -144,18 +181,20 @@ func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key s
 
 	upperName := strings.ToUpper(strings.TrimSpace(name))
 	if upperName == "" {
-		return "", nil, true, false
+		return "", "", nil, true, false
 	}
-	isSupportedMean := mean == "" || mean == "com.apple.iTunes" || mean == "org.musicbrainz.iTunes"
-	if !isSupportedMean {
-		return "", nil, true, false
+	trimmedMean := strings.TrimSpace(mean)
+	isAppleMean := trimmedMean == "" || strings.EqualFold(trimmedMean, "com.apple.iTunes")
+	isMBMean := strings.EqualFold(trimmedMean, "org.musicbrainz.iTunes")
+	if !isAppleMean && !isMBMean {
+		return "", upperName, nil, true, false
 	}
 	// Skip reading payload bytes of unrelated binary iTunes atoms without wasting budget.
 	isIdentity := isIdentityMP4Key(upperName)
 	for _, box := range dataBoxes {
 		if box.size > maxMP4SingleAtomSize || box.size > *budget {
 			if isIdentity {
-				return "", nil, false, true
+				return "", upperName, nil, false, true
 			}
 			continue
 		}
@@ -163,13 +202,13 @@ func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key s
 		buf := make([]byte, box.size)
 		if _, err := file.ReadAt(buf, box.offset); err != nil {
 			if isIdentity {
-				return "", nil, false, false
+				return "", upperName, nil, false, false
 			}
 			continue
 		}
 		if len(buf) < 8 {
 			if isIdentity {
-				return "", nil, false, false
+				return "", upperName, nil, false, false
 			}
 			continue
 		}
@@ -179,7 +218,7 @@ func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key s
 		case 1: // UTF-8
 			if !utf8.Valid(payload) {
 				if isIdentity {
-					return "", nil, false, false
+					return "", upperName, nil, false, false
 				}
 				continue
 			}
@@ -188,25 +227,21 @@ func parseMP4FreeformAtom(file *os.File, start, end int64, budget *int64) (key s
 			decoded, valid := decodeMP4UTF16BE(payload)
 			if !valid {
 				if isIdentity {
-					return "", nil, false, false
+					return "", upperName, nil, false, false
 				}
 				continue
 			}
 			values = append(values, strings.TrimSpace(decoded))
 		default:
 			if isIdentity {
-				return "", nil, false, false
+				return "", upperName, nil, false, false
 			}
 		}
 	}
-	switch mean {
-	case "", "com.apple.iTunes":
-		return upperName, values, true, false
-	case "org.musicbrainz.iTunes":
-		return "----:ORG.MUSICBRAINZ.ITUNES:" + upperName, values, true, false
-	default:
-		return "", nil, true, false
+	if isAppleMean {
+		return upperName, upperName, values, true, false
 	}
+	return "----:ORG.MUSICBRAINZ.ITUNES:" + upperName, upperName, values, true, false
 }
 
 func isIdentityMP4Key(upperName string) bool {
@@ -250,13 +285,28 @@ func decodeMP4UTF16BE(data []byte) (string, bool) {
 	return string(runes), true
 }
 
+type oggParseStatus int
+
+const (
+	oggStatusOK oggParseStatus = iota
+	oggStatusDegraded
+	oggStatusError
+)
+
 // readOggVorbisComments extracts the full multi-valued VorbisComment block
 // from the target audio logical stream in an Ogg Vorbis or Opus container,
 // handling interleaved logical streams, verifying page CRCs/sequences, and
 // enforcing a cumulative packet budget.
-func readOggVorbisComments(file *os.File) (raw map[string][]string, ok bool, limitTripped bool) {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, false, false
+//
+// Errors are classified explicitly into:
+//   - oggStatusError (must reject ingestion): invalid Ogg framing, missing BOS,
+//     page CRC mismatch, I/O error, or >maxOggCommentBytes packet limit.
+//   - oggStatusDegraded (UnsafeIdentity=true with empty tags): structurally valid
+//     BOS/CRC whose page sequence or continuation flag breaks or whose comment
+//     payload cannot be parsed cleanly.
+func readOggVorbisComments(file *os.File) (raw map[string][]string, status oggParseStatus, err error) {
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
+		return nil, oggStatusError, fmt.Errorf("seek ogg start: %w", err)
 	}
 	var (
 		hasTarget     bool
@@ -269,24 +319,24 @@ func readOggVorbisComments(file *os.File) (raw map[string][]string, ok bool, lim
 	)
 	header := make([]byte, 27)
 	for commentPacket == nil {
-		if _, err := io.ReadFull(file, header); err != nil {
-			return nil, false, false
+		if _, err = io.ReadFull(file, header); err != nil {
+			return nil, oggStatusError, fmt.Errorf("read ogg page header: %w", err)
 		}
 		if string(header[:4]) != "OggS" {
-			return nil, false, false
+			return nil, oggStatusError, fmt.Errorf("invalid ogg capture pattern")
 		}
 		segments := int(header[26])
 		laces := make([]byte, segments)
-		if _, err := io.ReadFull(file, laces); err != nil {
-			return nil, false, false
+		if _, err = io.ReadFull(file, laces); err != nil {
+			return nil, oggStatusError, fmt.Errorf("read ogg segment table: %w", err)
 		}
 		pagePayloadLen := 0
 		for _, l := range laces {
 			pagePayloadLen += int(l)
 		}
 		payload := make([]byte, pagePayloadLen)
-		if _, err := io.ReadFull(file, payload); err != nil {
-			return nil, false, false
+		if _, err = io.ReadFull(file, payload); err != nil {
+			return nil, oggStatusError, fmt.Errorf("read ogg page payload: %w", err)
 		}
 		serial := binary.LittleEndian.Uint32(header[14:18])
 		seq := binary.LittleEndian.Uint32(header[18:22])
@@ -294,14 +344,15 @@ func readOggVorbisComments(file *os.File) (raw map[string][]string, ok bool, lim
 		isContinued := hdrType&0x01 != 0
 		isBOS := hdrType&0x02 != 0
 
+		if !verifyOggPageCRC(header, laces, payload) {
+			return nil, oggStatusError, fmt.Errorf("ogg page CRC mismatch on serial %d", serial)
+		}
+
 		if !hasTarget {
 			if !isBOS {
-				return nil, false, false
+				return nil, oggStatusError, fmt.Errorf("ogg stream missing beginning-of-stream page")
 			}
 			if isOggAudioBOS(payload, laces) {
-				if !verifyOggPageCRC(header, laces, payload) {
-					return nil, false, false
-				}
 				hasTarget = true
 				targetSerial = serial
 				expectedSeq = seq
@@ -311,11 +362,8 @@ func readOggVorbisComments(file *os.File) (raw map[string][]string, ok bool, lim
 		} else if serial != targetSerial {
 			continue
 		} else {
-			if !verifyOggPageCRC(header, laces, payload) || seq != expectedSeq {
-				return nil, false, false
-			}
-			if isContinued != inPacket {
-				return nil, false, false
+			if seq != expectedSeq || isContinued != inPacket {
+				return nil, oggStatusDegraded, nil
 			}
 		}
 		expectedSeq++
@@ -326,7 +374,7 @@ func readOggVorbisComments(file *os.File) (raw map[string][]string, ok bool, lim
 			inPacket = true
 			if packetIndex == 1 {
 				if current.Len()+segLen > maxOggCommentBytes {
-					return nil, false, true
+					return nil, oggStatusError, fmt.Errorf("ogg comment packet exceeds safety limits")
 				}
 				current.Write(payload[pos : pos+segLen])
 			}
@@ -349,13 +397,13 @@ func readOggVorbisComments(file *os.File) (raw map[string][]string, ok bool, lim
 	case len(commentPacket) > 8 && string(commentPacket[:8]) == "OpusTags":
 		commentBlock = commentPacket[8:]
 	default:
-		return nil, false, false
+		return nil, oggStatusDegraded, nil
 	}
 	parsed := AudioMetadata{Raw: map[string][]string{}}
 	if err := parseVorbisComments(commentBlock, &parsed); err != nil {
-		return nil, false, false
+		return nil, oggStatusDegraded, nil
 	}
-	return parsed.Raw, true, false
+	return parsed.Raw, oggStatusOK, nil
 }
 
 func applyVorbisCommentFields(result *AudioMetadata, raw map[string][]string) {
@@ -372,6 +420,7 @@ func applyVorbisCommentFields(result *AudioMetadata, raw map[string][]string) {
 	result.Album = first("ALBUM")
 	result.Composer = first("COMPOSER")
 	result.Lyrics = first("LYRICS", "UNSYNCEDLYRICS")
+	result.Year = 0
 	date := first("DATE", "YEAR")
 	if len(date) >= 4 {
 		result.Year, _ = strconv.Atoi(date[:4])
@@ -395,6 +444,17 @@ func applyVorbisCommentFields(result *AudioMetadata, raw map[string][]string) {
 	} else {
 		result.AlbumArtists = nil
 	}
+	result.Artwork = nil
+	result.ArtworkMIME = ""
+	result.ArtworkExt = ""
+	for _, encoded := range raw["METADATA_BLOCK_PICTURE"] {
+		picBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+		if err != nil {
+			continue
+		}
+		parseFLACPicture(picBytes, result)
+	}
+	delete(raw, "METADATA_BLOCK_PICTURE")
 }
 
 func isOggAudioBOS(payload []byte, laces []byte) bool {
@@ -434,14 +494,25 @@ func verifyOggPageCRC(header, laces, payload []byte) bool {
 	return crc == want
 }
 
-func stripMP4ManagedKeys(flatRaw map[string][]string, raw map[string]interface{}) {
-	for k := range flatRaw {
-		if isMP4ManagedKey(k) {
+func stripMP4ManagedKeys(flatRaw map[string][]string, raw map[string]interface{}, freeformNames map[string]bool) {
+	shouldStrip := func(k string, vals []string) bool {
+		if isMP4ManagedKey(k) || freeformNames[strings.ToUpper(strings.TrimSpace(k))] {
+			return true
+		}
+		for _, v := range vals {
+			if int64(len(v)) > maxMP4SingleAtomSize {
+				return true
+			}
+		}
+		return false
+	}
+	for k, vals := range flatRaw {
+		if shouldStrip(k, vals) {
 			delete(flatRaw, k)
 		}
 	}
-	for k := range raw {
-		if isMP4ManagedKey(k) {
+	for k, v := range raw {
+		if shouldStrip(k, rawStringValues(v)) {
 			delete(raw, k)
 		}
 	}

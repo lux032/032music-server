@@ -427,6 +427,9 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_identity_checks WHERE audio_file_id=?`, audioID); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_artist_reverify WHERE audio_file_id=?`, audioID); err != nil {
+		return err
+	}
 	type fileRoleIdentity struct {
 		artistID int64
 		role     string

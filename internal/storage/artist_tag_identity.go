@@ -20,6 +20,14 @@ func taggedIdentityQuery(single bool) string {
 	return `SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE ` + filter + `(e.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1)) AND (e.status='conflict' OR (NOT EXISTS(SELECT 1 FROM audio_file_identity_checks chk WHERE chk.audio_file_id=e.audio_file_id AND chk.role=e.role AND chk.status='blocked') AND EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND ` + roleTagExistsPred + `)))`
 }
 
+func reverifyIdentityQuery(single bool) string {
+	filter := ""
+	if single {
+		filter = "r.artist_id=? AND "
+	}
+	return `SELECT r.artist_id FROM audio_file_artist_reverify r JOIN audio_files af ON af.id=r.audio_file_id WHERE ` + filter + `(r.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1))`
+}
+
 func legacyTaggedIdentityQuery(single bool) string {
 	if single {
 		return `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE ta.artist_id=? AND ` + legacyTagPred + ` AND ` + legacyGuard
@@ -71,6 +79,29 @@ func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int6
 		return nil, err
 	}
 	evidence.Close()
+
+	var reverify *sql.Rows
+	if artistID > 0 {
+		reverify, err = s.db.QueryContext(ctx, reverifyIdentityQuery(true), artistID)
+	} else {
+		reverify, err = s.db.QueryContext(ctx, reverifyIdentityQuery(false))
+	}
+	if err != nil {
+		return nil, err
+	}
+	for reverify.Next() {
+		var artist int64
+		if err = reverify.Scan(&artist); err != nil {
+			reverify.Close()
+			return nil, err
+		}
+		inconsistent[artist] = true
+	}
+	if err = reverify.Err(); err != nil {
+		reverify.Close()
+		return nil, err
+	}
+	reverify.Close()
 
 	var rows *sql.Rows
 	if artistID > 0 {
