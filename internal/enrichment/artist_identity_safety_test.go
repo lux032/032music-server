@@ -1133,3 +1133,122 @@ func TestM4AAndFLACSerializedCreatorMBIDEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestEndToEndMP4OrgMusicBrainzNamespaceAndID3v24(t *testing.T) {
+	const (
+		orgCompID = "33333333-3333-4333-8333-333333333333"
+		id3CompID = "44444444-4444-4444-8444-444444444444"
+	)
+	manager := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) { return http.DefaultTransport.RoundTrip(r) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, orgCompID):
+			io.WriteString(w, `{"id":"`+orgCompID+`","name":"Org Comp","sort-name":"Org Comp","aliases":[],"tags":[],"relations":[]}`)
+		case strings.Contains(r.URL.Path, id3CompID):
+			io.WriteString(w, `{"id":"`+id3CompID+`","name":"ID3 Writer","sort-name":"ID3 Writer","aliases":[],"tags":[],"relations":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	manager.musicBrainzBase = server.URL
+	s := manager.store
+	ctx := context.Background()
+	_ = s.EnsureLibrary(ctx, "Test", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+
+	box := func(kind string, payload []byte) []byte {
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.BigEndian, uint32(8+len(payload)))
+		buf.WriteString(kind)
+		buf.Write(payload)
+		return buf.Bytes()
+	}
+	freeform := func(meanVal, name, val string) []byte {
+		mean := box("mean", append([]byte{0, 0, 0, 0}, []byte(meanVal)...))
+		nm := box("name", append([]byte{0, 0, 0, 0}, []byte(name)...))
+		dt := box("data", append([]byte{0, 0, 0, 1, 0, 0, 0, 0}, []byte(val)...))
+		return box("----", append(append(mean, nm...), dt...))
+	}
+	ilst := box("ilst", bytes.Join([][]byte{
+		freeform("com.apple.iTunes", "COMPOSERS", "Org Comp"),
+		freeform("org.musicbrainz.iTunes", "MUSICBRAINZ_COMPOSERID", orgCompID),
+	}, nil))
+	meta := box("meta", append([]byte{0, 0, 0, 0}, ilst...))
+	m4aPath := filepath.Join(t.TempDir(), "org_ns.m4a")
+	if err := os.WriteFile(m4aPath, append(box("ftyp", []byte("M4A \x00\x00\x00\x00isomiso2")), box("moov", box("udta", meta))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedM4A, err := metadata.Read(m4aPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: "org.m4a", FileSize: 1, ModifiedAtNS: 1, Metadata: parsedM4A}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build minimal ID3v2.4 MP3 with UTF-8 TXXX frames for COMPOSERS and MUSICBRAINZ_COMPOSERID.
+	syncsafe := func(n int) []byte {
+		return []byte{byte((n >> 21) & 0x7f), byte((n >> 14) & 0x7f), byte((n >> 7) & 0x7f), byte(n & 0x7f)}
+	}
+	txxx := func(desc, val string) []byte {
+		body := append([]byte{3}, append([]byte(desc), append([]byte{0}, []byte(val)...)...)...)
+		var frame bytes.Buffer
+		frame.WriteString("TXXX")
+		frame.Write(syncsafe(len(body)))
+		frame.Write([]byte{0, 0})
+		frame.Write(body)
+		return frame.Bytes()
+	}
+	frames := bytes.Join([][]byte{
+		txxx("COMPOSERS", "ID3 Writer"),
+		txxx("MUSICBRAINZ_COMPOSERID", id3CompID),
+	}, nil)
+	var mp3 bytes.Buffer
+	mp3.WriteString("ID3\x04\x00\x00")
+	mp3.Write(syncsafe(len(frames)))
+	mp3.Write(frames)
+	mp3Path := filepath.Join(t.TempDir(), "tag.mp3")
+	if err := os.WriteFile(mp3Path, mp3.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedMP3, err := metadata.Read(mp3Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: "tag.mp3", FileSize: 2, ModifiedAtNS: 2, Metadata: parsedMP3}); err != nil {
+		t.Fatal(err)
+	}
+
+	setting, _ := s.MetadataSourceSetting(ctx, "musicbrainz")
+	setting.Enabled = true
+	setting.AutoMatch = true
+	_ = s.SaveMetadataSourceSetting(ctx, setting)
+
+	artists, _ := s.ArtistsForMatching(ctx)
+	want := map[string]string{
+		"Org Comp":   orgCompID,
+		"ID3 Writer": id3CompID,
+	}
+	for _, a := range artists {
+		expected, ok := want[a.Name]
+		if !ok {
+			continue
+		}
+		if a.TaggedMBID != expected {
+			t.Fatalf("%s TaggedMBID=%q want %q", a.Name, a.TaggedMBID, expected)
+		}
+		res, err := manager.MatchArtist(ctx, a.ID)
+		if err != nil || !res.AutoMatched {
+			t.Fatalf("%s MatchArtist failed: res=%+v err=%v", a.Name, res, err)
+		}
+		bound, err := s.ArtistExternalID(ctx, a.ID, "musicbrainz")
+		if err != nil || bound != expected {
+			t.Fatalf("%s bound=%q want %q err=%v", a.Name, bound, expected, err)
+		}
+		delete(want, a.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing expected artists: %v", want)
+	}
+}

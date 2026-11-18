@@ -85,6 +85,34 @@ func Read(path string) (AudioMetadata, error) {
 		return applyFallbacks(result, path), nil
 	}
 
+	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	var (
+		mp4Res     mp4CustomResult
+		oggRaw     map[string][]string
+		oggOK      bool
+		oggHandled bool
+	)
+	switch container {
+	case "m4a", "mp4":
+		mp4Res = readMP4CustomAtoms(file)
+		if mp4Res.limitTripped {
+			return AudioMetadata{}, fmt.Errorf("MP4 metadata exceeds safety limits")
+		}
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return AudioMetadata{}, fmt.Errorf("rewind MP4 metadata: %w", seekErr)
+		}
+	case "ogg", "oga", "opus":
+		var oggLimit bool
+		oggRaw, oggOK, oggLimit = readOggVorbisComments(file)
+		oggHandled = true
+		if oggLimit {
+			return AudioMetadata{}, fmt.Errorf("ogg comment packet exceeds safety limits")
+		}
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return AudioMetadata{}, fmt.Errorf("rewind ogg metadata: %w", seekErr)
+		}
+	}
+
 	parsed, err := tag.ReadFrom(file)
 	if err != nil {
 		return AudioMetadata{}, fmt.Errorf("read embedded metadata: %w", err)
@@ -97,7 +125,7 @@ func Read(path string) (AudioMetadata, error) {
 		Composer:     strings.TrimSpace(parsed.Composer()),
 		Lyrics:       strings.TrimSpace(parsed.Lyrics()),
 		Year:         parsed.Year(),
-		Container:    strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+		Container:    container,
 		MIMEType:     mime.TypeByExtension(strings.ToLower(filepath.Ext(path))),
 		Raw:          flattenRaw(raw),
 		Artists:      splitPeople(parsed.Artist()),
@@ -109,27 +137,28 @@ func Read(path string) (AudioMetadata, error) {
 
 	switch result.Container {
 	case "m4a", "mp4":
-		customAtoms, ok := readMP4CustomAtoms(file)
-		if !ok {
+		stripMP4ManagedKeys(result.Raw, raw)
+		if mp4Res.identityBad {
 			result.UnsafeIdentity = true
 		}
-		for key, values := range customAtoms {
+		for key, values := range mp4Res.atoms {
 			result.Raw[key] = values
+			if raw != nil {
+				raw[key] = values
+			}
 		}
 	case "ogg", "oga", "opus":
-		if !readOggVorbisComments(file, &result) {
+		if !oggOK {
+			// Do not inherit tag values (such as a second logical stream) when
+			// target stream packet reassembly or CRC validation fails.
 			result.UnsafeIdentity = true
+			result.Raw = map[string][]string{}
+			result.Composer = ""
+			result.Artists = nil
+			result.AlbumArtists = nil
+			result.Genres = nil
 		} else {
-			if len(result.Raw["COMPOSER"]) > 0 {
-				result.Composer = result.Raw["COMPOSER"][0]
-			}
-			if len(result.Raw["GENRE"]) > 0 {
-				var genres []string
-				for _, v := range result.Raw["GENRE"] {
-					genres = append(genres, splitValues(v)...)
-				}
-				result.Genres = genres
-			}
+			applyVorbisCommentFields(&result, oggRaw)
 		}
 	}
 
@@ -173,6 +202,12 @@ func Read(path string) (AudioMetadata, error) {
 				result.Raw[key] = values
 			}
 		}
+	} else if oggHandled {
+		oggInterfaceRaw := make(map[string]interface{}, len(result.Raw))
+		for k, v := range result.Raw {
+			oggInterfaceRaw[k] = v
+		}
+		result.InvolvedPeople = parseInvolvedPeopleRaw(oggInterfaceRaw)
 	} else {
 		result.InvolvedPeople = parseInvolvedPeopleRaw(raw)
 	}

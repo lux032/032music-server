@@ -342,4 +342,97 @@ func TestM4AFreeformAtomStripsLocaleAndOggKeepsMultiValues(t *testing.T) {
 	if got := CreatorMusicBrainzIDs(cm.Raw, "composer"); got != nil {
 		t.Fatalf("conflicting mp4 namespaces accepted: %v", got)
 	}
+
+	// Dual audio logical streams: stream 2 comment packet finishes first with
+	// Other Person + MBID a; stream 1 finishes second with Target Person only.
+	// Stream 1 must NOT inherit stream 2's MUSICBRAINZ_COMPOSERID.
+	buildVC := func(items ...string) []byte {
+		var p bytes.Buffer
+		p.WriteByte(3)
+		p.WriteString("vorbis")
+		binary.Write(&p, binary.LittleEndian, uint32(4))
+		p.WriteString("test")
+		binary.Write(&p, binary.LittleEndian, uint32(len(items)))
+		for _, item := range items {
+			binary.Write(&p, binary.LittleEndian, uint32(len(item)))
+			p.WriteString(item)
+		}
+		p.WriteByte(1)
+		return p.Bytes()
+	}
+	var dualOgg bytes.Buffer
+	dualOgg.Write(oggSerialPage(1, 0, 0x02, idPkt.Bytes()))
+	dualOgg.Write(oggSerialPage(2, 0, 0x02, idPkt.Bytes()))
+	dualOgg.Write(oggSerialPage(2, 1, 0x00, buildVC("TITLE=Stream2", "COMPOSER=Other Person", "MUSICBRAINZ_COMPOSERID="+a)))
+	dualOgg.Write(oggSerialPage(1, 1, 0x00, buildVC("TITLE=Stream1", "COMPOSER=Target Person")))
+	dualPath := filepath.Join(t.TempDir(), "dual_streams.ogg")
+	if err := os.WriteFile(dualPath, dualOgg.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dualMeta, err := Read(dualPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dualMeta.UnsafeIdentity {
+		t.Fatalf("valid primary ogg stream unexpectedly marked UnsafeIdentity")
+	}
+	if dualMeta.Composer != "Target Person" {
+		t.Fatalf("expected Target Person from stream 1, got %q", dualMeta.Composer)
+	}
+	if got := CreatorMusicBrainzIDs(dualMeta.Raw, "composer"); len(got) != 0 {
+		t.Fatalf("stream 1 inherited stream 2 composer MBID: %v (raw=%v)", got, dualMeta.Raw)
+	}
+
+	// Corrupt/gapped Ogg sequence must mark UnsafeIdentity=true and clear untrusted Raw tags.
+	var gappedOgg bytes.Buffer
+	gappedOgg.Write(oggSerialPage(1, 0, 0x02, idPkt.Bytes()))
+	gappedOgg.Write(oggSerialPage(1, 2, 0x00, buildVC("TITLE=Bad", "TIPL:written by=Writer", "MUSICBRAINZ_LYRICISTID="+a)))
+	gappedPath := filepath.Join(t.TempDir(), "gapped.ogg")
+	if err := os.WriteFile(gappedPath, gappedOgg.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gappedMeta, err := Read(gappedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gappedMeta.UnsafeIdentity || len(gappedMeta.Raw) != 0 {
+		t.Fatalf("expected UnsafeIdentity=true and cleared Raw on gapped ogg, got unsafe=%v raw=%v", gappedMeta.UnsafeIdentity, gappedMeta.Raw)
+	}
+
+	// org.musicbrainz.iTunes namespace alone must parse cleanly.
+	orgOnlyIlst := box("ilst", append(
+		mbFreeform("com.apple.iTunes", "COMPOSERS", "Comp Org"),
+		mbFreeform("org.musicbrainz.iTunes", "MUSICBRAINZ_COMPOSERID", a)...,
+	))
+	orgOnlyM4A := filepath.Join(t.TempDir(), "org_ns.m4a")
+	if err := os.WriteFile(orgOnlyM4A, append(ftyp, box("moov", box("udta", box("meta", append([]byte{0, 0, 0, 0}, orgOnlyIlst...))))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orgMeta, err := Read(orgOnlyM4A)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CreatorMusicBrainzIDs(orgMeta.Raw, "composer"); !reflect.DeepEqual(got, []string{a}) {
+		t.Fatalf("org.musicbrainz.iTunes composer ids=%v (raw=%v)", got, orgMeta.Raw)
+	}
+
+	// Unpaired UTF-16BE surrogate in MP4 freeform atom must flag UnsafeIdentity=true.
+	badUTF16Data := box("data", []byte{0, 0, 0, 2, 0, 0, 0, 0, 0xD8, 0x00, 0x00, 0x41})
+	badMean := box("mean", append([]byte{0, 0, 0, 0}, []byte("com.apple.iTunes")...))
+	badName := box("name", append([]byte{0, 0, 0, 0}, []byte("MUSICBRAINZ_COMPOSERID")...))
+	badIlst := box("ilst", append(
+		mbFreeform("com.apple.iTunes", "COMPOSER", "Bad UTF16"),
+		box("----", append(append(badMean, badName...), badUTF16Data...))...,
+	))
+	badUTF16M4A := filepath.Join(t.TempDir(), "bad_utf16.m4a")
+	if err := os.WriteFile(badUTF16M4A, append(ftyp, box("moov", box("udta", box("meta", append([]byte{0, 0, 0, 0}, badIlst...))))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	badUTF16Meta, err := Read(badUTF16M4A)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !badUTF16Meta.UnsafeIdentity {
+		t.Fatalf("unpaired UTF-16BE surrogate did not set UnsafeIdentity=true: %+v", badUTF16Meta)
+	}
 }

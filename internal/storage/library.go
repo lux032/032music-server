@@ -424,6 +424,9 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_artist_identities WHERE audio_file_id=?`, audioID); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_identity_checks WHERE audio_file_id=?`, audioID); err != nil {
+		return err
+	}
 	type fileRoleIdentity struct {
 		artistID int64
 		role     string
@@ -431,11 +434,15 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		status   string
 	}
 	var identityRows []fileRoleIdentity
+	roleCheckStatus := map[string]string{
+		"primary":  "verified",
+		"composer": "verified",
+		"lyricist": "verified",
+		"arranger": "verified",
+		"producer": "verified",
+	}
 	recordRoleIdentities := func(role string, roleIDs []int64, rawNames []string, rawProven bool, mbids []string, hasTag bool) error {
-		if len(roleIDs) == 0 {
-			return nil
-		}
-		if !m.UnsafeIdentity && rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
+		if !m.UnsafeIdentity && len(roleIDs) > 0 && rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
 			rawIDs, rErr := ensureArtists(ctx, tx, rawNames)
 			if rErr != nil {
 				return rErr
@@ -448,6 +455,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			}
 		}
 		if hasTag || m.UnsafeIdentity {
+			roleCheckStatus[role] = "blocked"
 			seen := map[int64]bool{}
 			for _, id := range roleIDs {
 				if seen[id] {
@@ -499,6 +507,11 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	}
 	for _, row := range identityRows {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,?,?,?)`, audioID, row.artistID, row.role, row.mbid, row.status); err != nil {
+			return err
+		}
+	}
+	for role, status := range roleCheckStatus {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO audio_file_identity_checks(audio_file_id,role,status) VALUES(?,?,?)`, audioID, role, status); err != nil {
 			return err
 		}
 	}

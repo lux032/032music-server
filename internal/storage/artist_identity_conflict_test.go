@@ -494,12 +494,33 @@ func TestLegacyMergeCannotTransferFileMBIDAnd074MigrationClassifiesRoles(t *test
 		t.Fatalf("merged target unexpectedly inherited legacy file MBID: %+v", gotB)
 	}
 
-	// Verify 074 migration reclassifies pre-074 creator rows and flags pre-074 mismatch candidates.
-	// Simulate 073 state by rolling back 074 schema, inserting 073 data, and re-running migration SQL.
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version=74`); err != nil {
+	// Verify 074+075 migrations reclassify unambiguous pre-074 rows, quarantine merged/ambiguous rows, and backfill review flags.
+	resC, err := s.db.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('PureCompC','purecompc','purecompc')`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?)`, fileID, artistB, idX); err != nil {
+	artistC, _ := resC.LastInsertId()
+	tr2, err := s.db.ExecContext(ctx, `INSERT INTO tracks(album_id,disc_number,track_number,title,sort_title) VALUES(?,1,2,'Track 2','track 2')`, album)
+	if err != nil {
+		t.Fatal(err)
+	}
+	track2, _ := tr2.LastInsertId()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,role) VALUES(?,?,'composer')`, track2, artistC); err != nil {
+		t.Fatal(err)
+	}
+	af2, err := s.db.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(?,?,'02.flac',1,1)`, lib, track2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file2ID, _ := af2.LastInsertId()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_tags(audio_file_id,field_name,value,position) VALUES(?,'MUSICBRAINZ_COMPOSERID',?,0)`, file2ID, idX); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate 073 state by rolling back 074 and 075 schema, inserting 073 data, and re-running Migrate.
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version>=74`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?),(?,?,?)`, fileID, artistB, idX, file2ID, artistC, idX); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,score,evidence_json,payload_json,status) VALUES(?,'musicbrainz',?,?,85,'["标签身份与歌手名称不一致，需要人工核对"]','{}','candidate')`, artistB, idX, "Wrong"); err != nil {
@@ -508,18 +529,143 @@ func TestLegacyMergeCannotTransferFileMBIDAnd074MigrationClassifiesRoles(t *test
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var countB int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audio_file_artist_identities WHERE audio_file_id=? AND artist_id=? AND status='valid'`, fileID, artistB).Scan(&countB); err != nil || countB != 0 {
+		t.Fatalf("merged fileID/artistB unexpectedly kept valid row: count=%d err=%v", countB, err)
+	}
 	var migratedRole, migratedStatus string
-	if err := s.db.QueryRowContext(ctx, `SELECT role,status FROM audio_file_artist_identities WHERE audio_file_id=? AND artist_id=?`, fileID, artistB).Scan(&migratedRole, &migratedStatus); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT role,status FROM audio_file_artist_identities WHERE audio_file_id=? AND artist_id=?`, file2ID, artistC).Scan(&migratedRole, &migratedStatus); err != nil {
 		t.Fatal(err)
 	}
 	if migratedRole != "composer" || migratedStatus != "valid" {
-		t.Fatalf("expected composer/valid after 074, got %s/%s", migratedRole, migratedStatus)
+		t.Fatalf("expected composer/valid after 074+075, got %s/%s", migratedRole, migratedStatus)
 	}
 	cands, err := s.ArtistCandidates(ctx, artistB)
 	if err != nil || len(cands) != 1 || !cands[0].RequiresManualReview {
-		t.Fatalf("expected RequiresManualReview backfilled on 074, got %+v err=%v", cands, err)
+		t.Fatalf("expected RequiresManualReview backfilled on 074+075, got %+v err=%v", cands, err)
 	}
 	if bound, err := s.AutoBindArtistCandidate(ctx, artistB, ExternalArtistProfile{Source: "musicbrainz", ExternalID: idX, DisplayName: "Wrong"}); err != nil || bound {
 		t.Fatalf("AutoBindArtistCandidate must reject RequiresManualReview=true, got bound=%v err=%v", bound, err)
+	}
+}
+
+func TestMigration075Fixes26f747bMisclassifiedRolesAndPrimaryOverride(t *testing.T) {
+	const (
+		idX = "11111111-1111-4111-8111-111111111111"
+		idY = "22222222-2222-4222-8222-222222222222"
+	)
+	s, ctx := openEnrichmentTestStore(t)
+	album, track, _, artistA := seedEnrichmentEntities(t, s, ctx)
+	var lib int64
+	_ = s.db.QueryRowContext(ctx, `SELECT library_id FROM albums WHERE id=?`, album).Scan(&lib)
+	resB, err := s.db.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('Comp B','comp b','compb')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artistB, _ := resB.LastInsertId()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,role) VALUES(?,?,'primary'),(?,?,'composer'),(?,?,'composer')`, track, artistA, track, artistA, track, artistB); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.db.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(?,?,'01.flac',1,1)`, lib, track)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID, _ := r.LastInsertId()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_tags(audio_file_id,field_name,value,position) VALUES(?,'MUSICBRAINZ_ARTISTID',?,0),(?,'MUSICBRAINZ_COMPOSERID',?,0)`, fileID, idX, fileID, idY+"; "+idX); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate buggy 26f747b 074 state: false composer/valid + spurious arranger/conflict + unflagged candidate.
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_identity_checks; DELETE FROM schema_migrations WHERE version>=75`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'composer',?,'valid'),(?,?,'arranger','','conflict')`, fileID, artistA, idX, fileID, artistA, idX, fileID, artistA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,score,evidence_json,payload_json,status,requires_manual_review) VALUES(?,'musicbrainz',?,?,80,'["需要人工核对"]','{}','candidate',0)`, artistA, idX, "Candidate A"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var rows int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audio_file_artist_identities WHERE audio_file_id=? AND artist_id=?`, fileID, artistA).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("expected only primary/valid to survive 075, count=%d err=%v", rows, err)
+	}
+	var survivingRole, survivingStatus string
+	if err := s.db.QueryRowContext(ctx, `SELECT role,status FROM audio_file_artist_identities WHERE audio_file_id=? AND artist_id=?`, fileID, artistA).Scan(&survivingRole, &survivingStatus); err != nil || survivingRole != "primary" || survivingStatus != "valid" {
+		t.Fatalf("expected primary/valid after 075, got %s/%s err=%v", survivingRole, survivingStatus, err)
+	}
+	var compCheck string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM audio_file_identity_checks WHERE audio_file_id=? AND role='composer'`, fileID).Scan(&compCheck); err != nil || compCheck != "blocked" {
+		t.Fatalf("expected composer check blocked, got %q err=%v", compCheck, err)
+	}
+	cands, err := s.ArtistCandidates(ctx, artistA)
+	if err != nil || len(cands) != 1 || !cands[0].RequiresManualReview {
+		t.Fatalf("expected 075 to backfill RequiresManualReview, got %+v err=%v", cands, err)
+	}
+	beforeOverride, err := s.ArtistForMatching(ctx, artistA)
+	if err != nil || beforeOverride.TaggedMBID != idX {
+		t.Fatalf("expected valid primary TaggedMBID before override, got %+v err=%v", beforeOverride, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,active) VALUES(?,1)`, track); err != nil {
+		t.Fatal(err)
+	}
+	afterOverride, err := s.ArtistForMatching(ctx, artistA)
+	if err != nil || afterOverride.TaggedMBID != "" {
+		t.Fatalf("primary override resurrected misclassified composer MBID: %+v err=%v", afterOverride, err)
+	}
+}
+
+func TestUnsafeIdentityBlocksInvolvedPeopleFallbackViaIdentityChecks(t *testing.T) {
+	const idX = "11111111-1111-4111-8111-111111111111"
+	s, ctx := openEnrichmentTestStore(t)
+	if err := s.EnsureLibrary(ctx, "Test", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := metadata.AudioMetadata{
+		Title:          "Corrupt Ogg Track",
+		Album:          "Album",
+		DiscNumber:     1,
+		TrackNumber:    1,
+		Artists:        []string{"Singer"},
+		Container:      "ogg",
+		UnsafeIdentity: true,
+		InvolvedPeople: []metadata.InvolvedPerson{{Role: "written by", Name: "Writer One"}},
+		Raw: map[string][]string{
+			"TIPL:written by":        {"Writer One"},
+			"MUSICBRAINZ_LYRICISTID": {idX},
+		},
+	}
+	if err := s.ImportTrack(ctx, ImportInput{LibraryID: lib.ID, RelativePath: "bad.ogg", FileSize: 10, ModifiedAtNS: 10, Metadata: meta}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var writerID int64
+	for _, a := range all {
+		if a.Name == "Writer One" {
+			writerID = a.ID
+			if a.TaggedMBID != "" {
+				t.Fatalf("batch ArtistsForMatching leaked MBID for UnsafeIdentity TIPL writer: %+v", a)
+			}
+		}
+	}
+	if writerID == 0 {
+		t.Fatal("expected Writer One artist to be materialized from TIPL")
+	}
+	single, err := s.ArtistForMatching(ctx, writerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single.TaggedMBID != "" {
+		t.Fatalf("single ArtistForMatching leaked MBID for UnsafeIdentity TIPL writer: %+v", single)
 	}
 }
