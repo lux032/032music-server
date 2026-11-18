@@ -54,6 +54,11 @@ type AudioMetadata struct {
 	AlbumArtistSort string
 	TitleSort       string
 	AlbumSort       string
+
+	// UnsafeIdentity indicates container tag parsing encountered malformed or
+	// truncated multi-value/custom metadata where display text may survive but
+	// MBID alignment must not be trusted.
+	UnsafeIdentity bool
 }
 
 var supportedExtensions = map[string]struct{}{
@@ -104,20 +109,27 @@ func Read(path string) (AudioMetadata, error) {
 
 	switch result.Container {
 	case "m4a", "mp4":
-		for key, values := range readMP4CustomAtoms(file) {
+		customAtoms, ok := readMP4CustomAtoms(file)
+		if !ok {
+			result.UnsafeIdentity = true
+		}
+		for key, values := range customAtoms {
 			result.Raw[key] = values
 		}
 	case "ogg", "oga", "opus":
-		readOggVorbisComments(file, &result)
-		if len(result.Raw["COMPOSER"]) > 0 {
-			result.Composer = result.Raw["COMPOSER"][0]
-		}
-		if len(result.Raw["GENRE"]) > 0 {
-			var genres []string
-			for _, v := range result.Raw["GENRE"] {
-				genres = append(genres, splitValues(v)...)
+		if !readOggVorbisComments(file, &result) {
+			result.UnsafeIdentity = true
+		} else {
+			if len(result.Raw["COMPOSER"]) > 0 {
+				result.Composer = result.Raw["COMPOSER"][0]
 			}
-			result.Genres = genres
+			if len(result.Raw["GENRE"]) > 0 {
+				var genres []string
+				for _, v := range result.Raw["GENRE"] {
+					genres = append(genres, splitValues(v)...)
+				}
+				result.Genres = genres
+			}
 		}
 	}
 
@@ -538,6 +550,7 @@ func parseID3v2InvolvedPeople(r io.Reader) []InvolvedPerson {
 		if frame != "IPLS" && frame != "TIPL" && frame != "TMCL" {
 			return
 		}
+		fields = compactStrings(fields)
 		for i := 0; i+1 < len(fields); i += 2 {
 			people = appendInvolved(people, fields[i], fields[i+1])
 		}
@@ -734,7 +747,7 @@ func decodeID3TextFields(payload []byte) ([]string, bool) {
 		}
 		text = string(utf16.Decode(units))
 	}
-	return compactStrings(strings.Split(strings.Trim(text, "\x00"), "\x00")), true
+	return strings.Split(strings.TrimSuffix(text, "\x00"), "\x00"), true
 }
 
 func parseNumberPair(number, total string) (int, int) {

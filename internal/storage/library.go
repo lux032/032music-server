@@ -435,7 +435,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		if len(roleIDs) == 0 {
 			return nil
 		}
-		if rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
+		if !m.UnsafeIdentity && rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
 			rawIDs, rErr := ensureArtists(ctx, tx, rawNames)
 			if rErr != nil {
 				return rErr
@@ -447,7 +447,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 				return nil
 			}
 		}
-		if hasTag {
+		if hasTag || m.UnsafeIdentity {
 			seen := map[int64]bool{}
 			for _, id := range roleIDs {
 				if seen[id] {
@@ -459,7 +459,8 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		}
 		return nil
 	}
-	primaryRawNames, primaryProven := metadata.RawPrimaryArtistNamesForIdentity(m.Raw, m.Artists)
+	allowFallback := m.Container == ""
+	primaryRawNames, primaryProven := metadata.RawPrimaryArtistNamesForIdentity(m.Raw, m.Artists, allowFallback)
 	primaryMBIDs := metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
 	if err = recordRoleIdentities("primary", artistIDs, primaryRawNames, primaryProven, primaryMBIDs, metadata.HasTagKey(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")); err != nil {
 		return err
@@ -490,7 +491,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 				return err
 			}
 		}
-		rawCreditNames, rawCreditProven := metadata.RawCreatorNamesForIdentity(m.Raw, credit.role, credit.names)
+		rawCreditNames, rawCreditProven := metadata.RawCreatorNamesForIdentity(m.Raw, credit.role, credit.names, allowFallback)
 		creditMBIDs := metadata.CreatorMusicBrainzIDs(m.Raw, credit.role)
 		if err = recordRoleIdentities(credit.role, creditIDs, rawCreditNames, rawCreditProven, creditMBIDs, metadata.HasCreatorMusicBrainzTag(m.Raw, credit.role)); err != nil {
 			return err
@@ -655,12 +656,14 @@ func sameUniqueArtistSet(creditIDs, rawIDs []int64) bool {
 		}
 		rawSet[id] = true
 	}
+	creditSet := make(map[int64]bool, len(creditIDs))
 	for _, id := range creditIDs {
-		if !rawSet[id] {
+		if creditSet[id] || !rawSet[id] {
 			return false
 		}
+		creditSet[id] = true
 	}
-	return len(rawSet) == len(creditIDs)
+	return len(creditSet) == len(rawSet)
 }
 
 func (s *Store) CountAvailableAudioFiles(ctx context.Context, libraryID int64) (int64, error) {

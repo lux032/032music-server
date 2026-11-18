@@ -422,24 +422,104 @@ func TestCreatorDuplicateAndLegacyGuessBlockedFromMBID(t *testing.T) {
 	}
 }
 
-func TestArtistTaggedMBIDSingleArtistQueryUsesIndex(t *testing.T) {
+func TestArtistTaggedMBIDQueryPlansCoverAllProductionSQL(t *testing.T) {
 	s, ctx := openEnrichmentTestStore(t)
-	rows, err := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE e.artist_id=?`, 1)
+	explain := func(query string, args ...any) string {
+		t.Helper()
+		rows, err := s.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var plans []string
+		for rows.Next() {
+			var id, parent, notused int
+			var detail string
+			if err = rows.Scan(&id, &parent, &notused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plans = append(plans, detail)
+		}
+		return strings.Join(plans, "\n")
+	}
+
+	singleEvidence := explain(taggedIdentityQuery(true), 1)
+	if !strings.Contains(singleEvidence, "idx_file_artist_identity_artist") || strings.Contains(singleEvidence, "USE TEMP B-TREE") {
+		t.Fatalf("unexpected singleEvidence plan:\n%s", singleEvidence)
+	}
+	singleLegacy := explain(legacyTaggedIdentityQuery(true), 1)
+	if !strings.Contains(singleLegacy, "idx_track_artists_artist") || strings.Contains(singleLegacy, "USE TEMP B-TREE") {
+		t.Fatalf("unexpected singleLegacy plan:\n%s", singleLegacy)
+	}
+	batchEvidence := explain(taggedIdentityQuery(false))
+	if strings.Contains(batchEvidence, "USE TEMP B-TREE") {
+		t.Fatalf("unexpected temp sort in batchEvidence:\n%s", batchEvidence)
+	}
+	batchLegacy := explain(legacyTaggedIdentityQuery(false))
+	if !strings.Contains(batchLegacy, "idx_audio_file_tags_field_value") || strings.Contains(batchLegacy, "USE TEMP B-TREE") {
+		t.Fatalf("unexpected batchLegacy plan:\n%s", batchLegacy)
+	}
+}
+
+func TestLegacyMergeCannotTransferFileMBIDAnd074MigrationClassifiesRoles(t *testing.T) {
+	const idX = "11111111-1111-4111-8111-111111111111"
+	s, ctx := openEnrichmentTestStore(t)
+	album, track, _, artistA := seedEnrichmentEntities(t, s, ctx)
+	var lib int64
+	_ = s.db.QueryRowContext(ctx, `SELECT library_id FROM albums WHERE id=?`, album).Scan(&lib)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,role) VALUES(?,?,'composer')`, track, artistA); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.db.ExecContext(ctx, `INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(?,?,'01.flac',1,1)`, lib, track)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	var plans []string
-	for rows.Next() {
-		var id, parent, notused int
-		var detail string
-		if err = rows.Scan(&id, &parent, &notused, &detail); err != nil {
-			t.Fatal(err)
-		}
-		plans = append(plans, detail)
+	fileID, _ := r.LastInsertId()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_tags(audio_file_id,field_name,value,position) VALUES(?,'MUSICBRAINZ_COMPOSERID',?,0)`, fileID, idX); err != nil {
+		t.Fatal(err)
 	}
-	joined := strings.Join(plans, "\n")
-	if !strings.Contains(joined, "idx_file_artist_identity_artist") || strings.Contains(joined, "USE TEMP B-TREE") {
-		t.Fatalf("unexpected query plan:\n%s", joined)
+	resB, err := s.db.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('TargetB','targetb','targetb')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artistB, _ := resB.LastInsertId()
+	if _, err := s.MergeArtists(ctx, artistA, artistB); err != nil {
+		t.Fatal(err)
+	}
+	gotB, err := s.ArtistForMatching(ctx, artistB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotB.TaggedMBID != "" {
+		t.Fatalf("merged target unexpectedly inherited legacy file MBID: %+v", gotB)
+	}
+
+	// Verify 074 migration reclassifies pre-074 creator rows and flags pre-074 mismatch candidates.
+	// Simulate 073 state by rolling back 074 schema, inserting 073 data, and re-running migration SQL.
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version=74`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?)`, fileID, artistB, idX); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO artist_match_candidates(artist_id,source,external_id,display_name,score,evidence_json,payload_json,status) VALUES(?,'musicbrainz',?,?,85,'["标签身份与歌手名称不一致，需要人工核对"]','{}','candidate')`, artistB, idX, "Wrong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var migratedRole, migratedStatus string
+	if err := s.db.QueryRowContext(ctx, `SELECT role,status FROM audio_file_artist_identities WHERE audio_file_id=? AND artist_id=?`, fileID, artistB).Scan(&migratedRole, &migratedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if migratedRole != "composer" || migratedStatus != "valid" {
+		t.Fatalf("expected composer/valid after 074, got %s/%s", migratedRole, migratedStatus)
+	}
+	cands, err := s.ArtistCandidates(ctx, artistB)
+	if err != nil || len(cands) != 1 || !cands[0].RequiresManualReview {
+		t.Fatalf("expected RequiresManualReview backfilled on 074, got %+v err=%v", cands, err)
+	}
+	if bound, err := s.AutoBindArtistCandidate(ctx, artistB, ExternalArtistProfile{Source: "musicbrainz", ExternalID: idX, DisplayName: "Wrong"}); err != nil || bound {
+		t.Fatalf("AutoBindArtistCandidate must reject RequiresManualReview=true, got bound=%v err=%v", bound, err)
 	}
 }

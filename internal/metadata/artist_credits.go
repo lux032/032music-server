@@ -163,13 +163,13 @@ func parseStrictMBIDGroup(values []string) []string {
 
 // RawPrimaryArtistNamesForIdentity returns raw, non-deduplicated primary artist
 // slots when the file tags prove exact positional alignment.
-func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string) ([]string, bool) {
-	if values := tagValues(raw, "ARTISTS"); len(values) > 0 {
-		return strictRawSlots(splitRawSlots(values, false))
+func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string, allowFallback bool) ([]string, bool) {
+	if groups := allTagValues(raw, "ARTISTS"); len(groups) > 0 {
+		return agreedStrictRawGroups(groups, false)
 	}
-	values := tagValues(raw, "ARTIST", "TPE1", "TP1", "\xa9ART", "©ART")
-	if len(values) == 0 {
-		if len(fallback) == 0 {
+	groups := allTagValues(raw, "ARTIST", "TPE1", "TP1", "\xa9ART", "©ART")
+	if len(groups) == 0 {
+		if !allowFallback || len(fallback) == 0 || HasTagKey(raw, "ALBUMARTIST", "ALBUM ARTIST", "TPE2", "TP2", "AART", "ALBUMARTISTS", "ALBUM_ARTISTS", "ALBUM ARTISTS") {
 			return nil, false
 		}
 		if len(fallback) == 1 && CompositeArtistCredit(fallback[0]) {
@@ -177,6 +177,11 @@ func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string
 		}
 		return strictRawSlots(fallback)
 	}
+	if len(groups) > 1 {
+		// Multiple distinct keys/namespaces: require all to agree strictly.
+		return agreedStrictRawGroups(groups, false)
+	}
+	values := groups[0]
 	if len(values) > 1 {
 		return strictRawSlots(splitRawSlots(values, false))
 	}
@@ -201,6 +206,32 @@ func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string
 		}
 	}
 	return nil, false
+}
+
+func agreedStrictRawGroups(groups [][]string, legacy bool) ([]string, bool) {
+	var agreed []string
+	for _, group := range groups {
+		slots, ok := strictRawSlots(splitRawSlots(group, legacy))
+		if !ok {
+			return nil, false
+		}
+		if agreed == nil {
+			agreed = slots
+			continue
+		}
+		if len(agreed) != len(slots) {
+			return nil, false
+		}
+		for i := range agreed {
+			if Normalize(agreed[i]) != Normalize(slots[i]) {
+				return nil, false
+			}
+		}
+	}
+	if len(agreed) == 0 {
+		return nil, false
+	}
+	return agreed, true
 }
 
 func splitRawSlots(values []string, legacy bool) []string {

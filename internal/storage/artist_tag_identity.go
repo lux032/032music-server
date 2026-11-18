@@ -6,6 +6,27 @@ import (
 	"strings"
 )
 
+const (
+	roleTagExistsPred = `((e.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID')) OR (e.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (e.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (e.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (e.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID')))`
+	legacyTagPred     = `((ta.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=ta.track_id AND st.active=1)) OR (ta.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (ta.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (ta.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (ta.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID')))`
+	legacyGuard       = `NOT EXISTS(SELECT 1 FROM audio_file_artist_identities e WHERE e.audio_file_id=af.id AND e.role=ta.role) AND NOT EXISTS(SELECT 1 FROM audio_file_artist_identities c WHERE c.audio_file_id=af.id AND c.artist_id=ta.artist_id AND c.status='conflict') AND NOT EXISTS(SELECT 1 FROM track_artist_sources s WHERE s.track_id=ta.track_id AND s.role=ta.role AND s.source<>'file_tag') AND NOT EXISTS(SELECT 1 FROM artist_merge_relation_moves m JOIN artist_merge_operations op ON op.id=m.operation_id WHERE op.status='merged' AND m.relation_type='track' AND m.owner_id=ta.track_id AND m.role=ta.role) AND (SELECT COUNT(*) FROM track_artists p WHERE p.track_id=ta.track_id AND p.role=ta.role)=1`
+)
+
+func taggedIdentityQuery(single bool) string {
+	filter := ""
+	if single {
+		filter = "e.artist_id=? AND "
+	}
+	return `SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE ` + filter + `(e.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1)) AND (e.status='conflict' OR EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND ` + roleTagExistsPred + `))`
+}
+
+func legacyTaggedIdentityQuery(single bool) string {
+	if single {
+		return `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE ta.artist_id=? AND ` + legacyTagPred + ` AND ` + legacyGuard
+	}
+	return `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM audio_file_tags tag JOIN audio_files af ON af.id=tag.audio_file_id JOIN track_artists ta ON ta.track_id=af.track_id WHERE tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID','MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID','MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID','MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID','MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID') AND ` + legacyTagPred + ` AND ` + legacyGuard
+}
+
 // Only unambiguous single-person-per-role credits (pre-074 legacy rows) or
 // import-verified per-role alignments provide identity evidence.
 func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int64]string, error) {
@@ -19,13 +40,12 @@ func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int6
 		result[artist] = mbid
 	}
 
-	// 1. Import-verified per-(audio_file, artist, role) identities and conflicts.
 	var evidence *sql.Rows
 	var err error
 	if artistID > 0 {
-		evidence, err = s.db.QueryContext(ctx, `SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE e.artist_id=? AND (e.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1)) AND (e.status='conflict' OR EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND ((e.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID')) OR (e.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (e.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (e.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (e.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID'))) AND instr(lower(tag.value),e.mbid)>0))`, artistID)
+		evidence, err = s.db.QueryContext(ctx, taggedIdentityQuery(true), artistID)
 	} else {
-		evidence, err = s.db.QueryContext(ctx, `SELECT e.artist_id,e.role,e.mbid,e.status FROM audio_file_artist_identities e JOIN audio_files af ON af.id=e.audio_file_id WHERE (e.role<>'primary' OR NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=af.track_id AND st.active=1)) AND (e.status='conflict' OR EXISTS(SELECT 1 FROM audio_file_tags tag WHERE tag.audio_file_id=e.audio_file_id AND ((e.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID')) OR (e.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (e.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (e.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (e.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID'))) AND instr(lower(tag.value),e.mbid)>0))`)
+		evidence, err = s.db.QueryContext(ctx, taggedIdentityQuery(false))
 	}
 	if err != nil {
 		return nil, err
@@ -52,16 +72,11 @@ func (s *Store) artistTaggedMBIDs(ctx context.Context, artistID int64) (map[int6
 	}
 	evidence.Close()
 
-	// 2. Legacy fallback for pre-074 databases/rows where (audio_file, role) has
-	// no recorded import evidence. Blocked if any conflict exists for the artist
-	// on that file, or if track_artists was modified by remote/manual sources.
 	var rows *sql.Rows
-	const legacyTagPred = `((ta.role='primary' AND tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID') AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st WHERE st.track_id=ta.track_id AND st.active=1)) OR (ta.role='composer' AND tag.field_name IN ('MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID')) OR (ta.role='lyricist' AND tag.field_name IN ('MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID')) OR (ta.role='arranger' AND tag.field_name IN ('MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID')) OR (ta.role='producer' AND tag.field_name IN ('MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID')))`
-	const legacyGuard = `NOT EXISTS(SELECT 1 FROM audio_file_artist_identities e WHERE e.audio_file_id=af.id AND e.role=ta.role) AND NOT EXISTS(SELECT 1 FROM audio_file_artist_identities c WHERE c.audio_file_id=af.id AND c.artist_id=ta.artist_id AND c.status='conflict') AND NOT EXISTS(SELECT 1 FROM track_artist_sources s WHERE s.track_id=ta.track_id AND s.role=ta.role AND s.source<>'file_tag') AND (SELECT COUNT(*) FROM track_artists p WHERE p.track_id=ta.track_id AND p.role=ta.role)=1`
 	if artistID > 0 {
-		rows, err = s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM track_artists ta JOIN audio_files af ON af.track_id=ta.track_id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE ta.artist_id=? AND `+legacyTagPred+` AND `+legacyGuard, artistID)
+		rows, err = s.db.QueryContext(ctx, legacyTaggedIdentityQuery(true), artistID)
 	} else {
-		rows, err = s.db.QueryContext(ctx, `SELECT ta.artist_id,af.id,ta.role,tag.field_name,tag.value FROM audio_file_tags tag JOIN audio_files af ON af.id=tag.audio_file_id JOIN track_artists ta ON ta.track_id=af.track_id WHERE tag.field_name IN ('MUSICBRAINZ_ARTISTID','MUSICBRAINZ ARTIST ID','MUSICBRAINZ_COMPOSERID','MUSICBRAINZ COMPOSER ID','MUSICBRAINZ_LYRICISTID','MUSICBRAINZ LYRICIST ID','MUSICBRAINZ_ARRANGERID','MUSICBRAINZ ARRANGER ID','MUSICBRAINZ_PRODUCERID','MUSICBRAINZ PRODUCER ID') AND `+legacyTagPred+` AND `+legacyGuard)
+		rows, err = s.db.QueryContext(ctx, legacyTaggedIdentityQuery(false))
 	}
 	if err != nil {
 		return nil, err

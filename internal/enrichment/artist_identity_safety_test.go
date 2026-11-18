@@ -1031,4 +1031,105 @@ func TestM4AAndFLACSerializedCreatorMBIDEndToEnd(t *testing.T) {
 	if gotBound["Singer A"] != singerID || gotBound["Comp A"] != comp1ID || gotBound["Comp B"] != comp2ID {
 		t.Fatalf("unexpected bound mbids: %v", gotBound)
 	}
+
+	// Real FLAC file end-to-end: Read -> ImportTrack -> MatchArtist (lyricist + arranger)
+	vorbisString := func(s string) []byte {
+		var b bytes.Buffer
+		binary.Write(&b, binary.LittleEndian, uint32(len(s)))
+		b.WriteString(s)
+		return b.Bytes()
+	}
+	const flacSingerID = "66666666-6666-4666-8666-666666666666"
+	const lyrID = "44444444-4444-4444-8444-444444444444"
+	const arrID = "55555555-5555-4555-8555-555555555555"
+	var vcBlock bytes.Buffer
+	vcBlock.Write(vorbisString("test"))
+	comments := []string{
+		"TITLE=FLAC Song", "ALBUM=FLAC Album", "ARTIST=FLAC Singer", "MUSICBRAINZ_ARTISTID=" + flacSingerID,
+		"LYRICISTS=Lyr A", "MUSICBRAINZ_LYRICISTID=" + lyrID,
+		"ARRANGERS=Arr A", "MUSICBRAINZ_ARRANGERID=" + arrID,
+	}
+	binary.Write(&vcBlock, binary.LittleEndian, uint32(len(comments)))
+	for _, c := range comments {
+		vcBlock.Write(vorbisString(c))
+	}
+	vcBytes := vcBlock.Bytes()
+	var flac bytes.Buffer
+	flac.WriteString("fLaC")
+	// Metadata block header: last=1 (0x80) | type=4 (VorbisComment) -> 0x84
+	flac.WriteByte(0x84)
+	flac.WriteByte(byte(len(vcBytes) >> 16))
+	flac.WriteByte(byte(len(vcBytes) >> 8))
+	flac.WriteByte(byte(len(vcBytes)))
+	flac.Write(vcBytes)
+	flacPath := filepath.Join(t.TempDir(), "track.flac")
+	if err := os.WriteFile(flacPath, flac.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedFLAC, err := metadata.Read(flacPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: lib.ID, RelativePath: "02.flac", FileSize: 2, ModifiedAtNS: 2, Metadata: parsedFLAC}); err != nil {
+		t.Fatal(err)
+	}
+	artists2, _ := s.ArtistsForMatching(ctx)
+	gotTags := map[string]string{}
+	for _, a := range artists2 {
+		gotTags[a.Name] = a.TaggedMBID
+	}
+	if gotTags["FLAC Singer"] != flacSingerID || gotTags["Lyr A"] != lyrID || gotTags["Arr A"] != arrID {
+		t.Fatalf("unexpected flac creator tagged mbids: %v", gotTags)
+	}
+
+	// Real PrimaryArtistCorrection + Undo preserves creator MBIDs while blocking/restoring primary MBID.
+	var flacTrackID, replacementArtistID int64
+	tracks, err := s.ListTracks(ctx, storage.Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range tracks {
+		if tr.Title == "FLAC Song" {
+			flacTrackID = tr.ID
+		}
+	}
+	for _, a := range artists2 {
+		if a.Name == "Comp A" {
+			replacementArtistID = a.ID
+		}
+	}
+	if flacTrackID == 0 || replacementArtistID == 0 {
+		t.Fatalf("missing track/artist: track=%d artist=%d", flacTrackID, replacementArtistID)
+	}
+	snap, err := s.PrimaryArtistCorrection(ctx, flacTrackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPrimaryArtistCorrection(ctx, flacTrackID, snap.Token, []int64{replacementArtistID}, false); err != nil {
+		t.Fatal(err)
+	}
+	duringOverride, _ := s.ArtistsForMatching(ctx)
+	duringMap := map[string]string{}
+	for _, a := range duringOverride {
+		duringMap[a.Name] = a.TaggedMBID
+	}
+	if duringMap["FLAC Singer"] != "" || duringMap["Lyr A"] != lyrID || duringMap["Arr A"] != arrID {
+		t.Fatalf("unexpected mbids during primary override: %v", duringMap)
+	}
+	snap2, err := s.PrimaryArtistCorrection(ctx, flacTrackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPrimaryArtistCorrection(ctx, flacTrackID, snap2.Token, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	afterUndo, _ := s.ArtistsForMatching(ctx)
+	for _, a := range afterUndo {
+		if a.Name == "FLAC Singer" && a.TaggedMBID != flacSingerID {
+			t.Fatalf("flac singer mbid not restored after undo: %+v", a)
+		}
+		if a.Name == "Lyr A" && a.TaggedMBID != lyrID {
+			t.Fatalf("lyricist mbid lost after undo: %+v", a)
+		}
+	}
 }

@@ -80,7 +80,7 @@ func HasCreatorMusicBrainzTag(raw map[string][]string, role string) bool {
 
 // RawCreatorNamesForIdentity returns raw, non-deduplicated creator slots for
 // identity alignment. Comma-guessed splits are never accepted as identity proof.
-func RawCreatorNamesForIdentity(raw map[string][]string, role, fallback string) ([]string, bool) {
+func RawCreatorNamesForIdentity(raw map[string][]string, role, fallback string, allowFallback bool) ([]string, bool) {
 	var structured, fields []string
 	switch role {
 	case "composer":
@@ -98,17 +98,24 @@ func RawCreatorNamesForIdentity(raw map[string][]string, role, fallback string) 
 	default:
 		return nil, false
 	}
-	if values := tagValues(raw, structured...); len(values) > 0 {
-		return strictRawSlots(splitRawSlots(values, false))
+	if groups := allTagValues(raw, structured...); len(groups) > 0 {
+		return agreedStrictRawGroups(groups, false)
 	}
-	values := tagValues(raw, fields...)
-	if len(values) == 0 {
+	groups := allTagValues(raw, fields...)
+	if len(groups) == 0 {
+		if !allowFallback {
+			return nil, false
+		}
 		single := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(fallback), "\ufeff"))
 		if Normalize(single) == "" || CompositeArtistCredit(single) || strings.ContainsAny(single, ",，") {
 			return nil, false
 		}
 		return []string{single}, true
 	}
+	if len(groups) > 1 {
+		return agreedStrictRawGroups(groups, false)
+	}
+	values := groups[0]
 	if len(values) > 1 || (len(values) == 1 && strings.ContainsAny(values[0], "\x00;")) {
 		return strictRawSlots(splitRawSlots(values, false))
 	}

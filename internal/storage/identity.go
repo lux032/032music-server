@@ -929,14 +929,15 @@ func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p Exter
 			return nil
 		}
 		var status string
-		err = tx.QueryRowContext(ctx, `SELECT status FROM artist_match_candidates WHERE artist_id=? AND source=? AND external_id=?`, artistID, p.Source, p.ExternalID).Scan(&status)
+		var manualOnly int
+		err = tx.QueryRowContext(ctx, `SELECT status,requires_manual_review FROM artist_match_candidates WHERE artist_id=? AND source=? AND external_id=?`, artistID, p.Source, p.ExternalID).Scan(&status, &manualOnly)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if status != "candidate" && status != "confirmed" {
+		if (status != "candidate" && status != "confirmed") || (manualOnly != 0 && status != "confirmed") {
 			return nil
 		}
 		var existing string
