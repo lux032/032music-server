@@ -1,8 +1,14 @@
 package metadata
 
 import (
+	"regexp"
 	"sort"
 	"strings"
+)
+
+var (
+	featJoinerPattern     = regexp.MustCompile(`(?i)\s+(?:feat\.?|featuring|ft\.?)\s+`)
+	combinedJoinerPattern = regexp.MustCompile(`(?i)(?:,\s+|\s+(?:feat\.?|featuring|ft\.?|vs\.?)\s+|\s+(?:&|×)\s+)`)
 )
 
 // ArtistNames prefers a structured list over a display credit. Legacy
@@ -54,12 +60,8 @@ func creditedNames(raw map[string][]string, fallback, structured, display, mbidK
 	names := cleanPeople(values, true)
 	ids := ArtistMusicBrainzIDs(raw, mbidKeys...)
 	if len(names) == 1 && len(ids) > 1 {
-		parts := strings.Split(names[0], ", ")
-		if len(parts) == len(ids) {
-			recovered := cleanPeople(parts, false)
-			if len(recovered) == len(ids) {
-				return recovered
-			}
+		if recovered, ok := splitCreditWithMBIDCount(names[0], len(ids)); ok {
+			return recovered
 		}
 	}
 	if len(names) > 0 {
@@ -192,9 +194,8 @@ func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string
 	if len(slots) == 1 {
 		ids := ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
 		if len(ids) > 1 {
-			parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(slots[0]), "\ufeff")), ", ")
-			if len(parts) == len(ids) {
-				return strictRawSlots(parts)
+			if recovered, ok := splitCreditWithMBIDCount(slots[0], len(ids)); ok {
+				return recovered, true
 			}
 			return nil, false
 		}
@@ -270,6 +271,36 @@ func strictRawSlots(slots []string) ([]string, bool) {
 		cleaned = append(cleaned, name)
 	}
 	return cleaned, true
+}
+
+// splitCreditWithMBIDCount recovers per-person names from a single joined
+// display credit only when strict valid MBIDs prove the exact headcount.
+// Tiers run from least ambiguous to most general so bands whose names contain
+// commas or "&" stay intact when split by "feat.", and ambiguous strings whose
+// total split count disagrees with expectedCount are rejected.
+func splitCreditWithMBIDCount(display string, expectedCount int) ([]string, bool) {
+	trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(display), "\ufeff"))
+	if trimmed == "" || expectedCount <= 1 {
+		return nil, false
+	}
+	if parts := featJoinerPattern.Split(trimmed, -1); len(parts) == expectedCount {
+		if cleaned, ok := strictRawSlots(parts); ok && len(cleaned) == expectedCount {
+			return cleaned, true
+		}
+	}
+	if !featJoinerPattern.MatchString(trimmed) {
+		if parts := strings.Split(trimmed, ", "); len(parts) == expectedCount {
+			if cleaned, ok := strictRawSlots(parts); ok && len(cleaned) == expectedCount {
+				return cleaned, true
+			}
+		}
+	}
+	if parts := combinedJoinerPattern.Split(trimmed, -1); len(parts) == expectedCount {
+		if cleaned, ok := strictRawSlots(parts); ok && len(cleaned) == expectedCount {
+			return cleaned, true
+		}
+	}
+	return nil, false
 }
 
 // CompositeArtistCredit flags display credits, not a license to split them.

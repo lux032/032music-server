@@ -94,7 +94,7 @@
             </button>
             <div class="h-row-main">
               <span class="h-row-title" title="{{.Title}}">{{.Title}}</span>
-              <span class="h-row-sub">{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></span>
+              <span class="h-row-sub album-artist-links">{{template "track-artists" .}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></span>
             </div>
             <span class="h-row-when">{{formatAdminTime .LastPlayedAt}}</span>
           </article>
@@ -118,7 +118,7 @@
             </button>
             <div class="h-row-main">
               <span class="h-row-title" title="{{.Record.Track.Title}}">{{.Record.Track.Title}}</span>
-              <span class="h-row-sub">{{.Record.Track.Artist}} · <a href="/admin/albums/{{.Record.Track.AlbumID}}">{{.Record.Track.Album}}</a></span>
+              <span class="h-row-sub album-artist-links">{{template "track-artists" .Record.Track}} · <a href="/admin/albums/{{.Record.Track.AlbumID}}">{{.Record.Track.Album}}</a></span>
               <span class="h-row-progress"><span class="h-meter" role="img" aria-label="已听 {{.Percent}}%"><i style="width:{{.Percent}}%"></i></span><span class="h-row-time">{{formatDurationMillis .Record.PositionMillis}} / {{formatDurationMillis .Record.DurationMillis}}</span></span>
             </div>
             <span class="h-row-when">{{formatAdminTime .Record.LastPlayedAt}}</span>

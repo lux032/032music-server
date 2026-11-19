@@ -59,6 +59,14 @@ func TestStructuredArtistNames(t *testing.T) {
 		{"id3 repeated bom", map[string][]string{"ARTISTS": {"\ufeffMori Calliope", "\ufeff常闇トワ"}}, []string{"Mori Calliope", "常闇トワ"}},
 		{"id3 nul", map[string][]string{"ARTISTS": {"A\x00B"}}, []string{"A", "B"}},
 		{"mp4", map[string][]string{"----:com.apple.iTunes:ARTISTS": {"A; B"}}, []string{"A", "B"}},
+		{"feat mbid recovery", map[string][]string{"ARTIST": {"Aiobahn +81 feat. DEMONDICE"}, "MUSICBRAINZ_ARTISTID": {"a39cf062-a860-4e22-ac59-1a8ebc65a8ff; 62d713c3-b081-4390-a9c7-0b8978d5b76a"}}, []string{"Aiobahn +81", "DEMONDICE"}},
+		{"feat case insensitive", map[string][]string{"ARTIST": {"Aiobahn +81 Feat. DEMONDICE"}, "MUSICBRAINZ_ARTISTID": {"a39cf062-a860-4e22-ac59-1a8ebc65a8ff; 62d713c3-b081-4390-a9c7-0b8978d5b76a"}}, []string{"Aiobahn +81", "DEMONDICE"}},
+		{"feat preserves band comma", map[string][]string{"ARTIST": {"Earth, Wind & Fire feat. DEMONDICE"}, "MUSICBRAINZ_ARTISTID": {"11111111-1111-4111-8111-111111111111; 22222222-2222-4222-8222-222222222222"}}, []string{"Earth, Wind & Fire", "DEMONDICE"}},
+		{"three way comma and feat", map[string][]string{"ARTIST": {"A, B feat. C"}, "MUSICBRAINZ_ARTISTID": {"11111111-1111-4111-8111-111111111111; 22222222-2222-4222-8222-222222222222; 33333333-3333-4333-8333-333333333333"}}, []string{"A", "B", "C"}},
+		{"ampersand with two mbids", map[string][]string{"ARTIST": {"A & B"}, "MUSICBRAINZ_ARTISTID": {"11111111-1111-4111-8111-111111111111; 22222222-2222-4222-8222-222222222222"}}, []string{"A", "B"}},
+		{"band ampersand single mbid", map[string][]string{"ARTIST": {"Simon & Garfunkel"}, "MUSICBRAINZ_ARTISTID": {"11111111-1111-4111-8111-111111111111"}}, []string{"Simon & Garfunkel"}},
+		{"feat without mbid not split", map[string][]string{"ARTIST": {"Aiobahn +81 feat. DEMONDICE"}}, []string{"Aiobahn +81 feat. DEMONDICE"}},
+		{"various artists with two mbids not split", map[string][]string{"ARTIST": {"Various Artists"}, "MUSICBRAINZ_ARTISTID": {"a39cf062-a860-4e22-ac59-1a8ebc65a8ff; 62d713c3-b081-4390-a9c7-0b8978d5b76a"}}, []string{"Various Artists"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := applyFallbacks(AudioMetadata{Raw: tc.raw}, "song.flac")
@@ -66,5 +74,29 @@ func TestStructuredArtistNames(t *testing.T) {
 				t.Fatalf("%v want %v", result.Artists, tc.want)
 			}
 		})
+	}
+}
+
+func TestAlbumArtistAndIdentityFeatMBIDRecovery(t *testing.T) {
+	raw := map[string][]string{
+		"ALBUMARTIST":               {"Aiobahn +81 feat. DEMONDICE"},
+		"MUSICBRAINZ_ALBUMARTISTID": {"a39cf062-a860-4e22-ac59-1a8ebc65a8ff; 62d713c3-b081-4390-a9c7-0b8978d5b76a"},
+		"ARTIST":                    {"Aiobahn +81 feat. DEMONDICE"},
+		"MUSICBRAINZ_ARTISTID":      {"a39cf062-a860-4e22-ac59-1a8ebc65a8ff; 62d713c3-b081-4390-a9c7-0b8978d5b76a"},
+	}
+	want := []string{"Aiobahn +81", "DEMONDICE"}
+	if got := AlbumArtistNames(raw, nil); !reflect.DeepEqual(got, want) {
+		t.Fatalf("AlbumArtistNames = %v, want %v", got, want)
+	}
+	if got, ok := RawPrimaryArtistNamesForIdentity(raw, nil, false); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("RawPrimaryArtistNamesForIdentity = %v (%v), want %v (true)", got, ok, want)
+	}
+
+	vaRaw := map[string][]string{
+		"ALBUMARTIST":               {"Various Artists"},
+		"MUSICBRAINZ_ALBUMARTISTID": {"a39cf062-a860-4e22-ac59-1a8ebc65a8ff; 62d713c3-b081-4390-a9c7-0b8978d5b76a"},
+	}
+	if got := AlbumArtistNames(vaRaw, nil); !reflect.DeepEqual(got, []string{"Various Artists"}) {
+		t.Fatalf("VA AlbumArtistNames = %v, want [Various Artists]", got)
 	}
 }

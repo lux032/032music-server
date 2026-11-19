@@ -189,7 +189,7 @@
             {{if $t.ArtworkURL}}<img class="collected-album-thumb fade-img" src="{{thumb $t.ArtworkURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<div class="collected-album-thumb cover-placeholder">032</div>{{end}}
             <div class="collected-track-meta">
               <strong>{{$t.Title}}</strong>
-              <small>{{$t.Artist}} · 收录于 <a href="/admin/albums/{{$t.AlbumID}}">《{{$t.Album}}》</a>{{if $t.Year}} ({{$t.Year}}){{end}} · 曲目 #{{$t.TrackNumber}} · <span class="role-badge {{if eq $t.Role "ost"}}ost{{end}}">{{workRoleShortLabel $t.Role}}{{if $t.Sequence}}{{$t.Sequence}}{{end}}</span></small>
+              <small class="album-artist-links">{{template "track-artists" $t.Track}} · 收录于 <a href="/admin/albums/{{$t.AlbumID}}">《{{$t.Album}}》</a>{{if $t.Year}} ({{$t.Year}}){{end}} · 曲目 #{{$t.TrackNumber}} · <span class="role-badge {{if eq $t.Role "ost"}}ost{{end}}">{{workRoleShortLabel $t.Role}}{{if $t.Sequence}}{{$t.Sequence}}{{end}}</span></small>
             </div>
             {{if $t.Container}}<span class="format-pill">{{$t.Container}}</span>{{else}}<span></span>{{end}}
             <span class="track-duration">{{if $t.DurationMillis}}{{formatDurationMillis $t.DurationMillis}}{{end}}</span>

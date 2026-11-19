@@ -75,7 +75,7 @@
           <a class="feature-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
           <div class="feature-track-copy">
             <strong>{{.Title}}</strong>
-            <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
+            <small class="album-artist-links">{{template "track-artists" .}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
           </div>
           {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
           <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>

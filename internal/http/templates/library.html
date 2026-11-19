@@ -172,7 +172,7 @@
           <span class="num-text">{{.DiscNumber}}.{{.TrackNumber}}</span>
           <button type="button" class="row-play-btn" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
         </span>
-        <div><strong>{{.Title}}</strong><small>{{.Artist}}</small><small class="track-credit-links">{{template "track-credits" .}}</small></div>
+        <div><strong>{{.Title}}</strong><small class="album-artist-links">{{template "track-artists" .}}</small><small class="track-credit-links">{{template "track-credits" .}}</small></div>
         <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>
         {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
         <span>{{formatDurationMillis .DurationMillis}}</span>

@@ -22,7 +22,7 @@
         <a class="feature-cover" href="/admin/albums/{{.Track.AlbumID}}">{{if .Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
         <div class="playback-copy">
           <strong>{{.Track.Title}}</strong>
-          <small>{{.Track.Artist}} · <a href="/admin/albums/{{.Track.AlbumID}}">{{.Track.Album}}</a></small>
+          <small class="album-artist-links">{{template "track-artists" .Track}} · <a href="/admin/albums/{{.Track.AlbumID}}">{{.Track.Album}}</a></small>
           <progress max="{{if .DurationMillis}}{{.DurationMillis}}{{else}}1{{end}}" value="{{.PositionMillis}}">{{formatDurationMillis .PositionMillis}}</progress>
         </div>
         <span class="playback-state {{.State}}"><button type="button" class="row-play-btn" title="播放 {{.Track.Title}}" aria-label="播放 {{.Track.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>{{playbackStateLabel .State}}</span>

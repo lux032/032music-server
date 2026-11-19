@@ -45,7 +45,7 @@
     <div class="search-tracks" data-track-list>{{range .Result.Tracks.Items}}
       <article class="search-track" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
         <a class="search-item-art" href="/admin/albums/{{.AlbumID}}#track-{{.ID}}" aria-label="查看歌曲：{{.Title}}">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
-        <div class="search-item-copy"><a href="/admin/albums/{{.AlbumID}}#track-{{.ID}}"><strong>{{.Title}}</strong></a><span>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></span></div>
+        <div class="search-item-copy"><a href="/admin/albums/{{.AlbumID}}#track-{{.ID}}"><strong>{{.Title}}</strong></a><span class="album-artist-links">{{template "track-artists" .}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></span></div>
         <span class="search-duration">{{formatDurationMillis .DurationMillis}}</span>
         <button type="button" class="icon-action row-play-btn search-play" aria-label="播放 {{.Title}}" title="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
       </article>{{end}}

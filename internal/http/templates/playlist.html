@@ -39,7 +39,7 @@
             </span>
             <div class="feature-track-copy">
               <strong>{{.Title}}</strong>{{if .Missing}}<span class="missing-track">文件缺失</span>{{end}}
-              <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
+              <small class="album-artist-links">{{template "track-artists" .}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
             </div>
             <span class="track-format">{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}</span>
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>

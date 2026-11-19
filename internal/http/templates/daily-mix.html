@@ -44,7 +44,7 @@
             </span>
             <div class="feature-track-copy">
               <strong>{{.Title}}{{if .Explore}} <span class="dm-new" title="你还没怎么听过的歌">新发现</span>{{end}}</strong>{{if .Missing}}<span class="missing-track">文件缺失</span>{{end}}
-              <small>{{.Artist}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
+              <small class="album-artist-links">{{template "track-artists" .Track}} · <a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a></small>
             </div>
             <span class="track-format">{{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}</span>
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
