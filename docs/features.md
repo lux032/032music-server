@@ -35,6 +35,15 @@
 - Last.fm 没有专辑和歌手收藏接口，所以只有单曲收藏能同步；专辑和歌手收藏仍然只存在本地。
 - 恢复备份后会清空待同步队列并重置回填进度，避免把旧数据库的操作重放到当前账号。
 
+## ListenBrainz 播放记录与红心同步
+
+可与 Last.fm 并行启用，在 `/admin/settings/metadata` 的 **ListenBrainz Scrobble** 与 **ListenBrainz 红心** 卡片中配置：
+
+1. **连接账号**：填写 Server URL（默认为官方 `https://api.listenbrainz.org`，也可填自建兼容服务地址）与 User Token，保存时自动通过 `/1/validate-token` 验证并绑定用户名。
+2. **播放记录（Scrobble）与正在播放**：复用本地播放判定规则（真实播放、进度过半且曲长超过 30 秒）；单条以 `single` 提交，断网积压以 `import` 批量补交，无 14 天过期限制；会自动附带文件标签里的 MusicBrainz Recording/Release/Artist MBID（含 MP3 `UFID` 帧）。开启「正在播放」时会请求 `playing_now?return_msid=true` 并持久化缓存返回的 `recording_msid`。
+3. **单曲红心同步**：开启后，收藏/取消收藏单曲会调用 `/1/feedback/recording-feedback`；按「本地标签 `recording_mbid` → 缓存的 `recording_msid` → `/1/metadata/lookup/` 在线反查」顺序解析标识，三者均无法匹配的曲目会明确跳过而不伪造播放记录；若自建服务器不支持 lookup 或 feedback 接口，会自动降级并提示。
+4. **存量回填**：支持手动启动、随时停止与断点续传，进度与无 ID 跳过数在管理页实时显示。
+
 ## AI 打标
 
 在 **管理 → 控制台 → AI 打标** 填写一个 OpenAI 兼容模型服务（Gemini、OpenAI、DeepSeek、通义千问、OpenRouter、本地 Ollama 等）的接口地址、模型和 API Key。大模型会结合声学分析结果、元数据和歌词片段，只从固定词表中为每首歌选择情绪（12 个）和风格（18 个），供每日推荐使用。

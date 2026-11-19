@@ -71,6 +71,7 @@ type identityPageData struct {
 	Settings                               []storage.MetadataSourceSetting
 	BiographySettings                      storage.BiographySettings
 	LastFMScrobble                         lastFMScrobbleView
+	ListenBrainz                           listenBrainzView
 	IdentityConflict                       *storage.ArtistIdentityConflict
 	Artist                                 *storage.ArtistDetail
 	Artists                                []storage.Artist
@@ -126,6 +127,7 @@ func (a *App) handleMetadataSettings(w http.ResponseWriter, r *http.Request) {
 	data.Settings = settings
 	data.BiographySettings, _ = a.store.BiographySettings(r.Context())
 	data.LastFMScrobble = a.lastFMScrobbleView(r)
+	data.ListenBrainz = a.listenBrainzView(r)
 	a.render(w, 200, "metadata-settings.html", data)
 }
 

@@ -43,3 +43,24 @@ func MusicBrainzFileIDs(raw map[string][]string) (groups, releases []string) {
 	sort.Strings(releases)
 	return
 }
+
+// RecordingMusicBrainzIDs extracts normalized recording MBIDs from raw file
+// tags across Vorbis/FLAC, MP4/M4A, and ID3v2 UFID spellings.
+func RecordingMusicBrainzIDs(raw map[string][]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for key, values := range raw {
+		switch strings.ToUpper(strings.TrimSpace(key)) {
+		case "MUSICBRAINZ_TRACKID", "MUSICBRAINZ TRACK ID":
+		default:
+			continue
+		}
+		for _, value := range values {
+			if id, ok := NormalizeMusicBrainzID(value); ok && !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}

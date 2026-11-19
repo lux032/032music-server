@@ -250,6 +250,9 @@ func (a *App) handleAdminTrackFavorite(w http.ResponseWriter, r *http.Request) {
 		a.redirectFeatureError(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites"), err)
 		return
 	}
+	if a.listenbrainz != nil {
+		a.listenbrainz.Wake()
+	}
 	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/favorites"), favoriteNotice(favorite, "歌曲"))
 }
 

@@ -79,7 +79,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"completedPosition":   "end(completed) must carry the true final position (≈duration), never 0; the server resets the stored breakpoint itself",
 			"effectiveStates":     []string{"playing", "buffering", "paused", "interrupted", "completed", "skipped", "stopped", "error"},
 			"historyPriority":     "playing > buffering > paused, otherwise the most recent end reason; pre-session rows show stopped",
-			"scrobble":            map[string]any{"thresholdFraction": 0.5, "slackMillis": 1000, "countsOn": "events with evidence of actual playback: the state before or after the event is playing; a session that only ever reported paused/buffering never counts, whatever endReason it ends with", "deduplicated": "once per resume chain (chain_id), backstopped by a unique partial index", "serverDerived": true, "lastfm": a.lastfm != nil},
+			"scrobble":            map[string]any{"thresholdFraction": 0.5, "slackMillis": 1000, "countsOn": "events with evidence of actual playback: the state before or after the event is playing; a session that only ever reported paused/buffering never counts, whatever endReason it ends with", "deduplicated": "once per resume chain (chain_id), backstopped by a unique partial index", "serverDerived": true, "lastfm": a.lastfm != nil, "listenbrainz": a.listenbrainz != nil},
 			"skip":                map[string]any{"endReason": "skipped", "thresholdMillis": 30000, "thresholdFraction": 0.5, "countedOnce": true},
 		},
 		"artwork": map[string]any{"parameter": "size", "sizes": []int{256, 512, 768, 1024, 1536}},
@@ -120,11 +120,19 @@ func (a *App) handleUnsetAlbumFavorite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleSetTrackFavorite(w http.ResponseWriter, r *http.Request) {
-	a.favoriteResult(w, r, a.store.SetTrackFavorite(r.Context(), parseInt64(r.PathValue("id")), true))
+	err := a.store.SetTrackFavorite(r.Context(), parseInt64(r.PathValue("id")), true)
+	if err == nil && a.listenbrainz != nil {
+		a.listenbrainz.Wake()
+	}
+	a.favoriteResult(w, r, err)
 }
 
 func (a *App) handleUnsetTrackFavorite(w http.ResponseWriter, r *http.Request) {
-	a.favoriteResult(w, r, a.store.SetTrackFavorite(r.Context(), parseInt64(r.PathValue("id")), false))
+	err := a.store.SetTrackFavorite(r.Context(), parseInt64(r.PathValue("id")), false)
+	if err == nil && a.listenbrainz != nil {
+		a.listenbrainz.Wake()
+	}
+	a.favoriteResult(w, r, err)
 }
 
 func (a *App) favoriteResult(w http.ResponseWriter, r *http.Request, err error) {

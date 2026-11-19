@@ -138,6 +138,8 @@ type PlaybackEventResult struct {
 	Counted bool `json:"counted"`
 	// QueuedForLastFM reports that this event enqueued a Last.fm scrobble.
 	QueuedForLastFM bool `json:"-"`
+	// QueuedForListenBrainz reports that this event enqueued a ListenBrainz listen.
+	QueuedForListenBrainz bool `json:"-"`
 }
 
 func activePlaybackState(state string) bool {
@@ -439,7 +441,7 @@ func (s *Store) recordPlaybackEventTx(ctx context.Context, input PlaybackEventIn
 		}
 	}
 
-	counted, queued, err := applyPlaybackSideEffects(ctx, tx, sess.trackID, sess.chainID, sess.startedAt, sess.initialPosMs, libraryDuration, max(sess.durationMs, input.DurationMillis), input, sess.state, newState)
+	counted, queued, lbQueued, err := applyPlaybackSideEffects(ctx, tx, sess.trackID, sess.chainID, sess.startedAt, sess.initialPosMs, libraryDuration, max(sess.durationMs, input.DurationMillis), input, sess.state, newState)
 	if err != nil {
 		return PlaybackEventResult{}, err
 	}
@@ -447,7 +449,7 @@ func (s *Store) recordPlaybackEventTx(ctx context.Context, input PlaybackEventIn
 	if input.Type == "end" && input.EndReason == "completed" {
 		position = 0
 	}
-	result := PlaybackEventResult{Applied: true, SessionID: input.SessionID, State: newState, PositionMillis: position, Counted: counted, QueuedForLastFM: queued}
+	result := PlaybackEventResult{Applied: true, SessionID: input.SessionID, State: newState, PositionMillis: position, Counted: counted, QueuedForLastFM: queued, QueuedForListenBrainz: lbQueued}
 	return result, tx.Commit()
 }
 
@@ -550,11 +552,11 @@ func (s *Store) startPlaybackSessionTx(ctx context.Context, tx *sql.Tx, input Pl
 		return PlaybackEventResult{}, err
 	}
 
-	counted, queued, err := applyPlaybackSideEffects(ctx, tx, input.TrackID, chainID, "", input.PositionMillis, libraryDuration, input.DurationMillis, input, "", input.State)
+	counted, queued, lbQueued, err := applyPlaybackSideEffects(ctx, tx, input.TrackID, chainID, "", input.PositionMillis, libraryDuration, input.DurationMillis, input, "", input.State)
 	if err != nil {
 		return PlaybackEventResult{}, err
 	}
-	result := PlaybackEventResult{Applied: true, SessionID: input.SessionID, State: input.State, PositionMillis: input.PositionMillis, Counted: counted, QueuedForLastFM: queued}
+	result := PlaybackEventResult{Applied: true, SessionID: input.SessionID, State: input.State, PositionMillis: input.PositionMillis, Counted: counted, QueuedForLastFM: queued, QueuedForListenBrainz: lbQueued}
 	return result, nil
 }
 
@@ -574,7 +576,7 @@ func (s *Store) startPlaybackSessionTx(ctx context.Context, tx *sql.Tx, input Pl
 // it ends with; a session that played past the threshold counts on the very
 // pause/buffering/end event that carries the reached position. start
 // passes priorState="".
-func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, chainID, sessionStartedAt string, initialPositionMs, libraryDuration, sessionDurationMs int64, input PlaybackEventInput, priorState, newState string) (bool, bool, error) {
+func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, chainID, sessionStartedAt string, initialPositionMs, libraryDuration, sessionDurationMs int64, input PlaybackEventInput, priorState, newState string) (bool, bool, bool, error) {
 	progressPosition := input.PositionMillis
 	if input.Type == "end" && input.EndReason == "completed" {
 		progressPosition = 0
@@ -583,7 +585,7 @@ func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, ch
 	refreshPlayed := evidenceOfPlay
 	if _, err := tx.ExecContext(ctx, `INSERT INTO playback_progress(track_id,position_ms,duration_ms,last_played_at) VALUES(?,?,?,CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END)
 		ON CONFLICT(track_id) DO UPDATE SET position_ms=excluded.position_ms,duration_ms=MAX(playback_progress.duration_ms,excluded.duration_ms),last_played_at=CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE playback_progress.last_played_at END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, trackID, progressPosition, input.DurationMillis, refreshPlayed, refreshPlayed); err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 
 	duration := libraryDuration
@@ -593,10 +595,11 @@ func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, ch
 
 	alreadyCounted, err := chainCountedTx(ctx, tx, chainID)
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 	counted := alreadyCounted
 	queued := false
+	lbQueued := false
 	// F-1/N-1: only events with evidence of actual playback count — the
 	// state before or after the event is playing. A paused/buffering start
 	// at a high position (cold restore without a persisted session) never
@@ -609,13 +612,13 @@ func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, ch
 			// visible in the history list, even if every earlier event of the
 			// session was paused/buffering (F-1/L-4 interaction).
 			if _, err := tx.ExecContext(ctx, `UPDATE playback_progress SET play_count=play_count+1,last_completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),last_played_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE track_id=?`, trackID); err != nil {
-				return false, false, err
+				return false, false, false, err
 			}
 			// The chain-counted unique partial index is the last line of
 			// defence here: a sibling that somehow slipped past the EXISTS
 			// check would fail this statement and roll back the event (B-1).
 			if _, err := tx.ExecContext(ctx, `UPDATE playback_sessions SET counted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE session_id=?`, input.SessionID); err != nil {
-				return false, false, err
+				return false, false, false, err
 			}
 			counted = true
 			// Last.fm startedAt is derived from the session start minus its
@@ -631,7 +634,11 @@ func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, ch
 			var err error
 			queued, err = enqueueLastFMScrobble(ctx, tx, trackID, duration, startedAt)
 			if err != nil {
-				return false, false, err
+				return false, false, false, err
+			}
+			lbQueued, err = enqueueListenBrainzScrobble(ctx, tx, trackID, duration, startedAt)
+			if err != nil {
+				return false, false, false, err
 			}
 		}
 	}
@@ -646,17 +653,17 @@ func applyPlaybackSideEffects(ctx context.Context, tx *sql.Tx, trackID int64, ch
 		}
 		if input.PositionMillis < threshold {
 			if _, err := tx.ExecContext(ctx, `UPDATE playback_progress SET skip_count=skip_count+1,last_skipped_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE track_id=?`, trackID); err != nil {
-				return false, false, err
+				return false, false, false, err
 			}
 		}
 	}
 
 	if libraryDuration <= 0 && plausibleClientDuration(input.DurationMillis) {
 		if _, err := tx.ExecContext(ctx, `UPDATE tracks SET duration_ms=? WHERE id=? AND COALESCE(duration_ms,0)=0`, input.DurationMillis, trackID); err != nil {
-			return false, false, err
+			return false, false, false, err
 		}
 	}
-	return counted, queued, nil
+	return counted, queued, lbQueued, nil
 }
 
 // SetPlaybackSessionHeartbeatForTest backdates a session's state and

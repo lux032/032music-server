@@ -23,6 +23,7 @@ import (
 	"github.com/lux032/032music-server/internal/enrichment"
 	webhttp "github.com/lux032/032music-server/internal/http"
 	"github.com/lux032/032music-server/internal/lastfm"
+	"github.com/lux032/032music-server/internal/listenbrainz"
 	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/sourcegate"
@@ -228,6 +229,9 @@ func run() error {
 	lastFMService := lastfm.NewService(db, logger)
 	lastFMService.Start(rootCtx)
 	app.SetLastFM(lastFMService)
+	listenBrainzService := listenbrainz.NewService(db, logger)
+	listenBrainzService.Start(rootCtx)
+	app.SetListenBrainz(listenBrainzService)
 	// Sonos/DLNA casting: discovery runs on demand (device list requests).
 	castManager := upnp.NewManager(upnp.Options{StaticDevices: cfg.CastDevices, DisableSSDP: !cfg.CastSSDP, Logger: logger})
 	defer castManager.Close()
@@ -304,6 +308,7 @@ func run() error {
 		discoveryService.Wait()
 		acquisitionService.Wait()
 		lastFMService.Wait()
+		listenBrainzService.Wait()
 		analysisService.Wait()
 		taggingService.Wait()
 		aliasService.Wait()

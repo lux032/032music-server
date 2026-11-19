@@ -8,6 +8,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -198,6 +199,12 @@ func finalizeExtractedTags(result *AudioMetadata, file *os.File, isMP3 bool, raw
 				switch frame {
 				case "TPE1", "TPE2", "TCOM", "TEXT":
 					artistFields[frame] = append(artistFields[frame], fields...)
+				case "UFID":
+					if len(fields) == 2 && strings.EqualFold(fields[0], "http://musicbrainz.org") {
+						if !slices.Contains(result.Raw["MUSICBRAINZ_TRACKID"], fields[1]) && !slices.Contains(artistFields["MUSICBRAINZ_TRACKID"], fields[1]) {
+							artistFields["MUSICBRAINZ_TRACKID"] = append(artistFields["MUSICBRAINZ_TRACKID"], fields[1])
+						}
+					}
 				case "TXXX":
 					if len(fields) > 1 {
 						key := strings.ToUpper(strings.TrimSpace(fields[0]))
@@ -654,7 +661,7 @@ func parseID3v2TextFrames(r io.Reader, consume func(string, []string)) {
 		if tagUnsynchronised {
 			payload = removeID3Unsynchronisation(payload)
 		}
-		if !isInvolvedPeopleFrame(version, frameID) && frameID != "TXXX" && frameID != "TPE1" && frameID != "TPE2" && frameID != "TCOM" && frameID != "TEXT" {
+		if !isInvolvedPeopleFrame(version, frameID) && frameID != "TXXX" && frameID != "TPE1" && frameID != "TPE2" && frameID != "TCOM" && frameID != "TEXT" && frameID != "UFID" {
 			continue
 		}
 		flags := frameHeader[9]
@@ -683,6 +690,12 @@ func parseID3v2TextFrames(r io.Reader, consume func(string, []string)) {
 			if flags&0x02 != 0 && !tagUnsynchronised {
 				payload = removeID3Unsynchronisation(payload)
 			}
+		}
+		if frameID == "UFID" {
+			if owner, id, ok := decodeID3UFID(payload); ok {
+				consume(frameID, []string{owner, id})
+			}
+			continue
 		}
 		fields, valid := decodeID3TextFields(payload)
 		if !valid {
@@ -727,6 +740,22 @@ func removeID3Unsynchronisation(value []byte) []byte {
 		}
 	}
 	return result
+}
+
+func decodeID3UFID(payload []byte) (string, string, bool) {
+	sep := bytes.IndexByte(payload, 0)
+	if sep <= 0 || sep+1 >= len(payload) {
+		return "", "", false
+	}
+	owner := strings.TrimSpace(string(payload[:sep]))
+	if !strings.EqualFold(owner, "http://musicbrainz.org") {
+		return "", "", false
+	}
+	id, ok := NormalizeMusicBrainzID(string(payload[sep+1:]))
+	if !ok {
+		return "", "", false
+	}
+	return owner, id, true
 }
 
 func decodeID3TextFields(payload []byte) ([]string, bool) {

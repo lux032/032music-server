@@ -664,7 +664,7 @@ document.addEventListener('click', (event) => {
   schedule();
 })();
 
-// -------------------------------------------------- Last.fm love sync poller
+// -------------------------------------------------- Last.fm & ListenBrainz love sync poller
 // The backfill is a long, explicitly started run, so the settings card refreshes
 // its progress bar while a run is active (3 s) and falls back to a slow check
 // otherwise so a run started in another tab still shows up.
@@ -672,7 +672,6 @@ document.addEventListener('click', (event) => {
   'use strict';
   if (window.__032_lastfm_love_initialized) return;
   window.__032_lastfm_love_initialized = true;
-  let timer = null;
 
   const setLine = (id, text) => {
     const el = document.getElementById(id);
@@ -681,76 +680,89 @@ document.addEventListener('click', (event) => {
     el.hidden = !text;
   };
 
-  function render(view) {
-    const root = document.getElementById('lastfm-love');
-    if (!root) return;
-    root.dataset.loveStatus = String(!!view.enabled);
-    const pending = Number(view.pending) || 0;
-    const failed = Number(view.failed) || 0;
-    const queue = document.getElementById('love-queue-line');
-    if (queue) {
-      queue.textContent = pending
-        ? `待同步 ${pending} 首${failed ? `（其中 ${failed} 首多次失败，正在放慢重试）` : ''}`
-        : '';
-      queue.hidden = pending === 0;
-    }
-    setLine('love-error-line', view.lastError ? `最近错误${view.lastErrorAt ? `（${view.lastErrorAt}）` : ''}：${view.lastError}` : '');
+  function setupLovePoller(cfg) {
+    let timer = null;
 
-    const run = view.backfill || {};
-    const active = run.state === 'running' || run.state === 'done' || run.state === 'cancelled';
-    const bar = document.getElementById('love-backfill-bar');
-    if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(run.percent) || 0))}%`;
-    const wrapper = document.getElementById('love-backfill-progress');
-    if (wrapper) wrapper.hidden = !active;
-    const text = document.getElementById('love-backfill-text');
-    if (text) {
-      text.hidden = !active;
-      if (active) {
-        const state = run.state === 'running' ? ' · 进行中' : run.state === 'done' ? ' · 已完成' : ' · 已停止';
-        text.textContent = `已同步 ${Number(run.processed) || 0} / ${Number(run.total) || 0} 首（${(Number(run.percent) || 0).toFixed(1)}%）`
-          + `${Number(run.failed) ? ` · 跳过 ${run.failed} 首` : ''}${state}`;
+    function render(view) {
+      const root = document.getElementById(cfg.rootId);
+      if (!root) return;
+      root.dataset.loveStatus = String(!!view.enabled);
+      const pending = Number(view.pending) || 0;
+      const failed = Number(view.failed) || 0;
+      const queue = document.getElementById(cfg.prefix + 'love-queue-line');
+      if (queue) {
+        queue.textContent = pending
+          ? `待同步 ${pending} 首${failed ? `（其中 ${failed} 首多次失败，正在放慢重试）` : ''}`
+          : '';
+        queue.hidden = pending === 0;
       }
+      setLine(cfg.prefix + 'love-error-line', view.lastError ? `最近错误${view.lastErrorAt ? `（${view.lastErrorAt}）` : ''}：${view.lastError}` : '');
+
+      const run = view.backfill || {};
+      const active = run.state === 'running' || run.state === 'done' || run.state === 'cancelled';
+      const bar = document.getElementById(cfg.prefix + 'love-backfill-bar');
+      if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(run.percent) || 0))}%`;
+      const wrapper = document.getElementById(cfg.prefix + 'love-backfill-progress');
+      if (wrapper) wrapper.hidden = !active;
+      const text = document.getElementById(cfg.prefix + 'love-backfill-text');
+      if (text) {
+        text.hidden = !active;
+        if (active) {
+          const state = run.state === 'running' ? ' · 进行中' : run.state === 'done' ? ' · 已完成' : ' · 已停止';
+          const skippedNoId = Number(run.skippedNoId) || 0;
+          const runFailed = Number(run.failed) || 0;
+          if (cfg.hasSkippedNoID) {
+            text.textContent = `已处理 ${Number(run.processed) || 0} / ${Number(run.total) || 0} 首（${(Number(run.percent) || 0).toFixed(1)}%）`
+              + `${skippedNoId ? ` · 无 ID 跳过 ${skippedNoId} 首` : ''}`
+              + `${runFailed ? ` · 失败 ${runFailed} 首` : ''}${state}`;
+          } else {
+            text.textContent = `已同步 ${Number(run.processed) || 0} / ${Number(run.total) || 0} 首（${(Number(run.percent) || 0).toFixed(1)}%）`
+              + `${runFailed ? ` · 跳过 ${runFailed} 首` : ''}${state}`;
+          }
+        }
+      }
+      setLine(cfg.prefix + 'love-backfill-error', run.lastError);
+      if (root.dataset.loveRunning === 'true' && run.state !== 'running') {
+        window.location.reload();
+        return;
+      }
+      root.dataset.loveRunning = String(run.state === 'running');
     }
-    setLine('love-backfill-error', run.lastError);
-    // A finished/cancelled run changes which button the server renders, so
-    // reload once to swap "停止回填" for "继续回填".
-    if (root.dataset.loveRunning === 'true' && run.state !== 'running') {
-      window.location.reload();
-      return;
+
+    async function refresh() {
+      const root = document.getElementById(cfg.rootId);
+      if (!root) return;
+      try {
+        const response = await fetch(cfg.endpoint, { credentials: 'same-origin' });
+        if (!response.ok) return;
+        const body = await response.json();
+        body.enabled = root.dataset.loveStatus === 'true';
+        render(body);
+      } catch (_) { /* keep the last rendered state; retry on the next tick */ }
     }
-    root.dataset.loveRunning = String(run.state === 'running');
-  }
 
-  async function refresh() {
-    const root = document.getElementById('lastfm-love');
-    if (!root) return;
-    try {
-      const response = await fetch('/admin/settings/lastfm-scrobble/love-status', { credentials: 'same-origin' });
-      if (!response.ok) return;
-      const body = await response.json();
-      body.enabled = root.dataset.loveStatus === 'true';
-      render(body);
-    } catch (_) { /* keep the last rendered state; retry on the next tick */ }
-  }
+    function schedule() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (document.hidden) return;
+      const root = document.getElementById(cfg.rootId);
+      if (!root) return;
+      timer = setTimeout(tick, root.dataset.loveRunning === 'true' ? 3000 : 20000);
+    }
 
-  function schedule() {
-    if (timer) { clearTimeout(timer); timer = null; }
-    if (document.hidden) return;
-    const root = document.getElementById('lastfm-love');
-    if (!root) return;
-    timer = setTimeout(tick, root.dataset.loveRunning === 'true' ? 3000 : 20000);
-  }
+    async function tick() {
+      await refresh();
+      schedule();
+    }
 
-  async function tick() {
-    await refresh();
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { if (timer) { clearTimeout(timer); timer = null; } } else { tick(); }
+    });
+    document.addEventListener('032:pjax-applied', () => { tick(); });
     schedule();
   }
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (timer) { clearTimeout(timer); timer = null; } } else { tick(); }
-  });
-  document.addEventListener('032:pjax-applied', () => { tick(); });
-  schedule();
+  setupLovePoller({ rootId: 'lastfm-love', endpoint: '/admin/settings/lastfm-scrobble/love-status', prefix: '', hasSkippedNoID: false });
+  setupLovePoller({ rootId: 'listenbrainz-love', endpoint: '/admin/settings/listenbrainz/love-status', prefix: 'lb-', hasSkippedNoID: true });
 })();
 
 // 大文件快照必须走 fetch + CSRF 头，不能由服务器预解析 multipart 表单。

@@ -270,7 +270,7 @@ func (b *Backups) CompleteRestore(ctx context.Context, s *Store) error {
 		}
 		// Queued Last.fm submissions belong to the replaced database: replaying
 		// them would push plays and love changes the restored library never had.
-		if _, e = tx.ExecContext(ctx, `UPDATE playlists SET revision=max(revision,coalesce((SELECT p.revision FROM prerestore.playlists p WHERE p.id=playlists.id),0))+1; DELETE FROM lastfm_scrobble_queue; DELETE FROM lastfm_love_queue; UPDATE lastfm_love_backfill SET state='idle',total=0,processed=0,failed=0,cursor=0,last_error='',started_at=NULL,finished_at=NULL; DELETE FROM acquisition_searches;`); e != nil {
+		if _, e = tx.ExecContext(ctx, `UPDATE playlists SET revision=max(revision,coalesce((SELECT p.revision FROM prerestore.playlists p WHERE p.id=playlists.id),0))+1; DELETE FROM lastfm_scrobble_queue; DELETE FROM lastfm_love_queue; UPDATE lastfm_love_backfill SET state='idle',total=0,processed=0,failed=0,cursor=0,last_error='',started_at=NULL,finished_at=NULL; DELETE FROM listenbrainz_scrobble_queue; DELETE FROM listenbrainz_love_queue; DELETE FROM listenbrainz_track_ids; UPDATE listenbrainz_love_backfill SET state='idle',total=0,processed=0,failed=0,skipped_no_id=0,cursor=0,last_error='',started_at=NULL,finished_at=NULL; DELETE FROM acquisition_searches;`); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, `INSERT INTO backup_restore_receipt VALUES(?)`, state.SHA256); e != nil {
@@ -361,7 +361,7 @@ func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
 	for _, item := range []struct {
 		table, key string
 		cols       []string
-	}{{"lastfm_scrobble_settings", "id", []string{"api_secret", "session_key", "username"}}, {"metadata_source_settings", "source", []string{"api_key"}}, {"ai_settings", "id", []string{"base_url", "api_key", "proxy_url"}}, {"acquisition_settings", "id", []string{"jackett_url", "jackett_api_key", "jackett_indexer", "qb_url", "qb_username", "qb_password", "qb_category"}}} {
+	}{{"lastfm_scrobble_settings", "id", []string{"api_secret", "session_key", "username"}}, {"listenbrainz_settings", "id", []string{"server_url", "user_token", "username"}}, {"metadata_source_settings", "source", []string{"api_key"}}, {"ai_settings", "id", []string{"base_url", "api_key", "proxy_url"}}, {"acquisition_settings", "id", []string{"jackett_url", "jackett_api_key", "jackett_indexer", "qb_url", "qb_username", "qb_password", "qb_category"}}} {
 		source, e := tableColumns(ctx, tx, "prerestore", item.table)
 		if e != nil {
 			return e

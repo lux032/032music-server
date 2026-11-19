@@ -29,6 +29,7 @@ import (
 	"github.com/lux032/032music-server/internal/discovery"
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/lastfm"
+	"github.com/lux032/032music-server/internal/listenbrainz"
 	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
@@ -71,6 +72,8 @@ type App struct {
 	// lastfm is the optional Last.fm scrobbler; nil disables submission
 	// (plays are still counted locally).
 	lastfm *lastfm.Service
+	// listenbrainz is the optional ListenBrainz scrobbler & love sync service.
+	listenbrainz *listenbrainz.Service
 	// watcher is the optional library watcher (automatic incremental scans);
 	// nil hides its controls on the dashboard.
 	watcher *scanner.Watcher
@@ -103,6 +106,9 @@ type App struct {
 
 // SetLastFM attaches the Last.fm scrobbling service.
 func (a *App) SetLastFM(service *lastfm.Service) { a.lastfm = service }
+
+// SetListenBrainz attaches the ListenBrainz scrobbling service.
+func (a *App) SetListenBrainz(service *listenbrainz.Service) { a.listenbrainz = service }
 
 type healthResponse struct {
 	Status        string `json:"status"`
@@ -644,6 +650,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/lastfm-scrobble/love-backfill", a.requireAdmin(http.HandlerFunc(a.handleStartLastFMLoveBackfill)))
 	mux.Handle("POST /admin/settings/lastfm-scrobble/love-backfill/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelLastFMLoveBackfill)))
 	mux.Handle("POST /admin/settings/lastfm-scrobble/love-retry", a.requireAdmin(http.HandlerFunc(a.handleRetryLastFMLoves)))
+	mux.Handle("POST /admin/settings/listenbrainz", a.requireAdmin(http.HandlerFunc(a.handleSaveListenBrainz)))
+	mux.Handle("POST /admin/settings/listenbrainz/disconnect", a.requireAdmin(http.HandlerFunc(a.handleDisconnectListenBrainz)))
+	mux.Handle("POST /admin/settings/listenbrainz/retry", a.requireAdmin(http.HandlerFunc(a.handleRetryListenBrainz)))
+	mux.Handle("POST /admin/settings/listenbrainz/love-sync", a.requireAdmin(http.HandlerFunc(a.handleSaveListenBrainzLoveSync)))
+	mux.Handle("GET /admin/settings/listenbrainz/love-status", a.requireAdmin(http.HandlerFunc(a.handleListenBrainzLoveStatus)))
+	mux.Handle("POST /admin/settings/listenbrainz/love-backfill", a.requireAdmin(http.HandlerFunc(a.handleStartListenBrainzLoveBackfill)))
+	mux.Handle("POST /admin/settings/listenbrainz/love-backfill/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelListenBrainzLoveBackfill)))
+	mux.Handle("POST /admin/settings/listenbrainz/love-retry", a.requireAdmin(http.HandlerFunc(a.handleRetryListenBrainzLoves)))
 	mux.Handle("GET /admin/settings/security", a.requireAdmin(http.HandlerFunc(a.handleSecurityPage)))
 	mux.Handle("POST /admin/settings/security/username", a.requireAdmin(http.HandlerFunc(a.handleSecurityUsername)))
 	mux.Handle("POST /admin/settings/security/password", a.requireAdmin(http.HandlerFunc(a.handleSecurityPassword)))

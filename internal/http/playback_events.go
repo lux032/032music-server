@@ -60,8 +60,16 @@ func (a *App) handlePlaybackEvents(w http.ResponseWriter, r *http.Request) {
 	if result.QueuedForLastFM && a.lastfm != nil {
 		a.lastfm.Wake()
 	}
-	if result.Applied && result.State == "playing" && a.lastfm != nil {
-		a.lastfm.NowPlaying(input.TrackID)
+	if result.QueuedForListenBrainz && a.listenbrainz != nil {
+		a.listenbrainz.Wake()
+	}
+	if result.Applied && result.State == "playing" {
+		if a.lastfm != nil {
+			a.lastfm.NowPlaying(input.TrackID)
+		}
+		if a.listenbrainz != nil {
+			a.listenbrainz.NowPlaying(input.TrackID)
+		}
 	}
 	writeJSON(w, http.StatusOK, result)
 }

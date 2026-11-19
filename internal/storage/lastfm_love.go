@@ -114,6 +114,9 @@ func (s *Store) SetTrackFavorite(ctx context.Context, id int64, favorite bool) e
 	if err = enqueueLastFMLove(ctx, tx, id, favorite); err != nil {
 		return err
 	}
+	if err = enqueueListenBrainzLove(ctx, tx, id, favorite); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

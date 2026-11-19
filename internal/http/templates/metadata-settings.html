@@ -158,6 +158,85 @@
         </section>
       </div>
       {{end}}
+      {{with $.ListenBrainz}}
+      <div class="source-card-form">
+        <section class="source-card" id="listenbrainz-scrobble">
+          <header>
+            <div><p class="kicker">播放记录</p><h2>ListenBrainz Scrobble</h2></div>
+            <label class="switch"><input type="checkbox" form="listenbrainz-scrobble-form" name="listenbrainz_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+          </header>
+          <p>歌曲播放超过一半时记录一次（30 秒及以下不提交），断网或重启不会丢失；支持官方 ListenBrainz 或自建兼容服务，会附带本地标签中的 MusicBrainz MBID。</p>
+          <p>{{if .Connected}}已连接账号：<strong>{{.Username}}</strong>（{{.ServerURL}}）{{else}}尚未连接 ListenBrainz 账号。{{end}}{{if .PendingCount}}<br>待提交：{{.PendingCount}} 条（最早 {{.OldestPending}}）{{end}}{{if .LastSuccessAt}}<br>最近成功提交：{{.LastSuccessAt}}{{end}}{{if .LastError}}<br><span class="danger-action">最近错误（{{.LastErrorAt}}）：{{.LastError}}</span>{{end}}</p>
+          <form id="listenbrainz-scrobble-form" class="source-card-body" method="post" action="/admin/settings/listenbrainz" data-scope-form>
+            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+            <div class="form-grid thirds">
+              <label>Server URL<input name="listenbrainz_server_url" value="{{.ServerURL}}" placeholder="https://api.listenbrainz.org"></label>
+              <label>User Token<input type="password" name="listenbrainz_user_token" autocomplete="off" placeholder="{{if .HasToken}}已配置；留空保持不变{{else}}在 ListenBrainz 设置页获取 User Token{{end}}"></label>
+            </div>
+            <label class="switch"><input type="checkbox" name="listenbrainz_now_playing" {{if .NowPlaying}}checked{{end}}> 同步“正在播放”状态（并缓存返回的 MSID）</label>
+            <div class="editor-actions"><button type="submit">{{if .Connected}}保存并验证{{else}}保存并连接{{end}}</button></div>
+          </form>
+          {{if or .Connected .PendingCount}}
+          <div class="source-card-actions">
+            {{if .Connected}}
+            <form method="post" action="/admin/settings/listenbrainz/disconnect">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button type="submit" class="secondary">断开账号</button>
+            </form>
+            {{end}}
+            {{if .PendingCount}}
+            <form method="post" action="/admin/settings/listenbrainz/retry">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button type="submit" class="secondary">立即重试提交</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
+        </section>
+        <section class="source-card" id="listenbrainz-love" data-love-status="{{.LoveSync}}" data-love-running="{{.BackfillRunning}}" aria-live="polite">
+          <header>
+            <div><p class="kicker">收藏同步</p><h2>ListenBrainz 红心</h2></div>
+            <form method="post" action="/admin/settings/listenbrainz/love-sync">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="sync_loves" value="{{if .LoveSync}}0{{else}}1{{end}}">
+              <button class="secondary-button" {{if and (not .LoveSync) (not .Connected)}}disabled title="请先连接 ListenBrainz 账号"{{end}}>{{if .LoveSync}}关闭红心同步{{else}}开启红心同步{{end}}</button>
+            </form>
+          </header>
+          <p>开启后，收藏或取消收藏单曲时会同步到 ListenBrainz 红心。优先使用文件内嵌的 Recording MBID，其次复用播放时缓存的 MSID 或在线反查；均未匹配到的冷门曲目会跳过（不会伪造播放记录）。{{if not .Connected}}<br><strong>尚未连接 ListenBrainz 账号</strong>，需要先在上方填写并保存 User Token。{{end}}{{if .FeedbackUnsupported}}<br><span class="danger-action">当前服务器不支持红心反馈接口，已暂停同步。</span>{{end}}</p>
+          <div class="lastfm-love-queue">
+            <p id="lb-love-queue-line" class="result-count"{{if not .LovePending}} hidden{{end}}>待同步 {{.LovePending}} 首{{if .LoveFailed}}（其中 {{.LoveFailed}} 首多次失败，正在放慢重试）{{end}}</p>
+            {{if .LoveFailed}}
+            <form method="post" action="/admin/settings/listenbrainz/love-retry">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <button class="secondary-button">立即重试</button>
+            </form>
+            {{end}}
+          </div>
+          <p id="lb-love-error-line" class="result-count audio-analysis-error"{{if not .LoveLastError}} hidden{{end}}>最近错误（{{.LoveLastErrorAt}}）：{{.LoveLastError}}</p>
+
+          <div class="lastfm-love-backfill">
+            <div class="lastfm-love-head">
+              <h3>把已有收藏同步过去</h3>
+              {{if .BackfillRunning}}
+              <form method="post" action="/admin/settings/listenbrainz/love-backfill/cancel">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button" data-love-cancel>停止回填</button>
+              </form>
+              {{else}}
+              <form method="post" action="/admin/settings/listenbrainz/love-backfill">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button" {{if not .LoveCanSync}}disabled title="请先连接 ListenBrainz 账号并开启红心同步"{{end}}>{{if .BackfillDone}}重新回填{{else if eq .BackfillState "cancelled"}}继续回填{{else}}开始回填{{end}}</button>
+              </form>
+              {{end}}
+            </div>
+            <p class="result-count">只在你手动点击后运行：按曲目顺序逐首提交并限速，可随时停止和续传；无法解析 Recording ID 的曲目会跳过计数。</p>
+            <div class="progress" id="lb-love-backfill-progress" {{if and (not .BackfillRunning) (not .BackfillDone) (ne .BackfillState "cancelled")}}hidden{{end}}><span id="lb-love-backfill-bar" style="width:{{.BackfillPercent}}%"></span></div>
+            <p id="lb-love-backfill-text" class="audio-analysis-line" {{if and (not .BackfillRunning) (not .BackfillDone) (ne .BackfillState "cancelled")}}hidden{{end}}>{{if .BackfillTotal}}已处理 {{.BackfillProcessed}} / {{.BackfillTotal}} 首（{{printf "%.1f" .BackfillPercent}}%）{{if .BackfillSkippedNoID}} · 无 ID 跳过 {{.BackfillSkippedNoID}} 首{{end}}{{if .BackfillFailed}} · 失败 {{.BackfillFailed}} 首{{end}}{{if .BackfillRunning}} · 进行中{{else if .BackfillDone}} · 已完成{{else}} · 已停止{{end}}{{end}}</p>
+            <p id="lb-love-backfill-error" class="audio-analysis-line audio-analysis-error" {{if not .BackfillError}}hidden{{end}}>{{.BackfillError}}</p>
+          </div>
+        </section>
+      </div>
+      {{end}}
       {{else if eq .Source "bangumi"}}
       <form class="source-card-form" method="post" data-scope-form>
         <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
