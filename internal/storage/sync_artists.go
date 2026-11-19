@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
+	"strings"
 )
 
 // SyncArtist is one performer row of the client sync model. Only canonical
@@ -99,50 +101,74 @@ func (s *Store) SyncArtists(ctx context.Context, params SyncArtistsParams) (Sync
 // otherwise SQLite drives the plan from idx_artists_merged_into and scans every
 // artist (~0.6s per 1000 albums on a real library instead of a few ms).
 func (s *Store) albumArtistRefs(ctx context.Context, albumIDs []int64) (map[int64][]ArtistRef, error) {
-	result := make(map[int64][]ArtistRef, len(albumIDs))
 	if len(albumIDs) == 0 {
-		return result, nil
+		return map[int64][]ArtistRef{}, nil
 	}
 	placeholders, args := inClause(albumIDs)
-	rows, err := s.db.QueryContext(ctx, `SELECT aa.album_id,ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM album_artists aa CROSS JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id IN (`+placeholders+`) AND ar.merged_into_artist_id IS NULL ORDER BY aa.album_id,aa.position,ar.id`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT aa.album_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),COALESCE(a.artist_credit,'') FROM album_artists aa CROSS JOIN artists ar ON ar.id=aa.artist_id JOIN albums a ON a.id=aa.album_id WHERE aa.album_id IN (`+placeholders+`) AND ar.merged_into_artist_id IS NULL ORDER BY aa.album_id,aa.position,ar.id`, args...)
 	if err != nil {
 		return nil, err
 	}
+	return readArtistRefs(rows, len(albumIDs))
+}
+
+// trackArtistRefs loads primary performers in credit order.
+func (s *Store) trackArtistRefs(ctx context.Context, trackIDs []int64) (map[int64][]ArtistRef, error) {
+	if len(trackIDs) == 0 {
+		return map[int64][]ArtistRef{}, nil
+	}
+	placeholders, args := inClause(trackIDs)
+	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name),COALESCE(t.artist_credit,'') FROM track_artists ta CROSS JOIN artists ar ON ar.id=ta.artist_id JOIN tracks t ON t.id=ta.track_id WHERE ta.role='primary' AND ta.track_id IN (`+placeholders+`) AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	return readArtistRefs(rows, len(trackIDs))
+}
+
+func readArtistRefs(rows *sql.Rows, capacity int) (map[int64][]ArtistRef, error) {
 	defer rows.Close()
+	result := make(map[int64][]ArtistRef, capacity)
+	source := make(map[int64]string)
 	for rows.Next() {
-		var albumID int64
+		var id int64
 		var ref ArtistRef
-		if err := rows.Scan(&albumID, &ref.ID, &ref.Name); err != nil {
+		var encoded string
+		if err := rows.Scan(&id, &ref.ID, &ref.Name, &encoded); err != nil {
 			return nil, err
 		}
-		result[albumID] = appendArtistRef(result[albumID], ref)
+		result[id] = appendArtistRef(result[id], ref)
+		if encoded != "" {
+			source[id] = encoded
+		}
+	}
+	for id, encoded := range source {
+		refs := result[id]
+		ids := make([]int64, len(refs))
+		for i, ref := range refs {
+			ids[i] = ref.ID
+		}
+		for i, phrase := range matchArtistCredit(encoded, ids) {
+			if i > 0 {
+				refs[i].JoinPhrase = &phrase
+			}
+		}
 	}
 	return result, rows.Err()
 }
 
-// trackArtistRefs loads the primary (performing) track artists for a batch of
-// tracks in credit order. Tracks without primary credits are absent; clients
-// fall back to the album artists, matching the server's own track artist text.
-func (s *Store) trackArtistRefs(ctx context.Context, trackIDs []int64) (map[int64][]ArtistRef, error) {
-	result := make(map[int64][]ArtistRef, len(trackIDs))
-	if len(trackIDs) == 0 {
-		return result, nil
-	}
-	placeholders, args := inClause(trackIDs)
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM track_artists ta CROSS JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role='primary' AND ta.track_id IN (`+placeholders+`) AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var trackID int64
-		var ref ArtistRef
-		if err := rows.Scan(&trackID, &ref.ID, &ref.Name); err != nil {
-			return nil, err
+func artistRefDisplay(refs []ArtistRef) string {
+	var display strings.Builder
+	for i, ref := range refs {
+		if i > 0 {
+			phrase := ", "
+			if ref.JoinPhrase != nil {
+				phrase = *ref.JoinPhrase
+			}
+			display.WriteString(phrase)
 		}
-		result[trackID] = appendArtistRef(result[trackID], ref)
+		display.WriteString(ref.Name)
 	}
-	return result, rows.Err()
+	return display.String()
 }
 
 func appendArtistRef(list []ArtistRef, ref ArtistRef) []ArtistRef {

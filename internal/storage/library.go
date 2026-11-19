@@ -54,12 +54,13 @@ type ScanJob struct {
 }
 
 type Artist struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	ImageURL   string `json:"imageUrl"`
-	AlbumCount int64  `json:"albumCount"`
-	TrackCount int64  `json:"trackCount"`
-	IsFavorite bool   `json:"isFavorite"`
+	JoinPhrase *string `json:"joinPhrase,omitempty"`
+	ID         int64   `json:"id"`
+	Name       string  `json:"name"`
+	ImageURL   string  `json:"imageUrl"`
+	AlbumCount int64   `json:"albumCount"`
+	TrackCount int64   `json:"trackCount"`
+	IsFavorite bool    `json:"isFavorite"`
 }
 
 type Album struct {
@@ -98,11 +99,9 @@ type Album struct {
 	// HasCustomArtwork reports a user-uploaded custom cover (4.5.7); only the
 	// album detail select fills it.
 	HasCustomArtwork bool `json:"hasCustomArtwork,omitempty"`
-	// AlbumArtists links the album credits on browse pages; only filled by
-	// the list hydration and kept out of the API payload.
+	// AlbumArtists provides local browse links in display order.
 	AlbumArtists []Artist `json:"-"`
-	// Artists are the credited album artists for API clients; filled by
-	// AttachAlbumArtistRefs on the endpoints that need them.
+	// Artists contains the credited album artists for API clients.
 	Artists []ArtistRef `json:"artists,omitempty"`
 }
 
@@ -359,6 +358,10 @@ func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupK
 			return 0, err
 		}
 	}
+	credit := scannedArtistCredit(m.Raw, m.AlbumArtists, albumArtistIDs, true)
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET artist_credit=? WHERE id=? AND artist_credit IS NOT ?`, credit, albumID, credit); err != nil {
+		return 0, err
+	}
 	return albumID, nil
 }
 
@@ -417,6 +420,10 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		if _, err = tx.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, "primary"); err != nil {
 			return err
 		}
+	}
+	credit := scannedArtistCredit(m.Raw, m.Artists, artistIDs, false)
+	if _, err = tx.ExecContext(ctx, `UPDATE tracks SET artist_credit=? WHERE id=? AND artist_credit IS NOT ?`, credit, trackID, credit); err != nil {
+		return err
 	}
 	if err = capturePrimaryArtistBase(ctx, tx, trackID); err != nil {
 		return err
@@ -872,11 +879,8 @@ func (s *Store) CountTracks(ctx context.Context, f Filters) (int64, error) {
 	return total, err
 }
 
-// albumArtistSQL 是 API 下发的专辑歌手名：优先取 album_artists 关系（歌手合并、
-// 改名后会同步更新），与网页端、曲目 artist 字段同源；无关系时才回退到标签文本。
-// performed_by 是文件标签原文，合并歌手不会改写它，重新扫描也会恢复它，
-// 若优先使用会让客户端拿到已合并歌手的旧名字而无法跳转歌手页。
-const albumArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),NULLIF(a.user_performed_by,''),NULLIF(a.performed_by,''),'Unknown Artist')`
+// albumArtistSQL prefers the credited identities and their current display names.
+const albumArtistSQL = `COALESCE(` + albumCreditDisplaySQL + `,NULLIF(a.user_performed_by,''),NULLIF(a.performed_by,''),'Unknown Artist')`
 
 var albumByIDSelect = `SELECT
 	a.id, COALESCE(a.user_title,a.title),

@@ -892,14 +892,9 @@ func (a *App) handleAlbumPage(w http.ResponseWriter, r *http.Request) {
 		data.Tracks, err = a.store.ListTracks(r.Context(), storage.Filters{AlbumID: data.AlbumDetail.ID, Limit: 500})
 	}
 	if err == nil {
-		trackArtists, artistErr := a.store.ArtistsForAlbumTracks(r.Context(), data.AlbumDetail.ID)
-		err = artistErr
-		for index := range data.Tracks {
-			data.Tracks[index].Artists = trackArtists[data.Tracks[index].ID]
-		}
-	}
-	if err == nil {
-		data.Artists, err = a.store.ArtistsForAlbum(r.Context(), data.AlbumDetail.ID)
+		albums := []storage.Album{*data.AlbumDetail}
+		err = a.store.AttachAlbumArtistRefs(r.Context(), albums)
+		data.AlbumDetail = &albums[0]
 	}
 	var albumLevelWorks []storage.AlbumLevelWorkView
 	if err == nil {

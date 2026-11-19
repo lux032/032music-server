@@ -44,7 +44,7 @@ func TestStartupRestoreSkipsPreupgrade(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = raw.Exec(`DROP INDEX idx_listenbrainz_love_queue_due;DROP INDEX idx_listenbrainz_scrobble_queue_due;DROP TABLE listenbrainz_track_ids;DROP TABLE listenbrainz_love_backfill;DROP TABLE listenbrainz_love_queue;DROP TABLE listenbrainz_scrobble_queue;DROP TABLE listenbrainz_settings;DROP TABLE artist_match_run_modes;DROP TRIGGER artist_source_state_setting_change;DROP TRIGGER artist_source_state_merge_change;DROP TABLE artist_source_match_state;CREATE TABLE artist_source_match_state (
+	if _, e = raw.Exec(`ALTER TABLE tracks DROP COLUMN artist_credit;ALTER TABLE albums DROP COLUMN artist_credit;DROP INDEX idx_listenbrainz_love_queue_due;DROP INDEX idx_listenbrainz_scrobble_queue_due;DROP TABLE listenbrainz_track_ids;DROP TABLE listenbrainz_love_backfill;DROP TABLE listenbrainz_love_queue;DROP TABLE listenbrainz_scrobble_queue;DROP TABLE listenbrainz_settings;DROP TABLE artist_match_run_modes;DROP TRIGGER artist_source_state_setting_change;DROP TRIGGER artist_source_state_merge_change;DROP TABLE artist_source_match_state;CREATE TABLE artist_source_match_state (
  artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
  source TEXT NOT NULL,
  input_key TEXT NOT NULL,

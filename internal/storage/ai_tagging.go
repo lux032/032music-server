@@ -91,6 +91,8 @@ func (s *Store) SaveAISettings(ctx context.Context, v AISettings) error {
 // ---------------------------------------------------------------- candidates
 
 // taggingAlbumArtistSQL / taggingGenresSQL 同时用于打标输入（TaggingTrackInfo）与 stamp，保证两者一致。
+const taggingTrackArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary' ORDER BY ta.position,ar.id)),(SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),a.user_performed_by,a.performed_by,'Unknown Artist')`
+
 const taggingAlbumArtistSQL = `COALESCE(a.user_performed_by, a.performed_by, (SELECT GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ') FROM album_artists aa JOIN artists ar ON ar.id = aa.artist_id WHERE aa.album_id = a.id), '')`
 
 const taggingGenresSQL = `COALESCE((SELECT GROUP_CONCAT(gx.name, ',' ORDER BY ox.position, gx.id) FROM track_genre_overrides ox JOIN genres gx ON gx.id = ox.genre_id WHERE ox.track_id = t.id),
@@ -101,7 +103,7 @@ const taggingGenresSQL = `COALESCE((SELECT GROUP_CONCAT(gx.name, ',' ORDER BY ox
 // 外置 .lrc 只记录有无：只修改已有 .lrc 的内容不会触发（数据库不保存其修改时间）。不使用 tracks/albums 的
 // updated_at：收藏、更换封面等与歌曲内容无关的操作也会刷新它们，不应触发重新打标。
 // 修改此表达式时需要新增迁移，把已有 track_tag_meta / ai_tagging_failures 的旧 stamp 换算过来。
-const taggingStampSQL = `COALESCE(t.user_title, t.title) || '|' || ` + trackArtistSQL + ` || '|' ||
+const taggingStampSQL = `COALESCE(t.user_title, t.title) || '|' || ` + taggingTrackArtistSQL + ` || '|' ||
 		COALESCE(a.user_title, a.title) || '|' || ` + taggingAlbumArtistSQL + ` || '|' || COALESCE(a.user_release_year, a.release_year, 0) || '|' ||
 		(SELECT COUNT(*) FROM tracks t2 WHERE t2.album_id = a.id) || '|' ||
 		(COALESCE(t.duration_ms, 0) / 1000) || '|' || ` + effectiveTrackTypeSQL + ` || '|' || ` + taggingGenresSQL + ` || '|' ||
@@ -245,7 +247,7 @@ func (s *Store) TaggingTrackInfo(ctx context.Context, trackID int64) (TaggingTra
 	var v TaggingTrackInfo
 	var genres string
 	var year sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT t.id, a.id, COALESCE(t.user_title, t.title), `+trackArtistSQL+`, COALESCE(a.user_title, a.title),
+	err := s.db.QueryRowContext(ctx, `SELECT t.id, a.id, COALESCE(t.user_title, t.title), `+taggingTrackArtistSQL+`, COALESCE(a.user_title, a.title),
 		`+taggingAlbumArtistSQL+`,
 		COALESCE(a.user_release_year, a.release_year), COALESCE(t.duration_ms, 0), `+effectiveTrackTypeSQL+`,
 		`+taggingGenresSQL+`,
@@ -536,7 +538,7 @@ func (s *Store) ClearTaggingFailures(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) TaggingFailures(ctx context.Context, limit int) ([]AITaggingFailure, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT x.track_id, COALESCE(t.user_title, t.title), `+trackArtistSQL+`, x.attempts, x.permanent, x.last_error, x.next_retry_at, x.updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT x.track_id, COALESCE(t.user_title, t.title), `+taggingTrackArtistSQL+`, x.attempts, x.permanent, x.last_error, x.next_retry_at, x.updated_at
 		FROM ai_tagging_failures x JOIN tracks t ON t.id = x.track_id JOIN albums a ON a.id = t.album_id
 		ORDER BY x.permanent DESC, x.updated_at DESC LIMIT ?`, limit)
 	if err != nil {
@@ -676,7 +678,7 @@ type RecentTagResult struct {
 }
 
 func (s *Store) RecentTagResults(ctx context.Context, limit int) ([]RecentTagResult, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.track_id, COALESCE(t.user_title, t.title), `+trackArtistSQL+`, m.model, m.reviewed_by, m.needs_review, m.tagged_at
+	rows, err := s.db.QueryContext(ctx, `SELECT m.track_id, COALESCE(t.user_title, t.title), `+taggingTrackArtistSQL+`, m.model, m.reviewed_by, m.needs_review, m.tagged_at
 		FROM track_tag_meta m JOIN tracks t ON t.id = m.track_id JOIN albums a ON a.id = t.album_id ORDER BY m.tagged_at DESC, m.track_id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -833,7 +835,7 @@ func (s *Store) SetAISampleRunStatus(ctx context.Context, runID int64, status, m
 }
 
 func (s *Store) AISampleItems(ctx context.Context, runID int64) ([]AISampleItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT i.track_id, COALESCE(t.user_title, t.title), `+trackArtistSQL+`, COALESCE(i.primary_json, ''), COALESCE(i.review_json, ''), i.error
+	rows, err := s.db.QueryContext(ctx, `SELECT i.track_id, COALESCE(t.user_title, t.title), `+taggingTrackArtistSQL+`, COALESCE(i.primary_json, ''), COALESCE(i.review_json, ''), i.error
 		FROM ai_sample_items i JOIN tracks t ON t.id = i.track_id JOIN albums a ON a.id = t.album_id WHERE i.run_id = ? ORDER BY i.track_id`, runID)
 	if err != nil {
 		return nil, err

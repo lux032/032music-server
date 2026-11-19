@@ -244,7 +244,7 @@
     </div>
   </div>
   <a class="h-card-title" href="/admin/albums/{{.Album.ID}}" title="{{.Album.Title}}">{{.Album.Title}}</a>
-  {{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}, {{end}}<a class="h-card-sub" href="/admin/artists/{{$artist.ID}}" title="{{$artist.Name}}">{{$artist.Name}}</a>{{end}}{{else}}<span class="h-card-sub">{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}</span>{{end}}
+  {{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a class="h-card-sub" href="/admin/artists/{{$artist.ID}}" title="{{$artist.Name}}">{{$artist.Name}}</a>{{end}}{{else}}<span class="h-card-sub">{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}</span>{{end}}
   <span class="h-card-meta">{{if .AddedTime}}入库于 {{formatAdminTime .AddedTime}}{{else}}{{.Meta}}{{end}}</span>
 </article>
 {{end}}
@@ -317,7 +317,7 @@
   <div class="h-hero-info">
     {{template "home-hero-tabs" .Tabs}}
     <h2 title="{{.Album.Title}}">{{.Album.Title}}</h2>
-    <p class="h-hero-by">{{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}, {{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{end}}{{else}}{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}{{end}}</p>
+    <p class="h-hero-by">{{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{end}}{{else}}{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}{{end}}</p>
     <ul class="h-facts">
       {{if .Album.Year}}<li>{{.Album.Year}}</li>{{end}}
       {{with albumKindLabel .Album}}<li>{{.}}</li>{{end}}

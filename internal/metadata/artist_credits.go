@@ -26,12 +26,15 @@ func AlbumArtistNames(raw map[string][]string, fallback []string) []string {
 // tagValues accepts Vorbis keys, ID3 descriptions and MP4 reverse-DNS atoms.
 // Sorting makes aliases deterministic even when the reader returns a map.
 func tagValues(raw map[string][]string, aliases ...string) []string {
+	// MP4 atom names can contain the raw 0xa9 byte. Apply the same case
+	// conversion to their aliases as flattenRaw applies to raw keys.
 	keys := make([]string, 0, len(raw))
 	for key := range raw {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, alias := range aliases {
+		alias = strings.ToUpper(alias)
 		for _, key := range keys {
 			normalized := strings.ToUpper(strings.TrimSpace(key))
 			if i := strings.LastIndex(normalized, ":"); i >= 0 {

@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"slices"
 	"strings"
 )
 
@@ -191,10 +190,6 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 	}
 
 	hydrations := []func() error{
-		// Album artists in credit order; all of them, regardless of filters.
-		func() error {
-			return stringHydration(`SELECT aa.album_id, GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name), ', ' ORDER BY aa.position, ar.id) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id IN (`+placeholders+`) GROUP BY aa.album_id`, args, func(a *Album, v string) { a.Artist = v })
-		},
 		// Effective genres, fallback layer: distinct union of the per-track
 		// effective genres (override-aware) for albums without album-level
 		// overrides. Genre-id order matches the historical genres-table scan.
@@ -248,8 +243,19 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 			return nil, err
 		}
 	}
-	if err = s.hydrateAlbumArtistLinks(ctx, placeholders, args, byID); err != nil {
+	refs, err := s.albumArtistRefs(ctx, ids)
+	if err != nil {
 		return nil, err
+	}
+	for id, album := range byID {
+		for _, ref := range refs[id] {
+			album.AlbumArtists = append(album.AlbumArtists, Artist{ID: ref.ID, Name: ref.Name, JoinPhrase: ref.JoinPhrase})
+		}
+		if len(refs[id]) > 0 {
+			album.Artist = artistRefDisplay(refs[id])
+		} else if album.PerformedBy != "" {
+			album.Artist = album.PerformedBy
+		}
 	}
 	for id, album := range byID {
 		if in, ok := kindInputs[id]; ok {
@@ -268,29 +274,6 @@ func (s *Store) hydrateAlbums(ctx context.Context, ids []int64) ([]Album, error)
 		result = append(result, *album)
 	}
 	return result, nil
-}
-
-// hydrateAlbumArtistLinks attaches the credited album artists (id + name,
-// credit order) so browse cards can link each name to its artist page.
-func (s *Store) hydrateAlbumArtistLinks(ctx context.Context, placeholders string, args []any, byID map[int64]*Album) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT aa.album_id,ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id IN (`+placeholders+`) ORDER BY aa.album_id,aa.position,ar.id`, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var albumID int64
-		var artist Artist
-		if err = rows.Scan(&albumID, &artist.ID, &artist.Name); err != nil {
-			return err
-		}
-		if album, ok := byID[albumID]; ok {
-			if !slices.ContainsFunc(album.AlbumArtists, func(v Artist) bool { return v.ID == artist.ID }) {
-				album.AlbumArtists = append(album.AlbumArtists, artist)
-			}
-		}
-	}
-	return rows.Err()
 }
 
 // ListArtistOptions returns id+name rows for filter dropdowns without the

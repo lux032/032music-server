@@ -23,14 +23,14 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     container.replaceChildren();
     if (detail?.artists?.length) {
       detail.artists.forEach((artist, index) => {
-        if (index) container.append(document.createTextNode('、'));
+        if (index) container.append(document.createTextNode(artist.joinPhrase ?? ', '));
         const link = document.createElement('a');
         link.href = `/admin/artists/${artist.id}`;
         link.textContent = artist.name;
         link.dataset.playerNav = '1';
         container.append(link);
       });
-    } else container.textContent = fallback || '—';
+    } else container.textContent = detail?.artist || fallback || '—';
   }
 
   function renderAlbumLink(container, detail, name, suffix = '') {
@@ -489,7 +489,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
         if (!labels[credit.role]) continue;
         creditsEl.append(document.createTextNode(`${labels[credit.role]}：`));
         credit.artists.forEach((artist,index) => {
-          if (index) creditsEl.append(document.createTextNode('、'));
+          if (index) creditsEl.append(document.createTextNode(artist.joinPhrase ?? ', '));
           const link = document.createElement('a');link.href = `/admin/credits/${artist.id}?role=${credit.role}`;link.textContent = artist.name;link.dataset.playerNav='1';creditsEl.append(link);
         });
         creditsEl.append(document.createElement('br'));

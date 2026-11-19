@@ -7,8 +7,9 @@ import (
 )
 
 type ArtistRef struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	JoinPhrase *string `json:"joinPhrase,omitempty"`
+	ID         int64   `json:"id"`
+	Name       string  `json:"name"`
 }
 type TrackCredit struct {
 	Role    string      `json:"role"`

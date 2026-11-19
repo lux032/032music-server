@@ -19,7 +19,7 @@ type TrackExtras struct {
 	LyricsURL    string `json:"lyricsUrl,omitempty"`
 }
 
-const trackArtistSQL = `COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ta.role='primary' ORDER BY ta.position,ar.id)),(SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(ar.user_display_name,ar.display_name) name FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id ORDER BY aa.position,ar.id)),a.user_performed_by,a.performed_by,'Unknown Artist')`
+const trackArtistSQL = `COALESCE(` + trackCreditDisplaySQL + `,` + albumCreditDisplaySQL + `,a.user_performed_by,a.performed_by,'Unknown Artist')`
 
 // albumArtworkURLSQL is the single cover-selection rule for every album
 // artwork projection: a user-uploaded custom cover always wins, then the
@@ -114,33 +114,18 @@ func (s *Store) hydrateTracks(ctx context.Context, items []Track) error {
 	if err := s.hydrateTrackCredits(ctx, items); err != nil {
 		return err
 	}
-	if len(items) == 0 {
-		return nil
-	}
 	ids := make([]int64, len(items))
-	byID := make(map[int64]*Track, len(items))
 	for i := range items {
 		ids[i] = items[i].ID
-		byID[items[i].ID] = &items[i]
 	}
-	placeholders, args := inClause(ids)
-	rows, err := s.db.QueryContext(ctx, `SELECT ta.track_id,ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role='primary' AND ta.track_id IN (`+placeholders+`) AND ar.merged_into_artist_id IS NULL ORDER BY ta.track_id,ta.position,ar.id`, args...)
+	refs, err := s.trackArtistRefs(ctx, ids)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var trackID int64
-		var artist Artist
-		if err = rows.Scan(&trackID, &artist.ID, &artist.Name); err != nil {
-			return err
+	for i := range items {
+		for _, ref := range refs[items[i].ID] {
+			items[i].Artists = append(items[i].Artists, Artist{ID: ref.ID, Name: ref.Name, JoinPhrase: ref.JoinPhrase})
 		}
-		if track := byID[trackID]; track != nil {
-			track.Artists = append(track.Artists, artist)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
 	}
 	return s.hydrateTrackVersionCounts(ctx, items)
 }
