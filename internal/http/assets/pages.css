@@ -3990,3 +3990,49 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .ai-applied-list { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
 .ai-applied-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--line); }
 
+/* Performing artists. Compact lines stay one row and collapse the rest into +N.
+   Detail lines keep the original join phrases and may wrap. */
+.artist-links { min-width: 0; max-width: 100%; color: inherit; }
+.artist-links.is-compact { display: inline-flex; align-items: center; gap: 6px; vertical-align: bottom; }
+.artist-links.is-detail, .artist-links.is-detail .artist-links-line { white-space: normal; }
+.artist-links-line { display: flex; align-items: baseline; min-width: 0; overflow: hidden; white-space: nowrap; }
+.artist-links.is-detail .artist-links-line { display: inline; overflow: visible; }
+.artist-name, .artist-sep { flex: none; }
+.artist-sep { color: var(--muted); white-space: pre; }
+.artist-links.is-ellipsis .artist-links-line,
+.artist-name.is-ellipsis { flex: 1 1 auto; min-width: 0; }
+.artist-name.is-ellipsis { overflow: hidden; text-overflow: ellipsis; }
+.artist-links a.artist-name { color: inherit; border-bottom: 1px solid transparent; }
+.artist-links a.artist-name:hover { color: var(--accent-strong-text); border-bottom-color: var(--accent-line); }
+.artist-fallback { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-card-sub > .artist-links,
+.album-card-artists > .artist-links,
+.h-hero-by > .artist-links,
+.h-hero-artists > .artist-links,
+.h-row-sub > .artist-links,
+#np-artist > .artist-links,
+#lyrics-artist > .artist-links,
+.fs-artist > .artist-links { display: flex; width: 100%; }
+button.artist-more {
+  flex: none; border: 0; border-radius: var(--radius-pill); padding: 0 7px; min-height: 0; height: 1.45em;
+  color: var(--text-secondary); background: var(--fill); box-shadow: none;
+  font-size: 0.78em; font-weight: 700; line-height: 1.45; letter-spacing: 0;
+}
+button.artist-more:hover, button.artist-more[aria-expanded="true"] {
+  color: var(--accent-strong-text); background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line); transform: none;
+}
+button.artist-more:active { transform: none; }
+.artist-popover {
+  position: fixed; z-index: 1300; width: min(280px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 16px));
+  overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg-panel); box-shadow: var(--shadow-pop); color: var(--text);
+}
+.artist-popover-title { margin: 0; padding: 2px 8px 6px; color: var(--muted); font-size: var(--fs-xs); font-weight: 650; }
+.artist-popover-list { list-style: none; margin: 0; padding: 0; }
+.artist-popover-list li { display: flex; align-items: baseline; gap: 6px; min-height: 32px; border-radius: 6px; padding: 4px 8px; }
+.artist-popover-list li:hover { background: var(--fill); }
+.artist-popover-join { flex: none; color: var(--muted); font-size: var(--fs-xs); white-space: pre-wrap; }
+.artist-popover-list a { min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.artist-popover-list a:hover { color: var(--accent-strong-text); }
+

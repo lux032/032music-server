@@ -1,0 +1,7 @@
+{{/* Shared performing-artist line.
+     compact: one line, " | " between names, +N reveals the original join phrases.
+     detail: every name, original join phrase (or ", " when the phrase is empty). */}}
+{{define "artist-links"}}<span class="artist-links{{if eq .Mode "detail"}} is-detail{{else}} is-compact{{end}}" data-artist-links="{{if eq .Mode "detail"}}detail{{else}}compact{{end}}">{{if .Items}}<span class="artist-links-line">{{range $i, $a := .Items}}{{if $i}}<span class="artist-sep" data-join="{{$a.JoinPhrase}}">{{if eq $.Mode "detail"}}{{$a.JoinPhrase}}{{else}} | {{end}}</span>{{end}}<a class="artist-name" href="/admin/artists/{{$a.ID}}">{{$a.Name}}</a>{{end}}</span>{{if ne .Mode "detail"}}<button type="button" class="artist-more" hidden aria-expanded="false" aria-haspopup="dialog">+0</button>{{end}}{{else}}<span class="artist-fallback">{{.Fallback}}</span>{{end}}</span>{{end}}
+
+{{define "track-artists"}}{{template "artist-links" (artistLinks "compact" .Artists "" .Artist)}}{{end}}
+{{define "track-artists-detail"}}{{template "artist-links" (artistLinks "detail" .Artists "" .Artist)}}{{end}}

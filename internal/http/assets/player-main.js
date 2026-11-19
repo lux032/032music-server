@@ -10,11 +10,13 @@ import { setupLocalTimes } from './local-time.js';
 import { setupPlaylists } from './playlist-picker.js';
 import { setupFullscreen } from './fullscreen.js';
 import { setupCast, restoreCast } from './cast.js';
+import { setupArtistLinks } from './artist-links.js';
 
 if (!window.__032_player_initialized) {
   window.__032_player_initialized = true;
   function init() {
     if (!document.body || document.body.classList.contains('login-page')) return;
+    setupArtistLinks();
     createPlayerDOM();
     setupAudioElement();
     setupPlaybackReporter();

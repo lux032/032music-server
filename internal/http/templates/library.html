@@ -184,7 +184,7 @@
               <div>
                 <p class="kicker">歌曲</p>
                 <h2 id="track-drawer-title-{{.ID}}">编辑歌曲</h2>
-                <p class="drawer-subtitle">{{.Title}}{{if .Artist}} · {{.Artist}}{{end}}</p>
+                <p class="drawer-subtitle">{{.Title}}{{if or .Artists .Artist}} · {{template "artist-links" (artistLinks "compact" .Artists "" .Artist)}}{{end}}</p>
               </div>
               <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
             </header>

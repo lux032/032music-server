@@ -252,7 +252,7 @@
           <div class="candidate-track-list">
             {{range .Candidates}}
             <article>
-              <div><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}</small></div>
+              <div><strong>{{.Title}}</strong><small class="album-artist-links">{{template "track-artists" .}} · {{.Album}}</small></div>
               <form method="post" action="/admin/works/{{$.Work.ID}}/tracks">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="trackId" value="{{.ID}}">

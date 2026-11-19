@@ -36,7 +36,7 @@
   {{if .Result.Albums.Total}}
   <section class="search-section" aria-labelledby="search-albums-heading">
     <div class="search-section-head"><h2 id="search-albums-heading">专辑 <span>{{.Result.Albums.Total}}</span></h2>{{if and (not .Result.Category) (gt .Result.Albums.Total .Result.Albums.Limit)}}<a class="secondary-button" href="{{index .More "albums"}}" aria-label="更多专辑结果">更多</a>{{end}}</div>
-    <div class="search-grid">{{range .Result.Albums.Items}}<a class="search-item" href="/admin/albums/{{.ID}}"><span class="search-item-art">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</span><span class="search-item-copy"><strong>{{.Title}}</strong><span>{{.Artist}}</span><small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small></span></a>{{end}}</div>
+    <div class="search-grid">{{range .Result.Albums.Items}}<div class="search-item"><a class="search-item-art" href="/admin/albums/{{.ID}}" aria-label="查看专辑：{{.Title}}">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a><span class="search-item-copy"><a href="/admin/albums/{{.ID}}"><strong>{{.Title}}</strong></a>{{template "artist-links" (artistLinks "compact" .AlbumArtists .PerformedBy .Artist)}}<small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small></span></div>{{end}}</div>
   </section>
   {{end}}
   {{if .Result.Tracks.Total}}

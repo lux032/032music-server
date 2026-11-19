@@ -7,6 +7,7 @@ import { bindSeekBar, updateTrackRowsUI, updatePlayerMetaUI, updatePlayButtonUI 
 import { loadLyrics } from './lyrics.js';
 import { isCasting, mediaTime, mediaDuration } from './cast.js';
 import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQueuePlayback, saveState, updateMediaSession } from './player-core.js';
+import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
 
   const trackDetails = new Map();
   let detailId = null;
@@ -18,19 +19,20 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
   let restorePosition = null;
   const announce = (message) => { const live = document.getElementById('np-queue-live'); if (live) live.textContent = message; };
 
-  function renderArtistLinks(container, detail, fallback) {
-    if (!container) return;
-    container.replaceChildren();
-    if (detail?.artists?.length) {
-      detail.artists.forEach((artist, index) => {
-        if (index) container.append(document.createTextNode(artist.joinPhrase ?? ', '));
-        const link = document.createElement('a');
-        link.href = `/admin/artists/${artist.id}`;
-        link.textContent = artist.name;
-        link.dataset.playerNav = '1';
-        container.append(link);
-      });
-    } else container.textContent = detail?.artist || fallback || '—';
+  function renderArtistLinks(container, detail, fallback, albumName) {
+    const artists = detail?.artists;
+    const encoded = Array.isArray(artists) && artists.length
+      ? artists.map(artist => `${artist.id}\t${artist.name || ''}\t${artist.joinPhrase ?? ''}`).join('\n')
+      : `fallback:${fallback ?? ''}`;
+    const key = `${encoded}\u0000${detail?.albumId || ''}\u0000${albumName || ''}`;
+    if (renderCompactArtists(container, artists, fallback || '—', { playerNav: true, key }) && albumName) {
+      container.append(document.createTextNode(' · '));
+      const albumPart = document.createElement('span');
+      albumPart.className = 'player-album';
+      renderAlbumLink(albumPart, detail, albumName);
+      container.append(albumPart);
+    }
+    layoutArtistLinks(container.querySelector(':scope > [data-artist-links="compact"]'));
   }
 
   function renderAlbumLink(container, detail, name, suffix = '') {
@@ -98,6 +100,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       }
     }
     if (detailId === id) {
+      const loaded = trackDetails.get(id);
+      if (loaded?.artists) track.artists = loaded.artists;
       lastQueueSignature = null;
       const toast = document.querySelector('.client-toast');
       if (toast?.style.display !== 'none' && toast?.textContent.includes('无法获取歌曲信息，请重试')) toast.style.display = 'none';
@@ -480,6 +484,8 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
     if (titleEl) { titleEl.textContent = track ? (track.title || '未知曲目') : '未在播放'; titleEl.title = track ? (track.title || '') : ''; }
     const detail = track && trackDetails.get(String(track.id));
     renderArtistLinks(artistEl, detail, track ? track.artist : '—');
+    const lyricsArtist = document.getElementById('lyrics-artist');
+    if (lyricsArtist) renderCompactArtists(lyricsArtist, detail?.artists, track?.artist || '', { playerNav: true });
     let creditsEl = document.getElementById('np-credits');
     if (!creditsEl && artistEl) { creditsEl = document.createElement('div'); creditsEl.id = 'np-credits'; artistEl.after(creditsEl); }
     if (creditsEl) {
@@ -504,15 +510,7 @@ import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQue
       playerTitle.title = title;
     }
     const playerArtist = document.getElementById('player-artist');
-    if (playerArtist && track) {
-      renderArtistLinks(playerArtist, detail, track.artist);
-      if (track.album) {
-        playerArtist.append(document.createTextNode(' · '));
-        const albumPart = document.createElement('span');
-        renderAlbumLink(albumPart, detail, track.album);
-        playerArtist.append(albumPart);
-      }
-    }
+    if (playerArtist && track) renderArtistLinks(playerArtist, detail, track.artist, track.album || '');
     loadTrackDetail(track);
     syncFavorite();
     const clear = document.getElementById('np-queue-clear'); if (clear) clear.disabled = !s.queue.length;

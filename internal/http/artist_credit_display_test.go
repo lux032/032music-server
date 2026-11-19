@@ -37,19 +37,62 @@ func TestAlbumPageKeepsArtistJoinPhrasesBetweenLinks(t *testing.T) {
 		t.Fatalf("track fixture: %+v, %v", tracks, err)
 	}
 	track := tracks[0]
-	link := func(index int) string {
-		a := track.Artists[index]
-		return fmt.Sprintf(`<a href="/admin/artists/%d">%s</a>`, a.ID, a.Name)
-	}
-	albumCredit := link(0) + " feat. " + link(1)
-	trackCredit := albumCredit + " & " + link(2)
-	body := getAdmin(t, app.Handler(), cookie, fmt.Sprintf("/admin/albums/%d", track.AlbumID))
-	for _, want := range []string{
-		`<h2 class="album-artist-links">` + albumCredit + "</h2>",
-		`<small class="album-artist-links">` + trackCredit,
-	} {
-		if !strings.Contains(html.UnescapeString(body), want) {
-			t.Errorf("missing linked credit %s", want)
+	body := html.UnescapeString(getAdmin(t, app.Handler(), cookie, fmt.Sprintf("/admin/albums/%d", track.AlbumID)))
+	header := between(t, body, `<h2 class="album-artist-links">`, `</h2>`)
+	for _, name := range []string{track.Artists[0].Name, track.Artists[1].Name} {
+		if !strings.Contains(header, fmt.Sprintf(`<a class="artist-name" href="/admin/artists/%d">%s</a>`, artistID(t, track, name), name)) {
+			t.Errorf("album header missing linked %s: %s", name, header)
 		}
 	}
+	if !strings.Contains(header, `data-artist-links="detail"`) || !strings.Contains(header, `data-join=" feat. "`) || strings.Contains(header, "> | <") {
+		t.Fatalf("album header should keep the feat. join phrase, got %s", header)
+	}
+	trackLine := between(t, body, `<small class="album-artist-links">`, `</small>`)
+	if !strings.Contains(trackLine, `data-artist-links="detail"`) || !strings.Contains(trackLine, " feat. ") || !strings.Contains(trackLine, " & ") {
+		t.Fatalf("track row should keep join phrases, got %s", trackLine)
+	}
+	for _, artist := range track.Artists {
+		if !strings.Contains(trackLine, fmt.Sprintf(`href="/admin/artists/%d"`, artist.ID)) {
+			t.Errorf("track row missing artist %d", artist.ID)
+		}
+	}
+
+	library := html.UnescapeString(getAdmin(t, app.Handler(), cookie, "/admin/albums"))
+	card := between(t, library, `class="album-card-artists">`, `</p>`)
+	if !strings.Contains(card, `data-artist-links="compact"`) || !strings.Contains(card, "> | <") || !strings.Contains(card, `data-join=" feat. "`) {
+		t.Fatalf("album grid should use pipe separators and keep the join phrase for +N, got %s", card)
+	}
+	home := html.UnescapeString(getAdmin(t, app.Handler(), cookie, "/admin/home"))
+	if strings.Contains(home, `<a class="h-card-sub"`) {
+		t.Fatal("home cards must not emit each artist as its own grid item")
+	}
+	homeCard := between(t, home, `class="h-card-sub">`, `</div>`)
+	if !strings.Contains(homeCard, `data-artist-links="compact"`) || !strings.Contains(homeCard, "> | <") {
+		t.Fatalf("home card should keep artists on one compact line, got %s", homeCard)
+	}
+}
+
+func artistID(t *testing.T, track storage.Track, name string) int64 {
+	t.Helper()
+	for _, artist := range track.Artists {
+		if artist.Name == name {
+			return artist.ID
+		}
+	}
+	t.Fatalf("missing artist %s", name)
+	return 0
+}
+
+func between(t *testing.T, body, start, end string) string {
+	t.Helper()
+	from := strings.Index(body, start)
+	if from < 0 {
+		t.Fatalf("missing %s", start)
+	}
+	from += len(start)
+	to := strings.Index(body[from:], end)
+	if to < 0 {
+		t.Fatalf("missing %s after %s", end, start)
+	}
+	return body[from : from+to]
 }
