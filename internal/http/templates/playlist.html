@@ -72,7 +72,7 @@
           <div class="candidate-track-list">
             {{range .Candidates}}
             <article>
-              <div><strong>{{.Title}}</strong><small>{{.Artist}} · {{.Album}}{{if index $.Existing .ID}} · 已添加{{end}}</small></div>
+              <div><strong>{{.Title}}</strong><small class="album-artist-links">{{template "track-artists" .}} · {{.Album}}{{if index $.Existing .ID}} · 已添加{{end}}</small></div>
               <form method="post" action="/admin/playlists/{{$.Detail.Playlist.ID}}/tracks">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="trackId" value="{{.ID}}">

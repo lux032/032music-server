@@ -46,8 +46,8 @@ test('current-playing and bottom-bar links navigate without interrupting audio',
   const audio = page.locator('#global-audio-element');
   await expect.poll(() => audio.evaluate(el => el.paused)).toBe(false);
 
-  for (const selector of ['#np-album a', '#np-artist a:first-child', '#player-artist span a', '#player-artist > a:first-child']) {
-    const link = page.locator(selector);
+  for (const selector of ['#np-album a', '#np-artist .artist-name', '#player-artist .artist-name', '#player-artist .player-album a']) {
+    const link = page.locator(selector).first();
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href', /\/admin\/(albums|artists)\/\d+$/);
     const href = await link.getAttribute('href');

@@ -139,7 +139,8 @@ func TestAdminAlbumsPageReleaseDateSortAndArtistLinks(t *testing.T) {
 	if !saved {
 		t.Fatal("release date sort should be remembered")
 	}
-	if !strings.Contains(body, `class="album-card-artists"><a href="/admin/artists/`) {
+	artists := strings.Index(body, `class="album-card-artists"`)
+	if artists < 0 || !strings.Contains(body[artists:min(len(body), artists+600)], `href="/admin/artists/`) {
 		t.Fatal("album card artist name should link to the artist page")
 	}
 }

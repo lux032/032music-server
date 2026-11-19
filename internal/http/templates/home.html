@@ -244,7 +244,7 @@
     </div>
   </div>
   <a class="h-card-title" href="/admin/albums/{{.Album.ID}}" title="{{.Album.Title}}">{{.Album.Title}}</a>
-  {{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a class="h-card-sub" href="/admin/artists/{{$artist.ID}}" title="{{$artist.Name}}">{{$artist.Name}}</a>{{end}}{{else}}<span class="h-card-sub">{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}</span>{{end}}
+  <div class="h-card-sub">{{template "artist-links" (artistLinks "compact" .Album.AlbumArtists .Album.PerformedBy .Album.Artist)}}</div>
   <span class="h-card-meta">{{if .AddedTime}}入库于 {{formatAdminTime .AddedTime}}{{else}}{{.Meta}}{{end}}</span>
 </article>
 {{end}}
@@ -285,7 +285,7 @@
       </button>
       <div class="h-row-main">
         <span class="h-row-title" title="{{.Track.Title}}">{{.Track.Title}}</span>
-        <span class="h-row-sub">{{.Track.Artist}}</span>
+        <span class="h-row-sub">{{template "artist-links" (artistLinks "compact" .Track.Artists "" .Track.Artist)}}</span>
       </div>
       <span class="h-role h-role-{{.Role}}">{{workRoleShortLabel .Role}}</span>
       <a class="h-trow-work" href="/admin/works/{{.WorkID}}" title="{{.WorkTitle}}">{{.WorkTitle}}</a>
@@ -317,7 +317,7 @@
   <div class="h-hero-info">
     {{template "home-hero-tabs" .Tabs}}
     <h2 title="{{.Album.Title}}">{{.Album.Title}}</h2>
-    <p class="h-hero-by">{{if .Album.AlbumArtists}}{{range $index, $artist := .Album.AlbumArtists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{end}}{{else}}{{if .Album.PerformedBy}}{{.Album.PerformedBy}}{{else}}{{.Album.Artist}}{{end}}{{end}}</p>
+    <p class="h-hero-by">{{template "artist-links" (artistLinks "compact" .Album.AlbumArtists .Album.PerformedBy .Album.Artist)}}</p>
     <ul class="h-facts">
       {{if .Album.Year}}<li>{{.Album.Year}}</li>{{end}}
       {{with albumKindLabel .Album}}<li>{{.}}</li>{{end}}
@@ -349,12 +349,13 @@
     <div class="h-hero-side-head"><h3>曲目</h3><span>共 {{.Album.TrackCount}} 首{{if gt .Album.DiscCount 1}} · {{.Album.DiscCount}} 碟{{end}}</span></div>
     <ol class="h-hero-tracks" data-track-list>
       {{range $index, $track := .Tracks}}
-      <li data-track-id="{{$track.ID}}" data-track-title="{{$track.Title}}" data-track-artist="{{$track.Artist}}" data-track-album="{{$.Album.Title}}" data-track-artwork="{{thumb $.Album.ArtworkURL 256}}"{{with $track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec $track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{$track.DurationMillis}}">
+      <li class="h-hero-track" data-track-id="{{$track.ID}}" data-track-title="{{$track.Title}}" data-track-artist="{{$track.Artist}}" data-track-album="{{$.Album.Title}}" data-track-artwork="{{thumb $.Album.ArtworkURL 256}}"{{with $track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec $track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{$track.DurationMillis}}">
         <button type="button" class="row-play-btn h-track-row" aria-label="播放 {{$track.Title}}">
           <span class="no">{{if $track.TrackNumber}}{{$track.TrackNumber}}{{else}}{{add $index 1}}{{end}}</span>
-          <span class="t"><b title="{{$track.Title}}">{{$track.Title}}</b><small>{{$track.Artist}}</small></span>
+          <span class="t"><b title="{{$track.Title}}">{{$track.Title}}</b></span>
           <span class="d">{{formatDurationMillis $track.DurationMillis}}</span>
         </button>
+        <small class="h-hero-artists">{{template "artist-links" (artistLinks "compact" $track.Artists "" $track.Artist)}}</small>
       </li>
       {{end}}
     </ol>

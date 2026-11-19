@@ -3,6 +3,7 @@ import { artworkForSize, formatTime, svgIcon, swapIcon } from './util.js';
 import { togglePlay, playPrevious, playNext, cycleLoopMode, toggleShuffle } from './player-core.js';
 import { lyrics } from './lyrics.js';
 import { mediaTime, mediaDuration, mediaSeek } from './cast.js';
+import { renderCompactArtists } from './artist-links.js';
 
 let overlay = null;
 let trigger = null;
@@ -30,7 +31,7 @@ export function syncFullscreen() {
   if (!overlay) return;
   const track = s.queue[s.currentIndex];
   overlay.querySelector('.fs-title').textContent = track?.title || '未在播放';
-  overlay.querySelector('.fs-artist').textContent = track?.artist || '';
+  renderCompactArtists(overlay.querySelector('.fs-artist'), track?.artists, track?.artist || '', { playerNav: true });
   overlay.querySelector('.fs-album').textContent = track?.album || '';
   const cover = overlay.querySelector('.fs-cover');
   if (track?.artwork) {

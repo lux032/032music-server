@@ -5,7 +5,7 @@
 {{template "sidebar" .}}{{template "nowplaying" .}}
 <main id="app-main" class="browser-main feature-main artist-correction-main">
   <header class="browser-header">
-    <div><h1>修正演唱者</h1><p class="result-count">{{.Track.Title}} · {{.Track.Artist}}</p></div>
+    <div><h1>修正演唱者</h1><p class="result-count">{{.Track.Title}} · {{template "track-artists" .Track}}</p></div>
     <a class="secondary-button" href="/admin/albums/{{.Track.AlbumID}}">返回专辑</a>
   </header>
   {{if .Notice}}<p class="toast" role="alert">{{.Notice}}</p>{{end}}

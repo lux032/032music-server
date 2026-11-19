@@ -23,7 +23,7 @@
       <div class="album-heading">
         <h1>{{.AlbumDetail.Title}}</h1>
         {{if .AlbumDetail.Version}}<p class="album-version">{{.AlbumDetail.Version}}</p>{{end}}
-        <h2 class="album-artist-links">{{range $index, $artist := .AlbumDetail.Artists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.Artist}}{{end}}</h2>
+        <h2 class="album-artist-links">{{template "artist-links" (artistLinks "detail" .AlbumDetail.Artists .AlbumDetail.PerformedBy .AlbumDetail.Artist)}}</h2>
 
         {{if .AlbumCapsules}}
         <div class="album-work-capsules">
@@ -86,7 +86,7 @@
               <div class="track-title-line">
                 <strong>{{.Title}}</strong>
               </div>
-              <small class="album-artist-links">{{template "track-artists" .}}{{template "track-credits" .}} · <a href="/admin/tracks/{{.ID}}/artists">修正演唱者</a></small>
+              <small class="album-artist-links">{{template "track-artists-detail" .}}{{template "track-credits" .}} · <a href="/admin/tracks/{{.ID}}/artists">修正演唱者</a></small>
             </div>
             <div class="track-tieup-cell">
               {{if $tieups}}
@@ -200,7 +200,7 @@
           <p class="kicker">发行信息</p>
           <dl>
             {{if .AlbumDetail.ReleaseKind}}<div><dt>类型</dt><dd>{{albumTypeLabel .AlbumDetail.ReleaseKind}}</dd></div>{{end}}
-            <div><dt>演出者</dt><dd class="album-artist-links">{{range $index, $artist := .AlbumDetail.Artists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.AlbumDetail.Artist}}{{end}}</dd></div>
+            <div><dt>演出者</dt><dd class="album-artist-links">{{template "artist-links" (artistLinks "detail" .AlbumDetail.Artists .AlbumDetail.PerformedBy .AlbumDetail.Artist)}}</dd></div>
             {{if .AlbumDetail.ReleaseDate}}<div><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}
             {{if .AlbumDetail.OriginalReleaseDate}}<div><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}
             {{if .AlbumDetail.Label}}<div><dt>厂牌</dt><dd>{{.AlbumDetail.Label}}</dd></div>{{end}}
@@ -365,8 +365,6 @@
   </main>
 </body>
 </html>
-
-{{define "track-artists"}}{{range $index, $artist := .Artists}}{{if $index}}{{if $artist.JoinPhrase}}{{$artist.JoinPhrase}}{{else}}, {{end}}{{end}}<a href="/admin/artists/{{$artist.ID}}">{{$artist.Name}}</a>{{else}}{{.Artist}}{{end}}{{end}}
 
 {{define "track-credits"}}
 {{with creditPeople . "lyricist"}} · 作词 {{range .}}<a href="/admin/credits/{{.ID}}?role=lyricist">{{.Name}}</a> {{end}}{{else}}{{if .Lyricist}} · 作词 {{.Lyricist}}{{end}}{{end}}

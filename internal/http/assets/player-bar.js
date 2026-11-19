@@ -354,7 +354,7 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
     }
 
     if (lyricsTitle) lyricsTitle.textContent = track.title || '';
-    if (lyricsArtist) lyricsArtist.textContent = track.artist || '';
+    if (lyricsArtist && !lyricsArtist.querySelector('[data-artist-links]')) lyricsArtist.textContent = track.artist || '';
 
     emitPlayerState();
   }

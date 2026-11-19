@@ -66,6 +66,43 @@ test('渲染：页头、聚焦卡、各模块与页脚', async ({ page }) => {
   await expect(page.locator('.wordmark')).toHaveAttribute('href', '/admin/home');
 });
 
+test('专辑卡把多位艺人收在一行，点 +N 展开原始连接词', async ({ page }) => {
+  await login(page);
+  await home(page);
+  const card = fixtureAlbumCard(page);
+  await expect(card.locator(':scope > a.h-card-sub')).toHaveCount(0);
+  await expect(card.locator(':scope > .h-card-sub .artist-links')).toHaveCount(1);
+  await expect(card.locator('.h-card-meta')).toBeVisible();
+
+  const probe = page.locator('#artist-links-probe');
+  await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.id = 'artist-links-probe';
+    host.style.width = '150px';
+    const names = ['鹿乃子のこ', '潘めぐみ', '虎視虎子', '水樹奈々', '佐々木李子'];
+    const joins = ['', ' (CV. ', ')、', ') & ', '、'];
+    const parts = names.map((name, index) => {
+      const sep = index ? `<span class="artist-sep" data-join="${joins[index]}"> | </span>` : '';
+      return `${sep}<a class="artist-name" href="/admin/artists/${index + 1}">${name}</a>`;
+    }).join('');
+    host.innerHTML = `<span class="artist-links is-compact" data-artist-links="compact"><span class="artist-links-line">${parts}</span><button type="button" class="artist-more" hidden aria-expanded="false" aria-haspopup="dialog">+0</button></span>`;
+    document.body.appendChild(host);
+  });
+  const more = probe.locator('.artist-more');
+  await expect(more).toBeVisible();
+  await expect(more).toHaveText(/^\+\d+$/);
+  await expect(probe.locator('.artist-name').first()).toBeVisible();
+  await expect(probe.locator('.artist-name:visible')).not.toHaveCount(5);
+  await more.click();
+  const popover = page.locator('.artist-popover');
+  await expect(popover).toBeVisible();
+  await expect(popover.locator('.artist-popover-title')).toHaveText('全部艺人 (5)');
+  await expect(popover).toContainText('(CV.');
+  await expect(popover.locator('a')).toHaveCount(5);
+  await expect(popover.locator('a').nth(1)).toHaveAttribute('href', '/admin/artists/2');
+  await expect(popover.locator('.artist-popover-join').first()).toHaveText(' (CV. ');
+});
+
 test('根路径重定向到主页', async ({ page }) => {
   await login(page);
   await page.goto('/');

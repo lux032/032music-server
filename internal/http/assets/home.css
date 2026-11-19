@@ -147,6 +147,14 @@
 .h-hero-tracks .no { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; text-align: center; }
 .h-hero-tracks .t { min-width: 0; display: grid; }
 .h-hero-tracks b, .h-hero-tracks small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.h-hero-tracks > li.h-hero-track { position: relative; }
+.h-hero-tracks > li.h-hero-track:hover > button { background: color-mix(in oklab, var(--surface) 80%, transparent); }
+.h-hero-tracks > li.h-hero-track .t { padding-bottom: 1.05em; }
+.h-hero-tracks small.h-hero-artists {
+  position: absolute; z-index: 1; left: 42px; right: 4.75rem; bottom: 8px; margin: 0;
+  overflow: hidden; text-overflow: clip; pointer-events: none;
+}
+.h-hero-artists .artist-links, .h-hero-artists .artist-name, .h-hero-artists .artist-more { pointer-events: auto; }
 .h-hero-tracks b { font-size: var(--fs-sm); font-weight: 600; }
 .h-hero-tracks small { color: var(--muted); font-size: var(--fs-xs); }
 .h-hero-tracks .d { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
@@ -185,7 +193,7 @@
 }
 .h-shelf > * { scroll-snap-align: start; }
 
-.h-card { position: relative; min-width: 0; display: grid; gap: 1px; align-content: start; }
+.h-card { position: relative; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; align-content: start; }
 .h-cover {
   position: relative; overflow: hidden; aspect-ratio: 1; margin-bottom: 9px;
   border-radius: var(--radius-cover); background: var(--surface-sunken); box-shadow: var(--shadow-card);
@@ -212,7 +220,7 @@
 .h-fab-ghost:hover { color: var(--text); background: var(--surface); }
 .h-fab-ghost .icon { width: 16px; height: 16px; }
 
-.h-card-title, .h-card-sub, .h-card-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-card-title, .h-card-sub, .h-card-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-card-title { color: var(--text); font-size: var(--fs-md); font-weight: 650; }
 .h-card-title:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
 .h-card-sub { color: var(--text-secondary); font-size: var(--fs-sm); }
