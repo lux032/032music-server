@@ -317,6 +317,19 @@ func (m *Manager) verifyArtistAvatarWithVLM(
 	return out.Valid, strings.TrimSpace(out.Reason)
 }
 
+// ArtistImageCandidatePreview fetches the image for a pending review item.
+func (m *Manager) ArtistImageCandidatePreview(ctx context.Context, candidateID int64) ([]byte, string, error) {
+	cand, err := m.store.ArtistImageCandidateByID(ctx, candidateID)
+	if err != nil {
+		return nil, "", err
+	}
+	if cand.Status != "pending" {
+		return nil, "", sql.ErrNoRows
+	}
+	data, mimeType, _, err := m.downloadPublicImage(ctx, cand.ImageURL, "artist image preview")
+	return data, mimeType, err
+}
+
 // ApproveArtistImageCandidate downloads a pending candidate avatar, caches it
 // on disk, saves it to artist_image_cache, and marks the candidate approved.
 func (m *Manager) ApproveArtistImageCandidate(ctx context.Context, candidateID int64) error {

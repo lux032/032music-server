@@ -348,7 +348,8 @@
       return `处理 ${run.processed} / ${run.total} · 匹配 ${run.matched} · 审核 ${run.review} · 无结果 ${run.noResult} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
     }
     if (kind === 'artistImage') {
-      return `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached} · 无地址 ${run.noUrl} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+      const candPart = run.candidate > 0 ? ` · 送审 ${run.candidate}` : '';
+      return `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached} · 无地址 ${run.noUrl} · 跳过 ${run.skipped} · 失败 ${run.failed}${candPart}`;
     }
     if (kind === 'artistBio') {
       return `处理 ${run.processed} / ${run.total} · 已补全 ${run.filled} · 无简介 ${run.missing} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
@@ -835,4 +836,56 @@ document.addEventListener('submit', async (event) => {
   document.addEventListener('032:pjax-applied', tick);
   document.addEventListener('visibilitychange', tick);
   tick();
+
+  document.addEventListener('click', async (event) => {
+    const btn = event.target.closest('[data-artist-image-web-search]');
+    if (!btn) return;
+    const artistId = btn.dataset.artistId;
+    const form = document.getElementById('artist-image-approve-form');
+    const csrf = form?.elements.namedItem('csrfToken')?.value;
+    const box = btn.closest('fieldset')?.querySelector('[data-artist-image-web-result]');
+    if (!artistId || !box || !form || !csrf) return;
+    btn.disabled = true;
+    box.textContent = '正在联网检索并核验候选头像...';
+    try {
+      const body = new URLSearchParams({ csrfToken: csrf });
+      const resp = await fetch(`/admin/artists/${encodeURIComponent(artistId)}/image/web-search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+      if (!resp.ok) {
+        box.textContent = '联网搜索失败，请检查 AI 与 DeepSeek 联网配置。';
+        return;
+      }
+      const data = await resp.json();
+      if (!data.found || !data.candidate || !data.candidate.ID) {
+        box.textContent = '未找到符合身份锚点与画质要求的候选头像。';
+        return;
+      }
+      const c = data.candidate;
+      box.replaceChildren();
+      const wrap = document.createElement('div');
+      wrap.className = 'artist-image-candidate-summary';
+      const img = document.createElement('img');
+      const candidatePath = `/admin/matches/images/candidates/${encodeURIComponent(c.ID)}`;
+      img.src = `${candidatePath}/preview`;
+      img.alt = '候选头像';
+      img.className = 'artist-image-candidate-preview';
+      const info = document.createElement('span');
+      info.textContent = `${c.Confidence || 'medium'} · ${c.Width || 0}×${c.Height || 0}${c.Reason ? ' · ' + c.Reason : ''}`;
+      const approveBtn = document.createElement('button');
+      approveBtn.type = 'submit';
+      approveBtn.setAttribute('form', form.id);
+      form.action = `${candidatePath}/approve`;
+      approveBtn.textContent = '采纳为头像';
+      wrap.append(img, info, approveBtn);
+      box.append(wrap);
+    } catch (_) {
+      box.textContent = '联网搜索请求出错，请稍后重试。';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
 })();

@@ -134,3 +134,40 @@ test('saving album metadata stays on PJAX without a full page reload (M1)', asyn
   await expect(page.locator('.toast')).toContainText('专辑信息已保存');
   expect(await page.evaluate(() => window.__m1Marker)).toBe('still-here');
 });
+
+test('artist candidate preview and approval use the dedicated form', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+
+  await page.goto('/admin/artists/album');
+  await page.locator('.artist-row a[href^="/admin/artists/"]').first().click();
+  const artistPath = new URL(page.url()).pathname;
+  const candidatePath = '/admin/matches/images/candidates/42';
+  await page.route('**' + artistPath + '/image/web-search', route => route.fulfill({
+    json: { found: true, candidate: { ID: 42, Confidence: 'medium', Width: 300, Height: 300 } }
+  }));
+  await page.route('**' + candidatePath + '/preview', route => route.fulfill({
+    contentType: 'image/png',
+    body: PNG_FILE.buffer
+  }));
+  await page.route('**' + candidatePath + '/approve', route => route.fulfill({
+    status: 303,
+    headers: { location: artistPath + '?view=profile' }
+  }));
+
+  await page.locator('a[data-drawer-open="artist-edit"]').first().click();
+  await page.getByRole('button', { name: '联网搜索候选头像' }).click();
+  const preview = page.getByRole('img', { name: '候选头像', exact: true });
+  await expect(preview).toHaveJSProperty('naturalWidth', 8);
+  await expect(preview).toHaveAttribute('src', candidatePath + '/preview');
+
+  const approve = page.getByRole('button', { name: '采纳为头像' });
+  expect(await approve.evaluate(button => button.form.id)).toBe('artist-image-approve-form');
+  const requestPromise = page.waitForRequest(request => new URL(request.url()).pathname === candidatePath + '/approve');
+  await approve.click();
+  const request = await requestPromise;
+  expect(request.method()).toBe('POST');
+  const body = new URLSearchParams(request.postData());
+  expect(body.get('csrfToken')).toBeTruthy();
+  expect(body.get('returnTo')).toBe(artistPath + '?view=profile');
+  await expect(page).toHaveURL(artistPath + '?view=profile');
+});

@@ -42,7 +42,7 @@ func TestMatchReviewPageImageBackfillUI(t *testing.T) {
 	}
 	body := adminGetBody(t, handler, cookie, "/admin/matches")
 	for _, want := range []string{
-		"已匹配艺术家头像补全",
+		"<h2>艺术家头像补全</h2>",
 		"已确认身份的艺术家 1 位",
 		"待补 1",
 		`data-active-url="/admin/matches/images/runs/active.json"`,
@@ -199,5 +199,54 @@ func TestArtistImageBackfillRoutesFlow(t *testing.T) {
 	handler.ServeHTTP(activeRec, req)
 	if !strings.Contains(activeRec.Body.String(), `"run":null`) {
 		t.Fatalf("active.json=%s", activeRec.Body.String())
+	}
+}
+
+func TestMatchReviewArtistImageQueueCountsAllAndUsesProtectedPreviews(t *testing.T) {
+	_, s, handler, _, cookie, _ := rateLimitTestApp(t)
+	ctx := context.Background()
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil || len(artists) == 0 {
+		t.Fatalf("artists=%v err=%v", artists, err)
+	}
+	var id int64
+	for i := 0; i < 31; i++ {
+		id, err = s.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+			ArtistID: artists[0].ID, Source: "ai_web", ImageURL: "https://example.com/avatar-" + strconv.Itoa(i) + ".png",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := adminGetBody(t, handler, cookie, "/admin/matches")
+	for _, want := range []string{
+		"待审核候选头像（31）",
+		"显示最近 30 条",
+		`<option value="web_fallback">`,
+		`name="max_web_requests_per_run"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+	path := "/admin/matches/images/candidates/" + strconv.FormatInt(id, 10) + "/preview"
+	if !strings.Contains(body, `src="`+path+`"`) || strings.Contains(body, `src="https://example.com/avatar-`) {
+		t.Fatal("candidate image should use the same-origin preview")
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusFound && rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated preview status = %d", rec.Code)
+	}
+	if err := s.ReviewArtistImageCandidate(ctx, id, "rejected"); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("reviewed preview status = %d", rec.Code)
 	}
 }

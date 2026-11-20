@@ -177,4 +177,8 @@ func TestComprehensiveImageBackfill_WebFallbackQueuesMediumCandidate(t *testing.
 	if err != nil || len(cands) != 1 || cands[0].Confidence != "medium" {
 		t.Fatalf("unexpected candidates: %+v err=%v", cands, err)
 	}
+	data, mimeType, err := manager.ArtistImageCandidatePreview(ctx, cands[0].ID)
+	if err != nil || mimeType != "image/png" || string(data) != pngBytes {
+		t.Fatalf("candidate preview: bytes=%d mime=%q err=%v", len(data), mimeType, err)
+	}
 }

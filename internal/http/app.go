@@ -689,6 +689,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/matches/images/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistImageBackfill)))
 	mux.Handle("GET /admin/matches/images/runs/active.json", a.requireAdmin(http.HandlerFunc(a.handleActiveArtistImageBackfill)))
 	mux.Handle("GET /admin/matches/images/candidates.json", a.requireAdmin(http.HandlerFunc(a.handleListArtistImageCandidates)))
+	mux.Handle("GET /admin/matches/images/candidates/{id}/preview", a.requireAdmin(http.HandlerFunc(a.handleArtistImageCandidatePreview)))
 	mux.Handle("POST /admin/matches/images/candidates/{id}/approve", a.requireAdmin(http.HandlerFunc(a.handleApproveArtistImageCandidate)))
 	mux.Handle("POST /admin/matches/images/candidates/{id}/reject", a.requireAdmin(http.HandlerFunc(a.handleRejectArtistImageCandidate)))
 	mux.Handle("POST /admin/artists/{id}/image/web-search", a.requireAdmin(http.HandlerFunc(a.handleSearchArtistImageCandidate)))

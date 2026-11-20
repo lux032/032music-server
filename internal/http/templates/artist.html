@@ -297,10 +297,12 @@
               <label for="artist-image-file">上传自定义图片（JPEG / PNG / WebP，不超过 10MB）</label>
               <input type="file" id="artist-image-file" name="image" accept="image/jpeg,image/png,image/webp" form="artist-image-upload-form" required>
               <p class="field-hint">自定义图片只保存在数据目录，自动刷新（Last.fm / MusicBrainz）不会覆盖。</p>
-              <div class="form-actions" style="justify-content:flex-start;">
+              <div class="form-actions" style="justify-content:flex-start;flex-wrap:wrap;">
                 <button type="submit" form="artist-image-upload-form" class="secondary-button">上传图片</button>
+                {{if not .Artist.HasCustomImage}}<button type="button" class="secondary-button" data-artist-image-web-search data-artist-id="{{.Artist.ID}}">联网搜索候选头像</button>{{end}}
                 {{if .Artist.HasCustomImage}}<button type="submit" form="artist-image-reset-form" class="secondary-button danger-action">恢复默认图片</button>{{end}}
               </div>
+              <div class="field-hint" data-artist-image-web-result aria-live="polite"></div>
             </fieldset>
           </div>
           <div class="form-actions editor-actions">
@@ -312,6 +314,12 @@
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="returnTo" value="/admin/artists/{{.Artist.ID}}?view=profile">
         </form>
+        {{if not .Artist.HasCustomImage}}
+        <form id="artist-image-approve-form" method="post">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="/admin/artists/{{.Artist.ID}}?view=profile">
+        </form>
+        {{end}}
         {{if .Artist.HasCustomImage}}
         <form id="artist-image-reset-form" method="post" action="/admin/artists/{{.Artist.ID}}/image/reset">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">

@@ -4036,3 +4036,28 @@ button.artist-more:active { transform: none; }
 .artist-popover-list a { min-width: 0; color: var(--text); overflow-wrap: anywhere; }
 .artist-popover-list a:hover { color: var(--accent-strong-text); }
 
+
+.artist-image-candidate-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.artist-image-candidate-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  overflow-wrap: anywhere;
+}
+
+.artist-image-candidate-preview {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--fill);
+}

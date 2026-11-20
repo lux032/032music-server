@@ -94,8 +94,8 @@
     </section>
 
     <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage">
-      <div class="section-title"><div><h2>已匹配艺术家头像补全</h2></div></div>
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">已确认身份的艺术家 {{.ImageBackfill.Total}} 位 · 本地有效头像 {{.ImageBackfill.Cached}} · 待补 {{.ImageBackfill.Missing}}。补全只使用已确认身份来源的图片地址，不改动身份，也不会覆盖自定义头像；磁盘缓存文件丢失会自动补齐。</p>
+      <div class="section-title"><div><h2>艺术家头像补全</h2></div></div>
+      <p class="muted" style="margin:0;font-size:var(--fs-sm);">已确认身份的艺术家 {{.ImageBackfill.Total}} 位 · 本地有效头像 {{.ImageBackfill.Cached}} · 待补 {{.ImageBackfill.Missing}}。默认仅补全已确认身份的艺人。所有模式均保留自定义头像。</p>
       {{with .ImageBackfill.Active}}
       <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
         <header>
@@ -103,7 +103,7 @@
           <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
         </header>
         <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
-        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}</p>
         <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
         <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
         <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
@@ -127,13 +127,82 @@
       <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
       {{end}}
       {{with .ImageBackfill.Last}}
-      <p class="muted run-last">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+      <p class="muted run-last">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
       {{end}}
       {{if not .ImageBackfill.Active}}
-      <form method="post" action="/admin/matches/images/backfill">
+      <form method="post" action="/admin/matches/images/backfill" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <button>已匹配艺术家头像补全</button>
+        <select name="mode" aria-label="头像补全模式">
+          <option value="matched">仅已匹配身份</option>
+          <option value="all">全库补全（按设置使用图源）</option>
+          <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
+          <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
+        </select>
+        <button>启动艺术家头像补全</button>
       </form>
+      {{end}}
+
+      {{if .ImageBackfill.PendingCandidates}}
+      <details open style="margin-top:14px;">
+        <summary><strong>待审核候选头像（{{.ImageBackfill.PendingCount}}）</strong></summary>
+        {{if gt .ImageBackfill.PendingCount (len .ImageBackfill.PendingCandidates)}}<p class="field-hint">显示最近 {{len .ImageBackfill.PendingCandidates}} 条，处理后可查看其余候选。</p>{{end}}
+        <div class="artist-image-candidate-list">
+          {{range .ImageBackfill.PendingCandidates}}
+          <article class="run-card" style="margin:0;display:flex;flex-direction:column;gap:8px;">
+            <div class="artist-image-candidate-summary">
+              <img class="artist-image-candidate-preview" src="/admin/matches/images/candidates/{{.ID}}/preview" alt="{{.ArtistName}}的候选头像" loading="lazy">
+              <div style="min-width:0;flex:1;">
+                <strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{.ArtistName}}</strong>
+                <small class="muted">{{.Source}} · {{.Confidence}}{{if and (gt .Width 0) (gt .Height 0)}} · {{.Width}}×{{.Height}}{{end}}</small>
+              </div>
+            </div>
+            {{if .Reason}}<small class="muted">{{.Reason}}</small>{{end}}
+            {{if .PageURL}}<small class="muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="{{.PageURL}}" target="_blank" rel="noopener noreferrer">来源页：{{.PageURL}}</a></small>{{end}}
+            <div class="run-actions">
+              <form method="post" action="/admin/matches/images/candidates/{{.ID}}/approve">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button>采纳并缓存</button>
+              </form>
+              <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button">忽略</button>
+              </form>
+            </div>
+          </article>
+          {{end}}
+        </div>
+      </details>
+      {{end}}
+
+      {{if .ImageBackfill.Settings}}
+      <details style="margin-top:14px;">
+        <summary><strong>头像补全数据源与 AI 策略设置</strong></summary>
+        <form method="post" action="/admin/settings/artist-images" style="margin-top:10px;display:grid;gap:10px;max-width:720px;">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <div style="display:flex;flex-wrap:wrap;gap:14px;">
+            <label><input type="checkbox" name="bangumi_enabled" value="1"{{if .ImageBackfill.Settings.BangumiEnabled}} checked{{end}}> 启用 Bangumi Persons（ACG 优先）</label>
+            <label><input type="checkbox" name="deezer_enabled" value="1"{{if .ImageBackfill.Settings.DeezerEnabled}} checked{{end}}> 启用 Deezer Public API</label>
+            <label><input type="checkbox" name="wikipedia_enabled" value="1"{{if .ImageBackfill.Settings.WikipediaEnabled}} checked{{end}}> 启用 Wikipedia pageimages</label>
+            <label><input type="checkbox" name="fanart_enabled" value="1"{{if .ImageBackfill.Settings.FanartEnabled}} checked{{end}}> 启用 Fanart.tv v3</label>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:14px;">
+            <label><input type="checkbox" name="web_fallback_enabled" value="1"{{if .ImageBackfill.Settings.WebFallbackEnabled}} checked{{end}}> 启用联网搜索 + AI 选图兜底</label>
+            <label><input type="checkbox" name="web_auto_apply_high" value="1"{{if .ImageBackfill.Settings.WebAutoApplyHigh}} checked{{end}}> 高置信度结果自动入库</label>
+            <label><input type="checkbox" name="vision_enabled" value="1"{{if .ImageBackfill.Settings.VisionEnabled}} checked{{end}}> 启用可选 VLM 视觉质检</label>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+            <label>Fanart.tv API Key<input type="password" name="fanart_api_key" placeholder="{{if .ImageBackfill.Settings.FanartAPIKey}}已配置（留空保持不变）{{else}}可选{{end}}"></label>
+            <label>选图文本模型<input type="text" name="ai_model" value="{{.ImageBackfill.Settings.AIModel}}" placeholder="留空沿用全局主模型"></label>
+            <label>视觉质检模型<input type="text" name="vision_model" value="{{.ImageBackfill.Settings.VisionModel}}" placeholder="需支持 image_url"></label>
+            <label>单轮联网上限（0=不限）<input type="number" name="max_web_requests_per_run" min="0" value="{{.ImageBackfill.Settings.MaxWebRequestsPerRun}}"></label>
+            <label>负缓存冷却天数<input type="number" name="negative_cache_days" min="1" value="{{.ImageBackfill.Settings.NegativeCacheDays}}"></label>
+          </div>
+          {{if .ImageBackfill.Settings.FanartAPIKey}}<label><input type="checkbox" name="clear_fanart_api_key" value="1"> 清除已保存的 Fanart.tv Key</label>{{end}}
+          <div><button class="secondary-button">保存头像补全设置</button></div>
+        </form>
+      </details>
+      {{else}}
+      <p class="field-hint">暂时无法读取头像补全设置，请刷新页面后重试。</p>
       {{end}}
     </section>
 

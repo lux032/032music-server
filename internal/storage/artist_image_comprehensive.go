@@ -340,11 +340,19 @@ func (s *Store) UpsertArtistImageCandidate(ctx context.Context, c ArtistImageCan
 	return id, err
 }
 
+const pendingArtistImageCandidates = ` FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.status='pending' AND a.merged_into_artist_id IS NULL`
+
+func (s *Store) PendingArtistImageCandidateCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*)`+pendingArtistImageCandidates).Scan(&count)
+	return count, err
+}
+
 func (s *Store) PendingArtistImageCandidates(ctx context.Context, limit int) ([]ArtistImageCandidate, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.artist_id,COALESCE(a.user_display_name,a.display_name),c.source,c.image_url,c.page_url,c.title,c.confidence,c.reason,c.width,c.height,c.status,c.created_at,COALESCE(c.reviewed_at,'') FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.status='pending' AND a.merged_into_artist_id IS NULL ORDER BY c.id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.artist_id,COALESCE(a.user_display_name,a.display_name),c.source,c.image_url,c.page_url,c.title,c.confidence,c.reason,c.width,c.height,c.status,c.created_at,COALESCE(c.reviewed_at,'')`+pendingArtistImageCandidates+` ORDER BY c.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

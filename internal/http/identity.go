@@ -55,6 +55,7 @@ func (m matchReviewItem) CanQuickAcceptAI() bool {
 	return m.AI != nil && m.AI.Action == storage.AIActionRecommendAccept &&
 		m.AIRecommendedCandidate() != nil && m.ConflictFor(m.AI.SelectedCandidateID) == nil
 }
+
 type artistReleaseGroup struct {
 	Title       string
 	Description string
@@ -816,6 +817,25 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		} else if !errors.Is(latestErr, sql.ErrNoRows) {
 			a.logger.Error("matches latest image backfill run", "error", latestErr)
 		}
+	}
+	if imgSt, stErr := a.store.ArtistImageSettings(r.Context()); stErr == nil {
+		data.ImageBackfill.Settings = &imgSt
+	} else {
+		a.logger.Error("matches artist image settings", "error", stErr)
+	}
+	const artistImageCandidateLimit = 30
+	if cands, candErr := a.store.PendingArtistImageCandidates(r.Context(), artistImageCandidateLimit); candErr == nil {
+		data.ImageBackfill.PendingCandidates = cands
+		data.ImageBackfill.PendingCount = len(cands)
+		if len(cands) == artistImageCandidateLimit {
+			if count, err := a.store.PendingArtistImageCandidateCount(r.Context()); err == nil {
+				data.ImageBackfill.PendingCount = max(count, len(cands))
+			} else {
+				a.logger.Error("matches pending artist image count", "error", err)
+			}
+		}
+	} else {
+		a.logger.Error("matches pending artist image candidates", "error", candErr)
 	}
 	// 歌手简介补全区块：统计只读 DB；失败只记日志，页面其余部分照常渲染。
 	if a.enrichment != nil {

@@ -41,10 +41,13 @@ func artistImageRunDTO(r storage.ArtistImageBackfillRun) artistImageRunView {
 // artistImageBackfillView 是 /admin/matches 页“已匹配艺术家头像补全”区块
 // 的数据：统计（只读 DB+磁盘）与活动/最近任务。
 type artistImageBackfillView struct {
-	Cached, Total int
-	Missing       int
-	Active        *artistImageRunView
-	Last          *artistImageRunView
+	Cached, Total     int
+	Missing           int
+	PendingCount      int
+	PendingCandidates []storage.ArtistImageCandidate
+	Settings          *storage.ArtistImageSettings
+	Active            *artistImageRunView
+	Last              *artistImageRunView
 }
 
 func (a *App) artistImageRunError(w http.ResponseWriter, err error) {
@@ -172,6 +175,26 @@ func (a *App) handleListArtistImageCandidates(w http.ResponseWriter, r *http.Req
 	writeArtistJSON(w, map[string]any{"candidates": items})
 }
 
+func (a *App) handleArtistImageCandidatePreview(w http.ResponseWriter, r *http.Request) {
+	if a.enrichment == nil {
+		http.Error(w, "任务服务不可用", http.StatusServiceUnavailable)
+		return
+	}
+	data, mimeType, err := a.enrichment.ArtistImageCandidatePreview(r.Context(), parseInt64(r.PathValue("id")))
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "候选头像预览暂不可用", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(data)
+}
+
 func (a *App) handleApproveArtistImageCandidate(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -191,7 +214,7 @@ func (a *App) handleApproveArtistImageCandidate(w http.ResponseWriter, r *http.R
 		http.Error(w, "采纳候选头像失败", http.StatusInternalServerError)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "已采纳候选头像并缓存到本地")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "已采纳候选头像并缓存到本地")
 }
 
 func (a *App) handleRejectArtistImageCandidate(w http.ResponseWriter, r *http.Request) {
