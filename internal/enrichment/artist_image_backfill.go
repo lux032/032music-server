@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lux032/032music-server/internal/netfetch"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -52,7 +53,11 @@ func (m *Manager) hasValidArtistImage(ctx context.Context, artistID int64) (bool
 // 取全部候选的有效缓存路径，循环内只做 os.Stat，避免逐艺术家 N+1 查询）。
 // 返回候选总数、本地有效缓存数与缺失候选列表。只读 DB 与磁盘，不访问网络。
 func (m *Manager) scanArtistImageBackfill(ctx context.Context) (total, cached int, missing []storage.ArtistImageBackfillCandidate, err error) {
-	rows, err := m.store.ArtistImageBackfillCacheScan(ctx)
+	return m.scanArtistImageBackfillForMode(ctx, "matched")
+}
+
+func (m *Manager) scanArtistImageBackfillForMode(ctx context.Context, mode string) (total, cached int, missing []storage.ArtistImageBackfillCandidate, err error) {
+	rows, err := m.store.ArtistImageBackfillCacheScanForMode(ctx, mode)
 	if err != nil {
 		return 0, 0, nil, err
 	}
@@ -94,6 +99,16 @@ func (m *Manager) cacheAutoMatchedArtistImage(ctx context.Context, artistID int6
 // 合并、本人与合并来源均无自定义头像且本地无有效缓存的艺术家。已有活动
 // 或暂停中的补全任务时返回 storage.ErrArtistImageBackfillState。
 func (m *Manager) StartArtistImageBackfill(ctx context.Context) (int64, error) {
+	return m.StartArtistImageBackfillWithMode(ctx, "matched")
+}
+
+// StartArtistImageBackfillWithMode 按指定模式启动头像补全：
+//   - matched: 仅已确认身份艺人（兼容 B+2 原口径）
+//   - all: 全库缺图艺人，依次尝试 Tier 1-2 结构化图源（及已开启的 Tier 3-4）
+//   - web_fallback: 全库缺图艺人，强制启用 Tier 3 联网搜索 + AI 选图兜底
+//   - rescan_all: 全库缺图艺人，忽略负缓存冷却期强制重扫
+func (m *Manager) StartArtistImageBackfillWithMode(ctx context.Context, mode string) (int64, error) {
+	mode = storage.NormalizeArtistImageBackfillMode(mode)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.imageBackfillRunning {
@@ -104,14 +119,14 @@ func (m *Manager) StartArtistImageBackfill(ctx context.Context) (int64, error) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	_, _, items, err := m.scanArtistImageBackfill(ctx)
+	_, _, items, err := m.scanArtistImageBackfillForMode(ctx, mode)
 	if err != nil {
 		return 0, err
 	}
 	if len(items) == 0 {
 		return 0, ErrNoArtistImageBackfillCandidates
 	}
-	runID, err := m.store.CreateArtistImageBackfillRun(ctx, items)
+	runID, err := m.store.CreateArtistImageBackfillRunWithMode(ctx, mode, items)
 	if err != nil {
 		return 0, err
 	}
@@ -151,6 +166,16 @@ func (m *Manager) artistImageBackfillFailure(runID int64, err error) {
 }
 
 func (m *Manager) executeArtistImageBackfill(ctx context.Context, runID int64) {
+	run, err := m.store.DurableArtistImageBackfillRun(ctx, runID)
+	if err != nil {
+		if ctx.Err() == nil {
+			m.artistImageBackfillFailure(runID, err)
+		} else if m.baseCtx.Err() != nil {
+			m.pauseArtistImageBackfillShutdown(runID)
+		}
+		return
+	}
+	runMode := storage.NormalizeArtistImageBackfillMode(run.Mode)
 	for {
 		if ctx.Err() != nil {
 			if m.baseCtx.Err() != nil {
@@ -174,7 +199,7 @@ func (m *Manager) executeArtistImageBackfill(ctx context.Context, runID int64) {
 		checkpoint := storage.ArtistImageBackfillCheckpoint{RunID: runID, ItemID: item.ID, ClaimToken: item.ClaimToken}
 		rateAttempts := 0
 		for {
-			outcome, errText, rate := m.processArtistImageBackfillItem(ctx, checkpoint, item)
+			outcome, errText, rate := m.processArtistImageBackfillItem(ctx, checkpoint, item, runMode)
 			if ctx.Err() != nil {
 				if m.baseCtx.Err() != nil {
 					m.pauseArtistImageBackfillShutdown(runID)
@@ -234,8 +259,9 @@ func (m *Manager) pauseArtistImageBackfillShutdown(runID int64) {
 // 解除/并发自定义头像/已补齐），库存 URL 优先直接下载；空 URL 仅向已确认
 // 身份对应的启用来源查询资料取 URL 后下载。限流以 RateLimitError 返回供
 // run 循环等待重试，其余失败归入各终态 outcome。
-func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, item storage.ArtistImageBackfillItem) (outcome, errText string, rate *RateLimitError) {
-	if _, err := m.store.ArtistImageBackfillSubject(ctx, item.ArtistID); errors.Is(err, sql.ErrNoRows) {
+func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, item storage.ArtistImageBackfillItem, runMode string) (outcome, errText string, rate *RateLimitError) {
+	runMode = storage.NormalizeArtistImageBackfillMode(runMode)
+	if _, err := m.store.ArtistImageBackfillSubjectForMode(ctx, item.ArtistID, runMode); errors.Is(err, sql.ErrNoRows) {
 		return "skipped", "状态已变化（已合并/身份解除/出现自定义头像）", nil
 	} else if err != nil {
 		return "failed", err.Error(), nil
@@ -248,48 +274,209 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 		return "skipped", "已有有效头像", nil
 	}
 
+	// Tier 1: 已确认身份的库存 URL 与 MusicBrainz/Last.fm 刷新
 	source, externalID, remoteURL, err := m.store.ArtistImageProfileSource(ctx, item.ArtistID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "failed", err.Error(), nil
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		// 库存 URL 为空：只查询已确认身份对应的启用来源，绝不重新判定身份。
-		if queryErr := m.queryConfirmedArtistImageURL(ctx, item.ArtistID, &checkpoint); queryErr != nil {
+		queryErr := m.queryConfirmedArtistImageURL(ctx, item.ArtistID, &checkpoint, runMode != "matched")
+		if queryErr != nil {
 			if rateErr := asRateLimited(queryErr); rateErr != nil {
 				return "", "", rateErr
 			}
 			if errors.Is(queryErr, storage.ErrArtistImageBackfillState) {
-				// P1-1：网络查询期间身份被解除/改认或任务被暂停/停止，guarded
-				// 写入已拒绝——绝不复活或覆盖身份，item 记 skipped。
 				return "skipped", "身份或任务状态已变化，资料未写入", nil
 			}
-			if errors.Is(queryErr, sql.ErrNoRows) {
-				return "no_url", "", nil
+			if !errors.Is(queryErr, sql.ErrNoRows) && runMode == "matched" {
+				return "failed", queryErr.Error(), nil
 			}
-			return "failed", queryErr.Error(), nil
-		}
-		source, externalID, remoteURL, err = m.store.ArtistImageProfileSource(ctx, item.ArtistID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return "no_url", "", nil
-		}
-		if err != nil {
-			return "failed", err.Error(), nil
+		} else {
+			source, externalID, remoteURL, err = m.store.ArtistImageProfileSource(ctx, item.ArtistID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return "failed", err.Error(), nil
+			}
 		}
 	}
 
-	if m.testImageBackfillHook != nil {
-		m.testImageBackfillHook(item.ArtistID)
+	if err == nil && remoteURL != "" {
+		if m.testImageBackfillHook != nil {
+			m.testImageBackfillHook(item.ArtistID)
+		}
+		if err = m.cacheArtistImageGuarded(ctx, item.ArtistID, source, externalID, remoteURL, &checkpoint); err != nil {
+			if rateErr := asRateLimited(err); rateErr != nil {
+				return "", "", rateErr
+			}
+			if errors.Is(err, storage.ErrArtistImageBackfillState) {
+				return "skipped", "状态已变化，写入被安全拒绝", nil
+			}
+			if runMode == "matched" {
+				return "failed", err.Error(), nil
+			}
+		} else {
+			return "cached", "", nil
+		}
 	}
-	if err = m.cacheArtistImageGuarded(ctx, item.ArtistID, source, externalID, remoteURL, &checkpoint); err != nil {
-		if rateErr := asRateLimited(err); rateErr != nil {
-			return "", "", rateErr
-		}
-		if errors.Is(err, storage.ErrArtistImageBackfillState) {
-			return "skipped", "状态已变化，写入被安全拒绝", nil
-		}
+
+	// Legacy B+2 matched-only mode stops here to preserve strict confirmed-profile semantics.
+	if runMode == "matched" {
+		return "no_url", "", nil
+	}
+
+	return m.processComprehensiveArtistImageFallback(ctx, checkpoint, item.ArtistID, runMode)
+}
+
+func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, runMode string) (outcome, errText string, rate *RateLimitError) {
+	imgSettings, err := m.store.ArtistImageSettings(ctx)
+	if err != nil {
 		return "failed", err.Error(), nil
 	}
-	return "cached", "", nil
+	anchor, err := m.store.ArtistBiographyAnchor(ctx, artistID)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+
+	trySaveStructured := func(srcName, imgURL string) (bool, string, string, *RateLimitError) {
+		if imgURL == "" {
+			return false, "", "", nil
+		}
+		data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, imgURL, "artist image")
+		if dlErr != nil {
+			if rateErr := asRateLimited(dlErr); rateErr != nil {
+				return true, "", "", rateErr
+			}
+			return false, "", "", nil
+		}
+		if _, _, ok, _ := netfetch.InspectImageQuality(data); !ok {
+			return false, "", "", nil
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		cachePath, wErr := writeCacheFile(m.imageDirectory, hash+ext, data)
+		if wErr != nil {
+			return true, "failed", wErr.Error(), nil
+		}
+		if saveErr := m.store.SaveArtistImageBackfillGuarded(ctx, storage.ArtistImageInput{
+			ArtistID:  artistID,
+			ByteSize:  int64(len(data)),
+			Source:    srcName,
+			RemoteURL: imgURL,
+			Hash:      hash,
+			MIMEType:  mimeType,
+			CachePath: cachePath,
+		}, &checkpoint); saveErr != nil {
+			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
+				return true, "skipped", "状态已变化，写入被安全拒绝", nil
+			}
+			return true, "failed", saveErr.Error(), nil
+		}
+		return true, "cached", "", nil
+	}
+
+	// Tier 2a: Fanart.tv (MBID-anchored)
+	if imgSettings.FanartEnabled && imgSettings.FanartAPIKey != "" {
+		if mbid, mbErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz"); mbErr == nil && mbid != "" {
+			imgURL, fErr := m.fanartArtistImage(ctx, mbid, imgSettings.FanartAPIKey)
+			if fErr != nil && asRateLimited(fErr) != nil {
+				return "", "", asRateLimited(fErr)
+			}
+			if done, out, eText, rErr := trySaveStructured("fanart", imgURL); done {
+				return out, eText, rErr
+			}
+		}
+	}
+
+	// Tier 2b: Bangumi Persons v0 (primary ACG source)
+	if imgSettings.BangumiEnabled {
+		imgURL, _, bgmErr := m.bangumiPersonImage(ctx, anchor)
+		if bgmErr != nil && asRateLimited(bgmErr) != nil {
+			return "", "", asRateLimited(bgmErr)
+		}
+		if done, out, eText, rErr := trySaveStructured("bangumi", imgURL); done {
+			return out, eText, rErr
+		}
+	}
+
+	// Tier 2c: Deezer Public API
+	if imgSettings.DeezerEnabled {
+		imgURL, _, dzErr := m.deezerSearchArtistImage(ctx, anchor)
+		if dzErr != nil && asRateLimited(dzErr) != nil {
+			return "", "", asRateLimited(dzErr)
+		}
+		if done, out, eText, rErr := trySaveStructured("deezer", imgURL); done {
+			return out, eText, rErr
+		}
+	}
+
+	// Tier 3 + 4: Web search + HTML og:image/JSON-LD + LLM selection (+ optional VLM)
+	webAllowed := runMode == "web_fallback" || imgSettings.WebFallbackEnabled
+	tierReached := "structured"
+	if webAllowed {
+		reserved, reserveErr := m.store.ReserveArtistImageWebRequest(ctx, checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
+		if errors.Is(reserveErr, storage.ErrArtistImageBackfillState) {
+			return "skipped", "任务状态已变化", nil
+		}
+		if reserveErr != nil {
+			return "failed", reserveErr.Error(), nil
+		}
+		if !reserved {
+			return "no_url", "本轮联网搜索预算已用完", nil
+		}
+		tierReached = "web_fallback"
+		found, ok, webErr := m.discoverArtistImageFromWeb(ctx, artistID, nil, imgSettings)
+		if webErr != nil {
+			if rateErr := asRateLimited(webErr); rateErr != nil {
+				return "", "", rateErr
+			}
+			return "failed", RedactSourceError(webErr).Error(), nil
+		}
+		if ok {
+			if found.Confidence == "high" && imgSettings.WebAutoApplyHigh {
+				hash := fmt.Sprintf("%x", sha256.Sum256(found.Data))
+				cachePath, wErr := writeCacheFile(m.imageDirectory, hash+found.Ext, found.Data)
+				if wErr != nil {
+					return "failed", wErr.Error(), nil
+				}
+				if saveErr := m.store.SaveArtistImageBackfillGuarded(ctx, storage.ArtistImageInput{
+					ArtistID:  artistID,
+					ByteSize:  int64(len(found.Data)),
+					Source:    found.Source,
+					RemoteURL: found.ImageURL,
+					Hash:      hash,
+					MIMEType:  found.MIMEType,
+					CachePath: cachePath,
+				}, &checkpoint); saveErr != nil {
+					if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
+						return "skipped", "状态已变化，写入被安全拒绝", nil
+					}
+					return "failed", saveErr.Error(), nil
+				}
+				return "cached", "", nil
+			}
+			id, candErr := m.store.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+				ArtistID:   artistID,
+				Source:     found.Source,
+				ImageURL:   found.ImageURL,
+				PageURL:    found.PageURL,
+				Title:      found.Title,
+				Confidence: found.Confidence,
+				Reason:     found.Reason,
+				Width:      found.Width,
+				Height:     found.Height,
+			})
+			if candErr != nil {
+				return "failed", candErr.Error(), nil
+			}
+			if id != 0 {
+				return "candidate", "", nil
+			}
+			return "skipped", "该候选已审核", nil
+		}
+	}
+
+	if err := m.store.RecordArtistImageAttempt(ctx, artistID, tierReached, "no_url", "", imgSettings.NegativeCacheDays); err != nil {
+		return "failed", err.Error(), nil
+	}
+	return "no_url", "", nil
 }
 
 // queryConfirmedArtistImageURL 仅在库存 URL 为空时调用：按已确认身份向
@@ -299,7 +486,7 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 // 网络查询窗口内身份被并发解除不得复活、被并发重新确认不得覆盖，暂停/停
 // 止后不得写入；响应身份漂移（external_id 与已确认身份不一致）同样不落库。
 // 没有可用来源返回 sql.ErrNoRows；状态冲突返回 ErrArtistImageBackfillState。
-func (m *Manager) queryConfirmedArtistImageURL(ctx context.Context, artistID int64, checkpoint *storage.ArtistImageBackfillCheckpoint) error {
+func (m *Manager) queryConfirmedArtistImageURL(ctx context.Context, artistID int64, checkpoint *storage.ArtistImageBackfillCheckpoint, expandedImages bool) error {
 	refreshed := false
 	mbid, err := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -307,7 +494,7 @@ func (m *Manager) queryConfirmedArtistImageURL(ctx context.Context, artistID int
 	}
 	if err == nil && mbid != "" {
 		if setting, settingErr := m.store.MetadataSourceSetting(ctx, "musicbrainz"); settingErr == nil && setting.Enabled {
-			_, profile, lookupErr := m.musicBrainzLookup(ctx, mbid, setting)
+			_, profile, lookupErr := m.musicBrainzLookupWithImageSources(ctx, mbid, setting, expandedImages)
 			if lookupErr == nil {
 				if profile.ExternalID == mbid {
 					if upsertErr := m.store.RefreshArtistProfileGuarded(ctx, artistID, profile, mbid, checkpoint); upsertErr != nil {

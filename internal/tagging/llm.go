@@ -82,11 +82,19 @@ func ValidateBaseURL(raw string) error {
 	return nil
 }
 
+// ImagePart represents an optional multimodal image attachment (data URL or
+// HTTPS URL) for vision-capable chat models.
+type ImagePart struct {
+	DataURL string
+	Detail  string
+}
+
 // ChatRequest 是一次请求。Format：json_schema（默认）或 json_object。
 type ChatRequest struct {
 	Model           string
 	System          string
 	User            string
+	Images          []ImagePart
 	Schema          json.RawMessage
 	Format          string
 	ReasoningEffort string
@@ -107,9 +115,34 @@ type chatMessage struct {
 
 // Complete 调用 /chat/completions。temperature 固定为 0。
 func (c *ChatClient) Complete(ctx context.Context, req ChatRequest) (ChatResult, error) {
+	var messages any = []chatMessage{{Role: "system", Content: req.System}, {Role: "user", Content: req.User}}
+	if len(req.Images) > 0 {
+		parts := make([]map[string]any, 0, 1+len(req.Images))
+		parts = append(parts, map[string]any{"type": "text", "text": req.User})
+		for _, img := range req.Images {
+			if strings.TrimSpace(img.DataURL) == "" {
+				continue
+			}
+			detail := strings.TrimSpace(img.Detail)
+			if detail == "" {
+				detail = "low"
+			}
+			parts = append(parts, map[string]any{
+				"type": "image_url",
+				"image_url": map[string]any{
+					"url":    img.DataURL,
+					"detail": detail,
+				},
+			})
+		}
+		messages = []map[string]any{
+			{"role": "system", "content": req.System},
+			{"role": "user", "content": parts},
+		}
+	}
 	body := map[string]any{
 		"model":       req.Model,
-		"messages":    []chatMessage{{Role: "system", Content: req.System}, {Role: "user", Content: req.User}},
+		"messages":    messages,
 		"temperature": 0,
 	}
 	switch req.Format {

@@ -787,6 +787,10 @@ func (m *Manager) musicBrainzSearchQuery(ctx context.Context, artist storage.Art
 }
 
 func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting storage.MetadataSourceSetting) (storage.ArtistCandidate, storage.ExternalArtistProfile, error) {
+	return m.musicBrainzLookupWithImageSources(ctx, mbid, setting, false)
+}
+
+func (m *Manager) musicBrainzLookupWithImageSources(ctx context.Context, mbid string, setting storage.MetadataSourceSetting, expandedImages bool) (storage.ArtistCandidate, storage.ExternalArtistProfile, error) {
 	var value mbArtistResponse
 	endpoint := strings.TrimRight(m.musicBrainzBase, "/") + "/artist/" + url.PathEscape(mbid) + "?inc=aliases+tags+url-rels&fmt=json"
 	if err := m.mbRequest(ctx, endpoint, setting, &value); err != nil {
@@ -801,9 +805,14 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 		tags = append(tags, v.Name)
 	}
 	imageURL := ""
+	var wikidataResource string
 	var spotifyURLs []string
+	var deezerIDs []string
 	for _, relation := range value.Relations {
 		if relation.Type == "wikidata" {
+			if wikidataResource == "" {
+				wikidataResource = relation.URL.Resource
+			}
 			var imageErr error
 			imageURL, imageErr = m.wikidataImage(ctx, relation.URL.Resource)
 			if imageErr != nil {
@@ -820,6 +829,9 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 		if strings.Contains(relation.URL.Resource, "open.spotify.com/artist/") {
 			spotifyURLs = append(spotifyURLs, relation.URL.Resource)
 		}
+		if dzID := extractDeezerArtistID(relation.URL.Resource); dzID != "" {
+			deezerIDs = append(deezerIDs, dzID)
+		}
 	}
 	if imageURL == "" {
 		for _, spotifyURL := range spotifyURLs {
@@ -835,6 +847,28 @@ func (m *Manager) musicBrainzLookup(ctx context.Context, mbid string, setting st
 			if imageURL != "" {
 				break
 			}
+		}
+	}
+	var imgSt storage.ArtistImageSettings
+	if expandedImages && imageURL == "" && (len(deezerIDs) > 0 || wikidataResource != "") {
+		imgSt, _ = m.store.ArtistImageSettings(ctx)
+	}
+	if imageURL == "" && imgSt.DeezerEnabled {
+		for _, dzID := range deezerIDs {
+			dzImg, dzErr := m.deezerArtistImageByID(ctx, dzID)
+			if dzErr != nil {
+				continue
+			}
+			if dzImg != "" {
+				imageURL = dzImg
+				break
+			}
+		}
+	}
+	if imageURL == "" && wikidataResource != "" && imgSt.WikipediaEnabled {
+		wikiImg, wikiErr := m.wikipediaArtistImage(ctx, wikidataResource)
+		if wikiErr == nil {
+			imageURL = wikiImg
 		}
 	}
 	payload := profilePayload("https://musicbrainz.org/artist/"+value.ID, imageURL, "", aliases, tags)

@@ -39,14 +39,14 @@ type ArtistImageBackfillItem struct {
 }
 
 type ArtistImageBackfillRun struct {
-	ID                                    int64
-	Status                                string
-	Total, Processed                      int
-	Cached, NoURL, Skipped, Failed        int
-	Current, ErrorMessage                 string
-	PauseReason, WaitSource, WaitingUntil string
-	WaitTotalMS, BudgetBaselineMS         int64
-	AutoResumeCount                       int
+	ID                                        int64
+	Status, Mode                              string
+	Total, Processed                          int
+	Cached, Candidate, NoURL, Skipped, Failed int
+	Current, ErrorMessage                     string
+	PauseReason, WaitSource, WaitingUntil     string
+	WaitTotalMS, BudgetBaselineMS             int64
+	AutoResumeCount                           int
 }
 
 // MaxArtistImageBackfillAutoResumeRounds 与身份匹配 run 一致：限流自动恢复
@@ -122,41 +122,7 @@ func (s *Store) ArtistImageProfileSource(ctx context.Context, artistID int64) (s
 }
 
 func (s *Store) CreateArtistImageBackfillRun(ctx context.Context, items []ArtistImageBackfillCandidate) (int64, error) {
-	if len(items) == 0 {
-		return 0, ErrArtistImageBackfillState
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	if err = artistImageBackfillWriteLock(ctx, tx); err != nil {
-		return 0, err
-	}
-	var active int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM artist_image_backfill_runs WHERE status IN ('running','queued','paused')`).Scan(&active); err != nil {
-		return 0, err
-	}
-	if active > 0 {
-		return 0, ErrArtistImageBackfillState
-	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO artist_image_backfill_runs(status,total_items) VALUES('running',?)`, len(items))
-	if err != nil {
-		return 0, err
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-	for _, item := range items {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_image_backfill_items(run_id,artist_id,artist_name) VALUES(?,?,?)`, id, item.ID, item.Name); err != nil {
-			return 0, err
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		return 0, err
-	}
-	return id, nil
+	return s.CreateArtistImageBackfillRunWithMode(ctx, "matched", items)
 }
 
 func (s *Store) ClaimArtistImageBackfillItem(ctx context.Context, runID int64) (ArtistImageBackfillItem, error) {
@@ -197,7 +163,7 @@ func (s *Store) ClaimArtistImageBackfillItem(ctx context.Context, runID int64) (
 // 已完成的项目直接返回 nil（断点重放安全），checkpoint 失配拒绝旧 worker。
 func (s *Store) CompleteArtistImageBackfillItem(ctx context.Context, c ArtistImageBackfillCheckpoint, outcome, errText string) error {
 	switch outcome {
-	case "cached", "no_url", "skipped", "failed":
+	case "cached", "candidate", "no_url", "skipped", "failed":
 	default:
 		return ErrArtistImageBackfillState
 	}
@@ -226,7 +192,7 @@ func (s *Store) CompleteArtistImageBackfillItem(ctx context.Context, c ArtistIma
 	if _, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_items SET status='completed',outcome=?,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, outcome, errText, c.ItemID); err != nil {
 		return err
 	}
-	for _, field := range []struct{ column, outcome string }{{"cached_items", "cached"}, {"no_url_items", "no_url"}, {"skipped_items", "skipped"}, {"failed_items", "failed"}} {
+	for _, field := range []struct{ column, outcome string }{{"cached_items", "cached"}, {"candidate_items", "candidate"}, {"no_url_items", "no_url"}, {"skipped_items", "skipped"}, {"failed_items", "failed"}} {
 		if _, err = tx.ExecContext(ctx, "UPDATE artist_image_backfill_runs SET "+field.column+"=(SELECT count(*) FROM artist_image_backfill_items WHERE run_id=? AND outcome=?) WHERE id=?", c.RunID, field.outcome, c.RunID); err != nil {
 			return err
 		}
@@ -352,7 +318,7 @@ func (s *Store) RecoverArtistImageBackfillRuns(ctx context.Context) (int64, erro
 
 func (s *Store) DurableArtistImageBackfillRun(ctx context.Context, id int64) (ArtistImageBackfillRun, error) {
 	var r ArtistImageBackfillRun
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,total_items,processed_items,cached_items,no_url_items,skipped_items,failed_items,COALESCE(current_artist,''),COALESCE(error_message,''),pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_image_backfill_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Total, &r.Processed, &r.Cached, &r.NoURL, &r.Skipped, &r.Failed, &r.Current, &r.ErrorMessage, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,mode,total_items,processed_items,cached_items,candidate_items,no_url_items,skipped_items,failed_items,COALESCE(current_artist,''),COALESCE(error_message,''),pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_image_backfill_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Mode, &r.Total, &r.Processed, &r.Cached, &r.Candidate, &r.NoURL, &r.Skipped, &r.Failed, &r.Current, &r.ErrorMessage, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
 	return r, err
 }
 

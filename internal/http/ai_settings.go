@@ -26,6 +26,8 @@ var aiPurposeLabels = map[string]string{
 	"artist_alias":               "中文别名补全",
 	"artist_biography_translate": "歌手简介翻译",
 	"artist_biography_web":       "歌手简介联网概括",
+	"artist_image_web":           "艺术家头像联网选图",
+	"artist_image_vision":        "艺术家头像视觉质检",
 	"album_review":               "AI 审核 · 专辑关联",
 	"track_review":               "AI 审核 · 曲目关联",
 	"work_review":                "AI 审核 · 作品对齐",

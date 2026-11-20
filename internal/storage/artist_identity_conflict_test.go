@@ -525,7 +525,7 @@ func TestLegacyMergeCannotTransferFileMBIDAnd074MigrationClassifiesRoles(t *test
 		t.Fatal(err)
 	}
 	// Simulate 073 state by rolling back 074 and 075 schema, inserting 073 data, and re-running Migrate.
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version>=74`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version BETWEEN 74 AND 77`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?),(?,?,?)`, fileID, artistB, idX, file2ID, artistC, idX); err != nil {
@@ -584,7 +584,7 @@ func TestMigration075Fixes26f747bMisclassifiedRolesAndPrimaryOverride(t *testing
 	}
 
 	// Simulate buggy 26f747b 074 state: false composer/valid + spurious arranger/conflict + unflagged candidate.
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DELETE FROM schema_migrations WHERE version>=75`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DELETE FROM schema_migrations WHERE version BETWEEN 75 AND 77`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'composer',?,'valid'),(?,?,'arranger','','conflict')`, fileID, artistA, idX, fileID, artistA, idX, fileID, artistA); err != nil {
@@ -728,21 +728,21 @@ func TestMigration074And075PreserveCrossFileConflictsUntilRescan(t *testing.T) {
 
 			switch path {
 			case "073_to_076":
-				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version>=74`); err != nil {
+				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version BETWEEN 74 AND 77`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?),(?,?,?)`, file1, artistA, idX, file2, artistA, idY); err != nil {
 					t.Fatal(err)
 				}
 			case "buggy_074_to_076":
-				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DELETE FROM schema_migrations WHERE version>=75`); err != nil {
+				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DELETE FROM schema_migrations WHERE version BETWEEN 75 AND 77`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'primary',?,'valid')`, file1, artistA, idX, file2, artistA, idY); err != nil {
 					t.Fatal(err)
 				}
 			case "9e9eb31_075_to_076":
-				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DELETE FROM schema_migrations WHERE version>=76`); err != nil {
+				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DELETE FROM schema_migrations WHERE version BETWEEN 76 AND 77`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid')`, file1, artistA, idX); err != nil {
@@ -879,7 +879,7 @@ func TestMigration076KeepsBlockedRoleReverifyAcrossSameArtistValidRole(t *testin
 			switch scenario {
 			case "9e9eb31_075_to_077":
 				// Simulate DB already migrated on 9e9eb31's 075 where file2 composer survived and primary was marked blocked.
-				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DELETE FROM schema_migrations WHERE version>=76`); err != nil {
+				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DELETE FROM schema_migrations WHERE version BETWEEN 76 AND 77`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'composer',?,'valid')`, file1, artistA, idX, file2, artistA, idX); err != nil {
@@ -890,7 +890,7 @@ func TestMigration076KeepsBlockedRoleReverifyAcrossSameArtistValidRole(t *testin
 				}
 			case "0c80f9c_076_to_077":
 				// Simulate DB already migrated on 0c80f9c's 076 (reverify table exists without file2/A because of instr exemption).
-				if _, err := s.db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version>=77`); err != nil {
+				if _, err := s.db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version BETWEEN 77 AND 77`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,role,mbid,status) VALUES(?,?,'primary',?,'valid'),(?,?,'composer',?,'valid')`, file1, artistA, idX, file2, artistA, idX); err != nil {
@@ -901,7 +901,7 @@ func TestMigration076KeepsBlockedRoleReverifyAcrossSameArtistValidRole(t *testin
 				}
 			case "073_primary_only_Y_to_077":
 				// Simulate 073 DB holding only one primary identity row A->Y on file2 alongside aligned single composer A->X tags.
-				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version>=74`); err != nil {
+				if _, err := s.db.ExecContext(ctx, `DROP TABLE audio_file_artist_reverify; DROP TABLE audio_file_identity_checks; DROP TABLE audio_file_artist_identities; CREATE TABLE audio_file_artist_identities (audio_file_id INTEGER NOT NULL, artist_id INTEGER NOT NULL, mbid TEXT NOT NULL, PRIMARY KEY(audio_file_id, artist_id)) STRICT; ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review; DELETE FROM schema_migrations WHERE version BETWEEN 74 AND 77`); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.db.ExecContext(ctx, `INSERT INTO audio_file_artist_identities(audio_file_id,artist_id,mbid) VALUES(?,?,?),(?,?,?)`, file1, artistA, idX, file2, artistA, idY); err != nil {

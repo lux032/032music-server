@@ -91,7 +91,7 @@ func TestRejectLastOrAllMarksRejectedStateAndMigration078(t *testing.T) {
 	}
 
 	// Migration 078 backfill: pre-078 review rows whose candidates are all rejected become 'rejected'.
-	if _, err = s.db.ExecContext(ctx, `UPDATE artist_source_match_state SET outcome='review' WHERE artist_id=? AND source='musicbrainz'; DELETE FROM schema_migrations WHERE version>=78; DROP TABLE artist_match_run_modes`, id); err != nil {
+	if _, err = s.db.ExecContext(ctx, `UPDATE artist_source_match_state SET outcome='review' WHERE artist_id=? AND source='musicbrainz'; DELETE FROM schema_migrations WHERE version=78; DROP TABLE artist_match_run_modes`, id); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Migrate(ctx); err != nil {

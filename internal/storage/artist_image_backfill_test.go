@@ -565,3 +565,82 @@ func TestArtistImageBackfillCacheScan(t *testing.T) {
 		t.Fatalf("scan=%+v", rows)
 	}
 }
+
+func TestArtistImageWebBudgetSurvivesResume(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.importArtistTrack(t, "A/01.flac", "Alpha")
+	artistID := f.artistID(t, "Alpha")
+	runID, err := f.store.CreateArtistImageBackfillRunWithMode(f.ctx, "web_fallback", []ArtistImageBackfillCandidate{{ID: artistID, Name: "Alpha"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := f.store.ClaimArtistImageBackfillItem(f.ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := ArtistImageBackfillCheckpoint{RunID: runID, ItemID: item.ID, ClaimToken: item.ClaimToken}
+	if ok, err := f.store.ReserveArtistImageWebRequest(f.ctx, old, artistID, 1); err != nil || !ok {
+		t.Fatalf("first reservation = %v, %v", ok, err)
+	}
+	for _, action := range []string{"pause", "resume"} {
+		if err := f.store.TransitionArtistImageBackfillRun(f.ctx, runID, action, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	item, err = f.store.ClaimArtistImageBackfillItem(f.ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ReserveArtistImageWebRequest(f.ctx, old, artistID, 1); !errors.Is(err, ErrArtistImageBackfillState) {
+		t.Fatalf("stale reservation error = %v", err)
+	}
+	current := ArtistImageBackfillCheckpoint{RunID: runID, ItemID: item.ID, ClaimToken: item.ClaimToken}
+	if ok, err := f.store.ReserveArtistImageWebRequest(f.ctx, current, artistID, 1); err != nil || ok {
+		t.Fatalf("reservation after resume = %v, %v", ok, err)
+	}
+}
+
+func TestArtistImageCandidateApprovalIsAtomic(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.importArtistTrack(t, "A/01.flac", "Alpha")
+	artistID := f.artistID(t, "Alpha")
+	candidate := ArtistImageCandidate{ArtistID: artistID, Source: "ai_web", ImageURL: "https://example.com/avatar.png"}
+	id, err := f.store.UpsertArtistImageCandidate(f.ctx, candidate)
+	if err != nil || id == 0 {
+		t.Fatalf("insert candidate = %d, %v", id, err)
+	}
+	image := ArtistImageInput{ArtistID: artistID, Source: candidate.Source, RemoteURL: candidate.ImageURL, CachePath: "avatar.png"}
+	if err := f.store.ApproveArtistImageCandidate(f.ctx, id, image); err == nil {
+		t.Fatal("approval with invalid cache entry succeeded")
+	}
+	review, err := f.store.ArtistImageCandidateByID(f.ctx, id)
+	if err != nil || review.Status != "pending" {
+		t.Fatalf("candidate after failed approval = %+v, %v", review, err)
+	}
+	if err := f.store.ReviewArtistImageCandidate(f.ctx, id, "rejected"); err != nil {
+		t.Fatal(err)
+	}
+	image.ByteSize = 1
+	if err := f.store.ApproveArtistImageCandidate(f.ctx, id, image); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("approve rejected candidate error = %v", err)
+	}
+	if id, err := f.store.UpsertArtistImageCandidate(f.ctx, candidate); err != nil || id != 0 {
+		t.Fatalf("requeue rejected candidate = %d, %v", id, err)
+	}
+	if err := f.store.SaveArtistImageBackfillGuarded(f.ctx, image, nil); !errors.Is(err, ErrArtistImageBackfillState) {
+		t.Fatalf("auto-apply rejected candidate error = %v", err)
+	}
+	candidate.ImageURL = "https://example.com/other.png"
+	image.RemoteURL = candidate.ImageURL
+	id, err = f.store.UpsertArtistImageCandidate(f.ctx, candidate)
+	if err != nil || id == 0 {
+		t.Fatalf("insert replacement candidate = %d, %v", id, err)
+	}
+	if err := f.store.ApproveArtistImageCandidate(f.ctx, id, image); err != nil {
+		t.Fatal(err)
+	}
+	review, err = f.store.ArtistImageCandidateByID(f.ctx, id)
+	if err != nil || review.Status != "approved" {
+		t.Fatalf("candidate after successful approval = %+v, %v", review, err)
+	}
+}
