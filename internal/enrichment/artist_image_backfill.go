@@ -83,16 +83,58 @@ func (m *Manager) ArtistImageBackfillStats(ctx context.Context) (cached, total i
 	return cached, total, err
 }
 
-// cacheAutoMatchedArtistImage 在批量自动匹配成功绑定身份后尽力缓存头像
-// （B+2 目标 1）。冷却期内直接短路；所有错误只记日志——绝不传播进 run 的
-// 限流/错误通道，绝不撤销已提交的身份。库存无 URL 时静默跳过。
+// cacheAutoMatchedArtistImage fills a missing avatar after the identity commits.
 func (m *Manager) cacheAutoMatchedArtistImage(ctx context.Context, artistID int64) {
 	if m.checkSourceCooldown("artist image") != nil {
 		return
 	}
-	if err := m.CacheArtistImage(ctx, artistID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		m.logger.Warn("cache artist image after automatic match", "artistId", artistID, "error", err)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := m.cacheMissingMatchedArtistImage(ctx, artistID); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, storage.ErrArtistImageBackfillState) {
+		m.logger.Warn("cache artist image after automatic match", "artistId", artistID, "error", RedactSourceError(err))
 	}
+}
+
+func (m *Manager) cacheMissingMatchedArtistImage(ctx context.Context, artistID int64) error {
+	if _, err := m.store.ArtistImageBackfillSubject(ctx, artistID); err != nil {
+		return err
+	}
+	if valid, err := m.hasValidArtistImage(ctx, artistID); valid || err != nil {
+		return err
+	}
+	source, externalID, remoteURL, err := m.store.ArtistImageIdentitySource(ctx, artistID)
+	if err != nil {
+		return err
+	}
+	save := func(image storage.ArtistImageInput) error {
+		return m.store.SaveAutoMatchedArtistImage(ctx, image, source, externalID, remoteURL)
+	}
+	if remoteURL != "" {
+		err = m.cacheArtistProfileImage(ctx, artistID, source, remoteURL, save)
+		if err == nil || asRateLimited(err) != nil || errors.Is(err, storage.ErrArtistImageBackfillState) || ctx.Err() != nil {
+			return err
+		}
+		m.logger.Debug("stored artist image unavailable after automatic match", "artistId", artistID, "source", source, "error", RedactSourceError(err))
+	}
+	settings, err := m.store.ArtistImageSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if !settings.DeezerEnabled && !settings.BangumiEnabled && (!settings.FanartEnabled || settings.FanartAPIKey == "") {
+		return nil
+	}
+	anchor, err := m.store.ArtistBiographyAnchor(ctx, artistID)
+	if err != nil {
+		return err
+	}
+	outcome, errText, rate := m.processStructuredArtistImageFallback(ctx, artistID, anchor, settings, save)
+	if rate != nil {
+		return rate
+	}
+	if outcome == "failed" {
+		return errors.New(errText)
+	}
+	return nil
 }
 
 // StartArtistImageBackfill 启动一轮持久化头像补全：候选为已确认身份、未
@@ -303,7 +345,10 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 		if m.testImageBackfillHook != nil {
 			m.testImageBackfillHook(item.ArtistID)
 		}
-		if err = m.cacheArtistImageGuarded(ctx, item.ArtistID, source, externalID, remoteURL, &checkpoint); err != nil {
+		save := func(image storage.ArtistImageInput) error {
+			return m.store.SaveArtistImageGuarded(ctx, image, source, externalID, remoteURL, &checkpoint)
+		}
+		if err = m.cacheArtistProfileImage(ctx, item.ArtistID, source, remoteURL, save); err != nil {
 			if rateErr := asRateLimited(err); rateErr != nil {
 				return "", "", rateErr
 			}
@@ -318,16 +363,9 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 	return m.processComprehensiveArtistImageFallback(ctx, checkpoint, item.ArtistID, runMode)
 }
 
-func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, runMode string) (outcome, errText string, rate *RateLimitError) {
-	imgSettings, err := m.store.ArtistImageSettings(ctx)
-	if err != nil {
-		return "failed", err.Error(), nil
-	}
-	anchor, err := m.store.ArtistBiographyAnchor(ctx, artistID)
-	if err != nil {
-		return "failed", err.Error(), nil
-	}
-
+// processStructuredArtistImageFallback tries the enabled Tier 2 sources in
+// priority order. The caller supplies the write guard for its workflow.
+func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, artistID int64, anchor storage.ArtistBiographyAnchor, imgSettings storage.ArtistImageSettings, save func(storage.ArtistImageInput) error) (outcome, errText string, rate *RateLimitError) {
 	logSourceResult := func(source, reason string, details ...any) {
 		fields := []any{"artistId", artistID, "artist", anchor.Name, "source", source, "reason", reason}
 		m.logger.Debug("artist image fallback source result", append(fields, details...)...)
@@ -370,7 +408,7 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 			logSourceResult(srcName, "cache_write_failed")
 			return true, "failed", wErr.Error(), nil
 		}
-		if saveErr := m.store.SaveArtistImageBackfillGuarded(ctx, storage.ArtistImageInput{
+		if saveErr := save(storage.ArtistImageInput{
 			ArtistID:  artistID,
 			ByteSize:  int64(len(data)),
 			Source:    srcName,
@@ -378,7 +416,7 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 			Hash:      hash,
 			MIMEType:  mimeType,
 			CachePath: cachePath,
-		}, &checkpoint); saveErr != nil {
+		}); saveErr != nil {
 			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
 				logSourceResult(srcName, "state_changed")
 				return true, "skipped", "状态已变化，写入被安全拒绝", nil
@@ -418,6 +456,27 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 		}
 	}
 
+	return "", "", nil
+}
+
+func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, runMode string) (outcome, errText string, rate *RateLimitError) {
+	imgSettings, err := m.store.ArtistImageSettings(ctx)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	anchor, err := m.store.ArtistBiographyAnchor(ctx, artistID)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+
+	save := func(image storage.ArtistImageInput) error {
+		return m.store.SaveArtistImageBackfillGuarded(ctx, image, &checkpoint)
+	}
+	if outcome, errText, rate := m.processStructuredArtistImageFallback(ctx, artistID, anchor, imgSettings, save); outcome != "" || rate != nil {
+		return outcome, errText, rate
+	}
+	log := m.logger.With("artistId", artistID, "artist", anchor.Name)
+
 	// Tier 3 + 4: Web search + HTML og:image/JSON-LD + LLM selection (+ optional VLM)
 	webAllowed := runMode == "web_fallback" || imgSettings.WebFallbackEnabled
 	tierReached := "structured"
@@ -430,21 +489,21 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 			return "failed", reserveErr.Error(), nil
 		}
 		if !reserved {
-			logSourceResult("ai_web", "budget_exhausted")
+			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "budget_exhausted")
 			return "no_url", "本轮联网搜索预算已用完", nil
 		}
 		tierReached = "web_fallback"
 		found, ok, webErr := m.discoverArtistImageFromWeb(ctx, artistID, nil, imgSettings)
 		if webErr != nil {
 			if rateErr := asRateLimited(webErr); rateErr != nil {
-				logSourceResult("ai_web", "rate_limited")
+				log.Debug("artist image fallback source result", "source", "ai_web", "reason", "rate_limited")
 				return "", "", rateErr
 			}
-			logSourceResult("ai_web", "lookup_failed")
+			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "lookup_failed")
 			return "failed", RedactSourceError(webErr).Error(), nil
 		}
 		if !ok {
-			logSourceResult("ai_web", "no_match")
+			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "no_match")
 		} else {
 			if found.Confidence == "high" && imgSettings.WebAutoApplyHigh {
 				hash := fmt.Sprintf("%x", sha256.Sum256(found.Data))
@@ -466,7 +525,7 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 					}
 					return "failed", saveErr.Error(), nil
 				}
-				logSourceResult(found.Source, "cached", "width", found.Width, "height", found.Height)
+				log.Debug("artist image fallback source result", "source", found.Source, "reason", "cached", "width", found.Width, "height", found.Height)
 				return "cached", "", nil
 			}
 			id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
@@ -487,10 +546,10 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 				return "failed", candErr.Error(), nil
 			}
 			if id != 0 {
-				logSourceResult(found.Source, "candidate")
+				log.Debug("artist image fallback source result", "source", found.Source, "reason", "candidate")
 				return "candidate", "", nil
 			}
-			logSourceResult(found.Source, "already_reviewed")
+			log.Debug("artist image fallback source result", "source", found.Source, "reason", "already_reviewed")
 			return "skipped", "该候选已审核", nil
 		}
 	}
@@ -571,10 +630,8 @@ func (m *Manager) queryConfirmedArtistImageURL(ctx context.Context, artistID int
 	return nil
 }
 
-// cacheArtistImageGuarded 下载并写入头像缓存：写入在事务内再次验证当前
-// 状态与快照的 URL/身份一致且没有并发新增的自定义头像（含合并继承），
-// checkpoint 提供纪元围栏防止旧 worker 写入。
-func (m *Manager) cacheArtistImageGuarded(ctx context.Context, artistID int64, source, externalID, remoteURL string, checkpoint *storage.ArtistImageBackfillCheckpoint) error {
+// cacheArtistProfileImage downloads a stored profile image before its guarded save.
+func (m *Manager) cacheArtistProfileImage(ctx context.Context, artistID int64, source, remoteURL string, save func(storage.ArtistImageInput) error) error {
 	data, mimeType, extension, err := m.downloadPublicImage(ctx, remoteURL, "artist image")
 	if err != nil {
 		return err
@@ -584,7 +641,7 @@ func (m *Manager) cacheArtistImageGuarded(ctx context.Context, artistID int64, s
 	if err != nil {
 		return err
 	}
-	return m.store.SaveArtistImageGuarded(ctx, storage.ArtistImageInput{ArtistID: artistID, ByteSize: int64(len(data)), Source: source, RemoteURL: remoteURL, Hash: hash, MIMEType: mimeType, CachePath: cachePath}, source, externalID, remoteURL, checkpoint)
+	return save(storage.ArtistImageInput{ArtistID: artistID, ByteSize: int64(len(data)), Source: source, RemoteURL: remoteURL, Hash: hash, MIMEType: mimeType, CachePath: cachePath})
 }
 
 // waitArtistImageBackfill 等待限流截止时间：共享冷却较长者顺延，等待切片

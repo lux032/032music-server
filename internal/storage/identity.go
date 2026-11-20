@@ -663,8 +663,13 @@ func (s *Store) ArtistImagePath(ctx context.Context, artistID int64) (string, st
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", "", false, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT cache_path,mime_type FROM artist_image_cache WHERE artist_id=? OR artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?) ORDER BY artist_id=? DESC,fetched_at DESC LIMIT 1`, artistID, artistID, artistID).Scan(&path, &mimeType)
+	path, mimeType, err = artistCachedImagePath(ctx, s.db, artistID)
 	return path, mimeType, false, err
+}
+
+func artistCachedImagePath(ctx context.Context, db queryRower, artistID int64) (path, mimeType string, err error) {
+	err = db.QueryRowContext(ctx, `SELECT cache_path,mime_type FROM artist_image_cache WHERE artist_id=? OR artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?) ORDER BY artist_id=? DESC,fetched_at DESC LIMIT 1`, artistID, artistID, artistID).Scan(&path, &mimeType)
+	return path, mimeType, err
 }
 
 func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error) {

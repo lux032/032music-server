@@ -27,9 +27,20 @@ func artistFakeClock(m *Manager) {
 	}
 }
 
+// These tests count identity and biography requests across pause/resume. Keep
+// their transport scoped to those sources; avatar requests have their own tests.
+func artistRuntimeIdentityOnlyManager(t *testing.T, lastFM bool) (*Manager, int64) {
+	t.Helper()
+	m, artistID := independentArtistManager(t, lastFM)
+	if err := m.store.SaveArtistImageSettings(context.Background(), storage.ArtistImageSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	return m, artistID
+}
+
 // 限流预算耗尽后不再等人：持久化的 waiting_until 到点后自动继续同一任务。
 func TestArtistRuntimeRateLimitWaitAutoResume(t *testing.T) {
-	m, artist := independentArtistManager(t, false)
+	m, artist := artistRuntimeIdentityOnlyManager(t, false)
 	artistFakeClock(m)
 	calls := 0
 	m.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -255,7 +266,7 @@ func TestArtistRuntimeWaitPersistenceFailurePauses(t *testing.T) {
 func TestArtistRuntimeSavedSourcesResumeOutcomes(t *testing.T) {
 	for _, outcome := range []string{"matched", "review", "no_result"} {
 		t.Run(outcome, func(t *testing.T) {
-			m, artist := independentArtistManager(t, true)
+			m, artist := artistRuntimeIdentityOnlyManager(t, true)
 			ctx := context.Background()
 			input, _ := m.store.ArtistForMatching(ctx, artist)
 			input, err := m.store.ArtistMatchQueryContext(ctx, input)
@@ -312,7 +323,7 @@ func TestArtistRuntimeSavedSourcesResumeOutcomes(t *testing.T) {
 }
 
 func TestArtistRuntimeDetailsRateLimitAfterSourcesStillMatches(t *testing.T) {
-	m, artist := independentArtistManager(t, true)
+	m, artist := artistRuntimeIdentityOnlyManager(t, true)
 	ctx := context.Background()
 	db := writableSafetyDB(t, m)
 	if _, err := db.Exec(`DELETE FROM audio_file_tags`); err != nil {
@@ -349,7 +360,7 @@ func TestArtistRuntimeDetailsRateLimitAfterSourcesStillMatches(t *testing.T) {
 }
 
 func TestArtistRuntimePausedDetailsRestoresWithoutHTTP(t *testing.T) {
-	m, _ := independentArtistManager(t, true)
+	m, _ := artistRuntimeIdentityOnlyManager(t, true)
 	ctx := context.Background()
 	db := writableSafetyDB(t, m)
 	if _, err := db.Exec(`DELETE FROM audio_file_tags`); err != nil {
@@ -431,7 +442,7 @@ func TestArtistRuntimeStableGlobalReviewNotRequeried(t *testing.T) {
 func TestArtistRuntimeRecoveredSourceSurvivesOtherFailure(t *testing.T) {
 	for _, score := range []int{100, 85} {
 		t.Run(fmt.Sprint(score), func(t *testing.T) {
-			m, artist := independentArtistManager(t, true)
+			m, artist := artistRuntimeIdentityOnlyManager(t, true)
 			ctx := context.Background()
 			input, _ := m.store.ArtistForMatching(ctx, artist)
 			run, err := m.store.CreateDurableArtistRun(ctx, []storage.ArtistRunItemInput{{Artist: input}})
@@ -521,7 +532,7 @@ func TestArtistRuntimeAutoResumeCancelWins(t *testing.T) {
 
 // 重复注册只保留最新定时器：到点后恰好自动恢复一次。
 func TestArtistRuntimeAutoResumeTimerReplaced(t *testing.T) {
-	m, _ := independentArtistManager(t, false)
+	m, _ := artistRuntimeIdentityOnlyManager(t, false)
 	var mu sync.Mutex
 	now := time.Now()
 	m.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }

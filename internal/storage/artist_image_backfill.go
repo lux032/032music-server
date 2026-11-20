@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"time"
 )
 
@@ -118,6 +119,15 @@ func (s *Store) ArtistImageBackfillSubject(ctx context.Context, artistID int64) 
 // 提交写入时再逐项比对。没有可用地址时返回 sql.ErrNoRows。
 func (s *Store) ArtistImageProfileSource(ctx context.Context, artistID int64) (source, externalID, remoteURL string, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT p.source,p.external_id,p.remote_image_url FROM artist_external_profiles p JOIN metadata_source_settings s ON s.source=p.source WHERE p.artist_id=? AND COALESCE(p.remote_image_url,'')<>'' ORDER BY s.priority LIMIT 1`, artistID).Scan(&source, &externalID, &remoteURL)
+	return source, externalID, remoteURL, err
+}
+
+// ArtistImageIdentitySource snapshots a confirmed identity for automatic avatar
+// discovery. Profiles with a usable stored URL keep the existing source priority.
+func (s *Store) ArtistImageIdentitySource(ctx context.Context, artistID int64) (source, externalID, remoteURL string, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT p.source,p.external_id,COALESCE(p.remote_image_url,'')
+		FROM artist_external_profiles p LEFT JOIN metadata_source_settings s ON s.source=p.source
+		WHERE p.artist_id=? ORDER BY (COALESCE(p.remote_image_url,'')<>'') DESC,COALESCE(s.priority,1000),p.source LIMIT 1`, artistID).Scan(&source, &externalID, &remoteURL)
 	return source, externalID, remoteURL, err
 }
 
@@ -547,6 +557,16 @@ func (s *Store) RefreshArtistProfileGuarded(ctx context.Context, artistID int64,
 // 成立都拒绝写入并返回 ErrArtistImageBackfillState——绝不覆盖并发设置的
 // 自定义头像，也绝不跟随已变化的身份/URL。
 func (s *Store) SaveArtistImageGuarded(ctx context.Context, image ArtistImageInput, expectSource, expectExternalID, expectURL string, c *ArtistImageBackfillCheckpoint) error {
+	return s.saveArtistImageForIdentity(ctx, image, expectSource, expectExternalID, expectURL, c, false)
+}
+
+// SaveAutoMatchedArtistImage saves a missing avatar only while the identity used
+// for discovery is still confirmed and there is no existing usable avatar.
+func (s *Store) SaveAutoMatchedArtistImage(ctx context.Context, image ArtistImageInput, expectSource, expectExternalID, expectURL string) error {
+	return s.saveArtistImageForIdentity(ctx, image, expectSource, expectExternalID, expectURL, nil, true)
+}
+
+func (s *Store) saveArtistImageForIdentity(ctx context.Context, image ArtistImageInput, expectSource, expectExternalID, expectURL string, c *ArtistImageBackfillCheckpoint, onlyIfMissing bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -569,6 +589,17 @@ func (s *Store) SaveArtistImageGuarded(ctx context.Context, image ArtistImageInp
 	if custom {
 		return ErrArtistImageBackfillState
 	}
+	if onlyIfMissing {
+		path, _, pathErr := artistCachedImagePath(ctx, tx, image.ArtistID)
+		if pathErr != nil && !errors.Is(pathErr, sql.ErrNoRows) {
+			return pathErr
+		}
+		if pathErr == nil {
+			if _, statErr := os.Stat(path); statErr == nil {
+				return ErrArtistImageBackfillState
+			}
+		}
+	}
 	var currentID, currentURL string
 	err = tx.QueryRowContext(ctx, `SELECT external_id,COALESCE(remote_image_url,'') FROM artist_external_profiles WHERE artist_id=? AND source=?`, image.ArtistID, expectSource).Scan(&currentID, &currentURL)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -585,6 +616,11 @@ func (s *Store) SaveArtistImageGuarded(ctx context.Context, image ArtistImageInp
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_image_cache(artist_id,source,remote_url,content_hash,mime_type,cache_path,byte_size) VALUES(?,?,?,?,?,?,?) ON CONFLICT(artist_id) DO UPDATE SET source=excluded.source,remote_url=excluded.remote_url,content_hash=excluded.content_hash,mime_type=excluded.mime_type,cache_path=excluded.cache_path,byte_size=excluded.byte_size,fetched_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, image.ArtistID, image.Source, image.RemoteURL, image.Hash, image.MIMEType, image.CachePath, image.ByteSize); err != nil {
 		return err
+	}
+	if onlyIfMissing {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM artist_image_attempts WHERE artist_id=?`, image.ArtistID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

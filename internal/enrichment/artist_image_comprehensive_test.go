@@ -240,6 +240,89 @@ func TestComprehensiveImageBackfill_Tier2SourceSelection(t *testing.T) {
 	}
 }
 
+func TestArtistAutoMatchFillsMissingImageWithTier2(t *testing.T) {
+	const artist = "三好真亜沙"
+	const mbid = "55555555-5555-4555-8555-555555555555"
+	const deezerURL = "http://93.184.216.34/deezer-xl.png"
+	const bangumiURL = "http://93.184.216.34/bangumi.png"
+	portrait := makeAvatarPNG(t, 100, 200)
+	for _, tt := range []struct {
+		name          string
+		deezerAlbum   string
+		resetIdentity bool
+		wantSource    string
+	}{
+		{name: "verified Deezer portrait", deezerAlbum: "Album", wantSource: "deezer"},
+		{name: "Bangumi after unverified Deezer", deezerAlbum: "Unrelated", wantSource: "bangumi"},
+		{name: "identity reset during Bangumi download", deezerAlbum: "Unrelated", resetIdentity: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			bt := newBackfillTransport()
+			bt.mbBody = `{"id":"` + mbid + `","name":"` + artist + `","relations":[]}`
+			manager, artistID := imageBackfillManager(t, bt, artist, mbid)
+			enableBackfillSource(t, manager.store, "musicbrainz", true)
+			enableBackfillSource(t, manager.store, "bangumi", true)
+			manager.setBangumiIntervalForTest(0)
+			var paths []string
+			var resetErr error
+			manager.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Host {
+				case "api.deezer.com", "api.bgm.tv", "93.184.216.34":
+					paths = append(paths, r.URL.Path)
+				default:
+					return bt.roundTrip(r)
+				}
+				var body string
+				switch r.URL.Path {
+				case "/search/artist":
+					body = `{"data":[{"id":1,"name":"三好 真亜沙","picture_xl":"` + deezerURL + `"}]}`
+				case "/artist/1/albums":
+					body = fmt.Sprintf(`{"data":[{"title":%q}]}`, tt.deezerAlbum)
+				case "/v0/search/persons":
+					body = `{"data":[{"id":1,"name":"三好　真亜沙","career":["artist"],"images":{"medium":"` + bangumiURL + `"}}]}`
+				case "/deezer-xl.png", "/bangumi.png":
+					if tt.resetIdentity {
+						resetErr = manager.store.ResetArtistIdentity(ctx, artistID, "musicbrainz", mbid)
+					}
+					body = portrait
+				default:
+					return nil, fmt.Errorf("unexpected image request: %s", r.URL)
+				}
+				return cannedResponse(http.StatusOK, http.Header{}, body), nil
+			})
+
+			runID, err := manager.StartAll(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := waitArtistMatchRun(t, manager.store, runID)
+			manager.Wait()
+			if run.Status != "completed" || run.Matched != 1 || resetErr != nil {
+				t.Fatalf("identity run=%+v reset error=%v", run, resetErr)
+			}
+			wantPaths := []string{"/search/artist", "/artist/1/albums", "/deezer-xl.png"}
+			if tt.wantSource != "deezer" {
+				wantPaths = []string{"/search/artist", "/artist/1/albums", "/v0/search/persons", "/bangumi.png"}
+			}
+			if !slices.Equal(paths, wantPaths) {
+				t.Fatalf("request paths = %v, want %v", paths, wantPaths)
+			}
+			if tt.resetIdentity {
+				if _, ok := imageBackfillCacheRow(t, manager, artistID); ok {
+					t.Fatal("a reset identity must not receive the downloaded portrait")
+				}
+				return
+			}
+			var source string
+			err = writableSafetyDB(t, manager).QueryRowContext(ctx, "SELECT source FROM artist_image_cache WHERE artist_id=?", artistID).Scan(&source)
+			if err != nil || source != tt.wantSource {
+				t.Fatalf("cached source=%q err=%v, want %q", source, err, tt.wantSource)
+			}
+		})
+	}
+}
+
 func TestArtistImageSearchNormalizesJapaneseNames(t *testing.T) {
 	for _, tt := range []struct {
 		local, query, remote string
