@@ -271,16 +271,29 @@
           <div><h2>歌手简介策略</h2></div>
           <label class="switch"><input type="checkbox" name="wikipedia_enabled" {{if .BiographySettings.WikipediaEnabled}}checked{{end}}> 启用 Wikipedia</label>
         </header>
-        <p>先通过已确认的 MusicBrainz MBID 找到 Wikidata，再读取对应语言的 Wikipedia 页面，不使用模糊名称搜索。</p>
+        <p>通过已确认的 MusicBrainz MBID 查找 Wikidata 全语种词条，优先挑选信息最完整的版本，必要时由 AI 自动翻译为目标语言入库；Last.fm 仅作可选补充，未配置 API Key 时自动跳过。</p>
         <div class="form-grid thirds">
-          <label>语言优先级<input name="biography_languages" value="{{.BiographySettings.PreferredLanguages}}" placeholder="zh,ja,en"><small>逗号分隔，从左到右尝试。</small></label>
+          <label>目标语言<select name="biography_target_language">
+            <option value="zh-Hans" {{if or (eq .BiographySettings.TargetLanguage "") (eq .BiographySettings.TargetLanguage "zh-Hans")}}selected{{end}}>简体中文 (zh-Hans)</option>
+            <option value="zh-Hant" {{if eq .BiographySettings.TargetLanguage "zh-Hant"}}selected{{end}}>繁體中文 (zh-Hant)</option>
+            <option value="en" {{if eq .BiographySettings.TargetLanguage "en"}}selected{{end}}>English (en)</option>
+            <option value="ja" {{if eq .BiographySettings.TargetLanguage "ja"}}selected{{end}}>日本語 (ja)</option>
+          </select><small>AI 翻译与联网概括的最终入库语言。</small></label>
           <label>来源优先级<select name="biography_source_priority">
-            <option value="wikipedia,lastfm" {{if eq .BiographySettings.SourcePriority "wikipedia,lastfm"}}selected{{end}}>Wikipedia 优先，Last.fm 其次</option>
-            <option value="lastfm,wikipedia" {{if eq .BiographySettings.SourcePriority "lastfm,wikipedia"}}selected{{end}}>Last.fm 优先，Wikipedia 其次</option>
+            <option value="wikipedia,lastfm" {{if eq .BiographySettings.SourcePriority "wikipedia,lastfm"}}selected{{end}}>Wikipedia 优先，Last.fm 可选补充</option>
+            <option value="lastfm,wikipedia" {{if eq .BiographySettings.SourcePriority "lastfm,wikipedia"}}selected{{end}}>Last.fm 优先（需有效 Key），Wikipedia 其次</option>
           </select></label>
           <label>缓存天数<input type="number" min="1" name="biography_cache_days" value="{{.BiographySettings.CacheDays}}"></label>
         </div>
-        <label class="switch"><input type="checkbox" name="biography_english_fallback" {{if .BiographySettings.EnglishFallback}}checked{{end}}> 首选语言均无结果时，自动以英文保底</label>
+        <div class="form-grid thirds">
+          <label class="switch"><input type="checkbox" name="biography_ai_translate_enabled" {{if .BiographySettings.AITranslateEnabled}}checked{{end}}> 启用 AI 自动翻译最完整源</label>
+          <label class="switch"><input type="checkbox" name="biography_ai_web_fallback_enabled" {{if .BiographySettings.AIWebFallbackEnabled}}checked{{end}}> 无现成简介时允许批量 AI 联网概括</label>
+          <label>简介专用模型（可选）<input name="biography_ai_model" value="{{.BiographySettings.AIModel}}" placeholder="留空则复用全局 AI 主模型"></label>
+        </div>
+        <div class="form-grid thirds">
+          <label>原生语言优先级<input name="biography_languages" value="{{.BiographySettings.PreferredLanguages}}" placeholder="zh,ja,en"><small>关闭 AI 翻译或回退时按从左到右尝试。</small></label>
+          <label class="switch"><input type="checkbox" name="biography_english_fallback" {{if .BiographySettings.EnglishFallback}}checked{{end}}> 首选语言均无结果时，自动以英文保底</label>
+        </div>
         <div class="editor-actions"><button type="submit">保存简介策略设置</button></div>
       </section>
     </form>

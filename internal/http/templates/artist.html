@@ -42,18 +42,29 @@
       <section>
         <div class="section-title">
           <h2>简介</h2>
-          <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <button class="secondary-button">刷新简介</button>
-          </form>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <button class="secondary-button">刷新简介</button>
+            </form>
+            {{if not .Artist.Biography}}
+            <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="web_fallback" value="1">
+              <button class="secondary-button">AI 联网生成</button>
+            </form>
+            {{end}}
+          </div>
         </div>
         {{if .Artist.BiographySource}}
         <div class="biography-origin">
-          <span>{{.Artist.BiographySource}}{{if .Artist.BiographyLanguage}} · {{.Artist.BiographyLanguage}}{{end}}</span>
-          {{if .Artist.BiographyURL}}<a href="{{.Artist.BiographyURL}}" target="_blank" rel="noreferrer">查看原文 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+          <span>{{biographyOriginLabel .Artist.BiographySource .Artist.BiographyLanguage .Artist.BiographyOriginSource .Artist.BiographyOriginLanguage}}</span>
+          {{if .Artist.BiographyModel}}<small>{{.Artist.BiographyModel}}</small>{{end}}
+          {{if .Artist.BiographyURL}}<a href="{{.Artist.BiographyURL}}" target="_blank" rel="noreferrer">{{biographyLinkLabel .Artist.BiographySource}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
         </div>
         {{end}}
-        <p class="artist-bio">{{if .Artist.Biography}}{{.Artist.Biography}}{{else}}尚无简介。确认 MusicBrainz 身份后刷新简介。{{end}}</p>
+        <p class="artist-bio">{{if .Artist.Biography}}{{.Artist.Biography}}{{else}}尚无简介。确认 MusicBrainz 身份后刷新简介，或点击「AI 联网生成」尝试基于公开资料整理。{{end}}</p>
+        {{if eq .Artist.BiographySource "ai_web"}}<p class="muted" style="margin-top:-28px;margin-bottom:24px;font-size:0.8rem;">此简介由 AI 基于公开网络资料整理生成，如信息有误可通过「编辑歌手」手工覆盖。</p>{{end}}
 
         {{if .Artist.Biographies}}
         <details class="biography-versions">
@@ -61,7 +72,7 @@
           <div>
             {{range .Artist.Biographies}}
             <article class="{{if .Selected}}selected{{end}}">
-              <div><strong>{{.Source}} · {{.Language}}</strong>{{if .Selected}}<small>当前显示</small>{{end}}</div>
+              <div><strong>{{biographyOriginLabel .Source .Language .OriginSource .OriginLanguage}}</strong>{{if .Model}}<small>{{.Model}}</small>{{end}}{{if .Selected}}<small>当前显示</small>{{end}}</div>
               <p>{{.Biography}}</p>
               <form method="post" action="/admin/artists/{{$.Artist.ID}}/biography">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">

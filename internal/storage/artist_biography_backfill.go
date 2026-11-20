@@ -43,6 +43,7 @@ type ArtistBiographyBackfillItem struct {
 type ArtistBiographyBackfillRun struct {
 	ID                                    int64
 	Status                                string
+	Mode                                  string
 	Total, Processed                      int
 	Filled, Missing, Skipped, Failed      int
 	Current, ErrorMessage                 string
@@ -98,6 +99,50 @@ func requireArtistBiographyBackfillCheckpoint(ctx context.Context, tx *sql.Tx, c
 
 // ArtistBiographyBackfillCandidates 返回 DB 级候选：未合并的歌手（H2
 // performer 口径）、本行无人工简介、本人与合并来源均无 found 版本行。
+// NormalizeArtistBiographyBackfillMode 规范化简介补全模式：
+// missing（默认，仅缺口）、retranslate（复用缓存重译）、rescan_all（全量重扫）。
+func NormalizeArtistBiographyBackfillMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "retranslate":
+		return "retranslate"
+	case "rescan_all":
+		return "rescan_all"
+	default:
+		return "missing"
+	}
+}
+
+// ArtistBiographyBackfillCandidatesForMode 按模式返回待处理歌手列表，始终跳过已合并与有人工简介的歌手。
+func (s *Store) ArtistBiographyBackfillCandidatesForMode(ctx context.Context, mode, targetLanguage string) ([]ArtistBiographyBackfillCandidate, error) {
+	mode = NormalizeArtistBiographyBackfillMode(mode)
+	if mode == "missing" {
+		return s.ArtistBiographyBackfillCandidates(ctx)
+	}
+	var query string
+	var args []any
+	if mode == "retranslate" {
+		targetTag := normalizeTargetLanguage(targetLanguage)
+		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' AND EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=a.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id)) AND b.source IN ('wikipedia','lastfm') AND b.status='found' AND b.biography<>'') AND NOT EXISTS(SELECT 1 FROM artist_biographies t WHERE t.artist_id=a.id AND t.source='ai_translated' AND t.language=? AND t.status='found' AND t.biography<>'') ORDER BY a.id`
+		args = []any{targetTag}
+	} else {
+		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' ORDER BY a.id`
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []ArtistBiographyBackfillCandidate
+	for rows.Next() {
+		var v ArtistBiographyBackfillCandidate
+		if err = rows.Scan(&v.ID, &v.Name); err != nil {
+			return nil, err
+		}
+		list = append(list, v)
+	}
+	return list, rows.Err()
+}
+
 func (s *Store) ArtistBiographyBackfillCandidates(ctx context.Context) ([]ArtistBiographyBackfillCandidate, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate+` AND `+artistBiographyGapPredicate+` ORDER BY a.id`)
 	if err != nil {
@@ -245,9 +290,12 @@ func (s *Store) UpsertArtistBiographyForIdentityGuarded(ctx context.Context, art
 		return ErrArtistBiographyBackfillState
 	}
 	value.Source = strings.ToLower(strings.TrimSpace(value.Source))
-	value.Language = normalizeLanguage(value.Language)
+	value.Language = normalizeBiographyLanguage(value.Source, value.Language)
 	value.Biography = strings.TrimSpace(value.Biography)
 	value.PageURL = strings.TrimSpace(value.PageURL)
+	value.OriginSource = strings.ToLower(strings.TrimSpace(value.OriginSource))
+	value.OriginLanguage = normalizeLanguage(value.OriginLanguage)
+	value.Model = strings.TrimSpace(value.Model)
 	if value.Status == "" {
 		value.Status = "found"
 	}
@@ -282,16 +330,21 @@ func (s *Store) UpsertArtistBiographyForIdentityGuarded(ctx context.Context, art
 	if current.OwnerID != expected.OwnerID || current.Source != expected.Source || current.ExternalID != expected.ExternalID {
 		return ErrArtistBiographyBackfillState
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_biographies(artist_id,source,language,biography,page_url,status) VALUES(?,?,?,?,?,?) ON CONFLICT(artist_id,source,language) DO UPDATE SET biography=excluded.biography,page_url=excluded.page_url,status=excluded.status,fetched_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, artistID, value.Source, value.Language, value.Biography, value.PageURL, value.Status); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_biographies(artist_id,source,language,biography,page_url,origin_source,origin_language,model,status) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,source,language) DO UPDATE SET biography=excluded.biography,page_url=excluded.page_url,origin_source=excluded.origin_source,origin_language=excluded.origin_language,model=excluded.model,status=excluded.status,fetched_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, artistID, value.Source, value.Language, value.Biography, value.PageURL, value.OriginSource, value.OriginLanguage, value.Model, value.Status); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) CreateArtistBiographyBackfillRun(ctx context.Context, items []ArtistBiographyBackfillCandidate) (int64, error) {
+	return s.CreateArtistBiographyBackfillRunWithMode(ctx, "missing", items)
+}
+
+func (s *Store) CreateArtistBiographyBackfillRunWithMode(ctx context.Context, mode string, items []ArtistBiographyBackfillCandidate) (int64, error) {
 	if len(items) == 0 {
 		return 0, ErrArtistBiographyBackfillState
 	}
+	mode = NormalizeArtistBiographyBackfillMode(mode)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -307,7 +360,7 @@ func (s *Store) CreateArtistBiographyBackfillRun(ctx context.Context, items []Ar
 	if active > 0 {
 		return 0, ErrArtistBiographyBackfillState
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO artist_biography_backfill_runs(status,total_items) VALUES('running',?)`, len(items))
+	result, err := tx.ExecContext(ctx, `INSERT INTO artist_biography_backfill_runs(status,mode,total_items) VALUES('running',?,?)`, mode, len(items))
 	if err != nil {
 		return 0, err
 	}
@@ -517,7 +570,7 @@ func (s *Store) RecoverArtistBiographyBackfillRuns(ctx context.Context) (int64, 
 
 func (s *Store) DurableArtistBiographyBackfillRun(ctx context.Context, id int64) (ArtistBiographyBackfillRun, error) {
 	var r ArtistBiographyBackfillRun
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,total_items,processed_items,filled_items,missing_items,skipped_items,failed_items,COALESCE(current_artist,''),COALESCE(error_message,''),pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_biography_backfill_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Total, &r.Processed, &r.Filled, &r.Missing, &r.Skipped, &r.Failed, &r.Current, &r.ErrorMessage, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,mode,total_items,processed_items,filled_items,missing_items,skipped_items,failed_items,COALESCE(current_artist,''),COALESCE(error_message,''),pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_biography_backfill_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Mode, &r.Total, &r.Processed, &r.Filled, &r.Missing, &r.Skipped, &r.Failed, &r.Current, &r.ErrorMessage, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
 	return r, err
 }
 

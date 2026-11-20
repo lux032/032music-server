@@ -78,6 +78,13 @@ func (m *Manager) ArtistBiographyBackfillStats(ctx context.Context) (missing, to
 // 歌手。已有活动或暂停中的补全任务时返回
 // storage.ErrArtistBiographyBackfillState。
 func (m *Manager) StartArtistBiographyBackfill(ctx context.Context) (int64, error) {
+	return m.StartArtistBiographyBackfillWithMode(ctx, "missing")
+}
+
+// StartArtistBiographyBackfillWithMode 按指定模式启动简介补全或重扫任务：
+// missing（仅缺口）、retranslate（复用已有缓存重译）、rescan_all（全量按新策略强制重扫）。
+func (m *Manager) StartArtistBiographyBackfillWithMode(ctx context.Context, mode string) (int64, error) {
+	mode = storage.NormalizeArtistBiographyBackfillMode(mode)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.bioBackfillRunning {
@@ -88,14 +95,19 @@ func (m *Manager) StartArtistBiographyBackfill(ctx context.Context) (int64, erro
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	items, err := m.store.ArtistBiographyBackfillCandidates(ctx)
+	settings, err := m.store.BiographySettings(ctx)
+	if err != nil {
+		return 0, err
+	}
+	targetTag := resolveTargetLanguageTag(settings)
+	items, err := m.store.ArtistBiographyBackfillCandidatesForMode(ctx, mode, targetTag)
 	if err != nil {
 		return 0, err
 	}
 	if len(items) == 0 {
 		return 0, ErrNoArtistBiographyBackfillCandidates
 	}
-	runID, err := m.store.CreateArtistBiographyBackfillRun(ctx, items)
+	runID, err := m.store.CreateArtistBiographyBackfillRunWithMode(ctx, mode, items)
 	if err != nil {
 		return 0, err
 	}
@@ -135,6 +147,10 @@ func (m *Manager) artistBiographyBackfillFailure(runID int64, err error) {
 }
 
 func (m *Manager) executeArtistBiographyBackfill(ctx context.Context, runID int64) {
+	runMode := "missing"
+	if run, err := m.store.DurableArtistBiographyBackfillRun(ctx, runID); err == nil {
+		runMode = storage.NormalizeArtistBiographyBackfillMode(run.Mode)
+	}
 	for {
 		if ctx.Err() != nil {
 			if m.baseCtx.Err() != nil {
@@ -158,7 +174,7 @@ func (m *Manager) executeArtistBiographyBackfill(ctx context.Context, runID int6
 		checkpoint := storage.ArtistBiographyBackfillCheckpoint{RunID: runID, ItemID: item.ID, ClaimToken: item.ClaimToken}
 		rateAttempts := 0
 		for {
-			outcome, errText, rate := m.processArtistBiographyBackfillItem(ctx, checkpoint, item)
+			outcome, errText, rate := m.processArtistBiographyBackfillItem(ctx, checkpoint, item, runMode)
 			if ctx.Err() != nil {
 				if m.baseCtx.Err() != nil {
 					m.pauseArtistBiographyBackfillShutdown(runID)
@@ -220,18 +236,24 @@ func (m *Manager) pauseArtistBiographyBackfillShutdown(runID int64) {
 // skipped_no_mbid 且零网络；抓取主体复用 refreshArtistBiographies 的
 // force=false 变体并以 checkpoint+身份快照 guarded 落库。限流以
 // RateLimitError 返回供 run 循环等待重试，其余失败归入各终态 outcome。
-func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkpoint storage.ArtistBiographyBackfillCheckpoint, item storage.ArtistBiographyBackfillItem) (outcome, errText string, rate *RateLimitError) {
-	if _, err := m.store.ArtistBiographyBackfillSubject(ctx, item.ArtistID); errors.Is(err, sql.ErrNoRows) {
-		// P2-1：本项可能在限流前已写入部分 found 行（或并发路径已补齐），
-		// 放宽复查（不含缺口条件）后继续以 force=false 补剩余语言，最终按
-		// filled/missing 结算，绝不把部分完成误判为 skipped_state。
+func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkpoint storage.ArtistBiographyBackfillCheckpoint, item storage.ArtistBiographyBackfillItem, runMode string) (outcome, errText string, rate *RateLimitError) {
+	runMode = storage.NormalizeArtistBiographyBackfillMode(runMode)
+	if runMode == "missing" {
+		if _, err := m.store.ArtistBiographyBackfillSubject(ctx, item.ArtistID); errors.Is(err, sql.ErrNoRows) {
+			if _, retryErr := m.store.ArtistBiographyBackfillRetrySubject(ctx, item.ArtistID); errors.Is(retryErr, sql.ErrNoRows) {
+				return "skipped_state", "状态已变化（已合并/已有简介或人工简介/不再是歌手）", nil
+			} else if retryErr != nil {
+				return "failed", retryErr.Error(), nil
+			}
+		} else if err != nil {
+			return "failed", err.Error(), nil
+		}
+	} else {
 		if _, retryErr := m.store.ArtistBiographyBackfillRetrySubject(ctx, item.ArtistID); errors.Is(retryErr, sql.ErrNoRows) {
-			return "skipped_state", "状态已变化（已合并/已有简介或人工简介/不再是歌手）", nil
+			return "skipped_state", "状态已变化（已合并/已有人工简介/不再是歌手）", nil
 		} else if retryErr != nil {
 			return "failed", retryErr.Error(), nil
 		}
-	} else if err != nil {
-		return "failed", err.Error(), nil
 	}
 
 	// 逐项重读配置（M6/R7）：语言优先级、来源启用/密钥、cache_days 绝不
@@ -241,16 +263,24 @@ func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkp
 		return "failed", err.Error(), nil
 	}
 	languages := languageList(settings.PreferredLanguages, settings.EnglishFallback)
-	if len(languages) == 0 {
+	if len(languages) == 0 && !settings.AITranslateEnabled && !settings.AIWebFallbackEnabled {
 		return "skipped_source_disabled", "未配置简介语言", nil
+	}
+	cachedTranslationOnly := runMode == "retranslate"
+	if cachedTranslationOnly && !settings.AITranslateEnabled {
+		return "skipped_source_disabled", "未启用 AI 简介翻译", nil
+	}
+	if len(languages) == 0 {
+		languages = []string{normalizeBioShortLanguage(resolveTargetLanguageTag(settings))}
 	}
 	lastFMSetting, lastFMErr := m.store.MetadataSourceSetting(ctx, "lastfm")
 	if lastFMErr != nil {
 		return "failed", lastFMErr.Error(), nil
 	}
-	wikipediaEnabled := settings.WikipediaEnabled
-	lastFMEnabled := lastFMSetting.Enabled && lastFMSetting.APIKey != ""
-	if !wikipediaEnabled && !lastFMEnabled {
+	wikipediaEnabled := settings.WikipediaEnabled && !cachedTranslationOnly
+	lastFMEnabled := !cachedTranslationOnly && lastFMSetting.Enabled && lastFMSetting.APIKey != ""
+	aiWebEnabled := settings.AIWebFallbackEnabled && !cachedTranslationOnly
+	if !wikipediaEnabled && !lastFMEnabled && !aiWebEnabled && !settings.AITranslateEnabled {
 		return "skipped_source_disabled", "所有简介来源均已禁用或未配置密钥", nil
 	}
 
@@ -262,13 +292,25 @@ func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkp
 		// 无已确认外部身份（含合并继承）：计跳过、绝不匹配身份、零网络请求。
 		return "skipped_no_mbid", "未确认 MusicBrainz 身份，无法补全简介", nil
 	}
-	if identity.Source != "musicbrainz" && !lastFMEnabled {
+	if identity.Source != "musicbrainz" && !lastFMEnabled && !aiWebEnabled && !settings.AITranslateEnabled {
 		return "skipped_no_mbid", "仅确认 Last.fm 身份且未启用 Last.fm 来源，无法补全简介", nil
 	}
 
+	targetTag := resolveTargetLanguageTag(settings)
 	wikipediaNeeded := identity.Source == "musicbrainz" && wikipediaEnabled && m.biographySourceNeedsRefresh(ctx, item.ArtistID, "wikipedia", languages, settings.CacheDays)
 	lastFMNeeded := lastFMEnabled && m.biographySourceNeedsRefresh(ctx, item.ArtistID, "lastfm", languages, settings.CacheDays)
-	if !wikipediaNeeded && !lastFMNeeded {
+	aiTranslateNeeded := false
+	if settings.AITranslateEnabled && targetTag != "" {
+		fresh, _ := m.store.ArtistBiographyFresh(ctx, item.ArtistID, "ai_translated", targetTag, settings.CacheDays)
+		aiTranslateNeeded = !fresh
+	}
+	aiWebNeeded := false
+	if aiWebEnabled && targetTag != "" {
+		fresh, _ := m.store.ArtistBiographyFresh(ctx, item.ArtistID, "ai_web", targetTag, settings.CacheDays)
+		aiWebNeeded = !fresh
+	}
+	forceRefresh := runMode == "rescan_all"
+	if !forceRefresh && !wikipediaNeeded && !lastFMNeeded && !aiTranslateNeeded && !aiWebNeeded {
 		// M4：fresh missing 同样在缓存窗口内跳过，绝不每次点按钮反复打源。
 		return "skipped_fresh", "", nil
 	}
@@ -276,7 +318,7 @@ func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkp
 	if m.testBioBackfillHook != nil {
 		m.testBioBackfillHook(item.ArtistID)
 	}
-	if err = m.refreshArtistBiographies(ctx, item.ArtistID, false, &checkpoint); err != nil {
+	if err = m.refreshArtistBiographies(ctx, item.ArtistID, forceRefresh, &checkpoint, BiographyRefreshOptions{cachedTranslationOnly: cachedTranslationOnly}); err != nil {
 		if rateErr := asRateLimited(err); rateErr != nil {
 			return "", "", rateErr
 		}

@@ -263,6 +263,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"formatTime":             localTimeMarkup,
 		"albumTypeLabel":         albumTypeLabel,
 		"workTypeLabel":          workTypeLabel,
+		"biographyOriginLabel":   biographyOriginLabel,
+		"biographyLinkLabel":     biographyLinkLabel,
 		"workRoleLabel":          workRoleLabel,
 		"workRoleShortLabel":     workRoleShortLabel,
 		"workRoleBadgeLabel":     workRoleBadgeLabel,
@@ -1317,3 +1319,76 @@ func (a *App) validCSRFHeader(r *http.Request) bool {
 }
 
 func (a *App) SetAcquisition(s *acquisition.Service) { a.acquisition = s }
+
+func biographyLanguageDisplay(code string) string {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "zh", "zh-hans", "zh-cn":
+		return "中文"
+	case "zh-hant", "zh-tw", "zh-hk":
+		return "繁体中文"
+	case "ja", "jp":
+		return "日文"
+	case "en":
+		return "英文"
+	case "ko":
+		return "韩文"
+	case "fr":
+		return "法文"
+	case "de":
+		return "德文"
+	case "es":
+		return "西班牙文"
+	default:
+		return strings.TrimSpace(code)
+	}
+}
+
+func biographySourceDisplay(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "wikipedia":
+		return "Wikipedia"
+	case "lastfm":
+		return "Last.fm"
+	case "local":
+		return "人工编辑"
+	default:
+		return strings.TrimSpace(source)
+	}
+}
+
+func biographyOriginLabel(source, language, originSource, originLanguage string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "ai_translated":
+		origin := ""
+		if originLanguage != "" {
+			origin = biographyLanguageDisplay(originLanguage)
+		}
+		if originSource != "" {
+			if origin != "" {
+				origin += " "
+			}
+			origin += biographySourceDisplay(originSource)
+		}
+		if origin != "" {
+			return "AI 翻译 · 译自" + origin
+		}
+		return "AI 翻译"
+	case "ai_web":
+		return "AI 基于网络资料整理"
+	case "local":
+		return "人工编辑"
+	default:
+		label := biographySourceDisplay(source)
+		if strings.TrimSpace(language) != "" {
+			return label + " · " + strings.TrimSpace(language)
+		}
+		return label
+	}
+}
+
+func biographyLinkLabel(source string) string {
+	if strings.ToLower(strings.TrimSpace(source)) == "ai_web" {
+		return "参考来源"
+	}
+	return "查看原文"
+}

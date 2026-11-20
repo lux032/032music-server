@@ -52,6 +52,7 @@ type ArtistDetail struct {
 	PerformedTrackCount, CreditTrackCount int64
 	Artist
 	Biography, BiographySource, BiographyLanguage, BiographyURL, BiographyFetchedAt string
+	BiographyOriginSource, BiographyOriginLanguage, BiographyModel                  string
 	Country, ArtistType                                                             string
 	MergedIntoID                                                                    int64
 	// HasCustomImage reports a user-uploaded custom image (4.5.7), including
@@ -736,6 +737,9 @@ func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error
 			d.BiographyLanguage = selected.Language
 			d.BiographyURL = selected.PageURL
 			d.BiographyFetchedAt = selected.FetchedAt
+			d.BiographyOriginSource = selected.OriginSource
+			d.BiographyOriginLanguage = selected.OriginLanguage
+			d.BiographyModel = selected.Model
 			for index := range d.Biographies {
 				d.Biographies[index].Selected = d.Biographies[index].Source == selected.Source && d.Biographies[index].Language == selected.Language
 			}

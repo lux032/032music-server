@@ -16,20 +16,22 @@ import (
 const aiSettingsPath = "/admin/settings/ai"
 
 var aiPurposeLabels = map[string]string{
-	"tag":           "AI 打标",
-	"review":        "AI 打标复核",
-	"sample":        "抽样对比",
-	"test":          "连接测试",
-	"mix":           "每日推荐标题",
-	"translate":     "歌词翻译",
-	"playlist":      "AI 灵感歌单",
-	"artist_alias":  "中文别名补全",
-	"album_review":  "AI 审核 · 专辑关联",
-	"track_review":  "AI 审核 · 曲目关联",
-	"work_review":   "AI 审核 · 作品对齐",
-	"artist_review": "AI 审核 · 艺术家匹配",
-	"credit_split":  "AI 审核 · 复合署名拆分",
-	"series_review": "AI 审核 · 系列建议",
+	"tag":                        "AI 打标",
+	"review":                     "AI 打标复核",
+	"sample":                     "抽样对比",
+	"test":                       "连接测试",
+	"mix":                        "每日推荐标题",
+	"translate":                  "歌词翻译",
+	"playlist":                   "AI 灵感歌单",
+	"artist_alias":               "中文别名补全",
+	"artist_biography_translate": "歌手简介翻译",
+	"artist_biography_web":       "歌手简介联网概括",
+	"album_review":               "AI 审核 · 专辑关联",
+	"track_review":               "AI 审核 · 曲目关联",
+	"work_review":                "AI 审核 · 作品对齐",
+	"artist_review":              "AI 审核 · 艺术家匹配",
+	"credit_split":               "AI 审核 · 复合署名拆分",
+	"series_review":              "AI 审核 · 系列建议",
 }
 
 type aiSettingsPageData struct {

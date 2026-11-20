@@ -18,10 +18,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lux032/032music-server/internal/aiclient"
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/netfetch"
 	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 type Manager struct {
@@ -50,6 +52,9 @@ type Manager struct {
 	phaseEndpoints      phase4Endpoints
 	confirmAlbumSubject func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error)
 	inlineAI            func(context.Context, string, int64) bool
+	aiLimiter           *aiclient.Limiter
+	aiChatFactory       aiclient.ChatFactory
+	bioWebFactory       func(storage.ArtistAliasSettings, storage.AISettings) (websearch.Client, error)
 	posterMu            sync.Mutex
 	posterBackfilling   bool
 	posterLastResult    *PosterBackfillResult
@@ -1028,7 +1033,11 @@ func (m *Manager) RefreshConfirmedArtistImage(ctx context.Context, artistID int6
 }
 
 func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, force bool) error {
-	return m.refreshArtistBiographies(ctx, artistID, force, nil)
+	return m.refreshArtistBiographies(ctx, artistID, force, nil, BiographyRefreshOptions{})
+}
+
+func (m *Manager) RefreshArtistBiographiesWithOptions(ctx context.Context, artistID int64, force bool, opts BiographyRefreshOptions) error {
+	return m.refreshArtistBiographies(ctx, artistID, force, nil, opts)
 }
 
 // refreshArtistBiographies 抓取并写入一位歌手的简介版本行。简介一律写规范
@@ -1038,7 +1047,7 @@ func (m *Manager) RefreshArtistBiographies(ctx context.Context, artistID int64, 
 // 迟到的写入一律被拒绝并中止本次刷新。checkpoint 仅补全 run 传入；交互
 // 路径传 nil（仍保留身份与合并状态校验）。语言优先级/来源启用/密钥/缓存
 // 天数在每次调用时重读，绝不使用快照配置。
-func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, force bool, checkpoint *storage.ArtistBiographyBackfillCheckpoint) error {
+func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, force bool, checkpoint *storage.ArtistBiographyBackfillCheckpoint, opts BiographyRefreshOptions) error {
 	canonicalID, err := m.store.CanonicalArtistID(ctx, artistID)
 	if err != nil {
 		return err
@@ -1048,18 +1057,33 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 		return err
 	}
 	languages := languageList(settings.PreferredLanguages, settings.EnglishFallback)
-	if len(languages) == 0 {
+	targetTag := resolveTargetLanguageTag(settings)
+	targetShort := normalizeBioShortLanguage(targetTag)
+	if len(languages) == 0 && !settings.AITranslateEnabled && !settings.AIWebFallbackEnabled && !opts.AllowWebFallback {
 		return ErrNoBiographyLanguages
 	}
+	if len(languages) == 0 && targetShort != "" {
+		languages = []string{targetShort}
+	}
 
-	wikipediaNeeded := settings.WikipediaEnabled
+	wikipediaNeeded := settings.WikipediaEnabled && !opts.cachedTranslationOnly
 	lastFMSetting, lastFMErr := m.store.MetadataSourceSetting(ctx, "lastfm")
-	lastFMNeeded := lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != ""
+	lastFMNeeded := !opts.cachedTranslationOnly && lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != ""
+	aiTranslateNeeded := settings.AITranslateEnabled && targetShort != ""
+	aiWebNeeded := !opts.cachedTranslationOnly && (settings.AIWebFallbackEnabled || opts.AllowWebFallback) && targetShort != ""
 	if !force {
 		wikipediaNeeded = wikipediaNeeded && m.biographySourceNeedsRefresh(ctx, canonicalID, "wikipedia", languages, settings.CacheDays)
 		lastFMNeeded = lastFMNeeded && m.biographySourceNeedsRefresh(ctx, canonicalID, "lastfm", languages, settings.CacheDays)
+		if aiTranslateNeeded {
+			fresh, _ := m.store.ArtistBiographyFresh(ctx, canonicalID, "ai_translated", targetTag, settings.CacheDays)
+			aiTranslateNeeded = !fresh
+		}
+		if aiWebNeeded && !opts.AllowWebFallback {
+			fresh, _ := m.store.ArtistBiographyFresh(ctx, canonicalID, "ai_web", targetTag, settings.CacheDays)
+			aiWebNeeded = !fresh
+		}
 	}
-	if !wikipediaNeeded && !lastFMNeeded {
+	if !wikipediaNeeded && !lastFMNeeded && !aiTranslateNeeded && !aiWebNeeded {
 		return nil
 	}
 
@@ -1078,7 +1102,7 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 		// Wikipedia lookup relies on MusicBrainz url-rels -> Wikidata; when only
 		// a Last.fm identity is confirmed, restrict to anchored Last.fm bios.
 		wikipediaNeeded = false
-		if !lastFMNeeded {
+		if !lastFMNeeded && !aiTranslateNeeded && !aiWebNeeded {
 			if lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != "" {
 				return nil
 			}
@@ -1093,9 +1117,14 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 	}
 
 	var wikidataResource string
+	var artistCountry string
+	var mbOfficialURLs []string
 	wikidataChecked := false
 	resolved := false
-	if wikipediaNeeded {
+	var candidates []biographyCandidate
+	var sitelinks map[string]string
+	needMBRelations := wikipediaNeeded || (aiWebNeeded && identity.Source == "musicbrainz")
+	if needMBRelations && identity.Source == "musicbrainz" {
 		mbSetting, settingErr := m.store.MetadataSourceSetting(ctx, "musicbrainz")
 		if settingErr == nil {
 			var value mbArtistResponse
@@ -1107,10 +1136,16 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 				m.logger.Warn("load MusicBrainz relations for biography", "artistId", canonicalID, "error", lookupErr)
 			} else {
 				wikidataChecked = true
+				artistCountry = value.Country
 				for _, relation := range value.Relations {
-					if relation.Type == "wikidata" {
+					if relation.Type == "wikidata" && wikidataResource == "" {
 						wikidataResource = relation.URL.Resource
-						break
+					}
+					switch relation.Type {
+					case "official homepage", "discogs", "allmusic", "bandcamp", "other databases":
+						if websearch.SafePageURL(relation.URL.Resource) {
+							mbOfficialURLs = append(mbOfficialURLs, relation.URL.Resource)
+						}
 					}
 				}
 			}
@@ -1118,14 +1153,28 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 	}
 
 	if wikipediaNeeded && wikidataResource != "" {
-		sitelinks, linkErr := m.wikidataSitelinks(ctx, wikidataResource)
+		var linkErr error
+		sitelinks, linkErr = m.wikidataSitelinks(ctx, wikidataResource)
 		if linkErr != nil {
 			if asRateLimited(linkErr) != nil {
 				return linkErr
 			}
 			m.logger.Warn("load Wikidata sitelinks", "artistId", canonicalID, "error", linkErr)
 		} else {
-			for _, language := range languages {
+			fetchLangs := languages
+			if settings.AITranslateEnabled {
+				fetchLangs = biographyCandidateLanguages(sitelinks, artistCountry, targetShort, languages)
+				// Preserve missing cache rows for configured languages absent from sitelinks.
+				for _, language := range languages {
+					if sitelinks[language] == "" {
+						if storeErr := upsert(storage.ArtistBiography{Source: "wikipedia", Language: language, Status: "missing"}); storeErr != nil {
+							return storeErr
+						}
+						resolved = true
+					}
+				}
+			}
+			for _, language := range fetchLangs {
 				title := sitelinks[language]
 				if title == "" {
 					if storeErr := upsert(storage.ArtistBiography{Source: "wikipedia", Language: language, Status: "missing"}); storeErr != nil {
@@ -1184,7 +1233,103 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 			resolved = true
 		}
 	}
+
+	// Reuse cached native rows when AI translation or web fallback is enabled
+	// so toggling AI settings does not force redundant Wikipedia/Last.fm calls.
+	if aiTranslateNeeded || aiWebNeeded {
+		existing, listErr := m.store.ArtistBiographies(ctx, canonicalID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, row := range existing {
+			if row.Source == "wikipedia" || row.Source == "lastfm" {
+				candidates = append(candidates, biographyCandidate{
+					Source:   row.Source,
+					Language: row.Language,
+					Text:     row.Biography,
+					PageURL:  row.PageURL,
+					Score:    biographyInfoScore(row.Source, row.Biography),
+				})
+			}
+		}
+	}
+
+	best, nativeTarget, hasBest := selectBestBiographyCandidate(candidates, targetShort)
+
+	// Tier 2: translate the most complete source edition into targetLanguage.
+	if aiTranslateNeeded && hasBest {
+		if shouldSkipAITranslation(nativeTarget, best) {
+			resolved = true
+		} else {
+			// If the best Wikipedia lead is unusually short, try a bounded full-article excerpt.
+			if best.Source == "wikipedia" && best.Score < bioShortIntroThreshold && sitelinks[best.Language] != "" {
+				if excerpt, exErr := m.wikipediaFullExcerpt(ctx, best.Language, sitelinks[best.Language], bioMaxWikiExcerptRunes); exErr == nil && biographyInfoScore("wikipedia", excerpt) > best.Score {
+					best.Text = excerpt
+					best.Score = biographyInfoScore("wikipedia", excerpt)
+				}
+			}
+			translated, usedModel, trErr := m.translateArtistBiography(ctx, artist.Name, best, settings)
+			if trErr != nil {
+				if opts.cachedTranslationOnly {
+					return trErr
+				}
+				m.logger.Warn("AI translate artist biography", "artistId", canonicalID, "originSource", best.Source, "originLanguage", best.Language, "error", RedactSourceError(trErr))
+			} else {
+				if storeErr := upsert(storage.ArtistBiography{
+					Source:         "ai_translated",
+					Language:       targetTag,
+					Biography:      translated,
+					PageURL:        best.PageURL,
+					OriginSource:   best.Source,
+					OriginLanguage: best.Language,
+					Model:          usedModel,
+				}); storeErr != nil {
+					return storeErr
+				}
+				resolved = true
+			}
+		}
+	}
+
+	// Tier 3: when no usable Wikipedia/Last.fm biography exists, synthesize one
+	// strictly from identity-anchored web search evidence.
+	var webFallbackErr error
+	if aiWebNeeded && (!hasBest || best.Score < 40) {
+		bio, pageURL, usedModel, ok, webErr := m.synthesizeArtistBiographyFromWeb(ctx, canonicalID, mbOfficialURLs, settings)
+		if webErr != nil {
+			if opts.AllowWebFallback {
+				return webErr
+			}
+			webFallbackErr = webErr
+			m.logger.Warn("AI web synthesize artist biography", "artistId", canonicalID, "error", RedactSourceError(webErr))
+		} else if ok {
+			if storeErr := upsert(storage.ArtistBiography{
+				Source:       "ai_web",
+				Language:     targetTag,
+				Biography:    bio,
+				PageURL:      pageURL,
+				OriginSource: "web",
+				Model:        usedModel,
+			}); storeErr != nil {
+				return storeErr
+			}
+			resolved = true
+		} else {
+			if storeErr := upsert(storage.ArtistBiography{
+				Source:   "ai_web",
+				Language: targetTag,
+				Status:   "missing",
+			}); storeErr != nil {
+				return storeErr
+			}
+			resolved = true
+		}
+	}
+
 	if !resolved {
+		if webFallbackErr != nil {
+			return webFallbackErr
+		}
 		return errors.New("all enabled biography sources failed")
 	}
 	return nil

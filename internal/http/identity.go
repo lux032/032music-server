@@ -155,11 +155,15 @@ func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request)
 	existingLastFM, _ := a.store.MetadataSourceSetting(r.Context(), "lastfm")
 	if scope == "biography" {
 		biographySettings := storage.BiographySettings{
-			PreferredLanguages: strings.TrimSpace(r.FormValue("biography_languages")),
-			SourcePriority:     strings.TrimSpace(r.FormValue("biography_source_priority")),
-			WikipediaEnabled:   r.FormValue("wikipedia_enabled") != "",
-			EnglishFallback:    r.FormValue("biography_english_fallback") != "",
-			CacheDays:          int(parseInt64(r.FormValue("biography_cache_days"))),
+			PreferredLanguages:   strings.TrimSpace(r.FormValue("biography_languages")),
+			SourcePriority:       strings.TrimSpace(r.FormValue("biography_source_priority")),
+			WikipediaEnabled:     r.FormValue("wikipedia_enabled") != "",
+			EnglishFallback:      r.FormValue("biography_english_fallback") != "",
+			CacheDays:            int(parseInt64(r.FormValue("biography_cache_days"))),
+			TargetLanguage:       strings.TrimSpace(r.FormValue("biography_target_language")),
+			AITranslateEnabled:   r.FormValue("biography_ai_translate_enabled") != "",
+			AIWebFallbackEnabled: r.FormValue("biography_ai_web_fallback_enabled") != "",
+			AIModel:              strings.TrimSpace(r.FormValue("biography_ai_model")),
 		}
 		if err := a.store.SaveBiographySettings(r.Context(), biographySettings); err != nil {
 			http.Error(w, err.Error(), 500)
@@ -401,7 +405,14 @@ func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil {
+	allowWeb := r.FormValue("web_fallback") == "1"
+	var refreshErr error
+	if allowWeb {
+		refreshErr = a.enrichment.RefreshArtistBiographiesWithOptions(r.Context(), id, true, enrichment.BiographyRefreshOptions{AllowWebFallback: true})
+	} else {
+		refreshErr = a.enrichment.RefreshArtistBiographies(r.Context(), id, true)
+	}
+	if err := refreshErr; err != nil {
 		if errors.Is(err, enrichment.ErrNoBiographyLanguages) {
 			// P2-6：语言配置为空与“未确认身份”明确区分。
 			redirectWithNotice(w, r, artistProfilePath(id), "未配置简介语言，请在数据来源设置中配置简介语言")

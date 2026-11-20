@@ -174,10 +174,23 @@
       <p class="muted run-last">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
       {{end}}
       {{if not .BioBackfill.Active}}
-      <form method="post" action="/admin/matches/biographies/backfill">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <button>歌手简介补全</button>
-      </form>
+      <div class="run-actions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <form method="post" action="/admin/matches/biographies/backfill">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="mode" value="missing">
+          <button>补全缺失简介</button>
+        </form>
+        <form method="post" action="/admin/matches/biographies/backfill">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="mode" value="retranslate">
+          <button class="secondary-button">重译已有简介（复用缓存）</button>
+        </form>
+        <form method="post" action="/admin/matches/biographies/backfill">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="mode" value="rescan_all">
+          <button class="secondary-button">按新策略全量重扫</button>
+        </form>
+      </div>
       {{end}}
     </section>
 

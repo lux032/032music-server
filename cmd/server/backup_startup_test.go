@@ -19,6 +19,11 @@ import (
 
 func startupFixture(t *testing.T) (config.Config, *storage.Backups, *storage.Store) {
 	t.Helper()
+	return startupFixtureAtVersion(t, 0)
+}
+
+func startupFixtureAtVersion(t *testing.T, version int) (config.Config, *storage.Backups, *storage.Store) {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Config{DatabasePath: filepath.Join(dir, "music.db"), DataDirectory: dir, MusicDirectory: "/music", BackupTime: "02:30", BackupKeepDaily: 3, BackupKeepPreupgrade: 2}
 	b := storage.NewBackups(cfg.DatabasePath, dir, "/music")
@@ -29,7 +34,7 @@ func startupFixture(t *testing.T) (config.Config, *storage.Backups, *storage.Sto
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = s.Migrate(context.Background()); e != nil {
+	if e = s.MigrateUpTo(context.Background(), version); e != nil {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { s.Close() })
@@ -37,45 +42,9 @@ func startupFixture(t *testing.T) (config.Config, *storage.Backups, *storage.Sto
 }
 func startupLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 func TestStartupRestoreSkipsPreupgrade(t *testing.T) {
-	cfg, b, s := startupFixture(t)
+	cfg, b, s := startupFixtureAtVersion(t, 55)
 	ctx := context.Background()
 	s.Close()
-	raw, e := sql.Open("sqlite", cfg.DatabasePath)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = raw.Exec(`ALTER TABLE tracks DROP COLUMN artist_credit;ALTER TABLE albums DROP COLUMN artist_credit;DROP INDEX idx_listenbrainz_love_queue_due;DROP INDEX idx_listenbrainz_scrobble_queue_due;DROP TABLE listenbrainz_track_ids;DROP TABLE listenbrainz_love_backfill;DROP TABLE listenbrainz_love_queue;DROP TABLE listenbrainz_scrobble_queue;DROP TABLE listenbrainz_settings;DROP TABLE artist_match_run_modes;DROP TRIGGER artist_source_state_setting_change;DROP TRIGGER artist_source_state_merge_change;DROP TABLE artist_source_match_state;CREATE TABLE artist_source_match_state (
- artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
- source TEXT NOT NULL,
- input_key TEXT NOT NULL,
- config_key TEXT NOT NULL,
- outcome TEXT NOT NULL CHECK(outcome IN ('review','no_result','matched','skipped_composite','error')),
- checked_at TEXT NOT NULL,
- next_check_at TEXT NOT NULL,
- snapshot_json TEXT NOT NULL DEFAULT '{}',
- PRIMARY KEY(artist_id,source)
-) STRICT;CREATE TRIGGER artist_source_state_setting_change AFTER UPDATE OF enabled,auto_match,language ON metadata_source_settings
-WHEN OLD.enabled<>NEW.enabled OR OLD.auto_match<>NEW.auto_match OR OLD.language<>NEW.language
-BEGIN DELETE FROM artist_source_match_state WHERE source=NEW.source; END;CREATE TRIGGER artist_source_state_merge_change AFTER UPDATE OF merged_into_artist_id ON artists
-WHEN OLD.merged_into_artist_id IS NOT NEW.merged_into_artist_id
-BEGIN DELETE FROM artist_source_match_state WHERE artist_id=NEW.id; END;DROP TABLE ai_review_runs;DROP TABLE ai_review_decisions;DROP TABLE ai_review_settings;DROP TRIGGER artist_alias_observe_new;DROP TABLE artist_alias_candidates;DROP TABLE artist_alias_jobs;DROP TABLE artist_alias_rejections;DROP TABLE artist_alias_new_artists;DROP TABLE artist_alias_settings;DROP TABLE artist_search_aliases;DROP TABLE legacy_creator_conversions;DROP TABLE audio_file_artist_reverify;DROP TABLE audio_file_identity_checks;DROP TABLE audio_file_artist_identities;DROP TABLE track_primary_artist_operations;DROP TABLE track_primary_artist_base;DROP TABLE track_primary_artist_state;ALTER TABLE artist_merge_operations DROP COLUMN correction_guard;ALTER TABLE artist_match_candidates DROP COLUMN requires_manual_review;DELETE FROM schema_migrations WHERE version>=56;DROP INDEX idx_acq_available_file_created;DROP TABLE acquisition_evidence;DROP TABLE acquisition_tasks;DROP TABLE acquisition_search_results;DROP TABLE acquisition_searches;DROP TABLE acquisition_settings;DROP TABLE discovery_schedule;DROP TABLE discovery_bangumi_mappings;DROP TABLE discovery_work_music;DROP TABLE discovery_bangumi_music;DROP TABLE discovery_work_seeds;DROP TABLE discovery_match_rejections;DROP TABLE discovery_possible_matches;DROP TABLE discovery_candidates;DROP TABLE discovery_artist_release_groups;DROP TABLE discovery_seeds;DROP TABLE discovery_refresh_state;DROP TABLE discovery_release_groups;DROP TABLE audio_file_release_groups;DROP TABLE audio_file_releases;DROP TABLE album_release_groups;DROP TABLE release_group_decisions;DROP TABLE release_group_rebuild;DROP TABLE release_groups;DROP TABLE backup_settings;DROP TABLE login_bans;DROP TABLE login_allowlist;DROP INDEX idx_lastfm_love_queue_due;DROP TABLE lastfm_love_backfill;DROP TABLE lastfm_love_queue;DROP TABLE credential_overrides;CREATE TABLE credential_overrides (
-    key TEXT PRIMARY KEY CHECK (key IN ('admin_username', 'admin_password_hash', 'api_token_hash', 'media_token')),
-    value TEXT NOT NULL CHECK (length(value) > 0),
-    updated_at TEXT NOT NULL
-) STRICT;ALTER TABLE lastfm_scrobble_settings DROP COLUMN sync_loves;ALTER TABLE lastfm_scrobble_settings DROP COLUMN last_love_error;ALTER TABLE lastfm_scrobble_settings DROP COLUMN last_love_error_at;CREATE TABLE ai_usage_new (
-    day TEXT NOT NULL,
-    model TEXT NOT NULL,
-    purpose TEXT NOT NULL CHECK (purpose IN ('tag', 'review', 'sample', 'test', 'mix', 'translate')),
-    requests INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens INTEGER NOT NULL DEFAULT 0,
-    completion_tokens INTEGER NOT NULL DEFAULT 0,
-    cached_tokens INTEGER NOT NULL DEFAULT 0,
-    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (day, model, purpose)
-) STRICT;INSERT INTO ai_usage_new SELECT * FROM ai_usage;DROP TABLE ai_usage;ALTER TABLE ai_usage_new RENAME TO ai_usage`); e != nil {
-		t.Fatal(e)
-	}
-	raw.Close()
 	name, e := b.Create(ctx, "manual", 0)
 	if e != nil {
 		t.Fatal(e)

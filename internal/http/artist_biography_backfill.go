@@ -15,6 +15,7 @@ import (
 type artistBiographyRunView struct {
 	ID           int64  `json:"id"`
 	Status       string `json:"status"`
+	Mode         string `json:"mode"`
 	Total        int    `json:"total"`
 	Processed    int    `json:"processed"`
 	Filled       int    `json:"filled"`
@@ -31,7 +32,7 @@ type artistBiographyRunView struct {
 }
 
 func artistBiographyRunDTO(r storage.ArtistBiographyBackfillRun) artistBiographyRunView {
-	return artistBiographyRunView{ID: r.ID, Status: r.Status, Total: r.Total, Processed: r.Processed, Filled: r.Filled, Missing: r.Missing, Skipped: r.Skipped, Failed: r.Failed, Current: r.Current, ErrorMessage: r.ErrorMessage, PauseReason: r.PauseReason, WaitSource: r.WaitSource, WaitingUntil: r.WaitingUntil, WaitTotalMS: r.WaitTotalMS, Resumable: r.Status == "paused"}
+	return artistBiographyRunView{ID: r.ID, Status: r.Status, Mode: r.Mode, Total: r.Total, Processed: r.Processed, Filled: r.Filled, Missing: r.Missing, Skipped: r.Skipped, Failed: r.Failed, Current: r.Current, ErrorMessage: r.ErrorMessage, PauseReason: r.PauseReason, WaitSource: r.WaitSource, WaitingUntil: r.WaitingUntil, WaitTotalMS: r.WaitTotalMS, Resumable: r.Status == "paused"}
 }
 
 // artistBiographyBackfillView 是 /admin/matches 页“歌手简介补全”区块的
@@ -64,7 +65,8 @@ func (a *App) handleStartArtistBiographyBackfill(w http.ResponseWriter, r *http.
 		redirectWithNotice(w, r, "/admin/matches", "任务服务不可用")
 		return
 	}
-	if _, err := a.enrichment.StartArtistBiographyBackfill(r.Context()); err != nil {
+	mode := storage.NormalizeArtistBiographyBackfillMode(r.FormValue("mode"))
+	if _, err := a.enrichment.StartArtistBiographyBackfillWithMode(r.Context(), mode); err != nil {
 		message := "启动补全失败，请稍后重试"
 		switch {
 		case errors.Is(err, enrichment.ErrNoArtistBiographyBackfillCandidates):
@@ -80,7 +82,14 @@ func (a *App) handleStartArtistBiographyBackfill(w http.ResponseWriter, r *http.
 		redirectWithNotice(w, r, "/admin/matches", message)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "歌手简介补全任务已启动")
+	notice := "歌手简介补全任务已启动"
+	switch mode {
+	case "retranslate":
+		notice = "已有简介重译任务已启动（复用本地缓存）"
+	case "rescan_all":
+		notice = "歌手简介全量重扫任务已启动（按新策略重新抓取并翻译）"
+	}
+	redirectWithNotice(w, r, "/admin/matches", notice)
 }
 
 func (a *App) handlePauseArtistBiographyBackfill(w http.ResponseWriter, r *http.Request) {

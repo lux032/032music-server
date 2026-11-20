@@ -165,6 +165,7 @@ func run() error {
 		sharedAILimiter.SetRate(aiSt.RequestsPerMinute)
 	}
 	app.SetSharedAILimiter(sharedAILimiter)
+	enrichmentManager.SetAILimiter(sharedAILimiter)
 	aiReviewService := aireview.New(db, logger, aireview.Options{
 		Limiter: sharedAILimiter,
 		OnWorkConfirmed: func(_ context.Context, workID int64) {

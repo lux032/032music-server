@@ -49,9 +49,9 @@ func (s *Store) ResetArtistIdentity(ctx context.Context, artistID int64, source,
 			return err
 		}
 		if source == "musicbrainz" {
-			_, err = tx.ExecContext(ctx, `DELETE FROM artist_biographies WHERE artist_id=? AND source IN ('wikipedia','lastfm')`, artistID)
+			_, err = tx.ExecContext(ctx, `DELETE FROM artist_biographies WHERE artist_id=? AND source IN ('wikipedia','lastfm','ai_translated','ai_web')`, artistID)
 		} else {
-			_, err = tx.ExecContext(ctx, `DELETE FROM artist_biographies WHERE artist_id=? AND source='lastfm'`, artistID)
+			_, err = tx.ExecContext(ctx, `DELETE FROM artist_biographies WHERE artist_id=? AND (source IN ('lastfm','ai_web') OR (source='ai_translated' AND origin_source='lastfm'))`, artistID)
 		}
 		if err != nil {
 			return err
