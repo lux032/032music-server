@@ -13,7 +13,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lux032/032music-server/internal/netfetch"
 	"github.com/lux032/032music-server/internal/storage"
+	"golang.org/x/text/unicode/norm"
 )
 
 var (
@@ -138,7 +140,7 @@ func (m *Manager) deezerArtistImageByID(ctx context.Context, deezerID string) (s
 func pickValidDeezerPicture(candidates ...string) string {
 	for _, raw := range candidates {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		if !validStructuredArtistImageURL(raw) {
 			continue
 		}
 		lower := strings.ToLower(raw)
@@ -151,22 +153,23 @@ func pickValidDeezerPicture(candidates ...string) string {
 	return ""
 }
 
-// deezerSearchArtistImage searches Deezer's public artist API using the artist
-// anchor and verifies exact normalized name/alias match (plus optional album
-// cross-check when multiple same-name artists exist).
+// deezerSearchArtistImage prefers picture_xl and requires album evidence whenever
+// the artist's local discography is known. Fan counts are not identity evidence.
 func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.ArtistBiographyAnchor) (string, string, error) {
-	queries := buildArtistSearchNames(anchor)
-	if len(queries) == 0 {
-		return "", "", nil
+	names := normalizedAnchorNameSet(anchor)
+	albums := normalizedStringSet(anchor.KnownAlbums)
+	albumMatches := map[int64]bool{}
+	var lookupErr error
+	type hit struct {
+		imageURL string
+		pageURL  string
 	}
-	nameSet := normalizedAnchorNameSet(anchor)
-	albumSet := normalizedStringSet(anchor.KnownAlbums)
 
-	for _, qName := range queries {
+	for _, qName := range buildArtistSearchNames(anchor) {
 		q := url.Values{"q": {qName}, "limit": {"10"}}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.deezer.com/search/artist?"+q.Encode(), nil)
 		if err != nil {
-			continue
+			return "", "", err
 		}
 		req.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 		var resp struct {
@@ -174,52 +177,76 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 				ID         int64  `json:"id"`
 				Name       string `json:"name"`
 				Link       string `json:"link"`
-				NBAlbum    int    `json:"nb_album"`
-				NBFan      int    `json:"nb_fan"`
 				PictureXL  string `json:"picture_xl"`
 				PictureBig string `json:"picture_big"`
 			} `json:"data"`
 		}
-		if err = m.doSourceJSON(m.client, req, "deezer", &resp); err != nil {
-			if asRateLimited(err) != nil {
+		if err := m.doSourceJSON(m.client, req, "deezer", &resp); err != nil {
+			if asRateLimited(err) != nil || ctx.Err() != nil {
 				return "", "", err
 			}
+			lookupErr = err
 			continue
 		}
-		type hit struct {
-			id      int64
-			imgURL  string
-			pageURL string
-			nbFan   int
-		}
-		var matches []hit
+
+		matches := map[int64]hit{}
+		var matchIDs []int64
 		for _, item := range resp.Data {
-			if !nameSet[compactArtistName(item.Name)] {
+			if item.ID <= 0 || !names[compactArtistName(item.Name)] {
 				continue
 			}
 			img := pickValidDeezerPicture(item.PictureXL, item.PictureBig)
-			matches = append(matches, hit{id: item.ID, imgURL: img, pageURL: strings.TrimSpace(item.Link), nbFan: item.NBFan})
-		}
-		if len(matches) == 0 {
-			continue
-		}
-		if len(matches) == 1 && len(albumSet) == 0 {
-			return matches[0].imgURL, matches[0].pageURL, nil
-		}
-		// When albums are known or multiple homonymous artists match, verify album overlap.
-		if len(albumSet) > 0 {
-			for _, h := range matches {
-				overlap, checkErr := m.deezerArtistHasAlbumOverlap(ctx, h.id, albumSet)
-				if checkErr != nil && asRateLimited(checkErr) != nil {
-					return "", "", checkErr
-				}
-				if overlap && h.imgURL != "" {
-					return h.imgURL, h.pageURL, nil
-				}
+			prior, exists := matches[item.ID]
+			if !exists {
+				matchIDs = append(matchIDs, item.ID)
+			}
+			if prior.imageURL == "" {
+				matches[item.ID] = hit{imageURL: img, pageURL: strings.TrimSpace(item.Link)}
 			}
 		}
+		if len(albums) == 0 && len(matches) > 1 {
+			return "", "", nil
+		}
+
+		var selected hit
+		var confirmed int
+		var albumLookupErr error
+		for _, id := range matchIDs {
+			if len(albums) > 0 {
+				overlap, checked := albumMatches[id]
+				if !checked {
+					overlap, err = m.deezerArtistHasAlbumOverlap(ctx, id, albums)
+					if err != nil {
+						if asRateLimited(err) != nil || ctx.Err() != nil {
+							return "", "", err
+						}
+						albumLookupErr = err
+						continue
+					}
+					albumMatches[id] = overlap
+				}
+				if !overlap {
+					continue
+				}
+			}
+			confirmed++
+			selected = matches[id]
+		}
+		if confirmed > 1 {
+			return "", "", nil
+		}
+		if albumLookupErr != nil {
+			// An unchecked homonym might also match the local discography.
+			if confirmed == 1 {
+				return "", "", albumLookupErr
+			}
+			lookupErr = albumLookupErr
+		}
+		if confirmed == 1 && selected.imageURL != "" {
+			return selected.imageURL, selected.pageURL, nil
+		}
 	}
-	return "", "", nil
+	return "", "", lookupErr
 }
 
 func (m *Manager) deezerArtistHasAlbumOverlap(ctx context.Context, deezerID int64, albumSet map[string]bool) (bool, error) {
@@ -236,18 +263,9 @@ func (m *Manager) deezerArtistHasAlbumOverlap(ctx context.Context, deezerID int6
 	if err = m.doSourceJSON(m.client, req, "deezer", &resp); err != nil {
 		return false, err
 	}
-	for _, a := range resp.Data {
-		normTitle := normalize(a.Title)
-		if normTitle == "" {
-			continue
-		}
-		if albumSet[normTitle] {
+	for _, album := range resp.Data {
+		if albumSet[normalize(norm.NFKC.String(album.Title))] {
 			return true, nil
-		}
-		for known := range albumSet {
-			if len([]rune(known)) >= 4 && len([]rune(normTitle)) >= 4 && (strings.Contains(normTitle, known) || strings.Contains(known, normTitle)) {
-				return true, nil
-			}
 		}
 	}
 	return false, nil
@@ -278,6 +296,7 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 		base = "https://api.bgm.tv"
 	}
 
+	var lookupErr error
 	for _, qName := range queries {
 		if waitErr := m.waitBangumiRateLimit(ctx); waitErr != nil {
 			return "", "", waitErr
@@ -308,9 +327,10 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 			} `json:"data"`
 		}
 		if doErr := m.doSourceJSON(m.client, req, "bangumi", &resp); doErr != nil {
-			if asRateLimited(doErr) != nil {
+			if asRateLimited(doErr) != nil || ctx.Err() != nil {
 				return "", "", doErr
 			}
+			lookupErr = doErr
 			continue
 		}
 		var matchedID int64
@@ -319,16 +339,28 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 			if p.ID <= 0 || !hasBangumiMusicCareer(p.Career) {
 				continue
 			}
+			var imgURL string
+			for _, candidate := range []string{p.Images.Large, p.Images.Medium, p.Images.Common, p.Images.Grid} {
+				candidate = strings.TrimSpace(candidate)
+				if validStructuredArtistImageURL(candidate) {
+					imgURL = candidate
+					break
+				}
+			}
+			if imgURL == "" {
+				continue
+			}
 			if !nameSet[compactArtistName(p.Name)] {
 				infobox := p.Infobox
 				if len(infobox) == 0 {
 					var detailErr error
 					infobox, detailErr = m.bangumiPersonInfobox(ctx, base, p.ID)
-					if asRateLimited(detailErr) != nil {
-						return "", "", detailErr
-					}
-					if err := ctx.Err(); err != nil {
-						return "", "", err
+					if detailErr != nil {
+						if asRateLimited(detailErr) != nil || ctx.Err() != nil {
+							return "", "", detailErr
+						}
+						lookupErr = detailErr
+						continue
 					}
 				}
 				if !bangumiInfoboxMatchesName(infobox, nameSet) {
@@ -336,23 +368,22 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 				}
 			}
 			if matchedID != 0 && matchedID != p.ID {
-				matchedID = 0
-				break
+				// Both candidates have plausible identities and usable portraits.
+				return "", "", nil
 			}
-			matchedID = p.ID
-			for _, candidate := range []string{p.Images.Large, p.Images.Medium, p.Images.Common, p.Images.Grid} {
-				candidate = strings.TrimSpace(candidate)
-				if candidate != "" && !strings.Contains(strings.ToLower(candidate), "no_icon") {
-					matchedImage = candidate
-					break
-				}
-			}
+			matchedID, matchedImage = p.ID, imgURL
 		}
-		if matchedID != 0 && matchedImage != "" {
+		if matchedID != 0 {
 			return matchedImage, fmt.Sprintf("https://bgm.tv/person/%d", matchedID), nil
 		}
 	}
-	return "", "", nil
+	return "", "", lookupErr
+}
+
+func validStructuredArtistImageURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") &&
+		u.Hostname() != "" && u.User == nil && !netfetch.IsLikelyPlaceholderImageURL(u)
 }
 
 // The search response can omit infobox fields, which are available on the person detail endpoint.
@@ -456,27 +487,37 @@ func (m *Manager) fanartArtistImage(ctx context.Context, mbid, apiKey string) (s
 	return strings.TrimSpace(resp.ArtistThumb[0].URL), nil
 }
 
+// Only strip trailing annotations. Splitting on slashes or stripping internal
+// parentheses could turn a group or multiple credits into an unrelated artist.
+var artistNameAnnotation = regexp.MustCompile(`(?:\s*\([^()]*\))+$`)
+
+func stripArtistNameAnnotation(name string) string {
+	return strings.TrimSpace(artistNameAnnotation.ReplaceAllString(name, ""))
+}
+
 func buildArtistSearchNames(anchor storage.ArtistBiographyAnchor) []string {
 	var out []string
 	seen := map[string]bool{}
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			return
+	add := func(name string) {
+		key := normalize(name)
+		if key != "" && !seen[key] {
+			seen[key] = true
+			out = append(out, name)
 		}
-		key := normalize(s)
-		if key == "" || seen[key] {
-			return
-		}
-		seen[key] = true
-		out = append(out, s)
 	}
-	add(anchor.Name)
-	for _, a := range anchor.Aliases {
-		if len(out) >= 3 {
+	primaryNames := map[string]bool{}
+	for _, name := range append([]string{anchor.Name}, anchor.Aliases...) {
+		name = strings.TrimSpace(norm.NFKC.String(name))
+		key := normalize(name)
+		if key == "" || primaryNames[key] {
+			continue
+		}
+		primaryNames[key] = true
+		add(name)
+		add(stripArtistNameAnnotation(name))
+		if len(primaryNames) == 3 {
 			break
 		}
-		add(a)
 	}
 	return out
 }
@@ -484,14 +525,17 @@ func buildArtistSearchNames(anchor storage.ArtistBiographyAnchor) []string {
 var artistNameSeparators = strings.NewReplacer(" ", "", "・", "", "·", "")
 
 func compactArtistName(name string) string {
-	return artistNameSeparators.Replace(normalize(name))
+	return artistNameSeparators.Replace(normalize(norm.NFKC.String(name)))
 }
 
 func normalizedAnchorNameSet(anchor storage.ArtistBiographyAnchor) map[string]bool {
 	set := map[string]bool{}
 	for _, name := range append([]string{anchor.Name}, anchor.Aliases...) {
-		if key := compactArtistName(name); key != "" {
-			set[key] = true
+		name = strings.TrimSpace(norm.NFKC.String(name))
+		for _, variant := range []string{name, stripArtistNameAnnotation(name)} {
+			if key := compactArtistName(variant); key != "" {
+				set[key] = true
+			}
 		}
 	}
 	return set
@@ -500,7 +544,7 @@ func normalizedAnchorNameSet(anchor storage.ArtistBiographyAnchor) map[string]bo
 func normalizedStringSet(items []string) map[string]bool {
 	set := map[string]bool{}
 	for _, item := range items {
-		if k := normalize(item); k != "" {
+		if k := normalize(norm.NFKC.String(item)); k != "" {
 			set[k] = true
 		}
 	}

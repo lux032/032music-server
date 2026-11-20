@@ -8,7 +8,9 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,7 +22,12 @@ import (
 
 func makeValidAvatarPNG(t *testing.T) string {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 300, 300))
+	return makeAvatarPNG(t, 300, 300)
+}
+
+func makeAvatarPNG(t *testing.T, width, height int) string {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	img.Set(0, 0, color.RGBA{R: 50, G: 100, B: 200, A: 255})
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
@@ -107,6 +114,199 @@ func TestComprehensiveImageBackfill_BangumiTier2(t *testing.T) {
 	}
 }
 
+func TestComprehensiveImageBackfill_Tier2SourceSelection(t *testing.T) {
+	const deezerXL = "http://93.184.216.34/deezer-xl.png"
+	const bangumiMedium = "http://93.184.216.34/bangumi-medium.png"
+	const search = "/search/artist"
+	const firstAlbums = "/artist/1/albums"
+	const secondAlbums = "/artist/2/albums"
+	const bangumiSearch = "/v0/search/persons"
+
+	largePortrait := makeAvatarPNG(t, 1000, 1000)
+	smallPortrait := makeAvatarPNG(t, 100, 200)
+	tinyIcon := makeAvatarPNG(t, 32, 32)
+	for _, tt := range []struct {
+		name        string
+		candidates  string
+		secondAlbum string
+		deezerImage string
+		wantSource  string
+		wantURL     string
+		wantReason  string
+		wantPaths   []string
+	}{
+		{
+			name: "verified Deezer XL wins",
+			candidates: `{"data":[
+				{"id":1,"name":"神前暁","nb_fan":500,"picture_xl":"http://93.184.216.34/wrong.png"},
+				{"id":2,"name":"神前暁","nb_fan":1,"picture_xl":"` + deezerXL + `","picture_big":"http://93.184.216.34/deezer-big.png"}
+			]}`,
+			secondAlbum: "Album", deezerImage: largePortrait,
+			wantSource: "deezer", wantURL: deezerXL, wantReason: "cached",
+			wantPaths: []string{search, firstAlbums, secondAlbums, "/deezer-xl.png"},
+		},
+		{
+			name: "multiple homonyms without album overlap",
+			candidates: `{"data":[
+				{"id":1,"name":"神前暁","nb_fan":500,"picture_xl":"http://93.184.216.34/wrong.png"},
+				{"id":2,"name":"神前暁","nb_fan":1,"picture_xl":"` + deezerXL + `"}
+			]}`,
+			secondAlbum: "Other release",
+			wantSource:  "bangumi", wantURL: bangumiMedium, wantReason: "no_match",
+			wantPaths: []string{search, firstAlbums, secondAlbums, bangumiSearch, "/bangumi-medium.png"},
+		},
+		{
+			name:       "single low-fan homonym without album overlap",
+			candidates: `{"data":[{"id":1,"name":"神前暁","nb_fan":1,"picture_xl":"` + deezerXL + `"}]}`,
+			wantSource: "bangumi", wantURL: bangumiMedium, wantReason: "no_match",
+			wantPaths: []string{search, firstAlbums, bangumiSearch, "/bangumi-medium.png"},
+		},
+		{
+			name:        "verified Deezer image below quality threshold",
+			candidates:  `{"data":[{"id":2,"name":"神前暁","picture_xl":"` + deezerXL + `"}]}`,
+			secondAlbum: "Album", deezerImage: tinyIcon,
+			wantSource: "bangumi", wantURL: bangumiMedium, wantReason: "quality_rejected",
+			wantPaths: []string{search, secondAlbums, "/deezer-xl.png", bangumiSearch, "/bangumi-medium.png"},
+		},
+		{
+			name:        "verified Deezer image download fails",
+			candidates:  `{"data":[{"id":2,"name":"神前暁","picture_xl":"` + deezerXL + `"}]}`,
+			secondAlbum: "Album",
+			wantSource:  "bangumi", wantURL: bangumiMedium, wantReason: "download_failed",
+			wantPaths: []string{search, secondAlbums, "/deezer-xl.png", bangumiSearch, "/bangumi-medium.png"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			manager, artistID := imageBackfillManager(t, newBackfillTransport(), "神前暁", "")
+			enableBackfillSource(t, manager.store, "bangumi", true)
+			manager.setBangumiIntervalForTest(0)
+			var logs bytes.Buffer
+			manager.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+			var paths []string
+			manager.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				paths = append(paths, r.URL.Path)
+				status, body := http.StatusOK, ""
+				switch r.URL.Path {
+				case search:
+					body = tt.candidates
+				case firstAlbums:
+					body = `{"data":[{"title":"Album tribute"}]}`
+				case secondAlbums:
+					body = fmt.Sprintf(`{"data":[{"title":%q}]}`, tt.secondAlbum)
+				case "/deezer-xl.png":
+					body = tt.deezerImage
+					if body == "" {
+						status = http.StatusNotFound
+					}
+				case bangumiSearch:
+					body = `{"data":[
+						{"id":11,"name":"神前暁","career":["writer"],"images":{"large":"http://93.184.216.34/wrong.png"}},
+						{"id":12,"name":"神前暁","career":["seiyu"],"images":{"large":"http://93.184.216.34/no_icon.png"}},
+						{"id":13,"name":"神前暁","career":["artist"]},
+						{"id":14,"name":"神前 暁","career":["producer"],"images":{"medium":"` + bangumiMedium + `"}}
+					]}`
+				case "/bangumi-medium.png":
+					body = smallPortrait
+				default:
+					return nil, fmt.Errorf("unexpected request: %s", r.URL)
+				}
+				return cannedResponse(status, http.Header{}, body), nil
+			})
+
+			runID, err := manager.StartArtistImageBackfillWithMode(ctx, "all")
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := waitImageBackfillRun(t, manager.store, runID)
+			manager.Wait()
+			if run.Status != "completed" || run.Cached != 1 {
+				t.Fatalf("expected a cached image, got %+v", run)
+			}
+			if !slices.Equal(paths, tt.wantPaths) {
+				t.Fatalf("request paths = %v, want %v", paths, tt.wantPaths)
+			}
+			var source, remoteURL string
+			db := writableSafetyDB(t, manager)
+			err = db.QueryRowContext(ctx, "SELECT source, remote_url FROM artist_image_cache WHERE artist_id=?", artistID).Scan(&source, &remoteURL)
+			if err != nil || source != tt.wantSource || remoteURL != tt.wantURL {
+				t.Fatalf("cached source=%q url=%q err=%v, want %q %q", source, remoteURL, err, tt.wantSource, tt.wantURL)
+			}
+			if !strings.Contains(logs.String(), "source=deezer reason="+tt.wantReason) {
+				t.Fatalf("missing Deezer result %q in logs: %s", tt.wantReason, &logs)
+			}
+		})
+	}
+}
+
+func TestArtistImageSearchNormalizesJapaneseNames(t *testing.T) {
+	for _, tt := range []struct {
+		local, query, remote string
+	}{
+		{"神前暁 (MONACA)", "神前暁", "神前　暁"},
+		{"花澤香菜（ＣＶ）", "花澤香菜", "花澤　香菜"},
+		{"三好真亜沙", "三好真亜沙", "三好 真･亜沙"},
+		{"ａｉｍｅｒ", "aimer", "AiMer"},
+	} {
+		t.Run(tt.local, func(t *testing.T) {
+			anchor := storage.ArtistBiographyAnchor{Name: tt.local, Aliases: []string{"別名（歌手）"}}
+			queries := buildArtistSearchNames(anchor)
+			if !slices.Contains(queries, tt.query) || !slices.Contains(queries, "別名") {
+				t.Fatalf("unexpected search queries: %v", queries)
+			}
+			if !normalizedAnchorNameSet(anchor)[compactArtistName(tt.remote)] {
+				t.Fatalf("%q should match %q", tt.remote, tt.local)
+			}
+		})
+	}
+}
+
+func TestBangumiPersonImageUsesCleanedQueryAndRejectsAmbiguousPortraits(t *testing.T) {
+	const portrait = "http://93.184.216.34/portrait.png"
+	for _, tt := range []struct {
+		name       string
+		candidates string
+		wantImage  string
+	}{
+		{
+			name:       "one matching portrait",
+			candidates: `{"id":1,"name":"花澤　香菜","career":["seiyu"],"images":{"large":"` + portrait + `"}}`,
+			wantImage:  portrait,
+		},
+		{
+			name: "two plausible portraits",
+			candidates: `{"id":1,"name":"花澤　香菜","career":["seiyu"],"images":{"large":"` + portrait + `"}},
+				{"id":2,"name":"花澤香菜","career":["artist"],"images":{"medium":"http://93.184.216.34/other.png"}}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var queries []string
+			var requestErr error
+			manager := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 1 || body["keyword"] == "" || r.Method != http.MethodPost || r.URL.Path != "/v0/search/persons" {
+					requestErr = fmt.Errorf("unexpected Bangumi request: method=%s path=%s body=%v err=%v", r.Method, r.URL.Path, body, err)
+					return nil, requestErr
+				}
+				keyword := body["keyword"]
+				queries = append(queries, keyword)
+				if keyword != "花澤香菜" {
+					return cannedResponse(http.StatusOK, http.Header{}, `{"data":[]}`), nil
+				}
+				return cannedResponse(http.StatusOK, http.Header{}, `{"data":[`+tt.candidates+`]}`), nil
+			}))
+			enableBackfillSource(t, manager.store, "bangumi", true)
+			manager.setBangumiIntervalForTest(0)
+
+			img, _, err := manager.bangumiPersonImage(context.Background(), storage.ArtistBiographyAnchor{Name: "花澤香菜（ＣＶ）"})
+			if requestErr != nil || err != nil || img != tt.wantImage || !slices.Equal(queries, []string{"花澤香菜(CV)", "花澤香菜"}) {
+				t.Fatalf("image=%q want=%q queries=%v err=%v requestErr=%v", img, tt.wantImage, queries, err, requestErr)
+			}
+		})
+	}
+}
+
 func TestMatchedImageBackfillFallsBackToBangumiPersonAlias(t *testing.T) {
 	for _, name := range []string{"confirmed", "identity removed during download"} {
 		t.Run(name, func(t *testing.T) {
@@ -116,6 +316,9 @@ func TestMatchedImageBackfillFallsBackToBangumiPersonAlias(t *testing.T) {
 			enableBackfillSource(t, manager.store, "lastfm", false)
 			enableBackfillSource(t, manager.store, "bangumi", true)
 			manager.setBangumiIntervalForTest(0)
+			if err := manager.store.SaveArtistImageSettings(ctx, storage.ArtistImageSettings{BangumiEnabled: true}); err != nil {
+				t.Fatal(err)
+			}
 			pngBytes := makeValidAvatarPNG(t)
 			var requestErr error
 			manager.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {

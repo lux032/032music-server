@@ -328,23 +328,46 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 		return "failed", err.Error(), nil
 	}
 
-	trySaveStructured := func(srcName, imgURL string) (bool, string, string, *RateLimitError) {
+	logSourceResult := func(source, reason string, details ...any) {
+		fields := []any{"artistId", artistID, "artist", anchor.Name, "source", source, "reason", reason}
+		m.logger.Debug("artist image fallback source result", append(fields, details...)...)
+	}
+
+	trySaveStructured := func(srcName, imgURL string, lookupErr error) (bool, string, string, *RateLimitError) {
+		if lookupErr != nil {
+			if rateErr := asRateLimited(lookupErr); rateErr != nil {
+				logSourceResult(srcName, "rate_limited", "stage", "lookup")
+				return true, "", "", rateErr
+			}
+			logSourceResult(srcName, "lookup_failed")
+			return false, "", "", nil
+		}
 		if imgURL == "" {
+			logSourceResult(srcName, "no_match")
+			return false, "", "", nil
+		}
+		if !validStructuredArtistImageURL(imgURL) {
+			logSourceResult(srcName, "quality_rejected", "detail", "invalid or placeholder image URL")
 			return false, "", "", nil
 		}
 		data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, imgURL, "artist image")
 		if dlErr != nil {
 			if rateErr := asRateLimited(dlErr); rateErr != nil {
+				logSourceResult(srcName, "rate_limited", "stage", "download")
 				return true, "", "", rateErr
 			}
+			logSourceResult(srcName, "download_failed")
 			return false, "", "", nil
 		}
-		if _, _, ok, _ := netfetch.InspectImageQuality(data); !ok {
+		width, height, ok, reason := netfetch.InspectImageQuality(data)
+		if !ok {
+			logSourceResult(srcName, "quality_rejected", "detail", reason)
 			return false, "", "", nil
 		}
 		hash := fmt.Sprintf("%x", sha256.Sum256(data))
 		cachePath, wErr := writeCacheFile(m.imageDirectory, hash+ext, data)
 		if wErr != nil {
+			logSourceResult(srcName, "cache_write_failed")
 			return true, "failed", wErr.Error(), nil
 		}
 		if saveErr := m.store.SaveArtistImageBackfillGuarded(ctx, storage.ArtistImageInput{
@@ -357,45 +380,40 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 			CachePath: cachePath,
 		}, &checkpoint); saveErr != nil {
 			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
+				logSourceResult(srcName, "state_changed")
 				return true, "skipped", "状态已变化，写入被安全拒绝", nil
 			}
+			logSourceResult(srcName, "cache_save_failed")
 			return true, "failed", saveErr.Error(), nil
 		}
-		m.logger.Info("artist image cached via fallback source", "artistId", artistID, "artist", anchor.Name, "source", srcName)
+		m.logger.Info("artist image cached via fallback source", "artistId", artistID, "artist", anchor.Name, "source", srcName, "reason", "cached", "width", width, "height", height)
 		return true, "cached", "", nil
 	}
 
-	// Tier 2a: Fanart.tv (MBID-anchored)
+	// Tier 2: MBID-anchored Fanart, then Deezer's large portraits, then Bangumi.
 	if imgSettings.FanartEnabled && imgSettings.FanartAPIKey != "" {
-		if mbid, mbErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz"); mbErr == nil && mbid != "" {
-			imgURL, fErr := m.fanartArtistImage(ctx, mbid, imgSettings.FanartAPIKey)
-			if fErr != nil && asRateLimited(fErr) != nil {
-				return "", "", asRateLimited(fErr)
-			}
-			if done, out, eText, rErr := trySaveStructured("fanart", imgURL); done {
+		mbid, mbErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
+		switch {
+		case errors.Is(mbErr, sql.ErrNoRows) || mbErr == nil && mbid == "":
+			logSourceResult("fanart", "missing_mbid")
+		case mbErr != nil:
+			logSourceResult("fanart", "lookup_failed")
+		default:
+			imgURL, lookupErr := m.fanartArtistImage(ctx, mbid, imgSettings.FanartAPIKey)
+			if done, out, eText, rErr := trySaveStructured("fanart", imgURL, lookupErr); done {
 				return out, eText, rErr
 			}
 		}
 	}
-
-	// Tier 2b: Bangumi Persons v0 (primary ACG source)
-	if imgSettings.BangumiEnabled {
-		imgURL, _, bgmErr := m.bangumiPersonImage(ctx, anchor)
-		if bgmErr != nil && asRateLimited(bgmErr) != nil {
-			return "", "", asRateLimited(bgmErr)
-		}
-		if done, out, eText, rErr := trySaveStructured("bangumi", imgURL); done {
+	if imgSettings.DeezerEnabled {
+		imgURL, _, lookupErr := m.deezerSearchArtistImage(ctx, anchor)
+		if done, out, eText, rErr := trySaveStructured("deezer", imgURL, lookupErr); done {
 			return out, eText, rErr
 		}
 	}
-
-	// Tier 2c: Deezer Public API
-	if imgSettings.DeezerEnabled {
-		imgURL, _, dzErr := m.deezerSearchArtistImage(ctx, anchor)
-		if dzErr != nil && asRateLimited(dzErr) != nil {
-			return "", "", asRateLimited(dzErr)
-		}
-		if done, out, eText, rErr := trySaveStructured("deezer", imgURL); done {
+	if imgSettings.BangumiEnabled {
+		imgURL, _, lookupErr := m.bangumiPersonImage(ctx, anchor)
+		if done, out, eText, rErr := trySaveStructured("bangumi", imgURL, lookupErr); done {
 			return out, eText, rErr
 		}
 	}
@@ -412,17 +430,22 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 			return "failed", reserveErr.Error(), nil
 		}
 		if !reserved {
+			logSourceResult("ai_web", "budget_exhausted")
 			return "no_url", "本轮联网搜索预算已用完", nil
 		}
 		tierReached = "web_fallback"
 		found, ok, webErr := m.discoverArtistImageFromWeb(ctx, artistID, nil, imgSettings)
 		if webErr != nil {
 			if rateErr := asRateLimited(webErr); rateErr != nil {
+				logSourceResult("ai_web", "rate_limited")
 				return "", "", rateErr
 			}
+			logSourceResult("ai_web", "lookup_failed")
 			return "failed", RedactSourceError(webErr).Error(), nil
 		}
-		if ok {
+		if !ok {
+			logSourceResult("ai_web", "no_match")
+		} else {
 			if found.Confidence == "high" && imgSettings.WebAutoApplyHigh {
 				hash := fmt.Sprintf("%x", sha256.Sum256(found.Data))
 				cachePath, wErr := writeCacheFile(m.imageDirectory, hash+found.Ext, found.Data)
@@ -443,6 +466,7 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 					}
 					return "failed", saveErr.Error(), nil
 				}
+				logSourceResult(found.Source, "cached", "width", found.Width, "height", found.Height)
 				return "cached", "", nil
 			}
 			id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
@@ -463,8 +487,10 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 				return "failed", candErr.Error(), nil
 			}
 			if id != 0 {
+				logSourceResult(found.Source, "candidate")
 				return "candidate", "", nil
 			}
+			logSourceResult(found.Source, "already_reviewed")
 			return "skipped", "该候选已审核", nil
 		}
 	}

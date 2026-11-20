@@ -316,6 +316,12 @@ func resolveCandidateImageURL(base *url.URL, raw string) string {
 	return u.String()
 }
 
+// IsLikelyPlaceholderImageURL checks recognizable icon and placeholder names in
+// an image URL's path. Image dimensions are checked separately after download.
+func IsLikelyPlaceholderImageURL(u *url.URL) bool {
+	return isLikelyJunkImageURL(u.Path, "")
+}
+
 func isLikelyJunkImageURL(rawURL, alt string) bool {
 	lower := strings.ToLower(rawURL)
 	if strings.Contains(lower, ".svg") || strings.Contains(lower, ".ico") {
@@ -323,7 +329,7 @@ func isLikelyJunkImageURL(rawURL, alt string) bool {
 	}
 	for _, bad := range []string{
 		"favicon", "apple-touch-icon", "sprite", "spacer", "1x1", "pixel",
-		"placeholder", "default_avatar", "no_image", "noimage", "blank.",
+		"placeholder", "default_avatar", "no_image", "noimage", "no_icon", "blank.",
 		"2a96cbd8b46e442fc41c2b86b821562f",
 	} {
 		if strings.Contains(lower, bad) {
