@@ -63,6 +63,11 @@ func TestInspectImageQuality(t *testing.T) {
 	if w, h, ok, reason := InspectImageQuality(makeTestPNG(t, 400, 400)); !ok || w != 400 || h != 400 {
 		t.Fatalf("expected 400x400 valid, got ok=%v %dx%d reason=%s", ok, w, h, reason)
 	}
+	for _, size := range [][2]int{{100, 100}, {100, 280}, {280, 100}} {
+		if _, _, ok, reason := InspectImageQuality(makeTestPNG(t, size[0], size[1])); !ok {
+			t.Errorf("expected %dx%d portrait to pass: %s", size[0], size[1], reason)
+		}
+	}
 	if _, _, ok, _ := InspectImageQuality(makeTestPNG(t, 64, 64)); ok {
 		t.Fatal("expected 64x64 icon to be rejected")
 	}

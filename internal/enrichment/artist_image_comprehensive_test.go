@@ -3,6 +3,8 @@ package enrichment
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -102,6 +104,62 @@ func TestComprehensiveImageBackfill_BangumiTier2(t *testing.T) {
 	run := waitImageBackfillRun(t, manager.store, runID)
 	if run.Status != "completed" || run.Cached != 1 || bgmCalls != 1 || imgCalls != 1 {
 		t.Fatalf("unexpected run=%+v bgmCalls=%d imgCalls=%d", run, bgmCalls, imgCalls)
+	}
+}
+
+func TestMatchedImageBackfillFallsBackToBangumiPersonAlias(t *testing.T) {
+	for _, name := range []string{"confirmed", "identity removed during download"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			manager, artistID := imageBackfillManager(t, newBackfillTransport(), "三好真亜沙", "")
+			confirmBackfillIdentity(t, manager.store, artistID, "lastfm", "matched-lastfm-id", "")
+			enableBackfillSource(t, manager.store, "lastfm", false)
+			enableBackfillSource(t, manager.store, "bangumi", true)
+			manager.setBangumiIntervalForTest(0)
+			pngBytes := makeValidAvatarPNG(t)
+			var requestErr error
+			manager.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				switch {
+				case r.URL.Host == "api.bgm.tv" && r.URL.Path == "/v0/search/persons":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["keyword"] != "三好真亜沙" || len(body) != 1 {
+						requestErr = fmt.Errorf("unexpected Bangumi search body: %v, err=%v", body, err)
+					}
+					return cannedResponse(http.StatusOK, http.Header{}, `{"data":[
+						{"id":24,"name":"三好真亜沙","career":["writer"],"images":{"large":"http://93.184.216.34/wrong.png"}},
+						{"id":123,"name":"Miyoshi","career":["seiyu"],"images":{"large":"https://lain.bgm.tv/pic/no_icon.png","grid":"http://93.184.216.34/portrait.png"}}
+					]}`), nil
+				case r.URL.Host == "api.bgm.tv" && r.URL.Path == "/v0/persons/123":
+					return cannedResponse(http.StatusOK, http.Header{}, `{"infobox":[{"key":"艺名","value":[{"v":"三好　真・亜沙"}]}]}`), nil
+				case r.URL.Host == "93.184.216.34" && r.URL.Path == "/portrait.png":
+					if name != "confirmed" {
+						requestErr = manager.store.ResetArtistIdentity(ctx, artistID, "lastfm", "matched-lastfm-id")
+					}
+					return cannedResponse(http.StatusOK, http.Header{}, pngBytes), nil
+				default:
+					requestErr = fmt.Errorf("unexpected backfill request: %s", r.URL)
+					return nil, requestErr
+				}
+			})
+
+			runID, err := manager.StartArtistImageBackfillWithMode(ctx, "matched")
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := waitImageBackfillRun(t, manager.store, runID)
+			manager.Wait()
+			if requestErr != nil {
+				t.Fatal(requestErr)
+			}
+			_, cached := imageBackfillCacheRow(t, manager, artistID)
+			if name == "confirmed" {
+				if run.Status != "completed" || run.Cached != 1 || !cached {
+					t.Fatalf("expected matched backfill to cache the Bangumi portrait, got run=%+v cached=%v", run, cached)
+				}
+			} else if run.Status != "completed" || run.Skipped != 1 || cached {
+				t.Fatalf("expected reset identity to block caching, got run=%+v cached=%v", run, cached)
+			}
+		})
 	}
 }
 

@@ -163,7 +163,7 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 	albumSet := normalizedStringSet(anchor.KnownAlbums)
 
 	for _, qName := range queries {
-		q := url.Values{"q": {qName}, "limit": {"5"}}
+		q := url.Values{"q": {qName}, "limit": {"10"}}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.deezer.com/search/artist?"+q.Encode(), nil)
 		if err != nil {
 			continue
@@ -194,7 +194,7 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 		}
 		var matches []hit
 		for _, item := range resp.Data {
-			if !nameSet[normalize(item.Name)] {
+			if !nameSet[compactArtistName(item.Name)] {
 				continue
 			}
 			img := pickValidDeezerPicture(item.PictureXL, item.PictureBig)
@@ -253,6 +253,11 @@ func (m *Manager) deezerArtistHasAlbumOverlap(ctx context.Context, deezerID int6
 	return false, nil
 }
 
+type bangumiPersonInfoboxEntry struct {
+	Key   string `json:"key"`
+	Value any    `json:"value"`
+}
+
 // bangumiPersonImage searches Bangumi API v0 (/v0/search/persons) for an
 // artist, voice actor, or composer and returns their portrait image URL.
 func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistBiographyAnchor) (string, string, error) {
@@ -277,9 +282,8 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 		if waitErr := m.waitBangumiRateLimit(ctx); waitErr != nil {
 			return "", "", waitErr
 		}
-		payload, _ := json.Marshal(map[string]any{
-			"keyword": qName,
-		})
+		// Search by keyword and check careers locally because the API combines career filters with AND.
+		payload, _ := json.Marshal(map[string]string{"keyword": qName})
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v0/search/persons?limit=5", bytes.NewReader(payload))
 		if reqErr != nil {
 			continue
@@ -298,11 +302,9 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 					Large  string `json:"large"`
 					Medium string `json:"medium"`
 					Common string `json:"common"`
+					Grid   string `json:"grid"`
 				} `json:"images"`
-				Infobox []struct {
-					Key   string `json:"key"`
-					Value any    `json:"value"`
-				} `json:"infobox"`
+				Infobox []bangumiPersonInfoboxEntry `json:"infobox"`
 			} `json:"data"`
 		}
 		if doErr := m.doSourceJSON(m.client, req, "bangumi", &resp); doErr != nil {
@@ -317,38 +319,73 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 			if p.ID <= 0 || !hasBangumiMusicCareer(p.Career) {
 				continue
 			}
-			matched := nameSet[normalize(p.Name)]
-			if !matched {
-				for _, box := range p.Infobox {
-					if box.Key != "别名" && box.Key != "简体中文名" && box.Key != "纯假名" && box.Key != "罗马字" {
-						continue
+			if !nameSet[compactArtistName(p.Name)] {
+				infobox := p.Infobox
+				if len(infobox) == 0 {
+					var detailErr error
+					infobox, detailErr = m.bangumiPersonInfobox(ctx, base, p.ID)
+					if asRateLimited(detailErr) != nil {
+						return "", "", detailErr
 					}
-					for _, alias := range flattenBangumiInfoboxValue(box.Value) {
-						if nameSet[normalize(alias)] {
-							matched = true
-							break
-						}
-					}
-					if matched {
-						break
+					if err := ctx.Err(); err != nil {
+						return "", "", err
 					}
 				}
-			}
-			if !matched {
-				continue
+				if !bangumiInfoboxMatchesName(infobox, nameSet) {
+					continue
+				}
 			}
 			if matchedID != 0 && matchedID != p.ID {
 				matchedID = 0
 				break
 			}
 			matchedID = p.ID
-			matchedImage = firstNonEmpty(p.Images.Large, p.Images.Medium, p.Images.Common)
+			for _, candidate := range []string{p.Images.Large, p.Images.Medium, p.Images.Common, p.Images.Grid} {
+				candidate = strings.TrimSpace(candidate)
+				if candidate != "" && !strings.Contains(strings.ToLower(candidate), "no_icon") {
+					matchedImage = candidate
+					break
+				}
+			}
 		}
-		if matchedID != 0 && matchedImage != "" && !strings.Contains(strings.ToLower(matchedImage), "no_icon") {
+		if matchedID != 0 && matchedImage != "" {
 			return matchedImage, fmt.Sprintf("https://bgm.tv/person/%d", matchedID), nil
 		}
 	}
 	return "", "", nil
+}
+
+// The search response can omit infobox fields, which are available on the person detail endpoint.
+func (m *Manager) bangumiPersonInfobox(ctx context.Context, base string, id int64) ([]bangumiPersonInfoboxEntry, error) {
+	if err := m.waitBangumiRateLimit(ctx); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/v0/persons/%d", base, id), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", m.metadataUserAgent(ctx))
+	var resp struct {
+		Infobox []bangumiPersonInfoboxEntry `json:"infobox"`
+	}
+	if err := m.doSourceJSON(m.client, req, "bangumi", &resp); err != nil {
+		return nil, err
+	}
+	return resp.Infobox, nil
+}
+
+func bangumiInfoboxMatchesName(infobox []bangumiPersonInfoboxEntry, names map[string]bool) bool {
+	for _, entry := range infobox {
+		switch entry.Key {
+		case "别名", "简体中文名", "纯假名", "罗马字", "日文名", "英文名", "艺名", "本名":
+			for _, alias := range flattenBangumiInfoboxValue(entry.Value) {
+				if names[compactArtistName(alias)] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func hasBangumiMusicCareer(careers []string) bool {
@@ -444,14 +481,17 @@ func buildArtistSearchNames(anchor storage.ArtistBiographyAnchor) []string {
 	return out
 }
 
+var artistNameSeparators = strings.NewReplacer(" ", "", "・", "", "·", "")
+
+func compactArtistName(name string) string {
+	return artistNameSeparators.Replace(normalize(name))
+}
+
 func normalizedAnchorNameSet(anchor storage.ArtistBiographyAnchor) map[string]bool {
 	set := map[string]bool{}
-	if k := normalize(anchor.Name); k != "" {
-		set[k] = true
-	}
-	for _, a := range anchor.Aliases {
-		if k := normalize(a); k != "" {
-			set[k] = true
+	for _, name := range append([]string{anchor.Name}, anchor.Aliases...) {
+		if key := compactArtistName(name); key != "" {
+			set[key] = true
 		}
 	}
 	return set
@@ -465,13 +505,4 @@ func normalizedStringSet(items []string) map[string]bool {
 		}
 	}
 	return set
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if s := strings.TrimSpace(v); s != "" {
-			return s
-		}
-	}
-	return ""
 }

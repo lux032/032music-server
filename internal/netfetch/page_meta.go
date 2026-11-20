@@ -21,9 +21,9 @@ import (
 
 const (
 	maxPageMetaBytes = 256 << 10
-	minAvatarPixels  = 160
-	minAvatarAspect  = 0.40
-	maxAvatarAspect  = 2.50
+	minAvatarPixels  = 100
+	minAvatarAspect  = 0.35
+	maxAvatarAspect  = 2.80
 )
 
 // PageImageCandidate represents a single image URL extracted from a public web

@@ -151,20 +151,52 @@ func (s *Store) CreateArtistImageBackfillRunWithMode(ctx context.Context, mode s
 	return id, nil
 }
 
+// requireArtistImageFallbackCheckpoint keeps matched runs within their confirmed-identity
+// scope even when an identity is removed while a source request is in flight.
+func requireArtistImageFallbackCheckpoint(ctx context.Context, tx *sql.Tx, c *ArtistImageBackfillCheckpoint, artistID int64) error {
+	if err := requireArtistImageBackfillCheckpoint(ctx, tx, c, artistID); err != nil || c == nil {
+		return err
+	}
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM artist_image_backfill_runs r JOIN artists a ON a.id=?
+		WHERE r.id=? AND a.merged_into_artist_id IS NULL
+		AND (r.mode<>'matched' OR EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=a.id))
+		AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id)
+		AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)
+	)`, artistID, c.RunID).Scan(&eligible)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrArtistImageBackfillState
+	}
+	return nil
+}
+
+func (s *Store) beginArtistImageFallbackWrite(ctx context.Context, c ArtistImageBackfillCheckpoint, artistID int64) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err = artistImageBackfillWriteLock(ctx, tx); err == nil {
+		err = requireArtistImageFallbackCheckpoint(ctx, tx, &c, artistID)
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
 // ReserveArtistImageWebRequest charges one attempt to the durable run before
 // making the request, so restarting or resuming cannot reset the budget.
 func (s *Store) ReserveArtistImageWebRequest(ctx context.Context, c ArtistImageBackfillCheckpoint, artistID int64, limit int) (bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginArtistImageFallbackWrite(ctx, c, artistID)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
-	if err = artistImageBackfillWriteLock(ctx, tx); err != nil {
-		return false, err
-	}
-	if err = requireArtistImageBackfillCheckpoint(ctx, tx, &c, artistID); err != nil {
-		return false, err
-	}
 	res, err := tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET web_requests=web_requests+1 WHERE id=? AND (?=0 OR web_requests<?)`, c.RunID, limit, limit)
 	if err != nil {
 		return false, err
@@ -263,7 +295,7 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 	if custom {
 		return ErrArtistImageBackfillState
 	}
-	if err = requireArtistImageBackfillCheckpoint(ctx, tx, c, image.ArtistID); err != nil {
+	if err = requireArtistImageFallbackCheckpoint(ctx, tx, c, image.ArtistID); err != nil {
 		return err
 	}
 	if candidateID != 0 {
@@ -297,23 +329,45 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 	return tx.Commit()
 }
 
-// RecordArtistImageAttempt records a negative-cache / cooldown entry so artists
-// without discoverable avatars are not re-queried on every subsequent run.
-func (s *Store) RecordArtistImageAttempt(ctx context.Context, artistID int64, tierReached, outcome, errText string, cooldownDays int) error {
-	if len(errText) > 500 {
-		errText = errText[:500]
-	}
+// RecordArtistImageBackfillMiss records a cooldown for an active backfill item.
+func (s *Store) RecordArtistImageBackfillMiss(ctx context.Context, checkpoint ArtistImageBackfillCheckpoint, artistID int64, tierReached string, cooldownDays int) error {
 	if cooldownDays < 1 {
 		cooldownDays = 30
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO artist_image_attempts(artist_id,tier_reached,last_outcome,last_error,checked_at,cooldown_until) VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now',?)) ON CONFLICT(artist_id) DO UPDATE SET tier_reached=excluded.tier_reached,last_outcome=excluded.last_outcome,last_error=excluded.last_error,checked_at=excluded.checked_at,cooldown_until=excluded.cooldown_until`,
-		artistID, tierReached, outcome, errText, fmt.Sprintf("+%d days", cooldownDays))
-	return err
+	tx, err := s.beginArtistImageFallbackWrite(ctx, checkpoint, artistID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO artist_image_attempts(artist_id,tier_reached,last_outcome,last_error,checked_at,cooldown_until) VALUES(?,?,'no_url','',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now',?)) ON CONFLICT(artist_id) DO UPDATE SET tier_reached=excluded.tier_reached,last_outcome=excluded.last_outcome,last_error=excluded.last_error,checked_at=excluded.checked_at,cooldown_until=excluded.cooldown_until`,
+		artistID, tierReached, fmt.Sprintf("+%d days", cooldownDays))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // UpsertArtistImageCandidate inserts or refreshes a candidate avatar in the
 // admin review queue. It returns zero for candidates that have already been reviewed.
 func (s *Store) UpsertArtistImageCandidate(ctx context.Context, c ArtistImageCandidate) (int64, error) {
+	return upsertArtistImageCandidate(ctx, s.db, c)
+}
+
+// UpsertArtistImageBackfillCandidate queues a candidate while the item is still eligible.
+func (s *Store) UpsertArtistImageBackfillCandidate(ctx context.Context, checkpoint ArtistImageBackfillCheckpoint, c ArtistImageCandidate) (int64, error) {
+	tx, err := s.beginArtistImageFallbackWrite(ctx, checkpoint, c.ArtistID)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	id, err := upsertArtistImageCandidate(ctx, tx, c)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+func upsertArtistImageCandidate(ctx context.Context, db queryRower, c ArtistImageCandidate) (int64, error) {
 	c.Source = strings.TrimSpace(c.Source)
 	c.ImageURL = strings.TrimSpace(c.ImageURL)
 	c.PageURL = strings.TrimSpace(c.PageURL)
@@ -329,7 +383,7 @@ func (s *Store) UpsertArtistImageCandidate(ctx context.Context, c ArtistImageCan
 		return 0, errors.New("invalid artist image candidate")
 	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO artist_image_candidates(artist_id,source,image_url,page_url,title,confidence,reason,width,height)
+	err := db.QueryRowContext(ctx, `INSERT INTO artist_image_candidates(artist_id,source,image_url,page_url,title,confidence,reason,width,height)
 		VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,image_url) DO UPDATE SET
 		source=excluded.source,page_url=excluded.page_url,title=excluded.title,confidence=excluded.confidence,reason=excluded.reason,width=excluded.width,height=excluded.height
 		WHERE artist_image_candidates.status='pending' RETURNING id`,

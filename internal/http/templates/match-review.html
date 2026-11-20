@@ -99,7 +99,7 @@
       {{with .ImageBackfill.Active}}
       <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
         <header>
-          <strong>头像补全任务 #{{.ID}}</strong>
+          <strong>头像补全任务 #{{.ID}}{{if .Mode}}（模式：{{.Mode}}）{{end}}</strong>
           <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
         </header>
         <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
@@ -133,8 +133,8 @@
       <form method="post" action="/admin/matches/images/backfill" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <select name="mode" aria-label="头像补全模式">
-          <option value="matched">仅已匹配身份</option>
-          <option value="all">全库补全（按设置使用图源）</option>
+          <option value="all" selected>全库补全（按设置使用图源）</option>
+          <option value="matched">仅已匹配身份（按设置使用图源）</option>
           <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
           <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
         </select>
