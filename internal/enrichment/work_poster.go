@@ -216,60 +216,92 @@ func (m *Manager) StartWorkPosterBackfill() (started bool) {
 		return false
 	}
 	m.posterBackfilling = true
+	m.posterBackfillPending = false
 	m.posterMu.Unlock()
+	m.launchWorkPosterBackfill()
+	return true
+}
+
+// requestAutoWorkPosterBackfill is used by automatic triggers (scan completion
+// and enrichment run completion). If a backfill pass is already running, it
+// marks a follow-up pass so newly added works are scanned before exiting.
+func (m *Manager) requestAutoWorkPosterBackfill() (started bool) {
+	m.posterMu.Lock()
+	if m.posterBackfilling {
+		m.posterBackfillPending = true
+		m.posterMu.Unlock()
+		return false
+	}
+	m.posterBackfilling = true
+	m.posterBackfillPending = false
+	m.posterMu.Unlock()
+	m.launchWorkPosterBackfill()
+	return true
+}
+
+func (m *Manager) launchWorkPosterBackfill() {
 	m.goBackground("work-poster-backfill", func() {
 		result := &PosterBackfillResult{}
 		defer func() {
 			result.FinishedAt = time.Now()
 			m.posterMu.Lock()
 			m.posterBackfilling = false
+			m.posterBackfillPending = false
 			m.posterLastResult = result
 			m.posterMu.Unlock()
 		}()
-		posters, err := m.store.WorkPosterURLs(m.baseCtx)
-		if err != nil {
-			m.logger.Warn("list work posters", "error", err)
-			return
-		}
-		if m.testPosterBackfillHook != nil {
-			m.testPosterBackfillHook()
-		}
-		for _, item := range posters {
-			if m.baseCtx.Err() != nil {
+		for {
+			posters, err := m.store.WorkPosterURLs(m.baseCtx)
+			if err != nil {
+				m.logger.Warn("list work posters", "error", err)
 				return
 			}
-			if _, _, err = m.CachedWorkPoster(item.URL); err == nil {
-				continue
+			if m.testPosterBackfillHook != nil {
+				m.testPosterBackfillHook()
 			}
-			if m.posterRecentlyFailed(item.URL) {
-				continue
-			}
-			ctx, cancel := context.WithTimeout(m.baseCtx, time.Minute)
-			err = m.CacheWorkPoster(ctx, item.WorkID)
-			cancel()
-			if err != nil {
-				if rateLimited := asRateLimited(err); rateLimited != nil {
-					// A 429 stops this backfill pass; the next pass retries.
-					result.RateLimited = true
-					m.logger.Warn("work poster backfill stopped by rate limiting", "workId", item.WorkID, "retryAfter", rateLimited.RetryAfter.String())
+			for _, item := range posters {
+				if m.baseCtx.Err() != nil {
 					return
 				}
-				result.Failed++
-				m.notePosterFailure(item.URL)
-				m.logger.Warn("backfill work poster", "workId", item.WorkID, "error", err)
-			} else {
-				result.Cached++
-				m.clearPosterFailure(item.URL)
+				if _, _, err = m.CachedWorkPoster(item.URL); err == nil {
+					continue
+				}
+				if m.posterRecentlyFailed(item.URL) {
+					continue
+				}
+				ctx, cancel := context.WithTimeout(m.baseCtx, time.Minute)
+				err = m.CacheWorkPoster(ctx, item.WorkID)
+				cancel()
+				if err != nil {
+					if rateLimited := asRateLimited(err); rateLimited != nil {
+						// A 429 stops this backfill pass; the next pass retries.
+						result.RateLimited = true
+						m.logger.Warn("work poster backfill stopped by rate limiting", "workId", item.WorkID, "retryAfter", rateLimited.RetryAfter.String())
+						return
+					}
+					result.Failed++
+					m.notePosterFailure(item.URL)
+					m.logger.Warn("backfill work poster", "workId", item.WorkID, "error", err)
+				} else {
+					result.Cached++
+					m.clearPosterFailure(item.URL)
+				}
+				select {
+				case <-m.baseCtx.Done():
+					return
+				case <-time.After(m.bangumiPace):
+				}
 			}
-			select {
-			case <-m.baseCtx.Done():
-				return
-			case <-time.After(m.bangumiPace):
+			m.posterMu.Lock()
+			again := m.posterBackfillPending && m.baseCtx.Err() == nil
+			m.posterBackfillPending = false
+			m.posterMu.Unlock()
+			if !again {
+				break
 			}
 		}
 		if result.Cached > 0 || result.Failed > 0 {
 			m.logger.Info("work poster backfill finished", "cached", result.Cached, "failed", result.Failed)
 		}
 	})
-	return true
 }

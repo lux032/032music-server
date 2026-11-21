@@ -178,19 +178,43 @@ func (m *Manager) start(ctx context.Context, scanType string, identity, legacyCr
 				_ = m.store.CheckReleaseGroupRebuildFailure(context.Background(), jobID)
 			}
 		}()
-		defer func() { m.mu.Lock(); m.running = false; m.mu.Unlock() }()
-		m.run(m.baseCtx, jobID, scanType, legacyCreators)
+		released := false
+		defer func() {
+			if !released {
+				m.mu.Lock()
+				m.running = false
+				m.mu.Unlock()
+			}
+		}()
+		completed := m.run(m.baseCtx, jobID, scanType, legacyCreators)
 		_ = m.store.CheckReleaseGroupRebuildFailure(m.baseCtx, jobID)
+		m.mu.Lock()
+		m.running = false
+		released = true
+		callback := m.onComplete
+		m.mu.Unlock()
+		if completed && callback != nil {
+			m.wg.Add(1)
+			go func() {
+				defer m.wg.Done()
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						m.logger.Error("panic in scan completion callback", "panic", recovered, "stack", string(debug.Stack()))
+					}
+				}()
+				callback()
+			}()
+		}
 	}()
 	return jobID, nil
 }
 
-func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyCreators bool) {
+func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyCreators bool) bool {
 	started := storage.ScanTimestamp()
 	paths, err := m.discover()
 	if err != nil {
 		m.fail(ctx, jobID, err)
-		return
+		return false
 	}
 	// S1 guard: never reconcile against an empty discovery. A scan that found
 	// zero files while the library previously had available files means the
@@ -200,16 +224,16 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 		available, countErr := m.store.CountAvailableAudioFiles(ctx, m.library.ID)
 		if countErr != nil {
 			m.fail(ctx, jobID, countErr)
-			return
+			return false
 		}
 		if available > 0 {
 			m.fail(ctx, jobID, fmt.Errorf("scan discovered 0 files but the library has %d available files; refusing to mark the library missing (is %s mounted?)", available, m.library.RootPath))
-			return
+			return false
 		}
 	}
 	if err = m.store.StartScanJob(ctx, jobID, int64(len(paths))); err != nil {
 		m.fail(ctx, jobID, err)
-		return
+		return false
 	}
 	var processed, skipped, failed int64
 	lastFlush := time.Now()
@@ -295,7 +319,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 		// A partial scan must never feed MarkMissing/CleanupOrphans: every
 		// file not yet visited would be wrongly marked missing.
 		m.fail(context.Background(), jobID, errors.New("scan cancelled by shutdown"))
-		return
+		return false
 	}
 
 	// S1 guard: refuse destructive reconciliation when an implausible share
@@ -303,17 +327,17 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 	available, err := m.store.CountAvailableAudioFiles(ctx, m.library.ID)
 	if err != nil {
 		m.fail(ctx, jobID, err)
-		return
+		return false
 	}
 	if available > 0 && float64(len(paths)) < float64(available)*(1-missingGuardRatio) {
 		m.fail(ctx, jobID, fmt.Errorf("scan discovered %d files but the library has %d available files (>%d%% would be marked missing); refusing reconciliation (is %s fully mounted?)", len(paths), available, int(missingGuardRatio*100), m.library.RootPath))
-		return
+		return false
 	}
 
 	missing, err := m.store.MarkMissing(ctx, m.library.ID, started)
 	if err != nil {
 		m.fail(ctx, jobID, err)
-		return
+		return false
 	}
 	// 只有通过上面的 S1 保护（未取消、未疑似掉盘）后才会走到这里，因此
 	// 永久删除不会在挂载失效时把整个曲库清空。
@@ -327,7 +351,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 	}
 	if err = m.store.CleanupOrphans(ctx); err != nil {
 		m.fail(ctx, jobID, err)
-		return
+		return false
 	}
 	if _, refreshErr := m.store.RefreshAlbumWorks(ctx, false); refreshErr != nil {
 		m.logger.Error("refresh album works", "error", refreshErr)
@@ -336,21 +360,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 		m.logger.Error("finish scan job", "error", err)
 	}
 	m.logger.Info("library scan completed", "jobId", jobID, "discovered", len(paths), "processed", processed, "skipped", skipped, "failed", failed, "missing", missing)
-	m.mu.Lock()
-	callback := m.onComplete
-	m.mu.Unlock()
-	if callback != nil {
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					m.logger.Error("panic in scan completion callback", "panic", recovered, "stack", string(debug.Stack()))
-				}
-			}()
-			callback()
-		}()
-	}
+	return true
 }
 
 func (m *Manager) discover() ([]string, error) {

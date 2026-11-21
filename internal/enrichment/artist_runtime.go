@@ -18,8 +18,10 @@ func (m *Manager) launchArtistRunLocked(runID int64) {
 	m.artistCancel = cancel
 	m.artistDone = done
 	m.goBackground("durable-artist-matching", func() {
+		completed := false
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				completed = false
 				m.artistRuntimeFailure(runID, fmt.Errorf("worker panic: %v", recovered))
 			}
 			cancel()
@@ -27,10 +29,17 @@ func (m *Manager) launchArtistRunLocked(runID int64) {
 			m.running = false
 			m.artistRunID = 0
 			m.artistCancel = nil
+			shouldRerun := completed && m.artistAutoRerunPending && m.baseCtx.Err() == nil
+			if shouldRerun {
+				m.artistAutoRerunPending = false
+			}
 			m.mu.Unlock()
 			close(done)
+			if shouldRerun {
+				m.startAutoArtist(m.baseCtx, false)
+			}
 		}()
-		m.executeArtistRun(ctx, runID)
+		completed = m.executeArtistRun(ctx, runID)
 	})
 }
 func (m *Manager) artistRuntimeFailure(runID int64, err error) {
@@ -39,7 +48,7 @@ func (m *Manager) artistRuntimeFailure(runID int64, err error) {
 		m.logger.Error("pause artist run failed", "runId", runID, "error", e)
 	}
 }
-func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
+func (m *Manager) executeArtistRun(ctx context.Context, runID int64) bool {
 	for {
 		if ctx.Err() != nil {
 			if m.baseCtx.Err() != nil {
@@ -47,20 +56,21 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 					m.logger.Error("pause shutdown artist run", "error", e)
 				}
 			}
-			return
+			return false
 		}
 		item, err := m.store.ClaimArtistRunItem(ctx, runID)
 		if errors.Is(err, sql.ErrNoRows) {
 			if e := m.store.TransitionArtistRun(context.Background(), runID, "complete", ""); e != nil {
 				m.artistRuntimeFailure(runID, e)
+				return false
 			}
-			return
+			return true
 		}
 		if err != nil {
 			if !errors.Is(err, storage.ErrArtistRunState) {
 				m.artistRuntimeFailure(runID, err)
 			}
-			return
+			return false
 		}
 		checkpoint := storage.ArtistRunCheckpoint{RunID: runID, ItemID: item.ID, ClaimToken: item.ClaimToken}
 		runCtx := context.WithValue(ctx, artistCheckpointKey{}, &checkpoint)
@@ -77,17 +87,17 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 			r, e := m.store.DurableArtistRun(ctx, runID)
 			if e != nil {
 				m.artistRuntimeFailure(runID, e)
-				return
+				return false
 			}
 			if r.WaitingUntil != "" {
 				deadline, e := time.Parse(time.RFC3339Nano, r.WaitingUntil)
 				if e != nil {
 					m.artistRuntimeFailure(runID, e)
-					return
+					return false
 				}
 				m.blockSourceUntil(r.WaitSource, deadline)
 				if e = m.waitArtistSource(ctx, checkpoint, r.WaitSource, deadline); e != nil {
-					return
+					return false
 				}
 			}
 			result, matchErr := m.matchArtistWithMode(runCtx, item.ObjectID, true, storage.ParseArtistScanMode(r.ScanMode))
@@ -95,7 +105,7 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 				if m.baseCtx.Err() != nil {
 					m.storePauseShutdown(runID)
 				}
-				return
+				return false
 			}
 			if rate := asRateLimited(matchErr); rate != nil {
 				if !rate.CooldownOnly {
@@ -113,23 +123,23 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) {
 					} else if !errors.Is(e, storage.ErrArtistRunState) {
 						m.artistRuntimeFailure(runID, e)
 					}
-					return
+					return false
 				}
 				if e = m.waitArtistSource(ctx, checkpoint, rate.Source, deadline); e != nil {
-					return
+					return false
 				}
 				continue
 			}
 			if matchErr != nil {
 				if !result.AutoMatched && (errors.Is(matchErr, storage.ErrArtistRunState) || isArtistPersistenceError(matchErr)) {
 					m.artistRuntimeFailure(runID, matchErr)
-					return
+					return false
 				}
 				m.logger.Warn("artist item warning", "runId", runID, "error", matchErr)
 			}
 			if e = m.store.CompleteArtistRunItem(ctx, checkpoint, result.Outcome); e != nil {
 				m.artistRuntimeFailure(runID, e)
-				return
+				return false
 			}
 			// B+2/H1：自动匹配绑定成功后，尝试补全缺失头像和简介。
 			// 身份已在 AutoBindArtistRunCandidate 事务内提交，此处的任何失败

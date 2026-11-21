@@ -88,21 +88,34 @@ func normalizeRunRequest(value RunRequest) (RunRequest, error) {
 // active in a process. Item collection happens in the background so the HTTP
 // request returns immediately.
 func (m *Manager) StartRun(ctx context.Context, request RunRequest) (storage.EnrichmentRun, error) {
+	run, _, err := m.startRun(ctx, request, false)
+	return run, err
+}
+
+func (m *Manager) startRun(ctx context.Context, request RunRequest, queueAutoOnBusy bool) (storage.EnrichmentRun, bool, error) {
 	request, err := normalizeRunRequest(request)
 	if err != nil {
-		return storage.EnrichmentRun{}, err
+		return storage.EnrichmentRun{}, false, err
 	}
 	m.phaseMu.Lock()
 	defer m.phaseMu.Unlock()
 	if m.phaseRunning {
-		return storage.EnrichmentRun{}, storage.ErrEnrichmentRunState
+		if queueAutoOnBusy {
+			m.phaseAutoRerunPending = true
+			return storage.EnrichmentRun{}, true, nil
+		}
+		return storage.EnrichmentRun{}, false, storage.ErrEnrichmentRunState
 	}
 	run, err := m.store.CreateDurableEnrichmentRun(ctx, request.Scope, request.TargetID, request.Force, phaseStages(request))
 	if err != nil {
-		return storage.EnrichmentRun{}, err
+		if queueAutoOnBusy && errors.Is(err, storage.ErrEnrichmentRunState) {
+			m.phaseAutoRerunPending = true
+			return storage.EnrichmentRun{}, true, nil
+		}
+		return storage.EnrichmentRun{}, false, err
 	}
 	m.launchDurablePhaseLocked(run)
-	return run.EnrichmentRun, nil
+	return run.EnrichmentRun, false, nil
 }
 func (m *Manager) CancelRun(runID int64) error { return m.stopPhaseRun(runID, "cancel") }
 func (m *Manager) PauseRun(runID int64) error  { return m.stopPhaseRun(runID, "pause") }
@@ -114,6 +127,9 @@ func (m *Manager) stopPhaseRun(runID int64, action string) error {
 			return ErrRunNotActive
 		}
 		return err
+	}
+	if action == "cancel" {
+		m.phaseAutoRerunPending = false
 	}
 	m.cancelAutoResume(enrichmentAutoResumeKind, runID)
 	if m.phaseRunID == runID && m.phaseCancel != nil {

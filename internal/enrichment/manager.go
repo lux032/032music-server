@@ -40,24 +40,27 @@ type Manager struct {
 	store               *storage.Store
 	logger              *slog.Logger
 	client              *http.Client
-	mu                  sync.Mutex
-	running             bool
-	artistRunID         int64
-	artistCancel        context.CancelFunc
-	gate                *sourcegate.Gate
-	phaseMu             sync.Mutex
-	phaseRunning        bool
-	phaseRunID          int64
-	phaseCancel         context.CancelFunc
-	phaseEndpoints      phase4Endpoints
-	confirmAlbumSubject func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error)
-	inlineAI            func(context.Context, string, int64) bool
-	aiLimiter           *aiclient.Limiter
-	aiChatFactory       aiclient.ChatFactory
-	bioWebFactory       func(storage.ArtistAliasSettings, storage.AISettings) (websearch.Client, error)
-	posterMu            sync.Mutex
-	posterBackfilling   bool
-	posterLastResult    *PosterBackfillResult
+	mu                     sync.Mutex
+	running                bool
+	artistRunID            int64
+	artistCancel           context.CancelFunc
+	artistAutoRerunPending bool
+	gate                   *sourcegate.Gate
+	phaseMu                sync.Mutex
+	phaseRunning           bool
+	phaseRunID             int64
+	phaseCancel            context.CancelFunc
+	phaseAutoRerunPending  bool
+	phaseEndpoints         phase4Endpoints
+	confirmAlbumSubject    func(context.Context, int64, int64, int64, string, bool, []int64) (string, []int64, error)
+	inlineAI               func(context.Context, string, int64) bool
+	aiLimiter              *aiclient.Limiter
+	aiChatFactory          aiclient.ChatFactory
+	bioWebFactory          func(storage.ArtistAliasSettings, storage.AISettings) (websearch.Client, error)
+	posterMu               sync.Mutex
+	posterBackfilling      bool
+	posterBackfillPending  bool
+	posterLastResult       *PosterBackfillResult
 	// 头像补全 durable run（B+2）与身份匹配 run 使用同一把 m.mu 但独立字段：
 	// 两类任务可以并行，带宽共享由现有各来源限流原语（sourcegate 请求间隔、
 	// blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。
@@ -195,8 +198,19 @@ func (m *Manager) StartAuto(ctx context.Context) {
 		m.logger.Warn("load automatic metadata settings", "error", err)
 		return
 	}
-	phaseEnabled := false
-	identityEnabled := false
+	phaseEnabled, identityEnabled := autoEnrichmentFlags(settings)
+	if phaseEnabled {
+		m.startAutoPhaseEnabled(ctx, true)
+	}
+	if identityEnabled {
+		m.startAutoArtistEnabled(ctx, true)
+	}
+	if m.posterBackfillAutoEnabled() {
+		m.requestAutoWorkPosterBackfill()
+	}
+}
+
+func autoEnrichmentFlags(settings []storage.MetadataSourceSetting) (phaseEnabled, identityEnabled bool) {
 	for _, setting := range settings {
 		if !setting.Enabled || !setting.AutoMatch {
 			continue
@@ -208,28 +222,67 @@ func (m *Manager) StartAuto(ctx context.Context) {
 			identityEnabled = true
 		}
 	}
-	if phaseEnabled {
-		if _, err = m.StartRun(ctx, RunRequest{Scope: "all"}); err != nil {
-			if errors.Is(err, storage.ErrEnrichmentRunState) {
-				// 例如重启后留下的 server_restart 暂停任务：自动启动跳过，
-				// 日志里给出下一步处理方式，便于排查“为什么没跑”。
-				m.logger.Info("automatic metadata enrichment skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
-			} else {
-				m.logger.Warn("automatic metadata enrichment was not started", "error", err)
-			}
+	return phaseEnabled, identityEnabled
+}
+
+func (m *Manager) startAutoPhase(ctx context.Context, queueIfBusy bool) {
+	settings, err := m.store.MetadataSourceSettings(ctx)
+	if err != nil {
+		m.logger.Warn("load automatic metadata settings", "error", err)
+		return
+	}
+	phaseEnabled, _ := autoEnrichmentFlags(settings)
+	if !phaseEnabled {
+		return
+	}
+	m.startAutoPhaseEnabled(ctx, queueIfBusy)
+}
+
+func (m *Manager) startAutoPhaseEnabled(ctx context.Context, queueIfBusy bool) {
+	_, queued, err := m.startRun(ctx, RunRequest{Scope: "all"}, queueIfBusy)
+	if queued {
+		m.logger.Info("automatic metadata enrichment queued: will rerun after current run completes")
+		return
+	}
+	if err != nil {
+		if errors.Is(err, storage.ErrEnrichmentRunState) {
+			// 例如重启后留下的 server_restart 暂停任务：自动启动跳过，
+			// 日志里给出下一步处理方式，便于排查“为什么没跑”。
+			m.logger.Info("automatic metadata enrichment skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
+		} else {
+			m.logger.Warn("automatic metadata enrichment was not started", "error", err)
 		}
 	}
-	if identityEnabled {
-		if _, err = m.StartAll(ctx); err != nil {
-			if errors.Is(err, storage.ErrArtistRunState) {
-				m.logger.Info("automatic artist matching skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
-			} else {
-				m.logger.Warn("automatic artist matching was not started", "error", err)
-			}
-		}
+}
+
+func (m *Manager) startAutoArtist(ctx context.Context, queueIfBusy bool) {
+	settings, err := m.store.MetadataSourceSettings(ctx)
+	if err != nil {
+		m.logger.Warn("load automatic metadata settings", "error", err)
+		return
 	}
-	if m.posterBackfillAutoEnabled() {
-		m.StartWorkPosterBackfill()
+	_, identityEnabled := autoEnrichmentFlags(settings)
+	if !identityEnabled {
+		return
+	}
+	m.startAutoArtistEnabled(ctx, queueIfBusy)
+}
+
+func (m *Manager) startAutoArtistEnabled(ctx context.Context, queueIfBusy bool) {
+	_, queued, err := m.startAllWithMode(ctx, storage.ArtistScanIncremental, queueIfBusy)
+	if queued {
+		m.logger.Info("automatic artist matching queued: will rerun after current run completes")
+		return
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNoEligibleArtists):
+			m.logger.Debug("automatic artist matching skipped: no eligible artists")
+		case errors.Is(err, storage.ErrArtistRunState), errors.Is(err, ErrRunNotActive):
+			m.logger.Info("automatic artist matching skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
+		default:
+			m.logger.Warn("automatic artist matching was not started", "error", err)
+		}
 	}
 }
 
@@ -238,22 +291,35 @@ func (m *Manager) StartAll(ctx context.Context) (int64, error) {
 }
 
 func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanMode) (int64, error) {
+	runID, _, err := m.startAllWithMode(ctx, mode, false)
+	return runID, err
+}
+
+func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanMode, queueAutoOnBusy bool) (int64, bool, error) {
 	if mode != storage.ArtistScanFull {
 		mode = storage.ArtistScanIncremental
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.running {
-		return 0, ErrRunNotActive
+		if queueAutoOnBusy {
+			m.artistAutoRerunPending = true
+			return 0, true, nil
+		}
+		return 0, false, ErrRunNotActive
 	}
 	if _, err := m.store.UnfinishedDurableArtistRun(ctx); err == nil {
-		return 0, storage.ErrArtistRunState
+		if queueAutoOnBusy {
+			m.artistAutoRerunPending = true
+			return 0, true, nil
+		}
+		return 0, false, storage.ErrArtistRunState
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
+		return 0, false, err
 	}
 	settings, err := m.store.MetadataSourceSettings(ctx)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	hasAutomaticSource := false
 	for _, setting := range settings {
@@ -263,18 +329,18 @@ func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanM
 		}
 	}
 	if !hasAutomaticSource {
-		return 0, errors.New("no automatic metadata source is enabled")
+		return 0, false, errors.New("no automatic metadata source is enabled")
 	}
 	artists, err := m.store.ArtistsForMatching(ctx)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	var eligible, composites []storage.ArtistMatchInput
 	for _, artist := range artists {
 		if metadata.CompositeArtistCredit(artist.Name) {
 			needed, e := m.store.ArtistCompositeCheckNeeded(ctx, artist, mode)
 			if e != nil {
-				return 0, e
+				return 0, false, e
 			}
 			if needed {
 				composites = append(composites, artist)
@@ -287,7 +353,7 @@ func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanM
 			}
 			check, e := m.store.ArtistSourceCheckNeededForMode(ctx, artist, setting, mode)
 			if e != nil {
-				return 0, e
+				return 0, false, e
 			}
 			if check.Eligible {
 				eligible = append(eligible, artist)
@@ -297,7 +363,7 @@ func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	}
 	artists = eligible
 	if len(artists) == 0 {
-		return 0, ErrNoEligibleArtists
+		return 0, false, ErrNoEligibleArtists
 	}
 	artists = append(artists, composites...)
 	var snapshots []storage.ArtistRunItemInput
@@ -313,10 +379,10 @@ func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	}
 	runID, err := m.store.CreateDurableArtistRunWithMode(ctx, snapshots, mode)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	m.launchArtistRunLocked(runID)
-	return runID, nil
+	return runID, false, nil
 }
 
 var ErrNoEligibleArtists = errors.New("没有需要检查的艺术家")
@@ -333,6 +399,9 @@ func (m *Manager) stopArtistRun(runID int64, action string) error {
 			return ErrRunNotActive
 		}
 		return err
+	}
+	if action == "cancel" {
+		m.artistAutoRerunPending = false
 	}
 	m.cancelAutoResume(artistAutoResumeKind, runID)
 	if m.artistRunID == runID && m.artistCancel != nil {

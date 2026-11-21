@@ -152,8 +152,10 @@ func (m *Manager) launchDurablePhaseLocked(run storage.DurableEnrichmentRun) {
 	m.phaseCancel = cancel
 	m.phaseDone = done
 	m.goBackground("durable-enrichment", func() {
+		completed := false
 		defer func() {
 			if value := recover(); value != nil {
+				completed = false
 				m.phaseRuntimeFailure(run.ID, run.Epoch, fmt.Errorf("panic: %v", value))
 			}
 			cancel()
@@ -161,30 +163,42 @@ func (m *Manager) launchDurablePhaseLocked(run storage.DurableEnrichmentRun) {
 			m.phaseRunning = false
 			m.phaseRunID = 0
 			m.phaseCancel = nil
+			shouldRerun := completed && m.phaseAutoRerunPending && m.baseCtx.Err() == nil
+			if shouldRerun {
+				m.phaseAutoRerunPending = false
+			}
 			m.phaseMu.Unlock()
 			close(done)
+			// 批次 8：每轮增强结束后（无论完成/失败/停止）补一次缺失海报；开关
+			// 关闭（测试/e2e）或服务正在关闭时不触发（L2）。
+			if m.posterBackfillAutoEnabled() && m.baseCtx.Err() == nil {
+				m.requestAutoWorkPosterBackfill()
+			}
+			if shouldRerun {
+				m.startAutoPhase(m.baseCtx, false)
+			}
 		}()
-		m.executeDurablePhase(ctx, run)
+		completed = m.executeDurablePhase(ctx, run)
 	})
 }
-func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEnrichmentRun) {
+func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEnrichmentRun) bool {
 	request := RunRequest{Scope: run.Scope, TargetID: run.TargetID, Force: run.Force}
 	failures := 0
 	lastFailure := ""
 	for _, stage := range phaseStages(request) {
 		if ctx.Err() != nil {
 			m.phaseShutdown(run)
-			return
+			return false
 		}
 		prepared, err := m.store.EnrichmentStagePrepared(ctx, run.ID, stage)
 		if err != nil {
 			m.phaseRuntimeFailure(run.ID, run.Epoch, err)
-			return
+			return false
 		}
 		if !prepared {
 			if err = m.store.SetEnrichmentCurrent(ctx, run.ID, run.Epoch, stage, "正在统计"+phase4StageLabel(stage)+"阶段…"); err != nil {
 				m.phaseRuntimeFailure(run.ID, run.Epoch, err)
-				return
+				return false
 			}
 			if m.testStageCollectHook != nil {
 				m.testStageCollectHook(stage)
@@ -192,17 +206,17 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 			items, e := m.collectDurablePhaseStage(ctx, request, stage)
 			if e != nil {
 				m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-				return
+				return false
 			}
 			if e = m.store.PrepareEnrichmentStage(ctx, run.ID, run.Epoch, stage, items); e != nil {
 				m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-				return
+				return false
 			}
 		}
 		for {
 			if ctx.Err() != nil {
 				m.phaseShutdown(run)
-				return
+				return false
 			}
 			item, e := m.store.ClaimEnrichmentItem(ctx, run.ID, run.Epoch, stage)
 			if errors.Is(e, sql.ErrNoRows) {
@@ -210,44 +224,44 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 			}
 			if e != nil {
 				m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-				return
+				return false
 			}
 			c := storage.EnrichmentCheckpoint{RunID: run.ID, ItemID: item.ID, Epoch: run.Epoch, Token: item.Token}
 			itemCtx := storage.WithEnrichmentCheckpoint(ctx, c)
 			var snapshot phaseItemSnapshot
 			if e = json.Unmarshal(item.Parameters, &snapshot); e != nil {
 				m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-				return
+				return false
 			}
 			if label := phaseItemCurrent(stage, snapshot); label != "" {
 				if e = m.store.SetEnrichmentCurrent(ctx, run.ID, run.Epoch, stage, label); e != nil {
 					if errors.Is(e, storage.ErrEnrichmentRunState) {
-						return
+						return false
 					}
 					m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-					return
+					return false
 				}
 			}
 			rateAttempts := 0
 			for {
 				if ctx.Err() != nil {
 					m.phaseShutdown(run)
-					return
+					return false
 				}
 				current, e := m.store.DurableEnrichmentRun(ctx, run.ID)
 				if e != nil {
 					m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-					return
+					return false
 				}
 				if current.WaitingUntil != "" {
 					deadline, e := time.Parse(time.RFC3339Nano, current.WaitingUntil)
 					if e != nil {
 						m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-						return
+						return false
 					}
 					m.blockSourceUntil(current.WaitSource, deadline)
 					if e = m.waitEnrichmentSource(ctx, c, current.WaitSource, deadline); e != nil {
-						return
+						return false
 					}
 				}
 				outcome, e := m.store.EnrichmentEffect(ctx, c, "final")
@@ -265,7 +279,7 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 				}
 				if ctx.Err() != nil {
 					m.phaseShutdown(run)
-					return
+					return false
 				}
 				if rate := asRateLimited(e); rate != nil {
 					if !rate.CooldownOnly {
@@ -282,17 +296,17 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 						} else if !errors.Is(e, storage.ErrEnrichmentRunState) {
 							m.phaseRuntimeFailure(run.ID, run.Epoch, e)
 						}
-						return
+						return false
 					}
 					if e = m.waitEnrichmentSource(ctx, c, rate.Source, deadline); e != nil {
-						return
+						return false
 					}
 					continue
 				}
 				if e != nil {
 					if isArtistPersistenceError(e) || errors.Is(e, storage.ErrEnrichmentRunState) {
 						m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-						return
+						return false
 					}
 					outcome = "failed"
 					failures++
@@ -306,13 +320,13 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 				}
 				if e = m.store.CompleteEnrichmentItem(ctx, c, outcome); e != nil {
 					m.phaseRuntimeFailure(run.ID, run.Epoch, e)
-					return
+					return false
 				}
 				if failures >= maxConsecutiveFailures {
 					if e = m.store.TransitionEnrichmentWorker(ctx, run.ID, run.Epoch, "fail", "连续五次来源失败，任务已结束"); e != nil {
 						m.phaseRuntimeFailure(run.ID, run.Epoch, e)
 					}
-					return
+					return false
 				}
 				break
 			}
@@ -322,7 +336,9 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 	// users can tell partial failures apart from a clean pass after recovery.
 	if err := m.store.TransitionEnrichmentWorker(ctx, run.ID, run.Epoch, "complete", lastFailure); err != nil {
 		m.phaseRuntimeFailure(run.ID, run.Epoch, err)
+		return false
 	}
+	return true
 }
 func (m *Manager) phaseShutdown(run storage.DurableEnrichmentRun) {
 	if m.baseCtx.Err() != nil {
