@@ -59,3 +59,76 @@ func TestArtistReviewPageBeyondFiveHundredAndCorrectionExcluded(t *testing.T) {
 		t.Fatalf("correction group must not carry confirm/reject forms: %s", correction)
 	}
 }
+
+func TestMatchReviewWorkbenchTabsSortingAndSettingsReturnTo(t *testing.T) {
+	_, s, handler, _, cookie, csrf := rateLimitTestApp(t)
+	ctx := context.Background()
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil || len(artists) == 0 {
+		t.Fatalf("artists=%v err=%v", artists, err)
+	}
+	artistID := artists[0].ID
+	if err := s.ReplaceArtistCandidatesForSources(ctx, artistID, []storage.ArtistCandidate{
+		{Source: "lastfm", ExternalID: "lf-1", DisplayName: "FirstLowScore", Score: 95},
+		{Source: "musicbrainz", ExternalID: "mb-1", DisplayName: "AIRecTarget", Score: 80, MBID: "mb-1"},
+	}, []string{"musicbrainz", "lastfm"}); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := s.ArtistCandidates(ctx, artistID)
+	if err != nil || len(cands) != 2 {
+		t.Fatalf("cands=%+v err=%v", cands, err)
+	}
+	var mbID int64
+	for _, c := range cands {
+		if c.Source == "musicbrainz" {
+			mbID = c.ID
+		}
+	}
+	if _, err := s.SaveAIReviewDecision(ctx, storage.AIReviewDecision{
+		TargetKind: storage.AITargetArtistMatch, TargetID: artistID,
+		Action: storage.AIActionRecommendAccept, SelectedCandidateID: mbID,
+		Confidence: 94, Reason: "精确命中代表作",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default tab is identity; AI-recommended candidate is sorted ahead of higher raw score.
+	body := adminGetBody(t, handler, cookie, "/admin/matches")
+	if !strings.Contains(body, `data-active-tab="identity"`) {
+		t.Fatal("expected default active tab identity")
+	}
+	if !strings.Contains(body, `id="artist-image-settings-dialog"`) {
+		t.Fatal("expected native settings dialog")
+	}
+	recPos := strings.Index(body, "<b>AIRecTarget</b>")
+	otherPos := strings.Index(body, "<b>FirstLowScore</b>")
+	if recPos < 0 || otherPos < 0 || recPos > otherPos {
+		t.Fatalf("expected AI recommended candidate sorted first: rec=%d other=%d", recPos, otherPos)
+	}
+
+	// Explicit ?tab=avatars and runsPage=2 -> tasks tab.
+	avatarsBody := adminGetBody(t, handler, cookie, "/admin/matches?tab=avatars")
+	if !strings.Contains(avatarsBody, `data-active-tab="avatars"`) {
+		t.Fatal("expected avatars tab active")
+	}
+	runsPageBody := adminGetBody(t, handler, cookie, "/admin/matches?runsPage=2")
+	if !strings.Contains(runsPageBody, `data-active-tab="tasks"`) {
+		t.Fatal("expected runsPage=2 to activate tasks tab")
+	}
+
+	// Saving avatar settings honors safe returnTo and rejects external URLs.
+	rec := postAdminForm(t, handler, cookie, csrf, "/admin/settings/artist-images", map[string][]string{
+		"bangumi_enabled": {"1"},
+		"returnTo":        {"/admin/matches?tab=avatars"},
+	})
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/admin/matches?tab=avatars&notice=") {
+		t.Fatalf("settings redirect=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	unsafeRec := postAdminForm(t, handler, cookie, csrf, "/admin/settings/artist-images", map[string][]string{
+		"bangumi_enabled": {"1"},
+		"returnTo":        {"https://evil.example/phish"},
+	})
+	if unsafeRec.Code != http.StatusSeeOther || !strings.HasPrefix(unsafeRec.Header().Get("Location"), "/admin/matches?notice=") {
+		t.Fatalf("unsafe settings redirect=%d loc=%q", unsafeRec.Code, unsafeRec.Header().Get("Location"))
+	}
+}

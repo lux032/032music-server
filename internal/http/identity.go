@@ -56,6 +56,45 @@ func (m matchReviewItem) CanQuickAcceptAI() bool {
 		m.AIRecommendedCandidate() != nil && m.ConflictFor(m.AI.SelectedCandidateID) == nil
 }
 
+// SortedCandidates puts the AI-recommended candidate first while preserving
+// the relative order of all other candidates.
+func (m matchReviewItem) SortedCandidates() []storage.ArtistCandidate {
+	if m.AI == nil || m.AI.SelectedCandidateID <= 0 || len(m.Candidates) <= 1 {
+		return m.Candidates
+	}
+	idx := -1
+	for i := range m.Candidates {
+		if m.Candidates[i].ID == m.AI.SelectedCandidateID {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return m.Candidates
+	}
+	out := make([]storage.ArtistCandidate, 0, len(m.Candidates))
+	out = append(out, m.Candidates[idx])
+	out = append(out, m.Candidates[:idx]...)
+	out = append(out, m.Candidates[idx+1:]...)
+	return out
+}
+
+func (m matchReviewItem) HasConflict() bool {
+	return len(m.Conflicts) > 0
+}
+
+func (m matchReviewItem) AIFilterBucket() string {
+	if m.AI != nil {
+		switch m.AI.Action {
+		case storage.AIActionRecommendAccept:
+			return "accept"
+		case storage.AIActionRecommendReject:
+			return "reject"
+		}
+	}
+	return "uncertain"
+}
+
 type artistReleaseGroup struct {
 	Title       string
 	Description string
@@ -98,6 +137,84 @@ type identityPageData struct {
 	ActiveAIRun     *storage.AIReviewRun
 	LastAIRun       *storage.AIReviewRun
 	AIApplied       []storage.AIReviewAppliedItem
+	MatchTab        string
+}
+
+func (d identityPageData) HasAnyActiveRun() bool {
+	return d.ActiveArtistRun != nil || d.ActiveAIRun != nil || d.ImageBackfill.Active != nil || d.BioBackfill.Active != nil
+}
+
+func (d identityPageData) ImageCoveragePercent() int {
+	if d.ImageBackfill.Total <= 0 {
+		return 0
+	}
+	pct := d.ImageBackfill.Cached * 100 / d.ImageBackfill.Total
+	if pct > 100 {
+		return 100
+	}
+	if pct < 0 {
+		return 0
+	}
+	return pct
+}
+
+func (d identityPageData) BioFilledCount() int {
+	filled := d.BioBackfill.Total - d.BioBackfill.Missing
+	if filled < 0 {
+		return 0
+	}
+	return filled
+}
+
+func (d identityPageData) BioCoveragePercent() int {
+	if d.BioBackfill.Total <= 0 {
+		return 0
+	}
+	pct := d.BioFilledCount() * 100 / d.BioBackfill.Total
+	if pct > 100 {
+		return 100
+	}
+	return pct
+}
+
+func (d identityPageData) ReviewAcceptCount() int {
+	n := 0
+	for _, item := range d.Review {
+		if item.AIFilterBucket() == "accept" {
+			n++
+		}
+	}
+	return n
+}
+
+func (d identityPageData) ReviewRejectCount() int {
+	n := 0
+	for _, item := range d.Review {
+		if item.AIFilterBucket() == "reject" {
+			n++
+		}
+	}
+	return n
+}
+
+func (d identityPageData) ReviewUncertainCount() int {
+	n := 0
+	for _, item := range d.Review {
+		if item.AIFilterBucket() == "uncertain" {
+			n++
+		}
+	}
+	return n
+}
+
+func (d identityPageData) ReviewConflictCount() int {
+	n := 0
+	for _, item := range d.Review {
+		if item.HasConflict() {
+			n++
+		}
+	}
+	return n
 }
 
 func (a *App) identityBase(r *http.Request, section string) identityPageData {
@@ -717,6 +834,16 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		a.logger.Error("matches active run", "error", err)
 	}
 	data.ArtistRunsPage, data.ArtistRunsLimit = runsPageNumber(r), 10
+	switch r.URL.Query().Get("tab") {
+	case "identity", "credits", "avatars", "tasks":
+		data.MatchTab = r.URL.Query().Get("tab")
+	default:
+		if data.ArtistRunsPage > 1 {
+			data.MatchTab = "tasks"
+		} else {
+			data.MatchTab = "identity"
+		}
+	}
 	runsOffset := (data.ArtistRunsPage - 1) * data.ArtistRunsLimit
 	if runs, count, err := a.store.ListDurableArtistRuns(r.Context(), data.ArtistRunsLimit, runsOffset); err == nil {
 		data.ArtistRunsTotal = count

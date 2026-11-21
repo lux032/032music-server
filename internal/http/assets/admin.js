@@ -889,3 +889,136 @@ document.addEventListener('submit', async (event) => {
   });
 
 })();
+
+// ----------------------------------------- Artist Match Workbench (/admin/matches)
+// Tab switching (client-side instant switch with URL ?tab= sync), AI/conflict
+// filter chips on the current review page, inline 2-step confirmation for high-
+// impact actions (reject-all / identity-conflict merge), and dialog backdrop close.
+(function () {
+  'use strict';
+  if (window.__032_match_workbench_initialized) return;
+  window.__032_match_workbench_initialized = true;
+
+  function setMatchTab(root, tab, syncUrl) {
+    if (!root || !tab) return;
+    root.dataset.activeTab = tab;
+    root.querySelectorAll('.match-tabs [data-match-tab]').forEach((btn) => {
+      const on = btn.getAttribute('data-match-tab') === tab;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', String(on));
+    });
+    root.querySelectorAll('[data-match-panel]').forEach((panel) => {
+      panel.hidden = panel.getAttribute('data-match-panel') !== tab;
+    });
+    root.querySelectorAll('[data-match-return-to]').forEach((input) => {
+      input.value = `/admin/matches?tab=${encodeURIComponent(tab)}`;
+    });
+    if (syncUrl && window.history && window.history.replaceState) {
+      const url = new URL(window.location.href);
+      if (tab === 'identity') url.searchParams.delete('tab');
+      else url.searchParams.set('tab', tab);
+      window.history.replaceState(window.history.state, '', url.href);
+    }
+  }
+
+  function applyMatchFilter(root, filter) {
+    if (!root) return;
+    const cards = Array.from(root.querySelectorAll('[data-match-card]'));
+    let visible = 0;
+    cards.forEach((card) => {
+      const bucket = card.getAttribute('data-ai-bucket') || 'uncertain';
+      const conflict = card.getAttribute('data-has-conflict') === '1';
+      const match = filter === 'all' || (filter === 'conflict' ? conflict : bucket === filter);
+      card.hidden = !match;
+      if (match) visible += 1;
+    });
+    root.querySelectorAll('[data-match-ai-filter]').forEach((chip) => {
+      chip.classList.toggle('active', chip.getAttribute('data-match-ai-filter') === filter);
+    });
+    const clearBtn = root.querySelector('[data-match-filter-clear]');
+    if (clearBtn) clearBtn.hidden = filter === 'all';
+    const empty = root.querySelector('[data-match-filter-empty]');
+    if (empty) empty.hidden = cards.length === 0 || visible > 0;
+    const summary = root.querySelector('[data-match-filter-summary]');
+    if (summary) {
+      if (!summary.dataset.defaultText) summary.dataset.defaultText = summary.textContent;
+      summary.textContent = filter === 'all'
+        ? summary.dataset.defaultText
+        : `当前筛选显示 ${visible} / 本页 ${cards.length} 位`;
+    }
+  }
+
+  function disarmInlineConfirm(form) {
+    if (!form) return;
+    const btn = form.querySelector('button[data-confirm-armed="1"]');
+    if (btn) {
+      btn.removeAttribute('data-confirm-armed');
+      if (btn.dataset.originalLabel) btn.textContent = btn.dataset.originalLabel;
+    }
+    form.querySelector('.match-inline-confirm-cancel')?.remove();
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!(e.target instanceof Element)) return;
+    const root = document.querySelector('[data-match-workbench]');
+
+    // Tab switch (both tab buttons and cross-tab jump buttons)
+    const tabTrigger = e.target.closest('[data-match-tab]');
+    if (tabTrigger && root && root.contains(tabTrigger)) {
+      const targetTab = tabTrigger.getAttribute('data-match-tab');
+      if (targetTab) setMatchTab(root, targetTab, true);
+      return;
+    }
+
+    // AI / conflict filter chips
+    const chip = e.target.closest('[data-match-ai-filter]');
+    if (chip && root && root.contains(chip)) {
+      applyMatchFilter(root, chip.getAttribute('data-match-ai-filter') || 'all');
+      return;
+    }
+    if (e.target.closest('[data-match-filter-clear]') && root) {
+      applyMatchFilter(root, 'all');
+      return;
+    }
+
+    // Inline 2-step confirmation cancel
+    const cancelBtn = e.target.closest('.match-inline-confirm-cancel');
+    if (cancelBtn) {
+      disarmInlineConfirm(cancelBtn.closest('form'));
+      return;
+    }
+
+    // Inline 2-step confirmation first click arms; second click lets form submit
+    const confirmBtn = e.target.closest('button[data-inline-confirm]');
+    if (confirmBtn) {
+      const form = confirmBtn.closest('form');
+      if (confirmBtn.getAttribute('data-confirm-armed') !== '1') {
+        e.preventDefault();
+        // Disarm any other open confirmations on the page
+        document.querySelectorAll('.match-inline-confirm-form').forEach((other) => {
+          if (other !== form) disarmInlineConfirm(other);
+        });
+        confirmBtn.dataset.originalLabel = confirmBtn.textContent;
+        confirmBtn.textContent = confirmBtn.getAttribute('data-inline-confirm') || '确认操作';
+        confirmBtn.setAttribute('data-confirm-armed', '1');
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'match-inline-confirm-cancel compact-button';
+        cancel.textContent = '取消';
+        confirmBtn.after(cancel);
+        return;
+      }
+    }
+
+    // Close settings dialog when clicking the backdrop
+    if (e.target instanceof HTMLDialogElement && e.target.classList.contains('match-settings-dialog')) {
+      e.target.close();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.match-inline-confirm-form').forEach(disarmInlineConfirm);
+    }
+  });
+})();

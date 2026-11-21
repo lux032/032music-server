@@ -529,19 +529,21 @@ test('matches/enrichment run-task pages: naming, collapsed history, no polling s
   await expect(page.locator('main h1')).toHaveText('艺术家匹配与审核');
   await expect(page.getByRole('button', { name: '扫描未检查的艺术家' })).toBeVisible();
   await expect(page.getByRole('button', { name: '全局补全扫描' })).toBeVisible();
+  await expect(page.locator('.review-filter input[name="q"]')).toBeVisible();
+  await expect(page.locator('.review-filter select[name="source"]')).toBeVisible();
+  // 空闲态下任务与历史收纳在「任务与补全」页签。
+  await page.locator('.match-tabs [data-match-tab="tasks"]').click();
   await expect(page.locator('[data-run-tasks][data-run-kind="artist"]')).toBeVisible();
   await expect(page.locator('[data-run-tasks][data-run-kind="artist"] [data-run-empty]')).toBeVisible();
   const history = page.locator('[data-run-kind="artist"] .run-history');
   await expect(history).toBeVisible();
   await expect(history).not.toHaveAttribute('open');
   await expect(history.locator('summary')).toContainText('任务记录');
-  await expect(page.locator('.review-filter input[name="q"]')).toBeVisible();
-  await expect(page.locator('.review-filter select[name="source"]')).toBeVisible();
   await page.waitForTimeout(2600);
   const afterIdle = activeRequests.length;
-  // 无活动任务：3 个 run-task 容器（匹配/头像补全/简介补全）各做初次评估，
+  // 无活动任务：4 个 run-task 容器（匹配/AI预审/头像补全/简介补全）各做初次评估，
   // 之后不得出现 2s 请求风暴。
-  expect(afterIdle).toBeLessThanOrEqual(3);
+  expect(afterIdle).toBeLessThanOrEqual(4);
   // PJAX 切换到增强页再切回：计时器去重，不叠加风暴。
   await page.locator('.sidebar a[data-nav="enrichment"]').first().dispatchEvent('click');
   await expect(page.locator('main h1')).toHaveText('元数据自动增强');
@@ -549,7 +551,7 @@ test('matches/enrichment run-task pages: naming, collapsed history, no polling s
   await page.locator('.sidebar a[data-nav="matches"]').first().dispatchEvent('click');
   await expect(page.locator('main h1')).toHaveText('艺术家匹配与审核');
   await page.waitForTimeout(2600);
-  expect(activeRequests.length - afterIdle).toBeLessThanOrEqual(6);
+  expect(activeRequests.length - afterIdle).toBeLessThanOrEqual(8);
 });
 
 test('matches page review filter keeps query params through PJAX submit', async ({ page }) => {

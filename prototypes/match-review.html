@@ -1,0 +1,2157 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="032 Music Server 艺术家匹配与审核页面交互原型">
+  <title>艺术家匹配与审核（交互原型） · 032 Music</title>
+  <style>
+    @font-face {
+      font-family: Inter;
+      src: url('../internal/http/assets/inter-latin.woff2') format('woff2');
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: light;
+      --bg: #fafafa;
+      --bg-soft: #f4f4f5;
+      --bg-panel: #ffffff;
+      --surface: #ffffff;
+      --surface-hover: #f0f0f2;
+      --surface-sunken: #ededf0;
+      --fill: #efeff2;
+      --fill-hover: #e4e4e9;
+      --line: #e6e6ea;
+      --line-strong: #d4d4da;
+      --text: #111113;
+      --text-secondary: #4f4f59;
+      --muted: #64646e;
+      --text-on-accent: #ffffff;
+      --accent: #5b47e0;
+      --accent-hover: #4a37c9;
+      --accent-active: #3d2db0;
+      --accent-soft: rgba(91, 71, 224, 0.09);
+      --accent-soft-strong: rgba(91, 71, 224, 0.16);
+      --accent-line: rgba(91, 71, 224, 0.35);
+      --accent-strong-text: #4a37c9;
+      --danger: #c42b44;
+      --danger-soft: rgba(196, 43, 68, 0.08);
+      --danger-line: rgba(196, 43, 68, 0.35);
+      --success: #0e7651;
+      --success-soft: rgba(14, 118, 81, 0.09);
+      --success-line: rgba(14, 118, 81, 0.35);
+      --warning: #9a5b00;
+      --warning-soft: rgba(154, 91, 0, 0.09);
+      --warning-line: rgba(154, 91, 0, 0.35);
+      --shadow-cover: 0 2px 6px rgba(17, 17, 19, 0.1);
+      --shadow-pop: 0 14px 40px rgba(17, 17, 19, 0.16);
+
+      --font-ui: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+      --r-sm: 6px;
+      --r-row: 8px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --r-pill: 999px;
+
+      --sidebar-w: 224px;
+      --np-w: 300px;
+      --player-h: 76px;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #111113;
+      --bg-soft: #161619;
+      --bg-panel: #18181b;
+      --surface: #19191c;
+      --surface-hover: #242428;
+      --surface-sunken: #222226;
+      --fill: #232327;
+      --fill-hover: #2e2e33;
+      --line: #2a2a2f;
+      --line-strong: #3a3a41;
+      --text: #f4f4f6;
+      --text-secondary: #b8b8c2;
+      --muted: #9a9aa5;
+      --text-on-accent: #140f33;
+      --accent: #8d7dff;
+      --accent-hover: #a194ff;
+      --accent-active: #b4aaff;
+      --accent-soft: rgba(141, 125, 255, 0.14);
+      --accent-soft-strong: rgba(141, 125, 255, 0.24);
+      --accent-line: rgba(141, 125, 255, 0.5);
+      --accent-strong-text: #b4aaff;
+      --danger: #ff6f83;
+      --danger-soft: rgba(255, 111, 131, 0.12);
+      --danger-line: rgba(255, 111, 131, 0.4);
+      --success: #45d39a;
+      --success-soft: rgba(69, 211, 154, 0.11);
+      --success-line: rgba(69, 211, 154, 0.38);
+      --warning: #f2b84b;
+      --warning-soft: rgba(242, 184, 75, 0.11);
+      --warning-line: rgba(242, 184, 75, 0.4);
+      --shadow-cover: 0 2px 8px rgba(0, 0, 0, 0.32);
+      --shadow-pop: 0 18px 46px rgba(0, 0, 0, 0.48);
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 0.92rem;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, h4, p { margin: 0; }
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: 0.48; cursor: not-allowed; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); }
+    .icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .icon-sm { width: 14px; height: 14px; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+    /* ---- 032 Music Fixed Shell ---- */
+    .sidebar {
+      position: fixed; inset: 0 auto var(--player-h) 0; z-index: 30;
+      display: flex; flex-direction: column; width: var(--sidebar-w);
+      border-right: 1px solid var(--line); padding: 20px 12px 12px;
+      background: var(--bg); overflow-y: auto;
+    }
+    .wordmark { display: flex; align-items: center; gap: 8px; margin: 0 8px 22px; font-weight: 800; }
+    .wordmark img { width: 26px; height: 26px; border-radius: 7px; }
+    .wordmark span { font-size: 1.18rem; letter-spacing: -0.03em; }
+    .wordmark small { color: var(--muted); font-size: 0.62rem; letter-spacing: 0.16em; margin-top: 2px; }
+
+    .side-nav { display: grid; gap: 2px; }
+    .side-nav a, .side-nav button {
+      display: flex; align-items: center; gap: 10px; height: 36px;
+      border: 0; border-radius: var(--r-row); padding: 0 11px;
+      color: var(--text-secondary); background: transparent;
+      font-size: 0.88rem; text-align: left;
+      transition: background 0.14s, color 0.14s;
+    }
+    .side-nav a:hover, .side-nav button:hover { background: var(--fill); color: var(--text); }
+    .side-nav a.active { background: var(--fill); color: var(--text); font-weight: 700; }
+    .side-nav a.active .icon { color: var(--accent); }
+    .nav-kicker {
+      margin: 16px 11px 6px; color: var(--muted);
+      font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    .nav-badge {
+      margin-left: auto; min-width: 20px; height: 19px; padding: 0 6px;
+      border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-strong-text);
+      font-size: 0.72rem; font-weight: 700; display: inline-grid; place-items: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .sidebar-bottom {
+      margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+      display: grid; gap: 8px;
+    }
+    .sidebar-health { display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 0.76rem; color: var(--muted); }
+    .dot-ok { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex: none; }
+    .sidebar-user { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 2px 10px; font-size: 0.82rem; color: var(--text-secondary); }
+    .icon-btn {
+      display: inline-grid; place-items: center; width: 32px; height: 32px;
+      border: 0; border-radius: var(--r-row); background: transparent; color: var(--muted);
+      transition: background 0.14s, color 0.14s;
+    }
+    .icon-btn:hover { background: var(--fill); color: var(--text); }
+
+    .now-playing {
+      position: fixed; inset: 0 0 var(--player-h) auto; z-index: 20;
+      width: var(--np-w); border-left: 1px solid var(--line);
+      padding: 20px 18px; background: var(--bg-panel); overflow-y: auto;
+    }
+    .np-head { display: flex; align-items: center; justify-content: space-between; color: var(--text-secondary); font-size: 0.82rem; font-weight: 700; }
+    .np-cover { width: 100%; aspect-ratio: 1; margin-top: 16px; border-radius: var(--r-sm); object-fit: cover; box-shadow: var(--shadow-cover); background: var(--surface-sunken); }
+    .np-title { margin-top: 14px; font-size: 0.96rem; font-weight: 700; }
+    .np-artist { margin-top: 2px; font-size: 0.82rem; color: var(--text-secondary); }
+    .np-bar { height: 4px; margin-top: 14px; border-radius: var(--r-pill); background: var(--surface-sunken); overflow: hidden; }
+    .np-bar span { display: block; height: 100%; width: 42%; background: var(--accent); border-radius: inherit; }
+    .np-times { display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .np-queue { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .np-queue h3 { font-size: 0.78rem; color: var(--muted); font-weight: 700; letter-spacing: 0.04em; margin-bottom: 8px; }
+    .np-queue ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+    .np-queue li { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: var(--r-row); font-size: 0.8rem; color: var(--text-secondary); }
+    .np-queue li.playing { background: var(--accent-soft); color: var(--accent-strong-text); font-weight: 600; }
+    .np-queue small { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .player-bar {
+      position: fixed; inset: auto 0 0; z-index: 40; height: var(--player-h);
+      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+      padding: 0 20px; border-top: 1px solid var(--line); background: var(--bg-panel);
+    }
+    .player-now { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .player-now img { width: 46px; height: 46px; border-radius: var(--r-sm); object-fit: cover; flex: none; }
+    .player-now strong, .player-now span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .player-now strong { font-size: 0.86rem; }
+    .player-now span { font-size: 0.76rem; color: var(--muted); }
+    .player-transport { display: flex; align-items: center; gap: 10px; }
+    .play-main {
+      width: 42px; height: 42px; border: 0; border-radius: 50%;
+      background: var(--text); color: var(--bg);
+      display: grid; place-items: center; transition: transform 0.14s;
+    }
+    .play-main:hover { transform: scale(1.05); }
+    .player-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted); font-size: 0.76rem; }
+
+    /* ---- Main Workspace ---- */
+    .main {
+      min-height: 100vh;
+      margin-left: var(--sidebar-w);
+      margin-right: var(--np-w);
+      padding: 30px clamp(20px, 3vw, 44px) calc(var(--player-h) + 56px);
+    }
+    .workspace { max-width: 1040px; }
+
+    /* ---- Demo Bar (Prototype only) ---- */
+    .proto-bar {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+      margin-bottom: 18px; padding: 8px 12px;
+      border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+      background: var(--bg-soft); font-size: 0.76rem; color: var(--text-secondary);
+    }
+    .proto-bar strong { color: var(--text); font-weight: 700; margin-right: 4px; }
+    .proto-chip {
+      border: 0; border-radius: var(--r-pill); padding: 4px 10px;
+      background: var(--surface); color: var(--text-secondary);
+      border: 1px solid var(--line); font-size: 0.74rem; font-weight: 500;
+      transition: background 0.14s, color 0.14s, border-color 0.14s;
+    }
+    .proto-chip:hover { background: var(--fill-hover); color: var(--text); }
+    .proto-chip.active { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-strong-text); font-weight: 650; }
+    .proto-spacer { flex: 1; }
+
+    /* ---- Buttons (DESIGN.md) ---- */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 0; border-radius: var(--r-pill); padding: 0.56rem 1rem;
+      font-size: 0.84rem; font-weight: 600; line-height: 1.2; white-space: nowrap;
+      transition: background 0.14s, color 0.14s, transform 0.1s;
+    }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: var(--text-on-accent); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-secondary { background: var(--fill); color: var(--text); }
+    .btn-secondary:hover:not(:disabled) { background: var(--fill-hover); }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover:not(:disabled) { background: var(--fill); color: var(--text); }
+    .btn-subtle-confirm { background: var(--fill); color: var(--text); }
+    .btn-subtle-confirm:hover:not(:disabled) { background: var(--text); color: var(--bg); }
+    .btn-danger-soft { background: var(--danger-soft); color: var(--danger); }
+    .btn-danger-soft:hover:not(:disabled) { background: var(--danger); color: #fff; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+    .btn-warning-soft { background: var(--warning-soft); color: var(--warning); }
+    .btn-warning-soft:hover:not(:disabled) { background: var(--warning); color: #fff; }
+    .btn-sm { padding: 0.4rem 0.78rem; font-size: 0.78rem; }
+    .btn-xs { padding: 0.3rem 0.66rem; font-size: 0.74rem; }
+
+    /* ---- Page Header ---- */
+    .page-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px 24px; flex-wrap: wrap;
+    }
+    .page-title-block { min-width: 0; flex: 1 1 320px; }
+    .page-title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .page-header h1 {
+      font-size: clamp(1.75rem, 2.5vw, 2.2rem); font-weight: 800;
+      line-height: 1.12; letter-spacing: -0.025em;
+    }
+    .page-subtitle {
+      margin-top: 6px; color: var(--text-secondary); font-size: 0.86rem;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+    }
+    .help-toggle {
+      display: inline-flex; align-items: center; gap: 4px;
+      border: 0; border-radius: var(--r-pill); padding: 2px 8px;
+      background: var(--fill); color: var(--text-secondary); font-size: 0.74rem; font-weight: 500;
+    }
+    .help-toggle:hover { background: var(--fill-hover); color: var(--text); }
+    .help-drawer {
+      margin-top: 12px; padding: 12px 14px;
+      border: 1px solid var(--line); border-radius: var(--r-md);
+      background: var(--surface); font-size: 0.8rem; color: var(--text-secondary);
+      display: grid; gap: 6px; line-height: 1.55;
+    }
+    .help-drawer strong { color: var(--text); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; padding-top: 4px; }
+
+    /* ---- Pinned Active Tasks Strip (Dynamic, Cross-Tab) ---- */
+    .active-runs-strip {
+      margin-top: 18px; display: grid; gap: 10px;
+    }
+    .active-run-banner {
+      border: 1px solid var(--accent-line); border-radius: var(--r-lg);
+      background: var(--surface); padding: 14px 16px;
+      display: grid; gap: 10px;
+    }
+    .active-run-banner.is-paused { border-color: var(--warning-line); }
+    .active-run-top {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .active-run-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.88rem; }
+    .pulse-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft); flex: none;
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    .is-paused .pulse-dot { background: var(--warning); box-shadow: 0 0 0 4px var(--warning-soft); animation: none; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: var(--r-pill);
+      font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .status-pill.running { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-strong-text); }
+    .status-pill.paused { background: var(--warning-soft); border-color: var(--warning-line); color: var(--warning); }
+    .status-pill.completed { background: var(--success-soft); border-color: var(--success-line); color: var(--success); }
+    .status-pill.failed { background: var(--danger-soft); border-color: var(--danger-line); color: var(--danger); }
+    .status-pill.neutral { background: var(--fill); color: var(--text-secondary); }
+
+    .run-progress-track { height: 5px; border-radius: var(--r-pill); background: var(--surface-sunken); overflow: hidden; }
+    .run-progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.35s var(--ease); }
+    .is-paused .run-progress-fill { background: var(--warning); }
+
+    .active-run-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px 16px; flex-wrap: wrap; font-size: 0.76rem; color: var(--text-secondary);
+    }
+    .active-run-wait {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 7px 10px; border-radius: var(--r-sm);
+      background: var(--warning-soft); color: var(--warning); font-size: 0.76rem; font-weight: 500;
+    }
+    .active-run-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    /* ---- Workbench Tabs ---- */
+    .workbench-tabs {
+      display: flex; align-items: center; gap: 4px;
+      margin-top: 22px; border-bottom: 1px solid var(--line);
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .workbench-tabs::-webkit-scrollbar { display: none; }
+    .tab-btn {
+      position: relative; display: inline-flex; align-items: center; gap: 7px;
+      border: 0; background: transparent; padding: 10px 14px 12px;
+      color: var(--text-secondary); font-size: 0.88rem; font-weight: 600;
+      white-space: nowrap; transition: color 0.14s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); }
+    .tab-btn.active::after {
+      content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
+      height: 2px; border-radius: 2px 2px 0 0; background: var(--accent);
+    }
+    .tab-count {
+      display: inline-grid; place-items: center; min-width: 20px; height: 20px;
+      padding: 0 6px; border-radius: var(--r-pill);
+      background: var(--fill); color: var(--muted);
+      font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .tab-btn.active .tab-count { background: var(--accent-soft); color: var(--accent-strong-text); }
+    .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.8s infinite; }
+
+    .tab-panel { padding-top: 18px; }
+
+    /* ---- Filter Toolbar ---- */
+    .filter-toolbar {
+      display: grid; gap: 12px; margin-bottom: 16px;
+    }
+    .filter-row-main {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .search-box {
+      position: relative; flex: 1 1 240px; max-width: 340px;
+    }
+    .search-box .icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      color: var(--muted); pointer-events: none;
+    }
+    .search-box input {
+      width: 100%; height: 38px; border: 1px solid transparent;
+      border-radius: var(--r-md); padding: 0 12px 0 36px;
+      background: var(--fill); font-size: 0.84rem;
+      transition: background 0.14s, border-color 0.14s, box-shadow 0.14s;
+    }
+    .search-box input:hover { background: var(--fill-hover); }
+    .search-box input:focus {
+      background: var(--surface); border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft); outline: none;
+    }
+    .select-field {
+      height: 38px; border: 1px solid transparent; border-radius: var(--r-md);
+      padding: 0 12px; background: var(--fill); font-size: 0.84rem; color: var(--text);
+      cursor: pointer; transition: background 0.14s, border-color 0.14s;
+    }
+    .select-field:hover { background: var(--fill-hover); }
+    .select-field:focus { background: var(--surface); border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+    .filter-summary { margin-left: auto; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .filter-chips { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px; height: 32px;
+      border: 0; border-radius: var(--r-pill); padding: 0 12px;
+      background: var(--fill); color: var(--text-secondary);
+      font-size: 0.78rem; font-weight: 500; transition: background 0.14s, color 0.14s;
+    }
+    .chip:hover { background: var(--fill-hover); color: var(--text); }
+    .chip.active { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+    .chip-num { opacity: 0.78; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+    .clear-link {
+      border: 0; background: transparent; padding: 4px 8px;
+      color: var(--accent-strong-text); font-size: 0.78rem; font-weight: 600;
+    }
+    .clear-link:hover { text-decoration: underline; }
+
+    /* ---- Wide Single-Column Review Cards (Quiet Card Rule) ---- */
+    .review-stack { display: grid; gap: 14px; }
+    .review-card {
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); overflow: hidden;
+      transition: opacity 0.22s var(--ease), transform 0.22s var(--ease);
+    }
+    .review-card.is-leaving { opacity: 0; transform: translateY(-6px) scale(0.99); pointer-events: none; }
+    .review-card-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 13px 18px; border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .artist-head-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+    .artist-name-link {
+      font-size: 1rem; font-weight: 700; color: var(--text);
+      letter-spacing: -0.01em; transition: color 0.14s;
+    }
+    .artist-name-link:hover { color: var(--accent-strong-text); }
+    .artist-stats { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    /* AI Decision Strip inside card */
+    .ai-strip {
+      display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+      padding: 10px 18px; border-bottom: 1px solid var(--line);
+      font-size: 0.8rem;
+    }
+    .ai-strip.tone-accept { background: var(--accent-soft); }
+    .ai-strip.tone-reject { background: var(--danger-soft); }
+    .ai-strip.tone-uncertain { background: var(--warning-soft); }
+    .ai-badge {
+      display: inline-flex; align-items: center; gap: 4px; flex: none;
+      padding: 2px 9px; border-radius: var(--r-pill);
+      font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .ai-badge.tone-accept { background: var(--surface); color: var(--accent-strong-text); border: 1px solid var(--accent-line); }
+    .ai-badge.tone-reject { background: var(--surface); color: var(--danger); border: 1px solid var(--danger-line); }
+    .ai-badge.tone-uncertain { background: var(--surface); color: var(--warning); border: 1px solid var(--warning-line); }
+    .ai-strip-body { flex: 1 1 260px; min-width: 0; color: var(--text-secondary); line-height: 1.5; }
+    .ai-strip-body strong { color: var(--text); }
+    .web-tag {
+      display: inline-flex; align-items: center; gap: 3px; margin-left: 6px;
+      padding: 1px 6px; border-radius: 4px; background: var(--surface);
+      border: 1px solid var(--line); color: var(--muted); font-size: 0.7rem; font-weight: 500;
+    }
+
+    /* Candidate Horizontal Rows */
+    .cand-list { display: grid; }
+    .cand-row {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 18px;
+      align-items: center; padding: 13px 18px;
+      border-top: 1px solid var(--line);
+      transition: background 0.14s, opacity 0.2s;
+    }
+    .cand-row:first-child { border-top: 0; }
+    .cand-row:hover { background: var(--bg-soft); }
+    .cand-row.is-recommended {
+      background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .cand-row.is-recommended:hover {
+      background: var(--accent-soft);
+    }
+    .cand-row.is-leaving { opacity: 0; pointer-events: none; }
+    .cand-info { min-width: 0; display: grid; gap: 4px; }
+    .cand-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+    .cand-title-line b { font-size: 0.92rem; font-weight: 650; color: var(--text); }
+    .rec-pill {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 8px; border-radius: var(--r-pill);
+      background: var(--accent-soft-strong); color: var(--accent-strong-text);
+      font-size: 0.7rem; font-weight: 700;
+    }
+    .source-tag {
+      display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--r-pill);
+      background: var(--fill); color: var(--text-secondary);
+      font-size: 0.71rem; font-weight: 600;
+    }
+    .score-num {
+      font-size: 0.74rem; font-weight: 700; color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    .score-num.high { color: var(--success); }
+    .cand-sub-line {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px;
+      font-size: 0.78rem; color: var(--muted);
+    }
+    .ext-link {
+      display: inline-flex; align-items: center; gap: 3px;
+      color: var(--accent-strong-text); font-size: 0.76rem; font-weight: 600;
+    }
+    .ext-link:hover { text-decoration: underline; }
+    .cand-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+    /* Conflict Box inside candidate row */
+    .conflict-box {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px 14px; flex-wrap: wrap;
+      padding: 9px 12px; border-radius: var(--r-sm);
+      background: var(--warning-soft); border: 1px solid var(--warning-line);
+      color: var(--warning); font-size: 0.78rem;
+    }
+    .conflict-box a.target-link { color: var(--text); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+    .conflict-box-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .conflict-detail-link { color: var(--text-secondary); font-size: 0.76rem; font-weight: 500; }
+    .conflict-detail-link:hover { color: var(--text); text-decoration: underline; }
+
+    /* Inline 2-step confirm group */
+    .confirm-group { display: inline-flex; align-items: center; gap: 5px; }
+
+    /* ---- Tab 2: Composite Credit Split ---- */
+    .section-hint {
+      margin-bottom: 14px; padding: 10px 14px; border-radius: var(--r-md);
+      background: var(--fill); color: var(--text-secondary); font-size: 0.82rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .split-body {
+      padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;
+      gap: 14px 18px; flex-wrap: wrap;
+    }
+    .split-info { flex: 1 1 320px; min-width: 0; display: grid; gap: 8px; }
+    .split-parts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .split-part-pill {
+      display: inline-flex; align-items: center; padding: 3px 10px;
+      border-radius: var(--r-pill); background: var(--accent-soft);
+      color: var(--accent-strong-text); font-size: 0.8rem; font-weight: 650;
+    }
+    .split-plus { color: var(--muted); font-size: 0.78rem; font-weight: 700; }
+
+    /* ---- Tab 3: Pending Avatar Candidates ---- */
+    .avatar-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px;
+    }
+    .avatar-card {
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); padding: 16px;
+      display: flex; flex-direction: column; gap: 12px;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .avatar-card.is-leaving { opacity: 0; transform: scale(0.97); pointer-events: none; }
+    .avatar-card-top { display: flex; align-items: center; gap: 12px; }
+    .avatar-preview {
+      width: 60px; height: 60px; border-radius: 50%; object-fit: cover;
+      border: 1px solid var(--line); background: var(--surface-sunken); flex: none;
+    }
+    .avatar-meta { min-width: 0; flex: 1; }
+    .avatar-meta strong { display: block; font-size: 0.94rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .avatar-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+    .avatar-reason { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.5; flex: 1; }
+    .avatar-source-url {
+      font-size: 0.74rem; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .avatar-source-url a { color: var(--accent-strong-text); }
+    .avatar-source-url a:hover { text-decoration: underline; }
+    .avatar-actions { display: flex; align-items: center; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+    .avatar-actions .btn { flex: 1; }
+
+    /* ---- Tab 4: 2x2 Pipelines Grid ---- */
+    .pipeline-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+    }
+    .pipeline-card {
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); padding: 18px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .pipeline-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .pipeline-head h2 { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; }
+    .pipeline-head p { margin-top: 3px; font-size: 0.78rem; color: var(--muted); line-height: 1.45; }
+
+    .coverage-block { display: grid; gap: 6px; }
+    .coverage-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.78rem; color: var(--text-secondary); }
+    .coverage-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+    .coverage-bar { height: 6px; border-radius: var(--r-pill); background: var(--surface-sunken); overflow: hidden; }
+    .coverage-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+
+    .pipeline-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .pipeline-form .select-field { flex: 1 1 180px; min-width: 0; height: 36px; font-size: 0.8rem; }
+    .inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-secondary); cursor: pointer; }
+    .inline-check input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+
+    .last-run-line {
+      font-size: 0.76rem; color: var(--muted); padding: 8px 10px;
+      border-radius: var(--r-row); background: var(--bg-soft); line-height: 1.5;
+      font-variant-numeric: tabular-nums;
+    }
+    .pipeline-footer {
+      margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    }
+
+    /* Collapsible History / Applied Records */
+    details.quiet-details { border-top: 1px solid var(--line); padding-top: 10px; }
+    details.quiet-details > summary {
+      cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); user-select: none;
+    }
+    details.quiet-details > summary::-webkit-details-marker { display: none; }
+    details.quiet-details > summary:hover { color: var(--text); }
+    .history-list { margin-top: 10px; display: grid; gap: 6px; }
+    .history-row {
+      padding: 8px 10px; border-radius: var(--r-row); background: var(--bg-soft);
+      display: grid; gap: 3px; font-size: 0.76rem;
+    }
+    .history-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .applied-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 8px 10px; border-radius: var(--r-row); background: var(--bg-soft); font-size: 0.78rem;
+    }
+    .applied-item-main { min-width: 0; flex: 1; display: grid; gap: 2px; }
+    .applied-item-main strong { font-size: 0.82rem; }
+    .applied-item-main small { color: var(--muted); font-size: 0.74rem; }
+
+    /* ---- Pagination & Zero State ---- */
+    .pager {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+      font-size: 0.82rem; color: var(--muted);
+    }
+    .pager-btns { display: flex; gap: 8px; }
+    .zero-state {
+      border: 1px dashed var(--line-strong); border-radius: var(--r-lg);
+      padding: 40px 24px; text-align: center; background: var(--surface);
+      display: grid; place-items: center; gap: 8px;
+    }
+    .zero-state strong { font-size: 0.96rem; color: var(--text); }
+    .zero-state span { font-size: 0.82rem; color: var(--muted); max-width: 420px; }
+
+    /* ---- Native Dialog Modal (Avatar Settings) ---- */
+    dialog.modal-dialog {
+      width: min(640px, calc(100vw - 28px)); max-height: 86dvh;
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      padding: 0; background: var(--surface); color: var(--text);
+      box-shadow: var(--shadow-pop); overflow: hidden;
+    }
+    dialog.modal-dialog::backdrop { background: rgba(17, 17, 19, 0.54); backdrop-filter: blur(2px); }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 16px 20px; border-bottom: 1px solid var(--line);
+    }
+    .modal-head h2 { font-size: 1.05rem; font-weight: 700; }
+    .modal-body { padding: 18px 20px; overflow-y: auto; max-height: calc(86dvh - 124px); display: grid; gap: 18px; }
+    .field-group { display: grid; gap: 10px; }
+    .field-group-title { font-size: 0.74rem; font-weight: 700; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+    .check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 14px; }
+    .check-card {
+      display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px;
+      border-radius: var(--r-md); background: var(--bg-soft); cursor: pointer; font-size: 0.82rem;
+    }
+    .check-card:hover { background: var(--fill); }
+    .check-card input { margin-top: 2px; accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
+    .check-card small { display: block; color: var(--muted); font-size: 0.73rem; margin-top: 1px; }
+    .input-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .field-label { display: grid; gap: 5px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500; }
+    .field-input {
+      height: 38px; border: 1px solid transparent; border-radius: var(--r-md);
+      padding: 0 11px; background: var(--fill); color: var(--text); font-size: 0.84rem;
+    }
+    .field-input:hover { background: var(--fill-hover); }
+    .field-input:focus { background: var(--surface); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+    .modal-foot {
+      display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+      padding: 13px 20px; border-top: 1px solid var(--line); background: var(--bg-soft);
+    }
+
+    /* ---- Toast ---- */
+    .toast-host {
+      position: fixed; left: 50%; bottom: calc(var(--player-h) + 18px); z-index: 120;
+      transform: translateX(-50%); pointer-events: none;
+    }
+    .toast {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; border: 1px solid var(--line-strong); border-radius: var(--r-md);
+      background: var(--surface); color: var(--text); box-shadow: var(--shadow-pop);
+      font-size: 0.84rem; pointer-events: auto;
+      opacity: 0; transform: translateY(10px); transition: opacity 0.18s, transform 0.2s var(--ease);
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast-undo {
+      border: 0; background: transparent; padding: 2px 4px;
+      color: var(--accent-strong-text); font-weight: 700; font-size: 0.82rem;
+    }
+    .toast-undo:hover { text-decoration: underline; }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 1240px) {
+      :root { --np-w: 0px; }
+      .now-playing { display: none; }
+    }
+    @media (max-width: 960px) {
+      .pipeline-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 900px) {
+      :root { --sidebar-w: 0px; --player-h: 64px; }
+      .sidebar {
+        inset: auto 0 0; width: 100%; height: 56px; border-right: 0; border-top: 1px solid var(--line);
+        padding: 0; flex-direction: row; background: var(--bg-panel); overflow: hidden;
+      }
+      .wordmark, .nav-kicker, .sidebar-bottom, .side-nav a:not([data-mobile]) { display: none; }
+      .side-nav { grid-template-columns: repeat(5, 1fr); width: 100%; height: 100%; }
+      .side-nav a { flex-direction: column; justify-content: center; gap: 2px; height: 100%; border-radius: 0; font-size: 0.68rem; padding: 4px 2px; }
+      .side-nav a.active { background: transparent; }
+      .player-bar { bottom: 56px; grid-template-columns: 1fr auto; padding: 0 14px; }
+      .player-right { display: none; }
+      .main { margin: 0; padding: 20px 16px 144px; }
+      .cand-row { grid-template-columns: 1fr; }
+      .cand-actions { justify-content: flex-start; }
+      .toast-host { bottom: 132px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true"><defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-album" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-artist" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-5 3-8 8-8s8 3 8 8"/></symbol>
+    <symbol id="i-track" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
+    <symbol id="i-work" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 4v5m6-5v5"/></symbol>
+    <symbol id="i-matches" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.8 2.6-6 6-6s6 2.2 6 6"/><path d="m16 11 2 2 4-4"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6m0-6-9 9M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="m18 5-10 7 10 7zM5 5v14"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 5 10 7L6 19zM19 5v14"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.2" fill="var(--surface)"/><circle cx="15" cy="17" r="2.2" fill="var(--surface)"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  </defs></svg>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" aria-label="主导航">
+    <a class="wordmark" href="#top"><img src="../docs/images/icon-v2.png" alt=""><span>032</span><small>MUSIC</small></a>
+    <nav class="side-nav">
+      <a href="#home" data-mobile><svg class="icon"><use href="#i-home"/></svg>主页</a>
+      <a href="#albums" data-mobile><svg class="icon"><use href="#i-album"/></svg>专辑</a>
+      <a href="#artists" data-mobile><svg class="icon"><use href="#i-artist"/></svg>歌手</a>
+      <a href="#tracks" data-mobile><svg class="icon"><use href="#i-track"/></svg>歌曲</a>
+      <a href="#works"><svg class="icon"><use href="#i-work"/></svg>作品</a>
+      <p class="nav-kicker">管理</p>
+      <a href="#matches" class="active" aria-current="page" data-mobile><svg class="icon"><use href="#i-matches"/></svg>艺术家匹配<span class="nav-badge" id="nav-total-badge">11</span></a>
+      <a href="#work-review"><svg class="icon"><use href="#i-work"/></svg>作品关联审核<span class="nav-badge">14</span></a>
+      <a href="#enrichment"><svg class="icon"><use href="#i-spark"/></svg>自动增强</a>
+      <a href="#settings"><svg class="icon"><use href="#i-gear"/></svg>数据来源与 AI</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-health"><span class="dot-ok"></span><span>音乐库已就绪 · 1,842 首</span></div>
+      <div class="sidebar-user">
+        <span>admin</span>
+        <button type="button" class="icon-btn" id="theme-toggle" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">
+          <svg class="icon" id="theme-icon"><use href="#i-moon"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Now Playing -->
+  <aside class="now-playing" aria-label="当前播放">
+    <div class="np-head"><span>当前播放</span><span class="muted">FLAC 24-bit</span></div>
+    <img class="np-cover" src="assets/walpurgis.jpg" alt="Walpurgis">
+    <p class="np-title">SPARK-AGAIN</p>
+    <p class="np-artist">Aimer · Walpurgis</p>
+    <div class="np-bar"><span></span></div>
+    <div class="np-times"><span>1:42</span><span>4:04</span></div>
+    <div class="np-queue">
+      <h3>播放队列</h3>
+      <ol>
+        <li class="playing"><span>1</span><span>SPARK-AGAIN</span><small>4:04</small></li>
+        <li><span>2</span><span>残響散歌</span><small>3:04</small></li>
+        <li><span>3</span><span>夜に駆ける</span><small>4:21</small></li>
+        <li><span>4</span><span>βios</span><small>4:33</small></li>
+      </ol>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main" id="top">
+    <div class="workspace">
+
+      <!-- Prototype Scenario Switcher (only for interactive review) -->
+      <div class="proto-bar" role="region" aria-label="原型状态模拟器">
+        <strong>原型状态模拟：</strong>
+        <button type="button" class="proto-chip active" data-scenario="idle">日常空闲（审核优先）</button>
+        <button type="button" class="proto-chip" data-scenario="running">运行中任务（顶部置顶）</button>
+        <button type="button" class="proto-chip" data-scenario="ratelimit">限流暂停 + 倒计时</button>
+        <button type="button" class="proto-chip" data-scenario="ai-off">AI 开关未启用</button>
+        <button type="button" class="proto-chip" data-scenario="empty">审核队列清空态</button>
+        <span class="proto-spacer"></span>
+        <button type="button" class="proto-chip" id="proto-reset">重置演示数据</button>
+      </div>
+
+      <!-- Page Header -->
+      <header class="page-header">
+        <div class="page-title-block">
+          <div class="page-title-row">
+            <h1>艺术家匹配与审核</h1>
+          </div>
+          <div class="page-subtitle">
+            <span>以 MusicBrainz / Last.fm 为来源识别艺术家身份，低于自动确认阈值的候选在此审核。</span>
+            <button type="button" class="help-toggle" id="scan-help-btn" aria-expanded="false" aria-controls="scan-help-drawer">
+              <svg class="icon icon-sm"><use href="#i-info"/></svg>
+              扫描规则说明
+            </button>
+          </div>
+          <div class="help-drawer" id="scan-help-drawer" hidden>
+            <p><strong>扫描未检查的艺术家（初次增量）</strong>：仅检查从未初次扫描过的艺术家；已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家保持不动。</p>
+            <p><strong>全局补全扫描</strong>：对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份。</p>
+            <p class="muted">说明：这里的“扫描”指外部元数据身份匹配，不是本地音频文件扫描。</p>
+          </div>
+        </div>
+
+        <div class="header-actions" id="header-actions">
+          <button type="button" class="btn btn-primary" id="btn-scan-inc">扫描未检查的艺术家</button>
+          <button type="button" class="btn btn-secondary" id="btn-scan-full">全局补全扫描</button>
+          <button type="button" class="btn btn-secondary" id="btn-header-ai">
+            <svg class="icon icon-sm"><use href="#i-spark"/></svg>
+            AI 预审
+          </button>
+        </div>
+      </header>
+
+      <!-- Dynamic Active Runs Strip (Hidden when all pipelines are idle) -->
+      <section class="active-runs-strip" id="active-runs-strip" aria-label="进行中的后台任务" hidden></section>
+
+      <!-- Workbench 4-Tab Bar -->
+      <nav class="workbench-tabs" role="tablist" aria-label="艺术家匹配工作区">
+        <button type="button" class="tab-btn active" role="tab" aria-selected="true" data-tab="identity">
+          <span>待审身份</span>
+          <span class="tab-count" id="badge-identity">0</span>
+        </button>
+        <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="credits">
+          <span>需修正署名</span>
+          <span class="tab-count" id="badge-credits">0</span>
+        </button>
+        <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="avatars">
+          <span>待审头像</span>
+          <span class="tab-count" id="badge-avatars">0</span>
+        </button>
+        <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="tasks">
+          <span>任务与补全</span>
+          <span class="tab-dot" id="tasks-running-dot" hidden></span>
+        </button>
+      </nav>
+
+      <!-- TAB 1: 待审身份 -->
+      <section class="tab-panel" id="panel-identity" role="tabpanel">
+        <div class="filter-toolbar">
+          <div class="filter-row-main">
+            <div class="search-box">
+              <svg class="icon"><use href="#i-search"/></svg>
+              <input type="search" id="identity-search" placeholder="搜索艺术家或候选名..." aria-label="搜索艺术家">
+            </div>
+            <select class="select-field" id="identity-source" aria-label="候选来源">
+              <option value="">全部来源</option>
+              <option value="musicbrainz">MusicBrainz</option>
+              <option value="lastfm">Last.fm</option>
+            </select>
+            <span class="filter-summary" id="identity-summary"></span>
+          </div>
+          <div class="filter-chips" id="identity-chips" role="group" aria-label="按 AI 结论与状态筛选"></div>
+        </div>
+
+        <div class="review-stack" id="identity-list"></div>
+
+        <nav class="pager" id="identity-pager" aria-label="待审核分页">
+          <span id="pager-info">第 1 页 · 共 0 位</span>
+          <div class="pager-btns">
+            <button type="button" class="btn btn-secondary btn-sm" disabled>上一页</button>
+            <button type="button" class="btn btn-secondary btn-sm" disabled>下一页</button>
+          </div>
+        </nav>
+      </section>
+
+      <!-- TAB 2: 需修正署名 -->
+      <section class="tab-panel" id="panel-credits" role="tabpanel" hidden>
+        <div class="section-hint">
+          <span>以下艺术家疑似合作署名，系统不会自动绑定个人身份；可直接采纳 AI 拆分方案，或前往艺术家详情页手动修正后再扫描。</span>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-run-credit-ai">
+            <svg class="icon icon-sm"><use href="#i-spark"/></svg>
+            AI 分析复合署名
+          </button>
+        </div>
+        <div class="review-stack" id="credits-list"></div>
+      </section>
+
+      <!-- TAB 3: 待审头像 -->
+      <section class="tab-panel" id="panel-avatars" role="tabpanel" hidden>
+        <div class="section-hint">
+          <span id="avatar-tab-stats" class="tabular"></span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-sm" data-open-avatar-settings>
+              <svg class="icon icon-sm"><use href="#i-sliders"/></svg>
+              图源与 AI 设置
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-goto-avatar-task">启动头像补全 →</button>
+          </div>
+        </div>
+        <div class="avatar-grid" id="avatars-grid"></div>
+      </section>
+
+      <!-- TAB 4: 任务与补全 (2x2 Pipeline Grid) -->
+      <section class="tab-panel" id="panel-tasks" role="tabpanel" hidden>
+        <div class="pipeline-grid" id="pipeline-grid"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Player Bar -->
+  <footer class="player-bar" aria-label="播放控制">
+    <div class="player-now">
+      <img src="assets/walpurgis.jpg" alt="">
+      <div><strong>SPARK-AGAIN</strong><span>Aimer · Walpurgis</span></div>
+    </div>
+    <div class="player-transport">
+      <button type="button" class="icon-btn" aria-label="上一首"><svg class="icon"><use href="#i-prev"/></svg></button>
+      <button type="button" class="play-main" aria-label="播放 / 暂停"><svg class="icon"><use href="#i-play"/></svg></button>
+      <button type="button" class="icon-btn" aria-label="下一首"><svg class="icon"><use href="#i-next"/></svg></button>
+    </div>
+    <div class="player-right"><span>FLAC 96kHz / 24bit</span></div>
+  </footer>
+
+  <!-- Native Dialog: 头像补全数据源与 AI 策略设置 -->
+  <dialog class="modal-dialog" id="avatar-settings-dialog" aria-labelledby="avatar-settings-title">
+    <form id="avatar-settings-form">
+      <div class="modal-head">
+        <h2 id="avatar-settings-title">头像补全数据源与 AI 策略设置</h2>
+        <button type="button" class="icon-btn" id="avatar-settings-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group">
+          <span class="field-group-title">结构化图源</span>
+          <div class="check-grid">
+            <label class="check-card">
+              <input type="checkbox" name="bangumi_enabled" checked>
+              <span><strong>Bangumi Persons</strong><small>ACG 声优与作曲家优先</small></span>
+            </label>
+            <label class="check-card">
+              <input type="checkbox" name="deezer_enabled" checked>
+              <span><strong>Deezer Public API</strong><small>流行音乐高分辨率艺人照</small></span>
+            </label>
+            <label class="check-card">
+              <input type="checkbox" name="wikipedia_enabled" checked>
+              <span><strong>Wikipedia pageimages</strong><small>基于已确认条目拉取主图</small></span>
+            </label>
+            <label class="check-card">
+              <input type="checkbox" name="fanart_enabled">
+              <span><strong>Fanart.tv v3</strong><small>需配置个人 API Key</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <span class="field-group-title">联网 AI 兜底与质量把关</span>
+          <div class="check-grid">
+            <label class="check-card">
+              <input type="checkbox" name="web_fallback_enabled" checked>
+              <span><strong>联网搜索 + AI 选图兜底</strong><small>结构化图源缺失时检索候选</small></span>
+            </label>
+            <label class="check-card">
+              <input type="checkbox" name="web_auto_apply_high" checked>
+              <span><strong>高置信度结果自动入库</strong><small>中低置信度进入「待审头像」</small></span>
+            </label>
+            <label class="check-card">
+              <input type="checkbox" name="vision_enabled">
+              <span><strong>可选 VLM 视觉质检</strong><small>校验人脸构图与清晰度</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <span class="field-group-title">模型、密钥与限流配额</span>
+          <div class="input-grid">
+            <label class="field-label">
+              Fanart.tv API Key
+              <input class="field-input" type="password" name="fanart_api_key" placeholder="已配置（留空保持不变）">
+            </label>
+            <label class="field-label">
+              选图文本模型
+              <input class="field-input" type="text" name="ai_model" value="" placeholder="留空沿用全局主模型">
+            </label>
+            <label class="field-label">
+              视觉质检模型
+              <input class="field-input" type="text" name="vision_model" value="" placeholder="需支持 image_url">
+            </label>
+            <label class="field-label">
+              单轮联网上限（0 = 不限）
+              <input class="field-input" type="number" name="max_web_requests_per_run" min="0" value="30">
+            </label>
+            <label class="field-label">
+              负缓存冷却天数
+              <input class="field-input" type="number" name="negative_cache_days" min="1" value="30">
+            </label>
+          </div>
+          <label class="inline-check" style="margin-top:2px;">
+            <input type="checkbox" name="clear_fanart_api_key">
+            清除已保存的 Fanart.tv Key
+          </label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" id="avatar-settings-cancel">取消</button>
+        <button type="submit" class="btn btn-primary">保存头像补全设置</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Toast Host -->
+  <div class="toast-host" aria-live="polite" aria-atomic="true">
+    <div class="toast" id="toast"><span id="toast-msg"></span><button type="button" class="toast-undo" id="toast-undo" hidden>撤销</button></div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      /* ---- Realistic Mock Dataset covering every edge case ---- */
+      function createInitialData() {
+        return {
+          aiConfigured: true,
+          aiReviewEnabled: true,
+          activeTab: 'identity',
+          search: '',
+          sourceFilter: '',
+          aiFilter: 'all',
+          avatarStats: { total: 342, cached: 298, missing: 44 },
+          bioStats: { total: 342, missing: 58 },
+
+          /* Pending Identity Review Items */
+          identity: [
+            {
+              id: 101, name: 'Aimer', albums: 9, tracks: 84,
+              ai: {
+                action: 'recommend_accept', tone: 'accept', label: 'AI 推荐采纳',
+                confidence: 96, selectedCandidateId: 1011, webSearched: true,
+                reason: '本地曲库包含《Walpurgis》《残響散歌》等代表作，与日本女歌手 Aimer (Sony Music) 完全吻合。'
+              },
+              candidates: [
+                { id: 1012, displayName: 'Aimer', source: 'lastfm', score: 78, disambiguation: '', country: '', artistType: '', url: 'https://www.last.fm/music/Aimer' },
+                { id: 1011, displayName: 'Aimer', source: 'musicbrainz', score: 92, disambiguation: 'Japanese pop singer', country: 'JP', artistType: 'Person', url: 'https://musicbrainz.org/artist/aimer-jp' },
+                { id: 1013, displayName: 'Aimer (French folk)', source: 'musicbrainz', score: 61, disambiguation: 'French indie duo', country: 'FR', artistType: 'Group', url: 'https://musicbrainz.org/artist/aimer-fr' }
+              ]
+            },
+            {
+              id: 102, name: 'Amane', albums: 2, tracks: 14,
+              ai: {
+                action: 'recommend_accept', tone: 'accept', label: 'AI 推荐采纳',
+                confidence: 91, selectedCandidateId: 1021, webSearched: false,
+                reason: '曲目所属专辑均指向同人歌姬 Amane Oikawa，但该 MBID 已被库内目标歌手占用，建议直接合并。'
+              },
+              candidates: [
+                {
+                  id: 1021, displayName: 'Amane Oikawa', source: 'musicbrainz', score: 95,
+                  disambiguation: 'Japanese doujin vocalist (Rolling Contact)', country: 'JP', artistType: 'Person',
+                  url: 'https://musicbrainz.org/artist/amane-oikawa',
+                  conflict: { targetId: 88, targetName: 'Amane Oikawa', canMerge: true }
+                },
+                { id: 1022, displayName: 'Amane', source: 'lastfm', score: 68, disambiguation: '', country: '', artistType: '', url: 'https://www.last.fm/music/Amane' }
+              ]
+            },
+            {
+              id: 103, name: 'KANA', albums: 1, tracks: 6,
+              ai: {
+                action: 'recommend_reject', tone: 'reject', label: 'AI 建议拒绝',
+                confidence: 89, selectedCandidateId: 0, webSearched: true,
+                reason: '两个候选分别是视觉系摇滚歌手与韩国说唱艺人，与本地动画 OST 声优演唱曲目明显不符。'
+              },
+              candidates: [
+                { id: 1031, displayName: 'KANA', source: 'musicbrainz', score: 74, disambiguation: 'Japanese gothic/visual kei singer', country: 'JP', artistType: 'Person', url: 'https://musicbrainz.org/artist/kana-vk' },
+                { id: 1032, displayName: 'KANA', source: 'lastfm', score: 63, disambiguation: 'Korean rapper', country: 'KR', artistType: 'Person', url: 'https://www.last.fm/music/KANA' }
+              ]
+            },
+            {
+              id: 104, name: '澤野弘之', albums: 12, tracks: 146,
+              ai: null,
+              candidates: [
+                {
+                  id: 1041, displayName: 'Hiroyuki Sawano', source: 'musicbrainz', score: 98,
+                  disambiguation: 'Japanese composer & arranger', country: 'JP', artistType: 'Person',
+                  url: 'https://musicbrainz.org/artist/hiroyuki-sawano',
+                  conflict: { targetId: 45, targetName: 'SawanoHiroyuki[nZk]', canMerge: false }
+                },
+                { id: 1042, displayName: '澤野弘之', source: 'lastfm', score: 86, disambiguation: '', country: 'JP', artistType: '', url: 'https://www.last.fm/music/澤野弘之' }
+              ]
+            },
+            {
+              id: 105, name: 'milet', albums: 3, tracks: 29,
+              ai: {
+                action: 'uncertain', tone: 'uncertain', label: 'AI 不确定',
+                confidence: 58, selectedCandidateId: 0, webSearched: false,
+                reason: '同名候选中 MusicBrainz 缺少消歧说明且曲目年份交叉，建议点击来源主页人工复核。'
+              },
+              candidates: [
+                { id: 1051, displayName: 'milet', source: 'musicbrainz', score: 83, disambiguation: 'Japanese singer-songwriter', country: 'JP', artistType: 'Person', url: 'https://musicbrainz.org/artist/milet-jp' },
+                { id: 1052, displayName: 'Milet', source: 'musicbrainz', score: 72, disambiguation: 'Electronic producer', country: 'DE', artistType: 'Person', url: 'https://musicbrainz.org/artist/milet-de' }
+              ]
+            }
+          ],
+
+          /* Composite Credit Correction Review */
+          credits: [
+            {
+              id: 201, name: 'Aimer & 澤野弘之', albums: 1, tracks: 3, candidateCount: 2,
+              ai: {
+                isComposite: true, action: 'recommend_split', tone: 'accept', confidence: 97,
+                parts: ['Aimer', '澤野弘之'],
+                reason: '明确为两位独立艺人的合作署名（《nZk》企划曲目），建议拆分为两个独立演出者。'
+              }
+            },
+            {
+              id: 202, name: 'YOASOBI feat. 幾田りら', albums: 1, tracks: 1, candidateCount: 1,
+              ai: {
+                isComposite: true, action: 'recommend_split', tone: 'accept', confidence: 93,
+                parts: ['YOASOBI', '幾田りら'],
+                reason: '包含 feat. 连接符，拆分为组合与主唱个人署名后可各自关联曲目。'
+              }
+            },
+            {
+              id: 203, name: 'fripSide & 南條愛乃', albums: 2, tracks: 5, candidateCount: 0,
+              ai: null
+            },
+            {
+              id: 204, name: 'ClariS & TrySail', albums: 1, tracks: 2, candidateCount: 1,
+              ai: {
+                isComposite: false, action: 'recommend_reject', tone: 'reject', confidence: 86,
+                parts: [],
+                reason: '该曲目为限定联动企划单曲，若希望保留联动单元署名可在歌手页手动确认。'
+              }
+            }
+          ],
+
+          /* Pending Avatar Candidates */
+          avatars: [
+            {
+              id: 301, artistName: 'Aimer', img: 'assets/zankyo-sanka.jpg',
+              source: 'Bangumi', confidence: 'high', width: 640, height: 640,
+              reason: '通过 Bangumi Person 词条精确匹配，官方宣传照构图完整。',
+              pageUrl: 'https://bgm.tv/person/15649'
+            },
+            {
+              id: 302, artistName: 'LiSA', img: 'assets/lander.jpg',
+              source: 'Deezer', confidence: 'medium', width: 500, height: 500,
+              reason: '联网兜底匹配到同名艺人高分辨率头像，建议核对是否为本人近照。',
+              pageUrl: 'https://www.deezer.com/artist/lisa-jp'
+            },
+            {
+              id: 303, artistName: 'YOASOBI', img: 'assets/the-book-2.jpg',
+              source: 'Wikipedia', confidence: 'medium', width: 800, height: 800,
+              reason: 'Wikipedia 日语条目主图，视觉质检通过，双人组合合照。',
+              pageUrl: 'https://ja.wikipedia.org/wiki/YOASOBI'
+            }
+          ],
+
+          /* Background Runs State */
+          activeRuns: {
+            artist: null,
+            aiReview: null,
+            artistImage: null,
+            artistBio: null
+          },
+          lastRuns: {
+            artist: { id: 48, scanMode: '初次增量', status: 'completed', processed: 120, total: 120, matched: 96, review: 14, noResult: 8, skipped: 2, failed: 0 },
+            aiReview: { id: 19, scope: '全部（待审 + 复合署名）', status: 'completed', processed: 42, total: 42, autoApplied: 27, recommended: 10, uncertain: 5, failed: 0 },
+            artistImage: { id: 12, status: 'completed', processed: 64, total: 64, cached: 48, noUrl: 13, skipped: 0, failed: 0, candidate: 3 },
+            artistBio: { id: 9, status: 'completed', processed: 70, total: 70, filled: 52, missing: 14, skipped: 4, failed: 0 }
+          },
+          artistRunHistory: [
+            { id: 48, scanMode: '初次增量', status: 'completed', processed: 120, total: 120, matched: 96, review: 14, noResult: 8, skipped: 2, failed: 0 },
+            { id: 47, scanMode: '全局补全', status: 'cancelled', processed: 35, total: 98, matched: 12, review: 9, noResult: 14, skipped: 0, failed: 0 },
+            { id: 46, scanMode: '初次增量', status: 'failed', processed: 18, total: 45, matched: 11, review: 2, noResult: 0, skipped: 0, failed: 5, error: '连续五次来源失败，任务已结束' }
+          ],
+          aiApplied: [
+            { id: 901, kind: '艺术家匹配', title: '梶浦由記', confidence: 99, reason: 'MBID 与代表作《空之境界》OST 完全匹配，已自动绑定' },
+            { id: 902, kind: '艺术家匹配', title: '米津玄師', confidence: 98, reason: 'MusicBrainz 与 Last.fm 双源身份一致，自动确认' },
+            { id: 903, kind: '艺术家匹配', title: 'ヨルシカ', confidence: 97, reason: '专辑《幻燈》《盗作》精确命中官方条目' }
+          ]
+        };
+      }
+
+      let state = createInitialData();
+      let toastTimer = null;
+      let lastUndoFn = null;
+      let progressTimer = null;
+      let countdownTimer = null;
+
+      /* ---- Helpers ---- */
+      const $ = (sel, root = document) => root.querySelector(sel);
+      const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+      function esc(str) {
+        return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      }
+
+      function showToast(msg, undoFn = null) {
+        const el = $('#toast');
+        $('#toast-msg').textContent = msg;
+        const undoBtn = $('#toast-undo');
+        lastUndoFn = undoFn;
+        undoBtn.hidden = !undoFn;
+        el.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => el.classList.remove('show'), undoFn ? 4800 : 3000);
+      }
+
+      $('#toast-undo').addEventListener('click', () => {
+        if (lastUndoFn) {
+          const fn = lastUndoFn;
+          lastUndoFn = null;
+          $('#toast').classList.remove('show');
+          fn();
+        }
+      });
+
+      function statusLabel(s) {
+        return { running: '进行中', paused: '已暂停', completed: '已完成', failed: '已失败', cancelled: '已停止' }[s] || s;
+      }
+
+      /* ---- Theme Toggle ---- */
+      function applyTheme(theme) {
+        document.documentElement.dataset.theme = theme;
+        $('#theme-icon use').setAttribute('href', theme === 'dark' ? '#i-sun' : '#i-moon');
+      }
+      $('#theme-toggle').addEventListener('click', () => {
+        applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+      });
+
+      /* ---- Scan Help Toggle ---- */
+      $('#scan-help-btn').addEventListener('click', (e) => {
+        const drawer = $('#scan-help-drawer');
+        const open = drawer.hidden;
+        drawer.hidden = !open;
+        e.currentTarget.setAttribute('aria-expanded', String(open));
+      });
+
+      /* ---- Tab Switching ---- */
+      function setActiveTab(tab) {
+        state.activeTab = tab;
+        $$('.tab-btn').forEach((btn) => {
+          const on = btn.dataset.tab === tab;
+          btn.classList.toggle('active', on);
+          btn.setAttribute('aria-selected', String(on));
+        });
+        ['identity', 'credits', 'avatars', 'tasks'].forEach((id) => {
+          $('#panel-' + id).hidden = id !== tab;
+        });
+      }
+      $$('.tab-btn').forEach((btn) => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
+
+      /* ---- Counts & Badges ---- */
+      function updateBadges() {
+        const idCount = state.identity.length;
+        const crCount = state.credits.length;
+        const avCount = state.avatars.length;
+        $('#badge-identity').textContent = idCount;
+        $('#badge-credits').textContent = crCount;
+        $('#badge-avatars').textContent = avCount;
+        const total = idCount + crCount + avCount;
+        const navBadge = $('#nav-total-badge');
+        navBadge.textContent = total;
+        navBadge.hidden = total === 0;
+
+        const hasActive = Object.values(state.activeRuns).some(Boolean);
+        $('#tasks-running-dot').hidden = !hasActive;
+      }
+
+      /* ---- Header Actions ---- */
+      function renderHeaderActions() {
+        const aiBtn = $('#btn-header-ai');
+        aiBtn.hidden = !(state.aiConfigured && state.aiReviewEnabled) || !!state.activeRuns.aiReview;
+        $('#btn-scan-inc').disabled = !!state.activeRuns.artist;
+        $('#btn-scan-full').disabled = !!state.activeRuns.artist;
+      }
+
+      /* ---- Active Runs Strip (Cross-Tab Pinned) ---- */
+      function renderActiveRuns() {
+        const strip = $('#active-runs-strip');
+        const runs = Object.entries(state.activeRuns).filter(([, r]) => !!r);
+        strip.hidden = runs.length === 0;
+        if (!runs.length) { strip.innerHTML = ''; return; }
+
+        strip.innerHTML = runs.map(([kind, run]) => {
+          const pct = run.total ? Math.min(100, Math.round((run.processed / run.total) * 100)) : 0;
+          const isPaused = run.status === 'paused';
+          let counts = '';
+          if (kind === 'artist') counts = `处理 ${run.processed} / ${run.total} · 匹配 ${run.matched} · 审核 ${run.review} · 无结果 ${run.noResult} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+          else if (kind === 'aiReview') counts = `处理 ${run.processed} / ${run.total} · 自动绑定 ${run.autoApplied} · 给建议 ${run.recommended} · 不确定 ${run.uncertain} · 失败 ${run.failed}`;
+          else if (kind === 'artistImage') counts = `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached} · 无地址 ${run.noUrl} · 送审 ${run.candidate} · 失败 ${run.failed}`;
+          else counts = `处理 ${run.processed} / ${run.total} · 已补全 ${run.filled} · 无简介 ${run.missing} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
+
+          let waitHtml = '';
+          if (run.waitSource) {
+            const mm = String(Math.floor(run.waitSec / 60)).padStart(2, '0');
+            const ss = String(run.waitSec % 60).padStart(2, '0');
+            waitHtml = `<div class="active-run-wait">
+              <span>限流 ${esc(run.waitSource)} · ${isPaused ? `${mm}:${ss} 后自动继续` : `等待 ${mm}:${ss}`}（累计等待 ${esc(run.waitTotal)}）</span>
+              ${run.pauseReason ? `<span>· 暂停原因：${esc(run.pauseReason)}</span>` : ''}
+            </div>`;
+          } else if (isPaused && run.pauseReason) {
+            waitHtml = `<div class="active-run-wait"><span>暂停原因：${esc(run.pauseReason)}</span></div>`;
+          }
+
+          return `<article class="active-run-banner ${isPaused ? 'is-paused' : ''}" data-active-kind="${kind}">
+            <div class="active-run-top">
+              <div class="active-run-title">
+                <span class="pulse-dot"></span>
+                <strong>${esc(run.title)}</strong>
+                <span class="status-pill ${run.status}">${statusLabel(run.status)}</span>
+                <span class="muted tabular" style="font-size:0.78rem;">${pct}%</span>
+              </div>
+              <div class="active-run-actions">
+                ${isPaused
+                  ? `<button type="button" class="btn btn-primary btn-xs" data-run-op="resume" data-kind="${kind}">继续</button>`
+                  : `<button type="button" class="btn btn-secondary btn-xs" data-run-op="pause" data-kind="${kind}">暂停</button>`}
+                <button type="button" class="btn btn-secondary btn-xs" data-run-op="cancel" data-kind="${kind}">停止</button>
+              </div>
+            </div>
+            <div class="run-progress-track"><div class="run-progress-fill" style="width:${pct}%"></div></div>
+            <div class="active-run-meta">
+              <span class="tabular">${counts}</span>
+              ${run.current ? `<span class="muted">当前：${esc(run.current)}</span>` : ''}
+            </div>
+            ${waitHtml}
+          </article>`;
+        }).join('');
+      }
+
+      /* ---- Tab 1: Pending Identity Review ---- */
+      function hasConflict(item) {
+        return item.candidates.some((c) => !!c.conflict);
+      }
+
+      function matchesAIFilter(item, filter) {
+        if (filter === 'all') return true;
+        if (filter === 'conflict') return hasConflict(item);
+        if (filter === 'accept') return item.ai && item.ai.action === 'recommend_accept';
+        if (filter === 'reject') return item.ai && item.ai.action === 'recommend_reject';
+        if (filter === 'uncertain') return !item.ai || item.ai.action === 'uncertain';
+        return true;
+      }
+
+      function filteredIdentityItems() {
+        const q = state.search.trim().toLowerCase();
+        return state.identity.filter((item) => {
+          if (q) {
+            const hitName = item.name.toLowerCase().includes(q);
+            const hitCand = item.candidates.some((c) => c.displayName.toLowerCase().includes(q));
+            if (!hitName && !hitCand) return false;
+          }
+          if (state.sourceFilter && !item.candidates.some((c) => c.source === state.sourceFilter)) return false;
+          if (!matchesAIFilter(item, state.aiFilter)) return false;
+          return true;
+        });
+      }
+
+      function renderIdentityChips() {
+        const base = state.identity.filter((item) => {
+          const q = state.search.trim().toLowerCase();
+          if (q && !item.name.toLowerCase().includes(q) && !item.candidates.some((c) => c.displayName.toLowerCase().includes(q))) return false;
+          if (state.sourceFilter && !item.candidates.some((c) => c.source === state.sourceFilter)) return false;
+          return true;
+        });
+        const defs = [
+          { key: 'all', label: '全部', count: base.length },
+          { key: 'accept', label: 'AI 推荐采纳', count: base.filter((i) => matchesAIFilter(i, 'accept')).length },
+          { key: 'reject', label: 'AI 建议拒绝', count: base.filter((i) => matchesAIFilter(i, 'reject')).length },
+          { key: 'uncertain', label: '不确定 / 未评估', count: base.filter((i) => matchesAIFilter(i, 'uncertain')).length },
+          { key: 'conflict', label: '存在身份冲突', count: base.filter((i) => matchesAIFilter(i, 'conflict')).length }
+        ];
+        const hasAnyFilter = state.search || state.sourceFilter || state.aiFilter !== 'all';
+        $('#identity-chips').innerHTML = defs.map((d) =>
+          `<button type="button" class="chip ${state.aiFilter === d.key ? 'active' : ''}" data-ai-filter="${d.key}">${d.label} <span class="chip-num">${d.count}</span></button>`
+        ).join('') + (hasAnyFilter ? `<button type="button" class="clear-link" id="clear-identity-filters">清除筛选</button>` : '');
+      }
+
+      function renderIdentityList() {
+        renderIdentityChips();
+        const items = filteredIdentityItems();
+        const list = $('#identity-list');
+        const pager = $('#identity-pager');
+        $('#identity-summary').textContent = `显示 ${items.length} / 共 ${state.identity.length} 位待审核艺术家`;
+        $('#pager-info').textContent = `第 1 页 · 共 ${items.length} 位`;
+
+        if (!items.length) {
+          pager.hidden = true;
+          const filteredOut = state.identity.length > 0;
+          list.innerHTML = `<div class="zero-state">
+            <strong>${filteredOut ? '当前筛选条件下没有匹配项' : '没有等待审核的艺术家候选'}</strong>
+            <span>${filteredOut ? '可以调整搜索词、来源或状态筛选胶囊。' : '全部待审身份已处理完毕，可随时在右上角启动新的艺术家匹配扫描。'}</span>
+            ${filteredOut ? `<button type="button" class="btn btn-secondary btn-sm" id="zero-clear-filter">清除筛选条件</button>` : ''}
+          </div>`;
+          return;
+        }
+        pager.hidden = false;
+
+        list.innerHTML = items.map((item) => {
+          const recId = item.ai ? item.ai.selectedCandidateId : 0;
+          // Sort AI-recommended candidate to the top row
+          const cands = [...item.candidates]
+            .filter((c) => !state.sourceFilter || c.source === state.sourceFilter)
+            .sort((a, b) => (b.id === recId ? 1 : 0) - (a.id === recId ? 1 : 0));
+
+          const aiHtml = item.ai ? `
+            <aside class="ai-strip tone-${item.ai.tone}">
+              <span class="ai-badge tone-${item.ai.tone}">${esc(item.ai.label)} · ${item.ai.confidence}%</span>
+              <div class="ai-strip-body">
+                <span>${esc(item.ai.reason)}</span>
+                ${item.ai.webSearched ? `<span class="web-tag">已联网核验</span>` : ''}
+              </div>
+            </aside>` : '';
+
+          const candsHtml = cands.map((c) => {
+            const isRec = recId > 0 && c.id === recId;
+            const srcName = c.source === 'musicbrainz' ? 'MusicBrainz' : 'Last.fm';
+            const metaParts = [c.disambiguation, c.country, c.artistType].filter(Boolean);
+            const conflictHtml = c.conflict ? `
+              <div class="conflict-box">
+                <span>⚠ 该身份已绑定至 <a href="#artist-${c.conflict.targetId}" class="target-link" data-demo-link="目标歌手《${esc(c.conflict.targetName)}》详情页">《${esc(c.conflict.targetName)}》</a></span>
+                <div class="conflict-box-actions">
+                  ${c.conflict.canMerge
+                    ? `<span class="confirm-group" data-confirm-merge data-artist-id="${item.id}" data-cand-id="${c.id}" data-artist-name="${esc(item.name)}" data-target-name="${esc(c.conflict.targetName)}">
+                        <button type="button" class="btn btn-warning-soft btn-xs" data-step="init">将 ${esc(item.name)} 并入对方</button>
+                      </span>`
+                    : `<span>当前状态不支持直接合并</span>`}
+                  <a href="#conflict-${item.id}" class="conflict-detail-link" data-demo-link="前往《${esc(item.name)}》歌手页核对身份冲突">去歌手页核对 ↗</a>
+                </div>
+              </div>` : '';
+
+            const confirmBtn = !c.conflict
+              ? `<button type="button" class="btn ${isRec ? 'btn-primary' : 'btn-subtle-confirm'} btn-sm" data-action="confirm" data-artist-id="${item.id}" data-cand-id="${c.id}">${isRec ? '确认（AI 推荐）' : '确认'}</button>`
+              : '';
+
+            return `<div class="cand-row ${isRec ? 'is-recommended' : ''}" data-cand-row="${c.id}">
+              <div class="cand-info">
+                <div class="cand-title-line">
+                  <b>${esc(c.displayName)}</b>
+                  ${isRec ? `<span class="rec-pill">★ AI 推荐</span>` : ''}
+                  <span class="source-tag">${srcName}</span>
+                  <span class="score-num ${c.score >= 85 ? 'high' : ''}">匹配分 ${c.score}</span>
+                </div>
+                <div class="cand-sub-line">
+                  ${metaParts.length ? `<span>${esc(metaParts.join(' · '))}</span>` : '<span>无额外消歧信息</span>'}
+                  ${c.url ? `<a class="ext-link" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">来源主页 <svg class="icon icon-sm"><use href="#i-ext"/></svg></a>` : ''}
+                </div>
+              </div>
+              <div class="cand-actions">
+                ${confirmBtn}
+                <button type="button" class="btn btn-ghost btn-sm" data-action="reject" data-artist-id="${item.id}" data-cand-id="${c.id}">拒绝</button>
+              </div>
+              ${conflictHtml}
+            </div>`;
+          }).join('');
+
+          return `<article class="review-card" data-artist-card="${item.id}">
+            <header class="review-card-head">
+              <div class="artist-head-meta">
+                <a class="artist-name-link" href="#artist-${item.id}" data-demo-link="打开《${esc(item.name)}》歌手详情页">${esc(item.name)}</a>
+                <span class="artist-stats">${item.albums} 张专辑 · ${item.tracks} 首</span>
+              </div>
+              <span class="confirm-group" data-confirm-reject-all data-artist-id="${item.id}">
+                <button type="button" class="btn btn-secondary btn-xs" data-step="init">全部拒绝</button>
+              </span>
+            </header>
+            ${aiHtml}
+            <div class="cand-list">${candsHtml}</div>
+          </article>`;
+        }).join('');
+      }
+
+      /* ---- Tab 2: Composite Credits ---- */
+      function renderCreditsList() {
+        const list = $('#credits-list');
+        if (!state.credits.length) {
+          list.innerHTML = `<div class="zero-state">
+            <strong>没有需要修正署名的艺术家</strong>
+            <span>当匹配扫描发现合作署名（如 A &amp; B、feat.）时，会集中列在此处。</span>
+          </div>`;
+          return;
+        }
+        list.innerHTML = state.credits.map((item) => {
+          let bodyHtml = '';
+          if (item.ai && item.ai.isComposite) {
+            bodyHtml = `<div class="split-body">
+              <div class="split-info">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <span class="ai-badge tone-accept">AI 建议拆分 · ${item.ai.confidence}%</span>
+                  <div class="split-parts">${item.ai.parts.map((p) => `<span class="split-part-pill">${esc(p)}</span>`).join('<span class="split-plus">+</span>')}</div>
+                </div>
+                <p class="muted" style="font-size:0.8rem;">${esc(item.ai.reason)}</p>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" data-credit-split="${item.id}">一键应用拆分到关联曲目</button>
+            </div>`;
+          } else if (item.ai) {
+            bodyHtml = `<div class="split-body">
+              <div class="split-info">
+                <div><span class="ai-badge tone-${item.ai.tone}">AI 判定非复合署名 · ${item.ai.confidence}%</span></div>
+                <p class="muted" style="font-size:0.8rem;">${esc(item.ai.reason)}</p>
+              </div>
+              <a class="btn btn-secondary btn-sm" href="#artist-${item.id}" data-demo-link="打开《${esc(item.name)}》歌手页手动处理">前往歌手页核对 →</a>
+            </div>`;
+          } else {
+            bodyHtml = `<div class="split-body">
+              <div class="split-info">
+                <p class="muted" style="font-size:0.82rem;">疑似合作署名，尚未执行 AI 拆分分析；可直接前往歌手页手动修正关系。</p>
+              </div>
+              <a class="btn btn-secondary btn-sm" href="#artist-${item.id}" data-demo-link="打开《${esc(item.name)}》歌手页手动拆分">前往歌手页拆分 →</a>
+            </div>`;
+          }
+
+          return `<article class="review-card" data-credit-card="${item.id}">
+            <header class="review-card-head">
+              <div class="artist-head-meta">
+                <a class="artist-name-link" href="#artist-${item.id}" data-demo-link="打开《${esc(item.name)}》歌手详情页">${esc(item.name)}</a>
+                <span class="artist-stats">${item.albums} 张专辑 · ${item.tracks} 首</span>
+              </div>
+              ${item.candidateCount > 0 ? `<span class="confirm-group" data-confirm-credit-reject data-credit-id="${item.id}"><button type="button" class="btn btn-secondary btn-xs" data-step="init">全部拒绝</button></span>` : ''}
+            </header>
+            ${bodyHtml}
+          </article>`;
+        }).join('');
+      }
+
+      /* ---- Tab 3: Pending Avatars ---- */
+      function renderAvatars() {
+        const s = state.avatarStats;
+        $('#avatar-tab-stats').textContent = `已确认身份 ${s.total} 位 · 本地有效头像 ${s.cached} · 待补 ${s.missing} · 待审核候选 ${state.avatars.length} 条`;
+        const grid = $('#avatars-grid');
+        if (!state.avatars.length) {
+          grid.innerHTML = `<div class="zero-state" style="grid-column:1/-1;">
+            <strong>没有待审核的候选头像</strong>
+            <span>高置信度头像已自动入库；需要人工复核的联网/兜底候选会出现在这里。</span>
+          </div>`;
+          return;
+        }
+        grid.innerHTML = state.avatars.map((a) => `
+          <article class="avatar-card" data-avatar-card="${a.id}">
+            <div class="avatar-card-top">
+              <img class="avatar-preview" src="${esc(a.img)}" alt="${esc(a.artistName)}的候选头像">
+              <div class="avatar-meta">
+                <strong>${esc(a.artistName)}</strong>
+                <div class="avatar-tags">
+                  <span class="source-tag">${esc(a.source)}</span>
+                  <span class="status-pill ${a.confidence === 'high' ? 'completed' : 'paused'}">${esc(a.confidence)}</span>
+                  <span class="source-tag tabular">${a.width}×${a.height}</span>
+                </div>
+              </div>
+            </div>
+            <p class="avatar-reason">${esc(a.reason)}</p>
+            <p class="avatar-source-url">来源页：<a href="${esc(a.pageUrl)}" target="_blank" rel="noopener noreferrer">${esc(a.pageUrl)}</a></p>
+            <div class="avatar-actions">
+              <button type="button" class="btn btn-primary btn-sm" data-avatar-op="approve" data-id="${a.id}">采纳并缓存</button>
+              <button type="button" class="btn btn-secondary btn-sm" data-avatar-op="reject" data-id="${a.id}">忽略</button>
+            </div>
+          </article>`).join('');
+      }
+
+      /* ---- Tab 4: 2x2 Pipelines Grid ---- */
+      function renderPipelines() {
+        const avPct = Math.round((state.avatarStats.cached / state.avatarStats.total) * 100);
+        const bioFilled = state.bioStats.total - state.bioStats.missing;
+        const bioPct = Math.round((bioFilled / state.bioStats.total) * 100);
+        const lr = state.lastRuns;
+        const ar = state.activeRuns;
+
+        const aiStatusHint = !state.aiConfigured
+          ? '尚未配置模型服务，请先前往 <a href="#ai-settings" class="ext-link" data-demo-link="跳转到 AI 设置页">AI 设置</a> 配置接口与密钥。'
+          : !state.aiReviewEnabled
+            ? 'AI 初审总开关未开启，可在 <a href="#ai-settings" class="ext-link" data-demo-link="跳转到 AI 设置页">AI 设置</a> 中启用。'
+            : '批量消歧待审艺术家身份（高置信且无冲突自动绑定），并为复合署名生成一键拆分方案。';
+
+        $('#pipeline-grid').innerHTML = `
+          <!-- Card 1: Artist Identity Scan -->
+          <article class="pipeline-card">
+            <div class="pipeline-head">
+              <div>
+                <h2>艺术家身份匹配扫描</h2>
+                <p>通过 MusicBrainz / Last.fm 匹配艺术家外部身份，低置信候选送入「待审身份」。</p>
+              </div>
+              <span class="status-pill ${ar.artist ? ar.artist.status : 'neutral'}">${ar.artist ? statusLabel(ar.artist.status) : '空闲'}</span>
+            </div>
+            ${ar.artist
+              ? `<p class="muted" style="font-size:0.8rem;">任务 #${ar.artist.id} 正在顶部进度条运行中，可随时暂停或停止。</p>`
+              : `<div class="pipeline-form">
+                  <button type="button" class="btn btn-primary btn-sm" data-launch="artist-inc">扫描未检查的艺术家</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-launch="artist-full">全局补全扫描</button>
+                </div>`}
+            <div class="last-run-line">最近任务：#${lr.artist.id} · ${lr.artist.scanMode} · ${statusLabel(lr.artist.status)} · 处理 ${lr.artist.processed}/${lr.artist.total} · 匹配 ${lr.artist.matched} · 审核 ${lr.artist.review} · 失败 ${lr.artist.failed}</div>
+            <details class="quiet-details">
+              <summary><span>任务记录（共 ${state.artistRunHistory.length} 条）</span><svg class="icon icon-sm"><use href="#i-chev"/></svg></summary>
+              <div class="history-list">
+                ${state.artistRunHistory.map((h) => `
+                  <div class="history-row">
+                    <div class="history-row-top">
+                      <strong>匹配任务 #${h.id} · ${h.scanMode}</strong>
+                      <span class="status-pill ${h.status}">${statusLabel(h.status)}</span>
+                    </div>
+                    <span class="muted tabular">处理 ${h.processed}/${h.total} · 匹配 ${h.matched} · 审核 ${h.review} · 无结果 ${h.noResult} · 跳过 ${h.skipped} · 失败 ${h.failed}</span>
+                    ${h.error ? `<span style="color:var(--danger);">${esc(h.error)}</span>` : ''}
+                  </div>`).join('')}
+              </div>
+            </details>
+          </article>
+
+          <!-- Card 2: AI Artist Review -->
+          <article class="pipeline-card">
+            <div class="pipeline-head">
+              <div>
+                <h2>AI 艺术家预审与复合署名</h2>
+                <p>${aiStatusHint}</p>
+              </div>
+              <span class="status-pill ${ar.aiReview ? ar.aiReview.status : (state.aiConfigured && state.aiReviewEnabled ? 'neutral' : 'paused')}">
+                ${ar.aiReview ? statusLabel(ar.aiReview.status) : (!state.aiConfigured || !state.aiReviewEnabled ? '未开启' : '就绪')}
+              </span>
+            </div>
+            ${state.aiConfigured && state.aiReviewEnabled && !ar.aiReview ? `
+              <form class="pipeline-form" id="ai-launch-form">
+                <select class="select-field" name="scope" aria-label="AI 预审范围">
+                  <option value="artists_all">全部（待审艺术家 + 复合署名）</option>
+                  <option value="artist_matches">仅待审艺术家身份</option>
+                  <option value="credit_splits">仅复合署名拆分建议</option>
+                </select>
+                <label class="inline-check"><input type="checkbox" name="force"> 强制重评</label>
+                <button type="submit" class="btn btn-secondary btn-sm">AI 处理待审</button>
+              </form>` : ar.aiReview ? `<p class="muted" style="font-size:0.8rem;">AI 预审 #${ar.aiReview.id} 正在顶部进度条运行中。</p>` : ''}
+            <div class="last-run-line">最近预审：#${lr.aiReview.id}（${lr.aiReview.scope}）· ${statusLabel(lr.aiReview.status)} · 处理 ${lr.aiReview.processed}/${lr.aiReview.total} · 自动绑定 ${lr.aiReview.autoApplied} · 建议 ${lr.aiReview.recommended}</div>
+            ${state.aiApplied.length ? `
+              <details class="quiet-details">
+                <summary><span>AI 最近自动绑定记录（${state.aiApplied.length} 条，可一键撤销）</span><svg class="icon icon-sm"><use href="#i-chev"/></svg></summary>
+                <div class="history-list">
+                  ${state.aiApplied.map((a) => `
+                    <div class="applied-item" data-applied-id="${a.id}">
+                      <div class="applied-item-main">
+                        <strong>${esc(a.title)} <span class="muted" style="font-weight:500;">· 置信度 ${a.confidence}%</span></strong>
+                        <small>${esc(a.reason)}</small>
+                      </div>
+                      <button type="button" class="btn btn-secondary btn-xs" data-revert-ai="${a.id}">撤销</button>
+                    </div>`).join('')}
+                </div>
+              </details>` : ''}
+          </article>
+
+          <!-- Card 3: Artist Image Backfill -->
+          <article class="pipeline-card">
+            <div class="pipeline-head">
+              <div>
+                <h2>艺术家头像补全</h2>
+                <p>默认补全已确认身份的艺人；所有模式均严格保留手动上传的自定义头像。</p>
+              </div>
+              <span class="status-pill ${ar.artistImage ? ar.artistImage.status : 'neutral'}">${ar.artistImage ? statusLabel(ar.artistImage.status) : avPct + '%'}</span>
+            </div>
+            <div class="coverage-block">
+              <div class="coverage-row">
+                <span>已确认身份 ${state.avatarStats.total} 位 · 本地有效 <strong>${state.avatarStats.cached}</strong></span>
+                <span>待补 <strong>${state.avatarStats.missing}</strong></span>
+              </div>
+              <div class="coverage-bar"><span style="width:${avPct}%"></span></div>
+            </div>
+            ${ar.artistImage
+              ? `<p class="muted" style="font-size:0.8rem;">头像补全任务 #${ar.artistImage.id} 正在顶部进度条运行中。</p>`
+              : `<form class="pipeline-form" id="avatar-launch-form">
+                  <select class="select-field" name="mode" aria-label="头像补全模式">
+                    <option value="all">全库补全（按设置使用图源）</option>
+                    <option value="matched">仅已匹配身份（按设置使用图源）</option>
+                    <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
+                    <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
+                  </select>
+                  <button type="submit" class="btn btn-secondary btn-sm">启动补全</button>
+                </form>`}
+            <div class="last-run-line">最近补全：#${lr.artistImage.id} · ${statusLabel(lr.artistImage.status)} · 处理 ${lr.artistImage.processed}/${lr.artistImage.total} · 已缓存 ${lr.artistImage.cached} · 无地址 ${lr.artistImage.noUrl} · 送审 ${lr.artistImage.candidate}</div>
+            <div class="pipeline-footer">
+              <button type="button" class="btn btn-secondary btn-xs" data-open-avatar-settings>
+                <svg class="icon icon-sm"><use href="#i-sliders"/></svg>
+                图源与 AI 策略设置
+              </button>
+              <button type="button" class="btn btn-ghost btn-xs" data-jump-tab="avatars">查看待审头像（${state.avatars.length}）→</button>
+            </div>
+          </article>
+
+          <!-- Card 4: Artist Biography Backfill -->
+          <article class="pipeline-card">
+            <div class="pipeline-head">
+              <div>
+                <h2>歌手简介补全</h2>
+                <p>按已确认身份抓取 Wikipedia / Last.fm 简介，不覆写人工填写版本。</p>
+              </div>
+              <span class="status-pill ${ar.artistBio ? ar.artistBio.status : 'neutral'}">${ar.artistBio ? statusLabel(ar.artistBio.status) : bioPct + '%'}</span>
+            </div>
+            <div class="coverage-block">
+              <div class="coverage-row">
+                <span>歌手总数 ${state.bioStats.total} 位 · 已有简介 <strong>${bioFilled}</strong></span>
+                <span>待补 <strong>${state.bioStats.missing}</strong></span>
+              </div>
+              <div class="coverage-bar"><span style="width:${bioPct}%"></span></div>
+            </div>
+            ${ar.artistBio
+              ? `<p class="muted" style="font-size:0.8rem;">简介补全任务 #${ar.artistBio.id} 正在顶部进度条运行中。</p>`
+              : `<form class="pipeline-form" id="bio-launch-form">
+                  <select class="select-field" name="mode" aria-label="简介补全模式">
+                    <option value="missing">补全缺失简介</option>
+                    <option value="retranslate">重译已有简介（复用缓存）</option>
+                    <option value="rescan_all">按新策略全量重扫</option>
+                  </select>
+                  <button type="submit" class="btn btn-secondary btn-sm">启动补全</button>
+                </form>`}
+            <div class="last-run-line">最近补全：#${lr.artistBio.id} · ${statusLabel(lr.artistBio.status)} · 处理 ${lr.artistBio.processed}/${lr.artistBio.total} · 已补全 ${lr.artistBio.filled} · 无简介 ${lr.artistBio.missing} · 跳过 ${lr.artistBio.skipped} · 失败 ${lr.artistBio.failed}</div>
+          </article>
+        `;
+      }
+
+      function renderAll() {
+        updateBadges();
+        renderHeaderActions();
+        renderActiveRuns();
+        renderIdentityList();
+        renderCreditsList();
+        renderAvatars();
+        renderPipelines();
+      }
+
+      /* ---- Live Run Tick Simulation ---- */
+      function stopTimers() {
+        clearInterval(progressTimer);
+        clearInterval(countdownTimer);
+      }
+      function ensureTimers() {
+        stopTimers();
+        const hasRunning = Object.values(state.activeRuns).some((r) => r && r.status === 'running');
+        const hasWait = Object.values(state.activeRuns).some((r) => r && r.waitSec > 0);
+        if (hasRunning) {
+          progressTimer = setInterval(() => {
+            let changed = false;
+            for (const [kind, run] of Object.entries(state.activeRuns)) {
+              if (!run || run.status !== 'running') continue;
+              if (run.processed < run.total) {
+                run.processed += 1;
+                if (kind === 'artist') run.matched += 1;
+                else if (kind === 'aiReview') run.autoApplied += 1;
+                else if (kind === 'artistImage') run.cached += 1;
+                else if (kind === 'artistBio') run.filled += 1;
+                changed = true;
+              } else {
+                state.activeRuns[kind] = null;
+                showToast(`${run.title} 已完成`);
+                changed = true;
+              }
+            }
+            if (changed) {
+              updateBadges();
+              renderHeaderActions();
+              renderActiveRuns();
+              renderPipelines();
+            }
+          }, 1800);
+        }
+        if (hasWait) {
+          countdownTimer = setInterval(() => {
+            let changed = false;
+            for (const run of Object.values(state.activeRuns)) {
+              if (run && run.waitSec > 0) { run.waitSec -= 1; changed = true; }
+            }
+            if (changed) renderActiveRuns();
+          }, 1000);
+        }
+      }
+
+      /* ---- Launch Task Helper ---- */
+      function launchRun(kind, opts = {}) {
+        if (kind === 'artist') {
+          state.activeRuns.artist = {
+            id: 49, title: `匹配任务 #49 · ${opts.full ? '全局补全' : '初次增量'}`,
+            status: 'running', processed: 12, total: 68, matched: 9, review: 2, noResult: 1, skipped: 0, failed: 0,
+            current: 'ReoNa'
+          };
+          showToast(opts.full ? '全局补全扫描任务已启动' : '自动匹配任务已启动');
+        } else if (kind === 'aiReview') {
+          state.activeRuns.aiReview = {
+            id: 20, title: `AI 预审 #20 · ${opts.label || '全部待审'}`,
+            status: 'running', processed: 3, total: 14, autoApplied: 2, recommended: 1, uncertain: 0, failed: 0,
+            current: 'Aimer'
+          };
+          showToast('AI 预审任务已启动');
+        } else if (kind === 'artistImage') {
+          state.activeRuns.artistImage = {
+            id: 13, title: `头像补全任务 #13（${opts.mode || 'all'}）`,
+            status: 'running', processed: 5, total: 44, cached: 4, noUrl: 1, candidate: 0, failed: 0,
+            current: 'EGOIST'
+          };
+          showToast('艺术家头像补全任务已启动');
+        } else if (kind === 'artistBio') {
+          state.activeRuns.artistBio = {
+            id: 10, title: `简介补全任务 #10（${opts.label || '补全缺失'}）`,
+            status: 'running', processed: 6, total: 58, filled: 5, missing: 1, skipped: 0, failed: 0,
+            current: 'Kalafina'
+          };
+          showToast('歌手简介补全任务已启动');
+        }
+        renderAll();
+        ensureTimers();
+      }
+
+      /* ---- Delegated Interactions ---- */
+      $('#identity-search').addEventListener('input', (e) => { state.search = e.target.value; renderIdentityList(); });
+      $('#identity-source').addEventListener('change', (e) => { state.sourceFilter = e.target.value; renderIdentityList(); });
+      $('#btn-scan-inc').addEventListener('click', () => launchRun('artist', { full: false }));
+      $('#btn-scan-full').addEventListener('click', () => launchRun('artist', { full: true }));
+      $('#btn-header-ai').addEventListener('click', () => launchRun('aiReview', { label: '全部（待审 + 复合署名）' }));
+      $('#btn-run-credit-ai').addEventListener('click', () => launchRun('aiReview', { label: '仅复合署名拆分建议' }));
+      $('#btn-goto-avatar-task').addEventListener('click', () => setActiveTab('tasks'));
+
+      document.addEventListener('click', (e) => {
+        const el = e.target.closest('[data-ai-filter], #clear-identity-filters, #zero-clear-filter, [data-action], [data-confirm-reject-all] button, [data-confirm-merge] button, [data-confirm-credit-reject] button, [data-credit-split], [data-avatar-op], [data-run-op], [data-launch], [data-open-avatar-settings], [data-jump-tab], [data-revert-ai], [data-demo-link], [data-scenario]');
+        if (!el) return;
+
+        // Prototype scenario switcher
+        if (el.hasAttribute('data-scenario')) {
+          $$('.proto-chip[data-scenario]').forEach((c) => c.classList.remove('active'));
+          el.classList.add('active');
+          const sc = el.dataset.scenario;
+          state = createInitialData();
+          if (sc === 'running') {
+            state.activeRuns.artist = {
+              id: 49, title: '匹配任务 #49 · 初次增量', status: 'running',
+              processed: 46, total: 120, matched: 38, review: 5, noResult: 3, skipped: 0, failed: 0,
+              current: 'SawanoHiroyuki[nZk]'
+            };
+          } else if (sc === 'ratelimit') {
+            state.activeRuns.artistImage = {
+              id: 13, title: '头像补全任务 #13（全库补全）', status: 'paused',
+              processed: 19, total: 44, cached: 14, noUrl: 3, candidate: 2, failed: 0,
+              current: '梶浦由記', waitSource: 'Bangumi / MusicBrainz', waitSec: 274, waitTotal: '2 分钟',
+              pauseReason: '同一对象连续限流'
+            };
+          } else if (sc === 'ai-off') {
+            state.aiReviewEnabled = false;
+            setActiveTab('tasks');
+          } else if (sc === 'empty') {
+            state.identity = [];
+            state.credits = [];
+            state.avatars = [];
+          }
+          renderAll();
+          ensureTimers();
+          return;
+        }
+
+        // Demo link toast
+        if (el.hasAttribute('data-demo-link')) {
+          e.preventDefault();
+          showToast(`原型演示：${el.dataset.demoLink}`);
+          return;
+        }
+
+        // AI filter chips
+        if (el.hasAttribute('data-ai-filter')) {
+          state.aiFilter = el.dataset.aiFilter;
+          renderIdentityList();
+          return;
+        }
+        if (el.id === 'clear-identity-filters' || el.id === 'zero-clear-filter') {
+          state.search = ''; state.sourceFilter = ''; state.aiFilter = 'all';
+          $('#identity-search').value = ''; $('#identity-source').value = '';
+          renderIdentityList();
+          return;
+        }
+
+        // Confirm / Reject single candidate
+        if (el.hasAttribute('data-action')) {
+          const action = el.dataset.action;
+          const artistId = Number(el.dataset.artistId);
+          const candId = Number(el.dataset.candId);
+          const idx = state.identity.findIndex((i) => i.id === artistId);
+          if (idx < 0) return;
+          const snapshot = structuredClone(state.identity[idx]);
+          if (action === 'confirm') {
+            const card = $(`[data-artist-card="${artistId}"]`);
+            if (card) card.classList.add('is-leaving');
+            setTimeout(() => {
+              state.identity.splice(idx, 1);
+              renderAll();
+              showToast(`已确认《${snapshot.name}》的外部身份`, () => {
+                state.identity.splice(idx, 0, snapshot);
+                renderAll();
+              });
+            }, 190);
+          } else if (action === 'reject') {
+            const item = state.identity[idx];
+            const cIdx = item.candidates.findIndex((c) => c.id === candId);
+            if (cIdx < 0) return;
+            const removedCand = item.candidates[cIdx];
+            if (item.candidates.length === 1) {
+              const card = $(`[data-artist-card="${artistId}"]`);
+              if (card) card.classList.add('is-leaving');
+              setTimeout(() => {
+                state.identity.splice(idx, 1);
+                renderAll();
+                showToast(`已拒绝《${snapshot.name}》的最后一条候选`, () => {
+                  state.identity.splice(idx, 0, snapshot);
+                  renderAll();
+                });
+              }, 190);
+            } else {
+              item.candidates.splice(cIdx, 1);
+              if (item.ai && item.ai.selectedCandidateId === candId) item.ai.selectedCandidateId = 0;
+              renderAll();
+              showToast(`已拒绝候选「${removedCand.displayName}」`, () => {
+                item.candidates.splice(cIdx, 0, removedCand);
+                renderAll();
+              });
+            }
+          }
+          return;
+        }
+
+        // Inline 2-step confirm: Reject All (Identity)
+        const rejGroup = el.closest('[data-confirm-reject-all]');
+        if (rejGroup) {
+          const artistId = Number(rejGroup.dataset.artistId);
+          if (el.dataset.step === 'init') {
+            rejGroup.innerHTML = `<button type="button" class="btn btn-danger btn-xs" data-step="go">确认全部拒绝</button><button type="button" class="btn btn-ghost btn-xs" data-step="cancel">取消</button>`;
+          } else if (el.dataset.step === 'cancel') {
+            rejGroup.innerHTML = `<button type="button" class="btn btn-secondary btn-xs" data-step="init">全部拒绝</button>`;
+          } else if (el.dataset.step === 'go') {
+            const idx = state.identity.findIndex((i) => i.id === artistId);
+            if (idx < 0) return;
+            const snap = structuredClone(state.identity[idx]);
+            const card = $(`[data-artist-card="${artistId}"]`);
+            if (card) card.classList.add('is-leaving');
+            setTimeout(() => {
+              state.identity.splice(idx, 1);
+              renderAll();
+              showToast(`已全部拒绝《${snap.name}》的 ${snap.candidates.length} 个候选`, () => {
+                state.identity.splice(idx, 0, snap);
+                renderAll();
+              });
+            }, 190);
+          }
+          return;
+        }
+
+        // Inline 2-step confirm: Merge Conflict
+        const mergeGroup = el.closest('[data-confirm-merge]');
+        if (mergeGroup) {
+          const artistId = Number(mergeGroup.dataset.artistId);
+          const aName = mergeGroup.dataset.artistName;
+          const tName = mergeGroup.dataset.targetName;
+          if (el.dataset.step === 'init') {
+            mergeGroup.innerHTML = `<button type="button" class="btn btn-danger btn-xs" data-step="go">确认并入《${esc(tName)}》</button><button type="button" class="btn btn-ghost btn-xs" data-step="cancel">取消</button>`;
+          } else if (el.dataset.step === 'cancel') {
+            mergeGroup.innerHTML = `<button type="button" class="btn btn-warning-soft btn-xs" data-step="init">将 ${esc(aName)} 并入对方</button>`;
+          } else if (el.dataset.step === 'go') {
+            const idx = state.identity.findIndex((i) => i.id === artistId);
+            if (idx < 0) return;
+            const snap = structuredClone(state.identity[idx]);
+            const card = $(`[data-artist-card="${artistId}"]`);
+            if (card) card.classList.add('is-leaving');
+            setTimeout(() => {
+              state.identity.splice(idx, 1);
+              renderAll();
+              showToast(`已将《${aName}》并入《${tName}》（可在合并历史回退）`, () => {
+                state.identity.splice(idx, 0, snap);
+                renderAll();
+              });
+            }, 190);
+          }
+          return;
+        }
+
+        // Inline 2-step confirm: Reject All (Credit Correction)
+        const credRej = el.closest('[data-confirm-credit-reject]');
+        if (credRej) {
+          const id = Number(credRej.dataset.creditId);
+          if (el.dataset.step === 'init') {
+            credRej.innerHTML = `<button type="button" class="btn btn-danger btn-xs" data-step="go">确认全部拒绝</button><button type="button" class="btn btn-ghost btn-xs" data-step="cancel">取消</button>`;
+          } else if (el.dataset.step === 'cancel') {
+            credRej.innerHTML = `<button type="button" class="btn btn-secondary btn-xs" data-step="init">全部拒绝</button>`;
+          } else if (el.dataset.step === 'go') {
+            const idx = state.credits.findIndex((c) => c.id === id);
+            if (idx < 0) return;
+            const snap = structuredClone(state.credits[idx]);
+            state.credits.splice(idx, 1);
+            renderAll();
+            showToast(`已清空《${snap.name}》的待审候选`, () => { state.credits.splice(idx, 0, snap); renderAll(); });
+          }
+          return;
+        }
+
+        // Apply Credit Split
+        if (el.hasAttribute('data-credit-split')) {
+          const id = Number(el.dataset.creditSplit);
+          const idx = state.credits.findIndex((c) => c.id === id);
+          if (idx < 0) return;
+          const snap = structuredClone(state.credits[idx]);
+          const card = $(`[data-credit-card="${id}"]`);
+          if (card) card.classList.add('is-leaving');
+          setTimeout(() => {
+            state.credits.splice(idx, 1);
+            renderAll();
+            showToast(`已将《${snap.name}》拆分为 ${snap.ai.parts.join(' / ')}，更新 ${snap.tracks} 首曲目`, () => {
+              state.credits.splice(idx, 0, snap);
+              renderAll();
+            });
+          }, 190);
+          return;
+        }
+
+        // Avatar Approve / Reject
+        if (el.hasAttribute('data-avatar-op')) {
+          const op = el.dataset.avatarOp;
+          const id = Number(el.dataset.id);
+          const idx = state.avatars.findIndex((a) => a.id === id);
+          if (idx < 0) return;
+          const snap = structuredClone(state.avatars[idx]);
+          const card = $(`[data-avatar-card="${id}"]`);
+          if (card) card.classList.add('is-leaving');
+          setTimeout(() => {
+            state.avatars.splice(idx, 1);
+            if (op === 'approve') { state.avatarStats.cached += 1; state.avatarStats.missing = Math.max(0, state.avatarStats.missing - 1); }
+            renderAll();
+            showToast(op === 'approve' ? `已采纳并缓存《${snap.artistName}》头像` : `已忽略《${snap.artistName}》候选头像`, () => {
+              state.avatars.splice(idx, 0, snap);
+              if (op === 'approve') { state.avatarStats.cached -= 1; state.avatarStats.missing += 1; }
+              renderAll();
+            });
+          }, 180);
+          return;
+        }
+
+        // Active Run Pause / Resume / Cancel
+        if (el.hasAttribute('data-run-op')) {
+          const op = el.dataset.runOp;
+          const kind = el.dataset.kind;
+          const run = state.activeRuns[kind];
+          if (!run) return;
+          if (op === 'pause') {
+            run.status = 'paused'; run.pauseReason = '手动暂停';
+            showToast(`${run.title} 已暂停`);
+          } else if (op === 'resume') {
+            run.status = 'running'; run.pauseReason = ''; run.waitSource = ''; run.waitSec = 0;
+            showToast(`${run.title} 已继续`);
+          } else if (op === 'cancel') {
+            state.activeRuns[kind] = null;
+            showToast(`${run.title} 已停止`);
+          }
+          renderAll();
+          ensureTimers();
+          return;
+        }
+
+        // Launch buttons inside Pipelines tab
+        if (el.hasAttribute('data-launch')) {
+          if (el.dataset.launch === 'artist-inc') launchRun('artist', { full: false });
+          if (el.dataset.launch === 'artist-full') launchRun('artist', { full: true });
+          return;
+        }
+
+        // Open Avatar Settings Dialog
+        if (el.hasAttribute('data-open-avatar-settings')) {
+          $('#avatar-settings-dialog').showModal();
+          return;
+        }
+
+        // Jump Tab
+        if (el.hasAttribute('data-jump-tab')) {
+          setActiveTab(el.dataset.jumpTab);
+          return;
+        }
+
+        // Revert AI Auto-Applied
+        if (el.hasAttribute('data-revert-ai')) {
+          const id = Number(el.dataset.revertAi);
+          const idx = state.aiApplied.findIndex((a) => a.id === id);
+          if (idx < 0) return;
+          const snap = state.aiApplied[idx];
+          state.aiApplied.splice(idx, 1);
+          renderAll();
+          showToast(`已撤销《${snap.title}》的 AI 自动绑定并退回待审`, () => {
+            state.aiApplied.splice(idx, 0, snap);
+            renderAll();
+          });
+          return;
+        }
+      });
+
+      // Pipeline Form Submissions
+      document.addEventListener('submit', (e) => {
+        if (e.target.id === 'ai-launch-form') {
+          e.preventDefault();
+          const sel = e.target.querySelector('select[name="scope"]');
+          launchRun('aiReview', { label: sel.selectedOptions[0].textContent });
+        } else if (e.target.id === 'avatar-launch-form') {
+          e.preventDefault();
+          const sel = e.target.querySelector('select[name="mode"]');
+          launchRun('artistImage', { mode: sel.selectedOptions[0].textContent });
+        } else if (e.target.id === 'bio-launch-form') {
+          e.preventDefault();
+          const sel = e.target.querySelector('select[name="mode"]');
+          launchRun('artistBio', { label: sel.selectedOptions[0].textContent });
+        } else if (e.target.id === 'avatar-settings-form') {
+          e.preventDefault();
+          $('#avatar-settings-dialog').close();
+          showToast('头像补全数据源与 AI 策略设置已保存');
+        }
+      });
+
+      $('#avatar-settings-close').addEventListener('click', () => $('#avatar-settings-dialog').close());
+      $('#avatar-settings-cancel').addEventListener('click', () => $('#avatar-settings-dialog').close());
+      $('#avatar-settings-dialog').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) e.currentTarget.close();
+      });
+
+      $('#proto-reset').addEventListener('click', () => {
+        $$('.proto-chip[data-scenario]').forEach((c) => c.classList.toggle('active', c.dataset.scenario === 'idle'));
+        state = createInitialData();
+        $('#identity-search').value = '';
+        $('#identity-source').value = '';
+        setActiveTab('identity');
+        renderAll();
+        ensureTimers();
+        showToast('演示数据已重置');
+      });
+
+      renderAll();
+    })();
+  </script>
+</body>
+</html>

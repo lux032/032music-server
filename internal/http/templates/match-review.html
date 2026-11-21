@@ -7,13 +7,17 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main">
-    <header class="browser-header">
-      <div>
+  <main id="app-main" class="browser-main identity-main matches-main" data-match-workbench data-active-tab="{{.MatchTab}}">
+    <header class="browser-header matches-header">
+      <div class="matches-title-block">
         <h1>艺术家匹配与审核</h1>
         <p class="result-count">以 MusicBrainz / Last.fm 为来源扫描艺术家身份；低于自动确认阈值的候选在这里人工审核。</p>
+        <details class="match-help">
+          <summary>扫描规则说明</summary>
+          <p>“扫描未检查的艺术家”及服务启动自动扫描仅检查从未初次扫描过的艺术家（已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家均保持不动）；“全局补全扫描”会对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
+        </details>
       </div>
-      <div class="header-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+      <div class="header-actions matches-header-actions">
         <form method="post" action="/admin/matches/run">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <button>扫描未检查的艺术家</button>
@@ -23,489 +27,680 @@
           <input type="hidden" name="mode" value="full">
           <button class="secondary-button">全局补全扫描</button>
         </form>
+        {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
+        <form method="post" action="/admin/ai-review/run">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="scope" value="artists_all">
+          <input type="hidden" name="returnTo" value="{{if .ReturnTo}}{{.ReturnTo}}{{else}}/admin/matches{{end}}">
+          <button type="submit" class="secondary-button">AI 预审</button>
+        </form>
+        {{end}}
       </div>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    <section class="feature-section">
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">“扫描未检查的艺术家”及服务启动自动扫描仅检查从未初次扫描过的艺术家（已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家均保持不动）；“全局补全扫描”会对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
-    </section>
+    {{if .HasAnyActiveRun}}
+    <section class="match-active-strip" aria-label="当前任务">
+      <h2 class="sr-only">当前任务</h2>
 
-    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist">
-      <div class="section-title"><div><h2>当前任务</h2></div></div>
       {{with .ActiveArtistRun}}
-      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
-        <header>
-          <strong>匹配任务 #{{.ID}} · {{artistScanModeLabel .ScanMode}}</strong>
-          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
-        </header>
-        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
-        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
-        <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
-        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
-        <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
-        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
-        <div class="run-actions">
-          <form method="post" action="/admin/matches/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button class="secondary-button">暂停</button>
-          </form>
-          <form method="post" action="/admin/matches/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button>继续</button>
-          </form>
-          <form method="post" action="/admin/matches/runs/{{.ID}}/cancel" data-run-action="cancel">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button class="secondary-button">停止</button>
-          </form>
-        </div>
-      </article>
-      {{else}}
-      <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的任务。</p>
-      {{end}}
-      {{with .LastArtistRun}}
-      <p class="muted run-last">最近任务：#{{.ID}} · {{artistScanModeLabel .ScanMode}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
-      {{end}}
-      <details class="run-history">
-        <summary>任务记录（共 {{$.ArtistRunsTotal}} 条）</summary>
-        <div class="enrichment-runs">
-          {{range .ArtistRunHistory}}
-          <article>
-            <header>
+      <div class="match-active-slot" data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist">
+        <article class="match-active-card{{if eq .Status "paused"}} is-paused{{end}}" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+          <header class="match-active-head">
+            <div class="match-active-title">
+              <span class="match-pulse-dot" aria-hidden="true"></span>
               <strong>匹配任务 #{{.ID}} · {{artistScanModeLabel .ScanMode}}</strong>
-              <span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span>
-            </header>
-            <div class="progress"><span style="width:{{percentDone .Processed .Total}}%"></span></div>
-            <p>处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
-            {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
-          </article>
-          {{else}}
-          <div class="zero-state"><strong>还没有匹配任务</strong><span>启动一次艺术家匹配扫描。</span></div>
-          {{end}}
-        </div>
-        {{if gt $.ArtistRunsTotal $.ArtistRunsLimit}}
-        <nav class="page-nav run-history-pages" aria-label="任务记录分页">
-          {{if gt $.ArtistRunsPage 1}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{subtract $.ArtistRunsPage 1}}">上一页</a>{{end}}
-          <span>第 {{$.ArtistRunsPage}} 页 · 共 {{$.ArtistRunsTotal}} 条</span>
-          {{if lt (mul $.ArtistRunsPage $.ArtistRunsLimit) $.ArtistRunsTotal}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{add $.ArtistRunsPage 1}}">下一页</a>{{end}}
-        </nav>
-        {{end}}
-      </details>
-    </section>
-
-    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage">
-      <div class="section-title"><div><h2>艺术家头像补全</h2></div></div>
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">已确认身份的艺术家 {{.ImageBackfill.Total}} 位 · 本地有效头像 {{.ImageBackfill.Cached}} · 待补 {{.ImageBackfill.Missing}}。默认仅补全已确认身份的艺人。所有模式均保留自定义头像。</p>
-      {{with .ImageBackfill.Active}}
-      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
-        <header>
-          <strong>头像补全任务 #{{.ID}}{{if .Mode}}（模式：{{.Mode}}）{{end}}</strong>
-          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
-        </header>
-        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
-        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}</p>
-        <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
-        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
-        <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
-        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
-        <div class="run-actions">
-          <form method="post" action="/admin/matches/images/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button class="secondary-button">暂停</button>
-          </form>
-          <form method="post" action="/admin/matches/images/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button>继续</button>
-          </form>
-          <form method="post" action="/admin/matches/images/runs/{{.ID}}/cancel" data-run-action="cancel">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button class="secondary-button">停止</button>
-          </form>
-        </div>
-      </article>
-      {{else}}
-      <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
-      {{end}}
-      {{with .ImageBackfill.Last}}
-      <p class="muted run-last">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
-      {{end}}
-      {{if not .ImageBackfill.Active}}
-      <form method="post" action="/admin/matches/images/backfill" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <select name="mode" aria-label="头像补全模式">
-          <option value="all" selected>全库补全（按设置使用图源）</option>
-          <option value="matched">仅已匹配身份（按设置使用图源）</option>
-          <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
-          <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
-        </select>
-        <button>启动艺术家头像补全</button>
-      </form>
-      {{end}}
-
-      {{if .ImageBackfill.PendingCandidates}}
-      <details open style="margin-top:14px;">
-        <summary><strong>待审核候选头像（{{.ImageBackfill.PendingCount}}）</strong></summary>
-        {{if gt .ImageBackfill.PendingCount (len .ImageBackfill.PendingCandidates)}}<p class="field-hint">显示最近 {{len .ImageBackfill.PendingCandidates}} 条，处理后可查看其余候选。</p>{{end}}
-        <div class="artist-image-candidate-list">
-          {{range .ImageBackfill.PendingCandidates}}
-          <article class="run-card" style="margin:0;display:flex;flex-direction:column;gap:8px;">
-            <div class="artist-image-candidate-summary">
-              <img class="artist-image-candidate-preview" src="/admin/matches/images/candidates/{{.ID}}/preview" alt="{{.ArtistName}}的候选头像" loading="lazy">
-              <div style="min-width:0;flex:1;">
-                <strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{.ArtistName}}</strong>
-                <small class="muted">{{.Source}} · {{.Confidence}}{{if and (gt .Width 0) (gt .Height 0)}} · {{.Width}}×{{.Height}}{{end}}</small>
-              </div>
+              <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
             </div>
-            {{if .Reason}}<small class="muted">{{.Reason}}</small>{{end}}
-            {{if .PageURL}}<small class="muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="{{.PageURL}}" target="_blank" rel="noopener noreferrer">来源页：{{.PageURL}}</a></small>{{end}}
-            <div class="run-actions">
-              <form method="post" action="/admin/matches/images/candidates/{{.ID}}/approve">
+            <div class="run-actions match-active-actions">
+              <form method="post" action="/admin/matches/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button>采纳并缓存</button>
+                <button class="secondary-button compact-button">暂停</button>
               </form>
-              <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
+              <form method="post" action="/admin/matches/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button class="secondary-button">忽略</button>
+                <button class="compact-button">继续</button>
+              </form>
+              <form method="post" action="/admin/matches/runs/{{.ID}}/cancel" data-run-action="cancel">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button compact-button">停止</button>
               </form>
             </div>
-          </article>
-          {{end}}
-        </div>
-      </details>
-      {{end}}
-
-      {{if .ImageBackfill.Settings}}
-      <details style="margin-top:14px;">
-        <summary><strong>头像补全数据源与 AI 策略设置</strong></summary>
-        <form method="post" action="/admin/settings/artist-images" style="margin-top:10px;display:grid;gap:10px;max-width:720px;">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <div style="display:flex;flex-wrap:wrap;gap:14px;">
-            <label><input type="checkbox" name="bangumi_enabled" value="1"{{if .ImageBackfill.Settings.BangumiEnabled}} checked{{end}}> 启用 Bangumi Persons（ACG 优先）</label>
-            <label><input type="checkbox" name="deezer_enabled" value="1"{{if .ImageBackfill.Settings.DeezerEnabled}} checked{{end}}> 启用 Deezer Public API</label>
-            <label><input type="checkbox" name="wikipedia_enabled" value="1"{{if .ImageBackfill.Settings.WikipediaEnabled}} checked{{end}}> 启用 Wikipedia pageimages</label>
-            <label><input type="checkbox" name="fanart_enabled" value="1"{{if .ImageBackfill.Settings.FanartEnabled}} checked{{end}}> 启用 Fanart.tv v3</label>
+          </header>
+          <div class="progress match-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+          <div class="match-active-meta">
+            <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+            <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:14px;">
-            <label><input type="checkbox" name="web_fallback_enabled" value="1"{{if .ImageBackfill.Settings.WebFallbackEnabled}} checked{{end}}> 启用联网搜索 + AI 选图兜底</label>
-            <label><input type="checkbox" name="web_auto_apply_high" value="1"{{if .ImageBackfill.Settings.WebAutoApplyHigh}} checked{{end}}> 高置信度结果自动入库</label>
-            <label><input type="checkbox" name="vision_enabled" value="1"{{if .ImageBackfill.Settings.VisionEnabled}} checked{{end}}> 启用可选 VLM 视觉质检</label>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
-            <label>Fanart.tv API Key<input type="password" name="fanart_api_key" placeholder="{{if .ImageBackfill.Settings.FanartAPIKey}}已配置（留空保持不变）{{else}}可选{{end}}"></label>
-            <label>选图文本模型<input type="text" name="ai_model" value="{{.ImageBackfill.Settings.AIModel}}" placeholder="留空沿用全局主模型"></label>
-            <label>视觉质检模型<input type="text" name="vision_model" value="{{.ImageBackfill.Settings.VisionModel}}" placeholder="需支持 image_url"></label>
-            <label>单轮联网上限（0=不限）<input type="number" name="max_web_requests_per_run" min="0" value="{{.ImageBackfill.Settings.MaxWebRequestsPerRun}}"></label>
-            <label>负缓存冷却天数<input type="number" name="negative_cache_days" min="1" value="{{.ImageBackfill.Settings.NegativeCacheDays}}"></label>
-          </div>
-          {{if .ImageBackfill.Settings.FanartAPIKey}}<label><input type="checkbox" name="clear_fanart_api_key" value="1"> 清除已保存的 Fanart.tv Key</label>{{end}}
-          <div><button class="secondary-button">保存头像补全设置</button></div>
-        </form>
-      </details>
-      {{else}}
-      <p class="field-hint">暂时无法读取头像补全设置，请刷新页面后重试。</p>
-      {{end}}
-    </section>
-
-    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio">
-      <div class="section-title"><div><h2>歌手简介补全</h2></div></div>
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">歌手 {{.BioBackfill.Total}} 位 · 缺简介待补 {{.BioBackfill.Missing}}。补全使用已确认的 MusicBrainz 身份抓取 Wikipedia / Last.fm 简介（若仅确认 Last.fm 身份则按精确身份拉取 Last.fm 简介），不做身份匹配；未确认身份的歌手会计入跳过。人工填写的简介不会被覆盖；补全后按简介优先级展示，可在歌手页固定版本。</p>
-      {{with .BioBackfill.Active}}
-      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
-        <header>
-          <strong>简介补全任务 #{{.ID}}</strong>
-          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
-        </header>
-        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
-        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
-        <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
-        <small class="muted run-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
-        <small class="muted" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
-        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
-        <div class="run-actions">
-          <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button class="secondary-button">暂停</button>
-          </form>
-          <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button>继续</button>
-          </form>
-          <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/cancel" data-run-action="cancel">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <button class="secondary-button">停止</button>
-          </form>
-        </div>
-      </article>
-      {{else}}
-      <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
-      {{end}}
-      {{with .BioBackfill.Last}}
-      <p class="muted run-last">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
-      {{end}}
-      {{if not .BioBackfill.Active}}
-      <div class="run-actions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <form method="post" action="/admin/matches/biographies/backfill">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="mode" value="missing">
-          <button>补全缺失简介</button>
-        </form>
-        <form method="post" action="/admin/matches/biographies/backfill">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="mode" value="retranslate">
-          <button class="secondary-button">重译已有简介（复用缓存）</button>
-        </form>
-        <form method="post" action="/admin/matches/biographies/backfill">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="mode" value="rescan_all">
-          <button class="secondary-button">按新策略全量重扫</button>
-        </form>
+          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+          <small class="muted match-active-note" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
+          <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
+        </article>
       </div>
       {{end}}
-    </section>
 
-    <section class="feature-section ai-review-toolbar-card" data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview">
-      <div class="ai-review-head">
-        <div>
-          <strong>AI 艺术家预审与复合署名分析</strong>
-          <p class="muted" style="margin:2px 0 0;font-size:var(--fs-xs);">
-            {{if not .AIConfigured}}尚未配置模型服务，请先前往 <a href="/admin/settings/ai">AI 设置</a> 配置接口与密钥。
-            {{else if not .AIReviewEnabled}}AI 初审总开关未开启，可在 <a href="/admin/settings/ai">AI 设置</a> 中启用。
-            {{else}}批量消歧待审艺术家身份（高置信且无身份冲突时自动绑定），并为复合署名生成一键拆分方案。{{end}}
-          </p>
-        </div>
-        {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
-        <form method="post" action="/admin/ai-review/run" class="ai-review-launch-form">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="returnTo" value="/admin/matches">
-          <select name="scope" aria-label="AI 预审范围">
-            <option value="artists_all" selected>全部（待审艺术家 + 复合署名）</option>
-            <option value="artist_matches">仅待审艺术家身份</option>
-            <option value="credit_splits">仅复合署名拆分建议</option>
-          </select>
-          <label class="ai-inline-check" style="margin:0;font-size:var(--fs-xs);"><input type="checkbox" name="force"> 强制重评</label>
-          <button type="submit" class="primary-button">AI 处理待审艺术家</button>
-        </form>
-        {{end}}
-      </div>
       {{with .ActiveAIRun}}
-      <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}" style="margin-top:10px;">
-        <header>
-          <strong>AI 预审 #{{.ID}} · {{aiReviewScopeLabel .Scope}}</strong>
-          <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
-        </header>
-        <div class="progress run-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
-        <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · AI 自动处理 {{.AutoApplied}} · 给建议 {{.Recommended}} · 不确定 {{.Uncertain}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
-        <small class="muted" data-run-field="current">{{if .CurrentLabel}}当前：{{.CurrentLabel}}{{end}}</small>
-        <small class="run-error" data-run-field="error">{{.ErrorMessage}}</small>
-        <div class="run-actions">
-          <form method="post" action="/admin/ai-review/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/matches">
-            <button class="secondary-button">暂停</button>
-          </form>
-          <form method="post" action="/admin/ai-review/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/matches">
-            <button>继续</button>
-          </form>
-          <form method="post" action="/admin/ai-review/runs/{{.ID}}/cancel" data-run-action="cancel">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/matches">
-            <button class="secondary-button">停止</button>
-          </form>
-        </div>
-      </article>
-      {{else}}
-      {{with .LastAIRun}}
-      <p class="muted run-last" style="margin-top:8px;">最近一次 AI 预审：#{{.ID}}（{{aiReviewScopeLabel .Scope}}）· {{runStatusLabel .Status}} · 处理 {{.Processed}}/{{.Total}} · 自动绑定 {{.AutoApplied}} · 建议 {{.Recommended}} · 不确定 {{.Uncertain}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
-      {{end}}
-      {{end}}
-      {{if .AIApplied}}
-      <details class="run-history" style="margin-top:10px;">
-        <summary>AI 最近自动绑定记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
-        <ul class="ai-applied-list">
-          {{range .AIApplied}}
-          <li>
-            <span class="ai-decision-chip tone-auto">{{aiTargetKindLabel .Decision.TargetKind}}</span>
-            <a href="{{.TargetURL}}"><strong>{{.TargetTitle}}</strong></a>
-            <small class="muted">置信度 {{.Decision.Confidence}}% · {{.Decision.Reason}}</small>
-            <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" style="margin-left:auto;">
-              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-              <button type="submit" class="secondary-button">撤销</button>
-            </form>
-          </li>
-          {{end}}
-        </ul>
-      </details>
-      {{end}}
-    </section>
-
-    <section class="feature-section">
-      <div class="section-title"><div><h2>待审核候选</h2></div></div>
-      <form method="get" action="/admin/matches" class="review-filter">
-        <input type="search" name="q" value="{{.ReviewQuery}}" placeholder="搜索艺术家" aria-label="搜索艺术家">
-        <select name="source" aria-label="候选来源">
-          <option value=""{{if eq .ReviewSource ""}} selected{{end}}>全部来源</option>
-          <option value="musicbrainz"{{if eq .ReviewSource "musicbrainz"}} selected{{end}}>MusicBrainz</option>
-          <option value="lastfm"{{if eq .ReviewSource "lastfm"}} selected{{end}}>Last.fm</option>
-        </select>
-        <input type="hidden" name="runsPage" value="{{.ArtistRunsPage}}">
-        <button class="secondary-button">筛选</button>
-      </form>
-      <p class="muted">共 {{.ReviewTotal}} 位待审核艺术家</p>
-    </section>
-
-    <section class="review-list">
-      {{range $item := .Review}}
-      <article>
-        <header>
-          <div class="review-card-title">
-            <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
-            <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
-          </div>
-          {{if gt (len $item.Candidates) 0}}
-          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="source" value="{{$.ReviewSource}}">
-            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-            <button type="submit" class="secondary-button compact-button">全部拒绝</button>
-          </form>
-          {{end}}
-        </header>
-        {{with $item.AI}}
-        <aside class="ai-decision-banner tone-{{.BadgeTone}}">
-          <div class="ai-decision-main">
-            <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
-            {{with $item.AIRecommendedCandidate}}
-            <span class="ai-target-pointer">推荐指向：<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）{{with ($item.CandidateURL .ID)}} <a class="candidate-source-link" href="{{.}}" target="_blank" rel="noopener noreferrer">来源主页 ↗</a>{{end}}</span>
-            {{end}}
-            <p class="ai-decision-reason">{{.Reason}}{{if .WebSearched}} <span class="muted">（已联网核验）</span>{{end}}</p>
-          </div>
-          {{if $item.CanQuickAcceptAI}}
-          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.SelectedCandidateID}}" class="ai-quick-accept-form">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-            <button type="submit" class="primary-button">采纳 AI 推荐</button>
-          </form>
-          {{end}}
-        </aside>
-        {{end}}
-        <div>
-          {{range $item.Candidates}}
-          {{$isRec := and $item.AI (eq $item.AI.SelectedCandidateID .ID)}}
-          {{$conflict := $item.ConflictFor .ID}}
-          <section{{if $isRec}} class="is-ai-recommended"{{end}}>
-            <div class="candidate-head-row">
-              <b>{{.DisplayName}}</b>
-              {{if $isRec}}<span class="status-badge ai-rec-pill">★ AI 推荐</span>{{else}}<span class="status-badge warning">待审核</span>{{end}}
+      <div class="match-active-slot" data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview">
+        <article class="match-active-card{{if eq .Status "paused"}} is-paused{{end}}" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+          <header class="match-active-head">
+            <div class="match-active-title">
+              <span class="match-pulse-dot" aria-hidden="true"></span>
+              <strong>AI 预审 #{{.ID}} · {{aiReviewScopeLabel .Scope}}</strong>
+              <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
             </div>
-            <div class="candidate-meta-row">
-              <span>{{.Source}} · 匹配分 {{.Score}}</span>
-              {{with ($item.CandidateURL .ID)}}
-              <a class="candidate-source-link" href="{{.}}" target="_blank" rel="noopener noreferrer">来源主页 ↗</a>
-              {{end}}
-            </div>
-            {{if or .Disambiguation .Country .ArtistType}}<small>{{.Disambiguation}}{{if and .Disambiguation (or .Country .ArtistType)}} · {{end}}{{.Country}}{{if and .Country .ArtistType}} · {{end}}{{.ArtistType}}</small>{{end}}
-            {{with $conflict}}
-            <div class="conflict-hint-pill">
-              <p class="conflict-hint-text">⚠ 该身份已绑定至 <a href="/admin/artists/{{.TargetArtistID}}?view=profile" target="_blank" rel="noopener noreferrer">《{{.TargetName}}》</a>（点击查看目标歌手）</p>
-              {{if .CanMerge}}
-              <div class="conflict-actions">
-                <form method="post" action="/admin/artists/{{$item.Artist.ID}}/identity-conflict/{{.CandidateID}}/merge">
-                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                  <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
-                  <input type="hidden" name="confirm" value="1">
-                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-                  <button type="submit" class="secondary-button compact-button">将 {{$item.Artist.Name}} 并入对方</button>
-                </form>
-                <a class="conflict-detail-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">去歌手页核对</a>
-              </div>
-              {{else}}
-              <p class="conflict-hint-text">当前状态不支持直接合并，请<a href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">前往歌手页核对</a></p>
-              {{end}}
-            </div>
-            {{end}}
-            <div class="candidate-actions">
-              {{if not $conflict}}
-              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
+            <div class="run-actions match-active-actions">
+              <form method="post" action="/admin/ai-review/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-                <button{{if $isRec}} class="primary-button"{{end}}>确认</button>
+                <input type="hidden" name="returnTo" value="/admin/matches">
+                <button class="secondary-button compact-button">暂停</button>
               </form>
-              {{end}}
-              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
+              <form method="post" action="/admin/ai-review/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-                <button class="secondary-button">拒绝</button>
+                <input type="hidden" name="returnTo" value="/admin/matches">
+                <button class="compact-button">继续</button>
+              </form>
+              <form method="post" action="/admin/ai-review/runs/{{.ID}}/cancel" data-run-action="cancel">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="/admin/matches">
+                <button class="secondary-button compact-button">停止</button>
               </form>
             </div>
-          </section>
-          {{end}}
-        </div>
-      </article>
-      {{else}}
-      {{if not .CreditCorrectionReview}}
-      <div class="zero-state"><strong>没有等待审核的候选</strong><span>可以启动一次艺术家匹配扫描。</span></div>
+          </header>
+          <div class="progress match-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+          <div class="match-active-meta">
+            <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · AI 自动处理 {{.AutoApplied}} · 给建议 {{.Recommended}} · 不确定 {{.Uncertain}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+            <small class="muted" data-run-field="current">{{if .CurrentLabel}}当前：{{.CurrentLabel}}{{end}}</small>
+          </div>
+          <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
+        </article>
+      </div>
       {{end}}
+
+      {{with .ImageBackfill.Active}}
+      <div class="match-active-slot" data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage">
+        <article class="match-active-card{{if eq .Status "paused"}} is-paused{{end}}" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+          <header class="match-active-head">
+            <div class="match-active-title">
+              <span class="match-pulse-dot" aria-hidden="true"></span>
+              <strong>头像补全任务 #{{.ID}}{{if .Mode}}（模式：{{.Mode}}）{{end}}</strong>
+              <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+            </div>
+            <div class="run-actions match-active-actions">
+              <form method="post" action="/admin/matches/images/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button compact-button">暂停</button>
+              </form>
+              <form method="post" action="/admin/matches/images/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="compact-button">继续</button>
+              </form>
+              <form method="post" action="/admin/matches/images/runs/{{.ID}}/cancel" data-run-action="cancel">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button compact-button">停止</button>
+              </form>
+            </div>
+          </header>
+          <div class="progress match-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+          <div class="match-active-meta">
+            <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}</p>
+            <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
+          </div>
+          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+          <small class="muted match-active-note" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
+          <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
+        </article>
+      </div>
+      {{end}}
+
+      {{with .BioBackfill.Active}}
+      <div class="match-active-slot" data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio">
+        <article class="match-active-card{{if eq .Status "paused"}} is-paused{{end}}" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
+          <header class="match-active-head">
+            <div class="match-active-title">
+              <span class="match-pulse-dot" aria-hidden="true"></span>
+              <strong>简介补全任务 #{{.ID}}</strong>
+              <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
+            </div>
+            <div class="run-actions match-active-actions">
+              <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button compact-button">暂停</button>
+              </form>
+              <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="compact-button">继续</button>
+              </form>
+              <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/cancel" data-run-action="cancel">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button compact-button">停止</button>
+              </form>
+            </div>
+          </header>
+          <div class="progress match-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
+          <div class="match-active-meta">
+            <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+            <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
+          </div>
+          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+          <small class="muted match-active-note" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
+          <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
+        </article>
+      </div>
       {{end}}
     </section>
-    {{if or (gt $.ReviewOffset 0) (gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit))}}
-    <nav class="page-nav review-pages" aria-label="待审核分页">
-      {{if gt $.ReviewOffset 0}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{subtract $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">上一页</a>{{end}}
-      <span>第 {{$.ReviewPage}} 页 · 共 {{$.ReviewTotal}} 位</span>
-      {{if gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit)}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{add $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">下一页</a>{{end}}
-    </nav>
     {{end}}
 
-    {{if .CreditCorrectionReview}}
-    <section class="feature-section">
-      <div class="section-title"><div><h2>需先修正署名</h2></div></div>
-      <p class="muted" style="margin:0;font-size:var(--fs-sm);">以下艺术家疑似合作署名，系统不会自动绑定个人身份；请先在艺术家详情页拆分或修正署名关系，再重新扫描。</p>
-    </section>
-    <section class="review-list">
-      {{range $item := .CreditCorrectionReview}}
-      <article>
-        <header>
-          <div class="review-card-title">
-            <a href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
-            <span>{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
-          </div>
-          {{if gt (len $item.Candidates) 0}}
-          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="source" value="{{$.ReviewSource}}">
-            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-            <button type="submit" class="secondary-button compact-button">全部拒绝</button>
-          </form>
-          {{end}}
-        </header>
-        {{if $item.AI}}
-        <aside class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
-          <div class="ai-decision-main">
-            <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">
-              {{if $item.AI.CreditIsComposite}}AI 建议拆分 · {{$item.AI.Confidence}}%{{else if eq $item.AI.Action "recommend_reject"}}AI 判定非复合署名 · {{$item.AI.Confidence}}%{{else}}AI 不确定 · {{$item.AI.Confidence}}%{{end}}
-            </span>
-            {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
-            <span class="ai-target-pointer">拆分结果：<strong>{{$item.AI.CreditPartsCSV}}</strong></span>
-            {{end}}
-            <p class="ai-decision-reason">{{$item.AI.Reason}}</p>
-          </div>
-          {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
-          <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
-            <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
-            {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
-            <button type="submit" class="primary-button">一键应用拆分到关联曲目</button>
-          </form>
-          {{end}}
-        </aside>
-        {{else}}
-        <p class="muted">疑似合作署名，需先修正艺术家关系。</p>
+    <nav class="match-tabs" role="tablist" aria-label="艺术家匹配工作区">
+      <button type="button" class="match-tab{{if eq .MatchTab "identity"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "identity"}}true{{else}}false{{end}}" aria-controls="match-panel-identity" data-match-tab="identity">
+        <span>待审身份</span>
+        <span class="match-tab-count">{{if gt (len .CreditCorrectionReview) 0}}{{len .Review}}{{else}}{{.ReviewTotal}}{{end}}</span>
+      </button>
+      <button type="button" class="match-tab{{if eq .MatchTab "credits"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "credits"}}true{{else}}false{{end}}" aria-controls="match-panel-credits" data-match-tab="credits">
+        <span>复合署名</span>
+        <span class="match-tab-count">{{len .CreditCorrectionReview}}</span>
+      </button>
+      <button type="button" class="match-tab{{if eq .MatchTab "avatars"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "avatars"}}true{{else}}false{{end}}" aria-controls="match-panel-avatars" data-match-tab="avatars">
+        <span>待审头像</span>
+        <span class="match-tab-count">{{.ImageBackfill.PendingCount}}</span>
+      </button>
+      <button type="button" class="match-tab{{if eq .MatchTab "tasks"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "tasks"}}true{{else}}false{{end}}" aria-controls="match-panel-tasks" data-match-tab="tasks">
+        <span>任务与补全</span>
+        {{if .HasAnyActiveRun}}<span class="match-tab-dot" aria-label="有任务进行中"></span>{{end}}
+      </button>
+    </nav>
+
+    <!-- Tab 1: 待审身份 -->
+    <section class="match-panel" id="match-panel-identity" role="tabpanel" data-match-panel="identity"{{if ne .MatchTab "identity"}} hidden{{end}}>
+      <h2 class="sr-only">待审核候选</h2>
+      <div class="match-filter-toolbar">
+        <form method="get" action="/admin/matches" class="review-filter">
+          <input type="search" name="q" value="{{.ReviewQuery}}" placeholder="搜索艺术家" aria-label="搜索艺术家">
+          <select name="source" aria-label="候选来源">
+            <option value=""{{if eq .ReviewSource ""}} selected{{end}}>全部来源</option>
+            <option value="musicbrainz"{{if eq .ReviewSource "musicbrainz"}} selected{{end}}>MusicBrainz</option>
+            <option value="lastfm"{{if eq .ReviewSource "lastfm"}} selected{{end}}>Last.fm</option>
+          </select>
+          <input type="hidden" name="runsPage" value="{{.ArtistRunsPage}}">
+          <button class="secondary-button">筛选</button>
+          <span class="match-filter-summary muted" data-match-filter-summary>共 {{.ReviewTotal}} 位待审核艺术家</span>
+        </form>
+        {{if .Review}}
+        <div class="match-filter-chips" role="group" aria-label="按 AI 结论与状态筛选">
+          <button type="button" class="match-chip active" data-match-ai-filter="all">全部 <span class="match-chip-num">{{len .Review}}</span></button>
+          <button type="button" class="match-chip" data-match-ai-filter="accept">AI 推荐采纳 <span class="match-chip-num">{{.ReviewAcceptCount}}</span></button>
+          <button type="button" class="match-chip" data-match-ai-filter="reject">AI 建议拒绝 <span class="match-chip-num">{{.ReviewRejectCount}}</span></button>
+          <button type="button" class="match-chip" data-match-ai-filter="uncertain">不确定 / 未评估 <span class="match-chip-num">{{.ReviewUncertainCount}}</span></button>
+          <button type="button" class="match-chip" data-match-ai-filter="conflict">存在身份冲突 <span class="match-chip-num">{{.ReviewConflictCount}}</span></button>
+          <button type="button" class="match-clear-filter" data-match-filter-clear hidden>清除筛选</button>
+        </div>
         {{end}}
-      </article>
+      </div>
+
+      <div class="match-review-stack">
+        {{range $item := .Review}}
+        <article class="match-review-card" data-match-card data-ai-bucket="{{$item.AIFilterBucket}}" data-has-conflict="{{if $item.HasConflict}}1{{else}}0{{end}}">
+          <header class="match-review-card-head">
+            <div class="review-card-title">
+              <a class="match-artist-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
+              <span class="match-artist-stats">{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+            </div>
+            {{if gt (len $item.Candidates) 0}}
+            <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form match-inline-confirm-form">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="source" value="{{$.ReviewSource}}">
+              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+              <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝">全部拒绝</button>
+            </form>
+            {{end}}
+          </header>
+          {{with $item.AI}}
+          <aside class="match-ai-strip tone-{{.BadgeTone}}">
+            <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
+            <div class="match-ai-strip-body">
+              {{with $item.AIRecommendedCandidate}}
+              <span class="ai-target-pointer">推荐：<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）</span>
+              {{end}}
+              <p class="match-ai-reason">{{.Reason}}{{if .WebSearched}} <span class="match-web-tag">已联网核验</span>{{end}}</p>
+            </div>
+          </aside>
+          {{end}}
+          <div class="match-cand-list">
+            {{range $item.SortedCandidates}}
+            {{$isRec := and $item.AI (eq $item.AI.SelectedCandidateID .ID)}}
+            {{$conflict := $item.ConflictFor .ID}}
+            <div class="match-cand-row{{if $isRec}} is-recommended{{end}}">
+              <div class="match-cand-info">
+                <div class="candidate-head-row">
+                  <b>{{.DisplayName}}</b>
+                  {{if $isRec}}<span class="status-badge ai-rec-pill">★ AI 推荐</span>{{end}}
+                  <span class="match-source-tag">{{.Source}}</span>
+                  <span class="match-score{{if ge .Score 85}} is-high{{end}}">匹配分 {{.Score}}</span>
+                </div>
+                <div class="candidate-meta-row">
+                  {{if or .Disambiguation .Country .ArtistType}}<span>{{.Disambiguation}}{{if and .Disambiguation (or .Country .ArtistType)}} · {{end}}{{.Country}}{{if and .Country .ArtistType}} · {{end}}{{.ArtistType}}</span>{{end}}
+                  {{with ($item.CandidateURL .ID)}}
+                  <a class="candidate-source-link" href="{{.}}" target="_blank" rel="noopener noreferrer">来源主页 ↗</a>
+                  {{end}}
+                </div>
+              </div>
+              <div class="candidate-actions match-cand-actions">
+                {{if not $conflict}}
+                <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                  <button class="{{if $isRec}}primary-button{{else}}secondary-button match-confirm-btn{{end}} compact-button">{{if $isRec}}确认（AI 推荐）{{else}}确认{{end}}</button>
+                </form>
+                {{end}}
+                <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                  <button class="match-ghost-btn compact-button">拒绝</button>
+                </form>
+              </div>
+              {{with $conflict}}
+              <div class="conflict-hint-pill match-conflict-row">
+                <p class="conflict-hint-text">⚠ 该身份已绑定至 <a href="/admin/artists/{{.TargetArtistID}}?view=profile" target="_blank" rel="noopener noreferrer">《{{.TargetName}}》</a>（点击查看目标歌手）</p>
+                {{if .CanMerge}}
+                <div class="conflict-actions">
+                  <form method="post" action="/admin/artists/{{$item.Artist.ID}}/identity-conflict/{{.CandidateID}}/merge" class="match-inline-confirm-form">
+                    <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
+                    <input type="hidden" name="confirm" value="1">
+                    <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                    <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认并入对方">将 {{$item.Artist.Name}} 并入对方</button>
+                  </form>
+                  <a class="conflict-detail-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">去歌手页核对</a>
+                </div>
+                {{else}}
+                <p class="conflict-hint-text">当前状态不支持直接合并，请<a href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">前往歌手页核对</a></p>
+                {{end}}
+              </div>
+              {{end}}
+            </div>
+            {{end}}
+          </div>
+        </article>
+        {{else}}
+        <div class="zero-state">
+          <strong>没有等待审核的候选</strong>
+          <span>{{if .CreditCorrectionReview}}本页还有 {{len .CreditCorrectionReview}} 位待处理复合署名，可切换到「复合署名」页签查看。{{else}}可以启动一次艺术家匹配扫描。{{end}}</span>
+        </div>
+        {{end}}
+        <div class="zero-state" data-match-filter-empty hidden>
+          <strong>当前筛选条件下没有匹配项</strong>
+          <span>可切换上方状态胶囊或清除筛选条件。</span>
+        </div>
+      </div>
+
+      {{if or (gt $.ReviewOffset 0) (gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit))}}
+      <nav class="page-nav review-pages" aria-label="待审核分页">
+        {{if gt $.ReviewOffset 0}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{subtract $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">上一页</a>{{end}}
+        <span>第 {{$.ReviewPage}} 页 · 共 {{$.ReviewTotal}} 位</span>
+        {{if gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit)}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{add $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">下一页</a>{{end}}
+      </nav>
       {{end}}
     </section>
+
+    <!-- Tab 2: 需先修正署名（位置必须在待审身份之后，且绝不包含确认/拒绝表单） -->
+    <section class="match-panel" id="match-panel-credits" role="tabpanel" data-match-panel="credits"{{if ne .MatchTab "credits"}} hidden{{end}}>
+      <div class="match-section-hint">
+        <div>
+          <h2>需先修正署名</h2>
+          <p class="muted">以下艺术家疑似合作署名，系统不会自动绑定个人身份；可一键应用 AI 拆分，或在艺术家详情页手动修正后再重新扫描。</p>
+        </div>
+        {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
+        <form method="post" action="/admin/ai-review/run">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="scope" value="credit_splits">
+          <input type="hidden" name="returnTo" value="/admin/matches?tab=credits">
+          <button type="submit" class="secondary-button compact-button">AI 分析复合署名</button>
+        </form>
+        {{end}}
+      </div>
+      <div class="match-review-stack">
+        {{range $item := .CreditCorrectionReview}}
+        <article class="match-review-card">
+          <header class="match-review-card-head">
+            <div class="review-card-title">
+              <a class="match-artist-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
+              <span class="match-artist-stats">{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+            </div>
+            {{if gt (len $item.Candidates) 0}}
+            <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form match-inline-confirm-form">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="source" value="{{$.ReviewSource}}">
+              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches?tab=credits{{end}}">
+              <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝">全部拒绝</button>
+            </form>
+            {{end}}
+          </header>
+          {{if $item.AI}}
+          <div class="match-split-body">
+            <div class="match-split-info">
+              <div class="match-split-top">
+                <span class="ai-decision-chip tone-{{$item.AI.BadgeTone}}">
+                  {{if $item.AI.CreditIsComposite}}AI 建议拆分 · {{$item.AI.Confidence}}%{{else if eq $item.AI.Action "recommend_reject"}}AI 判定非复合署名 · {{$item.AI.Confidence}}%{{else}}AI 不确定 · {{$item.AI.Confidence}}%{{end}}
+                </span>
+                {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
+                <span class="ai-target-pointer">拆分结果：<strong>{{$item.AI.CreditPartsCSV}}</strong></span>
+                {{end}}
+              </div>
+              <p class="match-ai-reason">{{$item.AI.Reason}}</p>
+            </div>
+            {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
+            <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches?tab=credits{{end}}">
+              {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
+              <button type="submit" class="primary-button compact-button">一键应用拆分到关联曲目</button>
+            </form>
+            {{else}}
+            <a class="secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
+            {{end}}
+          </div>
+          {{else}}
+          <div class="match-split-body">
+            <p class="muted match-ai-reason">疑似合作署名，需先修正艺术家关系。</p>
+            <a class="secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页拆分 →</a>
+          </div>
+          {{end}}
+        </article>
+        {{else}}
+        <div class="zero-state">
+          <strong>没有需要修正署名的艺术家</strong>
+          <span>当匹配扫描识别出合作署名时，将集中列在此处。</span>
+        </div>
+        {{end}}
+      </div>
+    </section>
+
+    <!-- Tab 3: 待审头像 -->
+    <section class="match-panel" id="match-panel-avatars" role="tabpanel" data-match-panel="avatars"{{if ne .MatchTab "avatars"}} hidden{{end}}>
+      <div class="match-section-hint">
+        <div>
+          <h2>待审核候选头像（{{.ImageBackfill.PendingCount}}）</h2>
+          <p class="muted">已确认身份的艺术家 {{.ImageBackfill.Total}} 位 · 本地有效头像 {{.ImageBackfill.Cached}} · 待补 {{.ImageBackfill.Missing}}。高置信度头像自动入库，需人工复核的候选列于此。</p>
+        </div>
+        <div class="match-hint-actions">
+          {{if .ImageBackfill.Settings}}
+          <button type="button" class="secondary-button compact-button" data-dialog-open="artist-image-settings-dialog">图源与 AI 设置</button>
+          {{end}}
+          <button type="button" class="secondary-button compact-button" data-match-tab="tasks">启动头像补全 →</button>
+        </div>
+      </div>
+      {{if gt .ImageBackfill.PendingCount (len .ImageBackfill.PendingCandidates)}}
+      <p class="field-hint match-sub-hint">显示最近 {{len .ImageBackfill.PendingCandidates}} 条，处理后可查看其余候选。</p>
+      {{end}}
+      {{if .ImageBackfill.PendingCandidates}}
+      <div class="match-avatar-grid">
+        {{range .ImageBackfill.PendingCandidates}}
+        <article class="match-avatar-card">
+          <div class="artist-image-candidate-summary">
+            <img class="artist-image-candidate-preview" src="/admin/matches/images/candidates/{{.ID}}/preview" alt="{{.ArtistName}}的候选头像" loading="lazy">
+            <div class="match-avatar-meta">
+              <strong>{{.ArtistName}}</strong>
+              <small class="muted">{{.Source}} · {{.Confidence}}{{if and (gt .Width 0) (gt .Height 0)}} · {{.Width}}×{{.Height}}{{end}}</small>
+            </div>
+          </div>
+          {{if .Reason}}<p class="match-avatar-reason">{{.Reason}}</p>{{end}}
+          {{if .PageURL}}<p class="match-avatar-url"><a href="{{.PageURL}}" target="_blank" rel="noopener noreferrer">来源页：{{.PageURL}}</a></p>{{end}}
+          <div class="match-avatar-actions">
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/approve">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="/admin/matches?tab=avatars">
+              <button class="primary-button compact-button">采纳并缓存</button>
+            </form>
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="/admin/matches?tab=avatars">
+              <button class="secondary-button compact-button">忽略</button>
+            </form>
+          </div>
+        </article>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="zero-state">
+        <strong>没有待审核的候选头像</strong>
+        <span>可在「任务与补全」页签启动艺术家头像补全任务。</span>
+      </div>
+      {{end}}
+    </section>
+
+    <!-- Tab 4: 任务与补全（2x2 流水线网格） -->
+    <section class="match-panel" id="match-panel-tasks" role="tabpanel" data-match-panel="tasks"{{if ne .MatchTab "tasks"}} hidden{{end}}>
+      <div class="match-pipeline-grid">
+        <!-- Card 1: 艺术家身份匹配扫描 -->
+        <article class="match-pipeline-card"{{if not .ActiveArtistRun}} data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist"{{end}}>
+          <header class="match-pipeline-head">
+            <div>
+              <h2>艺术家身份匹配扫描</h2>
+              <p class="muted">以 MusicBrainz / Last.fm 匹配外部身份，低置信候选送入待审。</p>
+            </div>
+            <span class="run-status {{if .ActiveArtistRun}}status-{{.ActiveArtistRun.Status}}{{else}}match-status-idle{{end}}">{{if .ActiveArtistRun}}{{runStatusLabel .ActiveArtistRun.Status}}{{else}}空闲{{end}}</span>
+          </header>
+          {{if .ActiveArtistRun}}
+          <p class="muted match-pipeline-running-note">当前任务 #{{.ActiveArtistRun.ID}} 已置顶在页面上方实时显示，可随时暂停、继续或停止。</p>
+          {{else}}
+          <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的任务。</p>
+          <div class="match-pipeline-actions">
+            <form method="post" action="/admin/matches/run">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <button class="compact-button">扫描未检查的艺术家</button>
+            </form>
+            <form method="post" action="/admin/matches/run">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="mode" value="full">
+              <button class="secondary-button compact-button">全局补全扫描</button>
+            </form>
+          </div>
+          {{end}}
+          {{with .LastArtistRun}}
+          <p class="muted run-last match-last-run">最近任务：#{{.ID}} · {{artistScanModeLabel .ScanMode}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+          {{end}}
+          <details class="run-history match-details">
+            <summary>任务记录（共 {{$.ArtistRunsTotal}} 条）</summary>
+            <div class="match-history-list">
+              {{range .ArtistRunHistory}}
+              <article class="match-history-item">
+                <header>
+                  <strong>匹配任务 #{{.ID}} · {{artistScanModeLabel .ScanMode}}</strong>
+                  <span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span>
+                </header>
+                <div class="progress"><span style="width:{{percentDone .Processed .Total}}%"></span></div>
+                <p>处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
+                {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
+              </article>
+              {{else}}
+              <div class="zero-state"><strong>还没有匹配任务</strong><span>启动一次艺术家匹配扫描。</span></div>
+              {{end}}
+            </div>
+            {{if gt $.ArtistRunsTotal $.ArtistRunsLimit}}
+            <nav class="page-nav run-history-pages" aria-label="任务记录分页">
+              {{if gt $.ArtistRunsPage 1}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{subtract $.ArtistRunsPage 1}}&tab=tasks">上一页</a>{{end}}
+              <span>第 {{$.ArtistRunsPage}} 页 · 共 {{$.ArtistRunsTotal}} 条</span>
+              {{if lt (mul $.ArtistRunsPage $.ArtistRunsLimit) $.ArtistRunsTotal}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{add $.ArtistRunsPage 1}}&tab=tasks">下一页</a>{{end}}
+            </nav>
+            {{end}}
+          </details>
+        </article>
+
+        <!-- Card 2: AI 艺术家预审与复合署名分析 -->
+        <article class="match-pipeline-card"{{if not .ActiveAIRun}} data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview"{{end}}>
+          <header class="match-pipeline-head">
+            <div>
+              <h2>AI 艺术家预审与复合署名分析</h2>
+              <p class="muted">
+                {{if not .AIConfigured}}尚未配置模型服务，请先前往 <a href="/admin/settings/ai">AI 设置</a> 配置接口与密钥。
+                {{else if not .AIReviewEnabled}}AI 初审总开关未开启，可在 <a href="/admin/settings/ai">AI 设置</a> 中启用。
+                {{else}}批量消歧待审艺术家身份（高置信且无身份冲突时自动绑定），并为复合署名生成一键拆分方案。{{end}}
+              </p>
+            </div>
+            <span class="run-status {{if .ActiveAIRun}}status-{{.ActiveAIRun.Status}}{{else if and .AIConfigured .AIReviewEnabled}}match-status-idle{{else}}status-paused{{end}}">
+              {{if .ActiveAIRun}}{{runStatusLabel .ActiveAIRun.Status}}{{else if and .AIConfigured .AIReviewEnabled}}就绪{{else}}未开启{{end}}
+            </span>
+          </header>
+          {{if .ActiveAIRun}}
+          <p class="muted match-pipeline-running-note">AI 预审任务 #{{.ActiveAIRun.ID}} 已置顶在页面上方实时显示。</p>
+          {{else if and .AIConfigured .AIReviewEnabled}}
+          <form method="post" action="/admin/ai-review/run" class="match-pipeline-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="/admin/matches?tab=tasks">
+            <select name="scope" aria-label="AI 预审范围">
+              <option value="artists_all" selected>全部（待审艺术家 + 复合署名）</option>
+              <option value="artist_matches">仅待审艺术家身份</option>
+              <option value="credit_splits">仅复合署名拆分建议</option>
+            </select>
+            <label class="ai-inline-check"><input type="checkbox" name="force"> 强制重评</label>
+            <button type="submit" class="secondary-button compact-button">AI 处理待审艺术家</button>
+          </form>
+          {{end}}
+          {{with .LastAIRun}}
+          <p class="muted run-last match-last-run">最近一次 AI 预审：#{{.ID}}（{{aiReviewScopeLabel .Scope}}）· {{runStatusLabel .Status}} · 处理 {{.Processed}}/{{.Total}} · 自动绑定 {{.AutoApplied}} · 建议 {{.Recommended}} · 不确定 {{.Uncertain}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+          {{end}}
+          {{if .AIApplied}}
+          <details class="run-history match-details">
+            <summary>AI 最近自动绑定记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
+            <ul class="ai-applied-list">
+              {{range .AIApplied}}
+              <li>
+                <span class="ai-decision-chip tone-auto">{{aiTargetKindLabel .Decision.TargetKind}}</span>
+                <a href="{{.TargetURL}}"><strong>{{.TargetTitle}}</strong></a>
+                <small class="muted">置信度 {{.Decision.Confidence}}% · {{.Decision.Reason}}</small>
+                <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" class="match-revert-form">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches?tab=tasks{{end}}">
+                  <button type="submit" class="secondary-button compact-button">撤销</button>
+                </form>
+              </li>
+              {{end}}
+            </ul>
+          </details>
+          {{end}}
+        </article>
+
+        <!-- Card 3: 艺术家头像补全 -->
+        <article class="match-pipeline-card"{{if not .ImageBackfill.Active}} data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage"{{end}}>
+          <header class="match-pipeline-head">
+            <div>
+              <h2>艺术家头像补全</h2>
+              <p class="muted">默认仅补全已确认身份的艺人。所有模式均保留自定义头像。</p>
+            </div>
+            <span class="run-status {{if .ImageBackfill.Active}}status-{{.ImageBackfill.Active.Status}}{{else}}match-status-idle{{end}}">{{if .ImageBackfill.Active}}{{runStatusLabel .ImageBackfill.Active.Status}}{{else}}{{.ImageCoveragePercent}}%{{end}}</span>
+          </header>
+          <div class="match-coverage">
+            <p class="muted">已确认身份的艺术家 {{.ImageBackfill.Total}} 位 · 本地有效头像 {{.ImageBackfill.Cached}} · 待补 {{.ImageBackfill.Missing}}</p>
+            <div class="progress"><span style="width:{{.ImageCoveragePercent}}%"></span></div>
+          </div>
+          {{if .ImageBackfill.Active}}
+          <p class="muted match-pipeline-running-note">头像补全任务 #{{.ImageBackfill.Active.ID}} 已置顶在页面上方实时显示。</p>
+          {{else}}
+          <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
+          <form method="post" action="/admin/matches/images/backfill" class="match-pipeline-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <select name="mode" aria-label="头像补全模式">
+              <option value="all" selected>全库补全（按设置使用图源）</option>
+              <option value="matched">仅已匹配身份（按设置使用图源）</option>
+              <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
+              <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
+            </select>
+            <button class="secondary-button compact-button">启动艺术家头像补全</button>
+          </form>
+          {{end}}
+          {{with .ImageBackfill.Last}}
+          <p class="muted run-last match-last-run">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+          {{end}}
+          <footer class="match-pipeline-footer">
+            {{if .ImageBackfill.Settings}}
+            <button type="button" class="secondary-button compact-button" data-dialog-open="artist-image-settings-dialog">头像补全数据源与 AI 策略设置</button>
+            {{else}}
+            <p class="field-hint">暂时无法读取头像补全设置，请刷新页面后重试。</p>
+            {{end}}
+            <button type="button" class="match-ghost-btn compact-button" data-match-tab="avatars">待审头像（{{.ImageBackfill.PendingCount}}）→</button>
+          </footer>
+        </article>
+
+        <!-- Card 4: 歌手简介补全 -->
+        <article class="match-pipeline-card"{{if not .BioBackfill.Active}} data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio"{{end}}>
+          <header class="match-pipeline-head">
+            <div>
+              <h2>歌手简介补全</h2>
+              <p class="muted">按已确认身份抓取 Wikipedia / Last.fm 简介，不覆盖人工填写版本，可在歌手页固定版本。</p>
+            </div>
+            <span class="run-status {{if .BioBackfill.Active}}status-{{.BioBackfill.Active.Status}}{{else}}match-status-idle{{end}}">{{if .BioBackfill.Active}}{{runStatusLabel .BioBackfill.Active.Status}}{{else}}{{.BioCoveragePercent}}%{{end}}</span>
+          </header>
+          <div class="match-coverage">
+            <p class="muted">歌手 {{.BioBackfill.Total}} 位 · 缺简介待补 {{.BioBackfill.Missing}}</p>
+            <div class="progress"><span style="width:{{.BioCoveragePercent}}%"></span></div>
+          </div>
+          {{if .BioBackfill.Active}}
+          <p class="muted match-pipeline-running-note">简介补全任务 #{{.BioBackfill.Active.ID}} 已置顶在页面上方实时显示。</p>
+          {{else}}
+          <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
+          <form method="post" action="/admin/matches/biographies/backfill" class="match-pipeline-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <select name="mode" aria-label="简介补全模式">
+              <option value="missing" selected>补全缺失简介</option>
+              <option value="retranslate">重译已有简介（复用缓存）</option>
+              <option value="rescan_all">按新策略全量重扫</option>
+            </select>
+            <button class="secondary-button compact-button">启动简介补全</button>
+          </form>
+          {{end}}
+          {{with .BioBackfill.Last}}
+          <p class="muted run-last match-last-run">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+          {{end}}
+        </article>
+      </div>
+    </section>
+
+    {{if .ImageBackfill.Settings}}
+    <dialog id="artist-image-settings-dialog" class="match-settings-dialog" aria-labelledby="artist-image-settings-title">
+      <form method="post" action="/admin/settings/artist-images" class="match-dialog-form">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="returnTo" value="/admin/matches?tab={{.MatchTab}}" data-match-return-to>
+        <header class="match-dialog-head">
+          <h2 id="artist-image-settings-title">头像补全数据源与 AI 策略设置</h2>
+          <button type="button" class="icon-button" data-dialog-close aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
+        </header>
+        <div class="match-dialog-body">
+          <div class="match-dialog-group">
+            <span class="kicker">结构化图源</span>
+            <div class="match-check-grid">
+              <label class="match-check-card"><input type="checkbox" name="bangumi_enabled" value="1"{{if .ImageBackfill.Settings.BangumiEnabled}} checked{{end}}> <span><strong>Bangumi Persons</strong><small>ACG 声优与作曲家优先</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="deezer_enabled" value="1"{{if .ImageBackfill.Settings.DeezerEnabled}} checked{{end}}> <span><strong>Deezer Public API</strong><small>流行音乐高分辨率艺人照</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="wikipedia_enabled" value="1"{{if .ImageBackfill.Settings.WikipediaEnabled}} checked{{end}}> <span><strong>Wikipedia pageimages</strong><small>基于已确认条目拉取主图</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="fanart_enabled" value="1"{{if .ImageBackfill.Settings.FanartEnabled}} checked{{end}}> <span><strong>Fanart.tv v3</strong><small>需配置个人 API Key</small></span></label>
+            </div>
+          </div>
+          <div class="match-dialog-group">
+            <span class="kicker">联网 AI 兜底与质量把关</span>
+            <div class="match-check-grid">
+              <label class="match-check-card"><input type="checkbox" name="web_fallback_enabled" value="1"{{if .ImageBackfill.Settings.WebFallbackEnabled}} checked{{end}}> <span><strong>联网搜索 + AI 选图兜底</strong><small>结构化图源缺失时检索候选</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="web_auto_apply_high" value="1"{{if .ImageBackfill.Settings.WebAutoApplyHigh}} checked{{end}}> <span><strong>高置信度结果自动入库</strong><small>中低置信度进入「待审头像」</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="vision_enabled" value="1"{{if .ImageBackfill.Settings.VisionEnabled}} checked{{end}}> <span><strong>可选 VLM 视觉质检</strong><small>校验人脸构图与清晰度</small></span></label>
+            </div>
+          </div>
+          <div class="match-dialog-group">
+            <span class="kicker">模型、密钥与限流配额</span>
+            <div class="match-input-grid">
+              <label>Fanart.tv API Key<input type="password" name="fanart_api_key" placeholder="{{if .ImageBackfill.Settings.FanartAPIKey}}已配置（留空保持不变）{{else}}可选{{end}}"></label>
+              <label>选图文本模型<input type="text" name="ai_model" value="{{.ImageBackfill.Settings.AIModel}}" placeholder="留空沿用全局主模型"></label>
+              <label>视觉质检模型<input type="text" name="vision_model" value="{{.ImageBackfill.Settings.VisionModel}}" placeholder="需支持 image_url"></label>
+              <label>单轮联网上限（0=不限）<input type="number" name="max_web_requests_per_run" min="0" value="{{.ImageBackfill.Settings.MaxWebRequestsPerRun}}"></label>
+              <label>负缓存冷却天数<input type="number" name="negative_cache_days" min="1" value="{{.ImageBackfill.Settings.NegativeCacheDays}}"></label>
+            </div>
+            {{if .ImageBackfill.Settings.FanartAPIKey}}
+            <label class="ai-inline-check"><input type="checkbox" name="clear_fanart_api_key" value="1"> 清除已保存的 Fanart.tv Key</label>
+            {{end}}
+          </div>
+        </div>
+        <footer class="match-dialog-foot">
+          <button type="button" class="secondary-button" data-dialog-close>取消</button>
+          <button type="submit">保存头像补全设置</button>
+        </footer>
+      </form>
+    </dialog>
     {{end}}
   </main>
 </body>

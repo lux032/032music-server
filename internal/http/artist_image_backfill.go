@@ -232,7 +232,7 @@ func (a *App) handleRejectArtistImageCandidate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "忽略候选头像失败", http.StatusInternalServerError)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "已忽略该候选头像")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "已忽略该候选头像")
 }
 
 func (a *App) handleSearchArtistImageCandidate(w http.ResponseWriter, r *http.Request) {
@@ -320,5 +320,5 @@ func (a *App) handleSaveArtistImageSettings(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "保存头像补全设置失败", http.StatusInternalServerError)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "艺术家头像补全设置已保存")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "艺术家头像补全设置已保存")
 }
