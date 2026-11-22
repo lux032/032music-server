@@ -162,12 +162,17 @@ func (s *Store) ArtistBiographyAnchor(ctx context.Context, artistID int64) (Arti
 		}
 		aliasRows.Close()
 	}
-	albumRows, err := s.db.QueryContext(ctx, `SELECT DISTINCT COALESCE(al.user_title,al.title) FROM albums al JOIN album_artists aa ON aa.album_id=al.id WHERE (aa.artist_id=? OR aa.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?)) AND `+albumVisibleSQL("al.id")+` ORDER BY COALESCE(al.user_release_year,al.release_year) DESC, COALESCE(al.user_title,al.title) ASC LIMIT 6`, artistID, artistID)
+	albumRows, err := s.db.QueryContext(ctx, `SELECT COALESCE(al.user_title,al.title) FROM albums al WHERE (EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=al.id AND (aa.artist_id=? OR aa.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?))) OR EXISTS(SELECT 1 FROM tracks t JOIN track_artists ta ON ta.track_id=t.id WHERE t.album_id=al.id AND ta.role IN ('primary','featured') AND (ta.artist_id=? OR ta.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?)) AND `+trackVisibleSQL("t.id")+`)) AND `+albumVisibleSQL("al.id")+` ORDER BY EXISTS(SELECT 1 FROM album_artists aa WHERE aa.album_id=al.id AND (aa.artist_id=? OR aa.artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?))) DESC, COALESCE(al.user_release_year,al.release_year) DESC, COALESCE(al.user_title,al.title) ASC LIMIT 6`, artistID, artistID, artistID, artistID, artistID, artistID)
 	if err == nil {
+		seenAlbums := map[string]bool{}
 		for albumRows.Next() {
 			var v string
-			if albumRows.Scan(&v) == nil && strings.TrimSpace(v) != "" {
-				out.KnownAlbums = append(out.KnownAlbums, strings.TrimSpace(v))
+			if albumRows.Scan(&v) == nil {
+				v = strings.TrimSpace(v)
+				if v != "" && !seenAlbums[strings.ToLower(v)] {
+					seenAlbums[strings.ToLower(v)] = true
+					out.KnownAlbums = append(out.KnownAlbums, v)
+				}
 			}
 		}
 		albumRows.Close()

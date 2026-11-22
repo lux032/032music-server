@@ -132,3 +132,83 @@ func TestMatchReviewWorkbenchTabsSortingAndSettingsReturnTo(t *testing.T) {
 		t.Fatalf("unsafe settings redirect=%d loc=%q", unsafeRec.Code, unsafeRec.Header().Get("Location"))
 	}
 }
+
+func TestMatchReviewSplitCountsUncertainBadgeAndJSONAuth(t *testing.T) {
+	_, s, handler, _, cookie, _ := rateLimitTestApp(t)
+	ctx := context.Background()
+	library, err := s.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create 52 solo artists (A00..A51) and 1 composite artist (ZZZ & Partner) beyond page 1's 50-item window.
+	for i := 0; i < 52; i++ {
+		name := fmt.Sprintf("B%02d", i)
+		if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: name + "/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: name, Album: name, Artists: []string{name}, AlbumArtists: []string{name}, DiscNumber: 1, TrackNumber: 1}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{LibraryID: library.ID, RelativePath: "comp/01.flac", FileSize: 1, ModifiedAtNS: 1, Metadata: metadata.AudioMetadata{Title: "Duet", Album: "Duet", Artists: []string{"ZZZ & Partner"}, AlbumArtists: []string{"ZZZ & Partner"}, DiscNumber: 1, TrackNumber: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b00ID int64
+	for _, a := range artists {
+		if strings.HasPrefix(a.Name, "B") || a.Name == "ZZZ & Partner" {
+			if err := s.ReplaceArtistCandidatesForSources(ctx, a.ID, []storage.ArtistCandidate{
+				{Source: "lastfm", ExternalID: fmt.Sprintf("lf-%d", a.ID), DisplayName: "HighScoreFirst", Score: 92},
+				{Source: "musicbrainz", ExternalID: fmt.Sprintf("mb-%d", a.ID), DisplayName: "UncertainTarget", Score: 80},
+			}, []string{"musicbrainz", "lastfm"}); err != nil {
+				t.Fatal(err)
+			}
+			if a.Name == "B00" {
+				b00ID = a.ID
+			}
+		}
+	}
+	cands, err := s.ArtistCandidates(ctx, b00ID)
+	if err != nil || len(cands) != 2 {
+		t.Fatalf("cands=%+v err=%v", cands, err)
+	}
+	var uncertainCandID int64
+	for _, c := range cands {
+		if c.Source == "musicbrainz" {
+			uncertainCandID = c.ID
+		}
+	}
+	if _, err := s.SaveAIReviewDecision(ctx, storage.AIReviewDecision{
+		TargetKind: storage.AITargetArtistMatch, TargetID: b00ID,
+		Action: storage.AIActionUncertain, SelectedCandidateID: uncertainCandID,
+		Confidence: 60, Reason: "同名艺人需核对",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Page 1 shows ZZ & Partner in Tab 2 despite >50 regular candidates, and keeps tab=identity with runsPage=2.
+	body := adminGetBody(t, handler, cookie, "/admin/matches?runsPage=2&tab=identity")
+	if !strings.Contains(body, `data-active-tab="identity"`) {
+		t.Fatal("explicit tab=identity must not be hijacked by runsPage=2")
+	}
+	if !strings.Contains(body, "ZZZ &amp; Partner") {
+		t.Fatal("composite credit artist past 50th overall position must still appear on credits page 1")
+	}
+	if strings.Contains(body, "★ AI 推荐") || strings.Contains(body, "确认（AI 推荐）") {
+		t.Fatal("uncertain AI decision must not render AI recommended badge or primary CTA")
+	}
+
+	// JSON endpoints use requireAdminJSON (401 without session cookie, not 303 redirect to login).
+	for _, ep := range []struct{ method, path string }{
+		{http.MethodGet, "/admin/matches/images/candidates.json"},
+		{http.MethodGet, "/admin/settings/artist-images.json"},
+		{http.MethodPost, fmt.Sprintf("/admin/artists/%d/image/web-search", b00ID)},
+	} {
+		req := httptest.NewRequest(ep.method, ep.path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s unauthenticated status=%d, want 401", ep.method, ep.path, rec.Code)
+		}
+	}
+}

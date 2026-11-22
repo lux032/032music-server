@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/sourcegate"
+	"github.com/lux032/032music-server/internal/tagging"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 // ErrRateLimited marks errors caused by a remote source asking us to back off
@@ -40,6 +43,14 @@ func asRateLimited(err error) *RateLimitError {
 	var rateLimited *RateLimitError
 	if errors.As(err, &rateLimited) {
 		return rateLimited
+	}
+	var llmErr *tagging.LLMError
+	if errors.As(err, &llmErr) && llmErr.Kind == tagging.KindRateLimit {
+		return &RateLimitError{Source: "ai", StatusCode: http.StatusTooManyRequests, RetryAfter: defaultRateLimitBackoff}
+	}
+	var webErr *websearch.WebError
+	if errors.As(err, &webErr) && webErr.Status == http.StatusTooManyRequests {
+		return &RateLimitError{Source: "deepseek", StatusCode: http.StatusTooManyRequests, RetryAfter: defaultRateLimitBackoff}
 	}
 	return nil
 }
@@ -174,11 +185,14 @@ func (m *Manager) doSourceJSON(client *http.Client, req *http.Request, source st
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("remote service returned %s", response.Status)
 	}
-	return json.NewDecoder(response.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(target)
 }
 
 // sourceDisplayName renders a rate-limited source in Chinese run messages.
 func sourceDisplayName(source string) string {
+	if strings.HasPrefix(source, "artist image") {
+		return "歌手图片"
+	}
 	switch source {
 	case "bangumi":
 		return "Bangumi"
@@ -192,8 +206,14 @@ func sourceDisplayName(source string) string {
 		return "Wikipedia"
 	case "spotify":
 		return "Spotify"
-	case "artist image":
-		return "歌手图片"
+	case "deezer":
+		return "Deezer"
+	case "fanart":
+		return "Fanart.tv"
+	case "ai":
+		return "AI 模型服务"
+	case "deepseek":
+		return "DeepSeek 联网"
 	case "work poster":
 		return "作品海报"
 	default:
@@ -225,12 +245,10 @@ func rateLimitMinutes(d time.Duration) int {
 // ("图片/简介因歌手图片限流"). Run messages keep the specific label via
 // sourceDisplayName.
 func noticeSourceName(source string) string {
-	switch source {
-	case "artist image", "work poster":
+	if strings.HasPrefix(source, "artist image") || source == "work poster" {
 		return "图片源"
-	default:
-		return sourceDisplayName(source)
 	}
+	return sourceDisplayName(source)
 }
 
 // RateLimitedSourceName returns the notice-facing Chinese name of the source

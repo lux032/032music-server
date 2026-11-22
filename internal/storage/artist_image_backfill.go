@@ -114,12 +114,38 @@ func (s *Store) ArtistImageBackfillSubject(ctx context.Context, artistID int64) 
 	return v, err
 }
 
+type ArtistImageProfileSourceRow struct {
+	Source     string
+	ExternalID string
+	RemoteURL  string
+}
+
 // ArtistImageProfileSource 按来源优先级返回第一个带图片地址的已确认身份
 // （source、external_id、remote_image_url），供补全在下载前快照身份与 URL，
 // 提交写入时再逐项比对。没有可用地址时返回 sql.ErrNoRows。
 func (s *Store) ArtistImageProfileSource(ctx context.Context, artistID int64) (source, externalID, remoteURL string, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT p.source,p.external_id,p.remote_image_url FROM artist_external_profiles p JOIN metadata_source_settings s ON s.source=p.source WHERE p.artist_id=? AND COALESCE(p.remote_image_url,'')<>'' ORDER BY s.priority LIMIT 1`, artistID).Scan(&source, &externalID, &remoteURL)
+	err = s.db.QueryRowContext(ctx, `SELECT p.source,p.external_id,p.remote_image_url FROM artist_external_profiles p LEFT JOIN metadata_source_settings s ON s.source=p.source WHERE p.artist_id=? AND COALESCE(p.remote_image_url,'')<>'' ORDER BY COALESCE(s.priority,1000),p.source LIMIT 1`, artistID).Scan(&source, &externalID, &remoteURL)
 	return source, externalID, remoteURL, err
+}
+
+// ArtistImageProfileSources returns all confirmed external profiles with a
+// non-empty stored image URL in source-priority order, allowing fallback to
+// secondary confirmed profiles when the primary stored image URL fails.
+func (s *Store) ArtistImageProfileSources(ctx context.Context, artistID int64) ([]ArtistImageProfileSourceRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.source,p.external_id,p.remote_image_url FROM artist_external_profiles p LEFT JOIN metadata_source_settings s ON s.source=p.source WHERE p.artist_id=? AND COALESCE(p.remote_image_url,'')<>'' ORDER BY COALESCE(s.priority,1000),p.source`, artistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []ArtistImageProfileSourceRow
+	for rows.Next() {
+		var item ArtistImageProfileSourceRow
+		if err = rows.Scan(&item.Source, &item.ExternalID, &item.RemoteURL); err != nil {
+			return nil, err
+		}
+		list = append(list, item)
+	}
+	return list, rows.Err()
 }
 
 // ArtistImageIdentitySource snapshots a confirmed identity for automatic avatar
@@ -600,16 +626,26 @@ func (s *Store) saveArtistImageForIdentity(ctx context.Context, image ArtistImag
 			}
 		}
 	}
-	var currentID, currentURL string
-	err = tx.QueryRowContext(ctx, `SELECT external_id,COALESCE(remote_image_url,'') FROM artist_external_profiles WHERE artist_id=? AND source=?`, image.ArtistID, expectSource).Scan(&currentID, &currentURL)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrArtistImageBackfillState
-	}
-	if err != nil {
-		return err
-	}
-	if currentID != expectExternalID || currentURL != expectURL {
-		return ErrArtistImageBackfillState
+	if expectSource == "" {
+		var confirmed bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles WHERE artist_id=?)`, image.ArtistID).Scan(&confirmed); err != nil {
+			return err
+		}
+		if !confirmed {
+			return ErrArtistImageBackfillState
+		}
+	} else {
+		var currentID, currentURL string
+		err = tx.QueryRowContext(ctx, `SELECT external_id,COALESCE(remote_image_url,'') FROM artist_external_profiles WHERE artist_id=? AND source=?`, image.ArtistID, expectSource).Scan(&currentID, &currentURL)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrArtistImageBackfillState
+		}
+		if err != nil {
+			return err
+		}
+		if currentID != expectExternalID || (!onlyIfMissing && currentURL != expectURL) || (onlyIfMissing && expectURL != "" && currentURL != expectURL) {
+			return ErrArtistImageBackfillState
+		}
 	}
 	if err = requireArtistImageBackfillCheckpoint(ctx, tx, c, image.ArtistID); err != nil {
 		return err

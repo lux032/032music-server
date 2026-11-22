@@ -191,3 +191,70 @@ func configureBiographyAI(t *testing.T, manager *Manager, translate bool) {
 		t.Fatal(err)
 	}
 }
+
+func TestManualWebBiographyWorksForUnmatchedArtist(t *testing.T) {
+	ctx := context.Background()
+	bt := newBioTransport()
+	manager, artist := bioBackfillManager(t, bt, "Unmatched Indie Singer")
+	configureBiographyAI(t, manager, false)
+	const pageURL = "https://example.com/unmatched-singer"
+	manager.SetBiographyWebFactory(func(storage.ArtistAliasSettings, storage.AISettings) (websearch.Client, error) {
+		return fakeBioWeb{results: []websearch.SearchResult{{URL: pageURL, Content: strings.Repeat("Unmatched Indie Singer released Album-Unmatched Indie Singer in 2024. ", 4)}}}, nil
+	})
+	manager.SetAIChatFactory(func(storage.AISettings) (tagging.Chat, error) {
+		return fakeBioChat{fn: func(_ context.Context, _ tagging.ChatRequest) (tagging.ChatResult, error) {
+			return tagging.ChatResult{Content: `{"sameArtist":true,"confidence":"high","evidencePages":[0],"reason":"matched album","biography":"这是一位独立创作歌手，于 2024 年发行了代表作品，活跃于独立流行与电子音乐领域。"}`}, nil
+		}}, nil
+	})
+	if err := manager.RefreshArtistBiographiesWithOptions(ctx, artist, true, BiographyRefreshOptions{AllowWebFallback: true}); err != nil {
+		t.Fatalf("unmatched web biography failed: %v", err)
+	}
+	detail, err := manager.store.ArtistDetail(ctx, artist)
+	if err != nil || detail.BiographySource != "ai_web" || detail.Biography == "" {
+		t.Fatalf("expected unmatched ai_web biography, got source=%q bio=%q err=%v", detail.BiographySource, detail.Biography, err)
+	}
+}
+
+func TestBiographyRetranslateModeReplacesExistingTranslationAndForeignMissStaysMissing(t *testing.T) {
+	ctx := context.Background()
+	bt := newBioTransport()
+	manager, artist := bioBackfillManager(t, bt, "Retranslate Artist")
+	confirmBioIdentity(t, manager.store, artist, "mbid-retrans-1")
+	configureBiographyAI(t, manager, true)
+
+	// Foreign sitelink row alone is not displayable and must not mark artist as having a displayable bio.
+	if err := manager.store.UpsertArtistBiography(ctx, artist, storage.ArtistBiography{
+		Source: "wikipedia", Language: "ko", Biography: strings.Repeat("한국의 가수이며 다양한 앨범을 발표했다. ", 20), PageURL: "https://ko.wikipedia.org/wiki/A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	found, err := manager.store.ArtistBiographyFoundExists(ctx, artist)
+	if err != nil || found {
+		t.Fatalf("untranslated foreign row must not count as displayable found: found=%v err=%v", found, err)
+	}
+
+	// Seed an older AI translation and verify retranslate mode still selects and updates it.
+	if err := manager.store.UpsertArtistBiography(ctx, artist, storage.ArtistBiography{
+		Source: "ai_translated", Language: "zh-Hans", Biography: "旧模型翻译文本", OriginSource: "wikipedia", OriginLanguage: "ko", Model: "old-model",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager.SetAIChatFactory(func(storage.AISettings) (tagging.Chat, error) {
+		return fakeBioChat{fn: func(_ context.Context, _ tagging.ChatRequest) (tagging.ChatResult, error) {
+			return tagging.ChatResult{Content: `{"biography":"新模型重新翻译的完整歌手简介。"}`}, nil
+		}}, nil
+	})
+	runID, err := manager.StartArtistBiographyBackfillWithMode(ctx, "retranslate")
+	if err != nil {
+		t.Fatalf("StartArtistBiographyBackfillWithMode(retranslate): %v", err)
+	}
+	finished := waitBioBackfillRun(t, manager.store, runID)
+	manager.Wait()
+	if finished.Filled != 1 {
+		t.Fatalf("expected retranslate to fill 1 artist, got %+v", finished)
+	}
+	detail, err := manager.store.ArtistDetail(ctx, artist)
+	if err != nil || detail.Biography != "新模型重新翻译的完整歌手简介。" {
+		t.Fatalf("expected updated translation, got %q err=%v", detail.Biography, err)
+	}
+}

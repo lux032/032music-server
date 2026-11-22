@@ -239,15 +239,17 @@ func (m *Manager) startAutoPhase(ctx context.Context, queueIfBusy bool) {
 }
 
 func (m *Manager) startAutoPhaseEnabled(ctx context.Context, queueIfBusy bool) {
-	_, queued, err := m.startRun(ctx, RunRequest{Scope: "all"}, queueIfBusy)
-	if queued {
+	_, queuedState, err := m.startRun(ctx, RunRequest{Scope: "all"}, queueIfBusy)
+	switch queuedState {
+	case "active":
 		m.logger.Info("automatic metadata enrichment queued: will rerun after current run completes")
+		return
+	case "paused":
+		m.logger.Info("automatic metadata enrichment queued behind paused run: resume or cancel it from the admin page")
 		return
 	}
 	if err != nil {
 		if errors.Is(err, storage.ErrEnrichmentRunState) {
-			// 例如重启后留下的 server_restart 暂停任务：自动启动跳过，
-			// 日志里给出下一步处理方式，便于排查“为什么没跑”。
 			m.logger.Info("automatic metadata enrichment skipped: another run is active or paused; resume or cancel it from the admin page", "error", err)
 		} else {
 			m.logger.Warn("automatic metadata enrichment was not started", "error", err)
@@ -269,9 +271,13 @@ func (m *Manager) startAutoArtist(ctx context.Context, queueIfBusy bool) {
 }
 
 func (m *Manager) startAutoArtistEnabled(ctx context.Context, queueIfBusy bool) {
-	_, queued, err := m.startAllWithMode(ctx, storage.ArtistScanIncremental, queueIfBusy)
-	if queued {
+	_, queuedState, err := m.startAllWithMode(ctx, storage.ArtistScanIncremental, queueIfBusy)
+	switch queuedState {
+	case "active":
 		m.logger.Info("automatic artist matching queued: will rerun after current run completes")
+		return
+	case "paused":
+		m.logger.Info("automatic artist matching queued behind paused run: resume or cancel it from the admin page")
 		return
 	}
 	if err != nil {
@@ -295,7 +301,7 @@ func (m *Manager) StartAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	return runID, err
 }
 
-func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanMode, queueAutoOnBusy bool) (int64, bool, error) {
+func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanMode, queueAutoOnBusy bool) (int64, string, error) {
 	if mode != storage.ArtistScanFull {
 		mode = storage.ArtistScanIncremental
 	}
@@ -304,22 +310,23 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	if m.running {
 		if queueAutoOnBusy {
 			m.artistAutoRerunPending = true
-			return 0, true, nil
+			return 0, "active", nil
 		}
-		return 0, false, ErrRunNotActive
+		return 0, "", ErrRunNotActive
 	}
 	if _, err := m.store.UnfinishedDurableArtistRun(ctx); err == nil {
 		if queueAutoOnBusy {
 			m.artistAutoRerunPending = true
-			return 0, true, nil
+			return 0, "paused", nil
 		}
-		return 0, false, storage.ErrArtistRunState
+		return 0, "", storage.ErrArtistRunState
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return 0, false, err
+		return 0, "", err
 	}
+	m.artistAutoRerunPending = false
 	settings, err := m.store.MetadataSourceSettings(ctx)
 	if err != nil {
-		return 0, false, err
+		return 0, "", err
 	}
 	hasAutomaticSource := false
 	for _, setting := range settings {
@@ -329,18 +336,18 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 		}
 	}
 	if !hasAutomaticSource {
-		return 0, false, errors.New("no automatic metadata source is enabled")
+		return 0, "", errors.New("no automatic metadata source is enabled")
 	}
 	artists, err := m.store.ArtistsForMatching(ctx)
 	if err != nil {
-		return 0, false, err
+		return 0, "", err
 	}
 	var eligible, composites []storage.ArtistMatchInput
 	for _, artist := range artists {
 		if metadata.CompositeArtistCredit(artist.Name) {
 			needed, e := m.store.ArtistCompositeCheckNeeded(ctx, artist, mode)
 			if e != nil {
-				return 0, false, e
+				return 0, "", e
 			}
 			if needed {
 				composites = append(composites, artist)
@@ -353,7 +360,7 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 			}
 			check, e := m.store.ArtistSourceCheckNeededForMode(ctx, artist, setting, mode)
 			if e != nil {
-				return 0, false, e
+				return 0, "", e
 			}
 			if check.Eligible {
 				eligible = append(eligible, artist)
@@ -363,7 +370,7 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	}
 	artists = eligible
 	if len(artists) == 0 {
-		return 0, false, ErrNoEligibleArtists
+		return 0, "", ErrNoEligibleArtists
 	}
 	artists = append(artists, composites...)
 	var snapshots []storage.ArtistRunItemInput
@@ -379,10 +386,10 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	}
 	runID, err := m.store.CreateDurableArtistRunWithMode(ctx, snapshots, mode)
 	if err != nil {
-		return 0, false, err
+		return 0, "", err
 	}
 	m.launchArtistRunLocked(runID)
-	return runID, false, nil
+	return runID, "", nil
 }
 
 var ErrNoEligibleArtists = errors.New("没有需要检查的艺术家")
@@ -926,6 +933,9 @@ func (m *Manager) musicBrainzLookupWithImageSources(ctx context.Context, mbid st
 		for _, dzID := range deezerIDs {
 			dzImg, dzErr := m.deezerArtistImageByID(ctx, dzID)
 			if dzErr != nil {
+				if asRateLimited(dzErr) != nil {
+					return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, dzErr
+				}
 				continue
 			}
 			if dzImg != "" {
@@ -936,11 +946,15 @@ func (m *Manager) musicBrainzLookupWithImageSources(ctx context.Context, mbid st
 	}
 	if imageURL == "" && wikidataResource != "" && imgSt.WikipediaEnabled {
 		wikiImg, wikiErr := m.wikipediaArtistImage(ctx, wikidataResource)
-		if wikiErr == nil {
+		if wikiErr != nil {
+			if asRateLimited(wikiErr) != nil {
+				return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, wikiErr
+			}
+		} else {
 			imageURL = wikiImg
 		}
 	}
-	payload := profilePayload("https://musicbrainz.org/artist/"+value.ID, imageURL, "", aliases, tags)
+	payload := profilePayloadWithRelations("https://musicbrainz.org/artist/"+value.ID, imageURL, "", aliases, tags, deezerIDs)
 	profile := storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, PageURL: "https://musicbrainz.org/artist/" + value.ID, RemoteImageURL: imageURL, Country: value.Country, ArtistType: value.Type, Disambiguation: value.Disambiguation, Aliases: aliases, Tags: tags, Raw: payload}
 	return storage.ArtistCandidate{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, Disambiguation: value.Disambiguation, Country: value.Country, ArtistType: value.Type, MBID: value.ID, Payload: payload}, profile, nil
 }
@@ -1070,7 +1084,14 @@ func validatePublicImageURL(raw string) error {
 }
 
 func profilePayload(pageURL, imageURL, biography string, aliases, tags []string) json.RawMessage {
+	return profilePayloadWithRelations(pageURL, imageURL, biography, aliases, tags, nil)
+}
+
+func profilePayloadWithRelations(pageURL, imageURL, biography string, aliases, tags, deezerIDs []string) json.RawMessage {
 	value := map[string]any{"pageUrl": pageURL, "imageUrl": imageURL, "biography": biography, "aliases": aliases, "tags": tags}
+	if len(deezerIDs) > 0 {
+		value["deezerIds"] = deezerIDs
+	}
 	data, _ := json.Marshal(value)
 	return data
 }
@@ -1101,7 +1122,7 @@ func (m *Manager) RefreshConfirmedArtistImage(ctx context.Context, artistID int6
 	if err == nil && mbid != "" {
 		setting, settingErr := m.store.MetadataSourceSetting(ctx, "musicbrainz")
 		if settingErr == nil && setting.Enabled {
-			_, profile, lookupErr := m.musicBrainzLookup(ctx, mbid, setting)
+			_, profile, lookupErr := m.musicBrainzLookupWithImageSources(ctx, mbid, setting, true)
 			if lookupErr == nil {
 				if upsertErr := m.store.UpsertExternalArtistProfile(ctx, artistID, profile); upsertErr != nil {
 					return upsertErr
@@ -1177,7 +1198,7 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 	if !force {
 		wikipediaNeeded = wikipediaNeeded && m.biographySourceNeedsRefresh(ctx, canonicalID, "wikipedia", languages, settings.CacheDays)
 		lastFMNeeded = lastFMNeeded && m.biographySourceNeedsRefresh(ctx, canonicalID, "lastfm", languages, settings.CacheDays)
-		if aiTranslateNeeded {
+		if aiTranslateNeeded && !opts.cachedTranslationOnly {
 			fresh, _ := m.store.ArtistBiographyFresh(ctx, canonicalID, "ai_translated", targetTag, settings.CacheDays)
 			aiTranslateNeeded = !fresh
 		}
@@ -1194,29 +1215,40 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 	if err != nil {
 		return err
 	}
+	var upsert func(storage.ArtistBiography) error
 	identity, identityErr := m.store.ArtistBiographySource(ctx, canonicalID)
 	if identityErr != nil && !errors.Is(identityErr, sql.ErrNoRows) {
 		return identityErr
 	}
 	if identityErr != nil {
-		return sql.ErrNoRows
-	}
-	if identity.Source != "musicbrainz" {
-		// Wikipedia lookup relies on MusicBrainz url-rels -> Wikidata; when only
-		// a Last.fm identity is confirmed, restrict to anchored Last.fm bios.
-		wikipediaNeeded = false
-		if !lastFMNeeded && !aiTranslateNeeded && !aiWebNeeded {
-			if lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != "" {
-				return nil
+		if opts.AllowWebFallback && aiWebNeeded && checkpoint == nil {
+			wikipediaNeeded = false
+			lastFMNeeded = false
+			aiTranslateNeeded = false
+			upsert = func(value storage.ArtistBiography) error {
+				return m.store.UpsertUnmatchedArtistWebBiographyGuarded(ctx, canonicalID, value)
 			}
+		} else {
 			return sql.ErrNoRows
 		}
-	}
-	if !configureArtistForBiographySource(&artist, identity) {
-		return sql.ErrNoRows
-	}
-	upsert := func(value storage.ArtistBiography) error {
-		return m.store.UpsertArtistBiographyForIdentityGuarded(ctx, canonicalID, identity, value, checkpoint)
+	} else {
+		if identity.Source != "musicbrainz" {
+			// Wikipedia lookup relies on MusicBrainz url-rels -> Wikidata; when only
+			// a Last.fm identity is confirmed, restrict to anchored Last.fm bios.
+			wikipediaNeeded = false
+			if !lastFMNeeded && !aiTranslateNeeded && !aiWebNeeded {
+				if lastFMErr == nil && lastFMSetting.Enabled && lastFMSetting.APIKey != "" {
+					return nil
+				}
+				return sql.ErrNoRows
+			}
+		}
+		if !configureArtistForBiographySource(&artist, identity) {
+			return sql.ErrNoRows
+		}
+		upsert = func(value storage.ArtistBiography) error {
+			return m.store.UpsertArtistBiographyForIdentityGuarded(ctx, canonicalID, identity, value, checkpoint)
+		}
 	}
 
 	var wikidataResource string
@@ -1361,7 +1393,7 @@ func (m *Manager) refreshArtistBiographies(ctx context.Context, artistID int64, 
 
 	// Tier 2: translate the most complete source edition into targetLanguage.
 	if aiTranslateNeeded && hasBest {
-		if shouldSkipAITranslation(nativeTarget, best) {
+		if shouldSkipAITranslationForTarget(nativeTarget, best, targetTag) {
 			resolved = true
 		} else {
 			// If the best Wikipedia lead is unusually short, try a bounded full-article excerpt.

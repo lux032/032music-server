@@ -62,7 +62,7 @@ func (a *App) handlePauseArtistRun(w http.ResponseWriter, r *http.Request) {
 		a.artistRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "任务已暂停，可手动继续")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "任务已暂停，可手动继续")
 }
 func (a *App) handleResumeArtistRun(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
@@ -77,7 +77,7 @@ func (a *App) handleResumeArtistRun(w http.ResponseWriter, r *http.Request) {
 		a.artistRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "任务已继续，已处理对象不会重复")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "任务已继续，已处理对象不会重复")
 }
 func (a *App) handleActiveArtistRun(w http.ResponseWriter, r *http.Request) {
 	run, err := a.store.UnfinishedDurableArtistRun(r.Context())

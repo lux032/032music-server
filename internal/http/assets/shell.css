@@ -452,6 +452,7 @@ body.np-collapsed .np-expand { display: grid; }
 .player-meta strong a { color: inherit; }
 .player-meta strong a:hover { text-decoration: underline; }
 .player-meta small { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+#player-artist { flex: 1 1 auto; }
 #player-artist .player-album { display: inline; }
 #player-artist .player-album a { color: inherit; }
 #player-artist .player-album a:hover { color: var(--accent-strong-text); }

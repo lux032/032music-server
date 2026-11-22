@@ -68,8 +68,9 @@ func (a *App) handleStartArtistImageBackfill(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches")
 	if a.enrichment == nil {
-		redirectWithNotice(w, r, "/admin/matches", "任务服务不可用")
+		redirectWithNotice(w, r, returnTo, "任务服务不可用")
 		return
 	}
 	mode := storage.NormalizeArtistImageBackfillMode(r.FormValue("mode"))
@@ -86,14 +87,14 @@ func (a *App) handleStartArtistImageBackfill(w http.ResponseWriter, r *http.Requ
 		default:
 			a.logger.Error("start artist image backfill", "error", err)
 		}
-		redirectWithNotice(w, r, "/admin/matches", message)
+		redirectWithNotice(w, r, returnTo, message)
 		return
 	}
 	message := "艺术家头像补全任务已启动"
 	if mode == "matched" {
 		message = "已匹配" + message
 	}
-	redirectWithNotice(w, r, "/admin/matches", message)
+	redirectWithNotice(w, r, returnTo, message)
 }
 
 func (a *App) handlePauseArtistImageBackfill(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +110,7 @@ func (a *App) handlePauseArtistImageBackfill(w http.ResponseWriter, r *http.Requ
 		a.artistImageRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "补全任务已暂停，可手动继续")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "补全任务已暂停，可手动继续")
 }
 
 func (a *App) handleResumeArtistImageBackfill(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +126,7 @@ func (a *App) handleResumeArtistImageBackfill(w http.ResponseWriter, r *http.Req
 		a.artistImageRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "补全任务已继续，已处理对象不会重复")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "补全任务已继续，已处理对象不会重复")
 }
 
 func (a *App) handleCancelArtistImageBackfill(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +142,7 @@ func (a *App) handleCancelArtistImageBackfill(w http.ResponseWriter, r *http.Req
 		a.artistImageRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "补全任务已停止")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "补全任务已停止")
 }
 
 // handleActiveArtistImageBackfill 是 run-card 轮询端点：返回当前未完成
@@ -189,7 +190,7 @@ func (a *App) handleArtistImageCandidatePreview(w http.ResponseWriter, r *http.R
 		http.Error(w, "候选头像预览暂不可用", http.StatusBadGateway)
 		return
 	}
-	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Cache-Control", "private, max-age=300")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
@@ -205,16 +206,21 @@ func (a *App) handleApproveArtistImageCandidate(w http.ResponseWriter, r *http.R
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches")
 	if err := a.enrichment.ApproveArtistImageCandidate(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "候选头像不存在", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, storage.ErrArtistImageBackfillState) {
+			redirectWithNotice(w, r, returnTo, "艺术家状态已变化或已有自定义头像，候选头像未写入")
 			return
 		}
 		a.logger.Error("approve artist image candidate", "candidateId", id, "error", err)
 		http.Error(w, "采纳候选头像失败", http.StatusInternalServerError)
 		return
 	}
-	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "已采纳候选头像并缓存到本地")
+	redirectWithNotice(w, r, returnTo, "已采纳候选头像并缓存到本地")
 }
 
 func (a *App) handleRejectArtistImageCandidate(w http.ResponseWriter, r *http.Request) {

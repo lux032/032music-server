@@ -175,7 +175,7 @@ func (m *Manager) launchDurablePhaseLocked(run storage.DurableEnrichmentRun) {
 				m.requestAutoWorkPosterBackfill()
 			}
 			if shouldRerun {
-				m.startAutoPhase(m.baseCtx, false)
+				m.startAutoPhase(m.baseCtx, true)
 			}
 		}()
 		completed = m.executeDurablePhase(ctx, run)
@@ -325,6 +325,10 @@ func (m *Manager) executeDurablePhase(ctx context.Context, run storage.DurableEn
 				if failures >= maxConsecutiveFailures {
 					if e = m.store.TransitionEnrichmentWorker(ctx, run.ID, run.Epoch, "fail", "连续五次来源失败，任务已结束"); e != nil {
 						m.phaseRuntimeFailure(run.ID, run.Epoch, e)
+					} else {
+						m.phaseMu.Lock()
+						m.phaseAutoRerunPending = false
+						m.phaseMu.Unlock()
 					}
 					return false
 				}

@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -77,6 +78,9 @@ func FetchPageImageMeta(ctx context.Context, client *http.Client, rawURL, ua str
 	}
 	if c.Transport == nil {
 		c.Transport = defaultPublicTransport()
+	}
+	if c.Timeout == 0 {
+		c.Timeout = 15 * time.Second
 	}
 	c.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 6 {

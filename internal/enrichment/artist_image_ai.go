@@ -8,6 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/lux032/032music-server/internal/aiclient"
@@ -87,6 +91,35 @@ func resolveArtistImageVisionModel(ai storage.AISettings, img storage.ArtistImag
 	return strings.TrimSpace(ai.Model)
 }
 
+func extractStoredDeezerIDs(raw json.RawMessage) []string {
+	var doc struct {
+		DeezerIDs []string `json:"deezerIds"`
+	}
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	return doc.DeezerIDs
+}
+
+func (m *Manager) canRunArtistImageWebFallback(ctx context.Context, imgSettings storage.ArtistImageSettings) (bool, error) {
+	aiSt, err := m.store.AISettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	model := resolveArtistImageAIModel(aiSt, imgSettings)
+	if strings.TrimSpace(aiSt.BaseURL) == "" || strings.TrimSpace(aiSt.APIKey) == "" || model == "" {
+		return false, errors.New("未配置 AI 模型服务")
+	}
+	aliasSt, err := m.store.ArtistAliasSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	if _, err = m.newBiographyWebClient(aliasSt, aiSt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // discoverArtistImageFromWeb executes Tier 3 (DeepSeek search + SSRF-safe HTML
 // og:image/JSON-LD extraction + text LLM identity/image selection) and optional
 // Tier 4 (VLM visual quality verification).
@@ -124,6 +157,11 @@ func (m *Manager) discoverArtistImageFromWeb(
 	if strings.TrimSpace(anchor.Name) == "" {
 		return zero, false, nil
 	}
+
+	if len(officialURLs) == 0 {
+		officialURLs, _ = m.store.ArtistConfirmedPageURLs(ctx, artistID)
+	}
+	rejectedURLs, _ := m.store.RejectedArtistImageURLs(ctx, artistID)
 
 	var pageURLs []string
 	seenPage := map[string]bool{}
@@ -177,7 +215,7 @@ func (m *Manager) discoverArtistImageFromWeb(
 			if len(flat) >= imgMaxFlatItems {
 				break
 			}
-			if seenImg[img.URL] {
+			if seenImg[img.URL] || rejectedURLs[img.URL] {
 				continue
 			}
 			seenImg[img.URL] = true
@@ -299,12 +337,17 @@ func (m *Manager) verifyArtistAvatarWithVLM(
 		Schema: artistImageVisionSchema,
 	}, "artist_image_vision")
 	if err != nil {
-		// Gracefully degrade if the user's configured model is text-only.
 		var le *tagging.LLMError
-		if errors.As(err, &le) && (le.Kind == tagging.KindBadRequest || le.Kind == tagging.KindFormat) {
-			m.logger.Warn("configured vision model rejected image_url; degrading to local quality rules", "model", vModel, "error", le.Message)
-			return true, ""
+		if errors.As(err, &le) {
+			if le.Kind == tagging.KindFiltered {
+				return false, "rejected by model safety filter"
+			}
+			if le.Kind == tagging.KindBadRequest || le.Kind == tagging.KindFormat {
+				m.logger.Warn("configured vision model rejected image_url; degrading to local quality rules", "model", vModel, "error", le.Message)
+				return true, ""
+			}
 		}
+		// Gracefully degrade on transient VLM failure so valid portraits are not dropped.
 		return true, ""
 	}
 	var out struct {
@@ -317,7 +360,61 @@ func (m *Manager) verifyArtistAvatarWithVLM(
 	return out.Valid, strings.TrimSpace(out.Reason)
 }
 
-// ArtistImageCandidatePreview fetches the image for a pending review item.
+func previewSourceCooldownKey(rawURL string) string {
+	if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil && u.Hostname() != "" {
+		return "artist image preview:" + strings.ToLower(u.Hostname())
+	}
+	return "artist image preview"
+}
+
+func (m *Manager) candidatePreviewDir() string {
+	if m.imageDirectory == "" {
+		return ""
+	}
+	return filepath.Join(m.imageDirectory, "candidates")
+}
+
+func (m *Manager) cacheCandidatePreviewBytes(imageURL, ext string, data []byte) {
+	dir := m.candidatePreviewDir()
+	if dir == "" || len(data) == 0 || strings.TrimSpace(imageURL) == "" {
+		return
+	}
+	if ext == "" {
+		ext = ".img"
+	}
+	urlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(imageURL))))
+	_, _ = writeCacheFile(dir, urlHash+ext, data)
+}
+
+func (m *Manager) readCandidatePreviewBytes(imageURL string) (data []byte, mimeType, ext string, ok bool) {
+	dir := m.candidatePreviewDir()
+	if dir == "" || strings.TrimSpace(imageURL) == "" {
+		return nil, "", "", false
+	}
+	urlHash := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(imageURL))))
+	for _, candidateExt := range []string{".jpg", ".png", ".webp", ".gif", ".img"} {
+		raw, err := os.ReadFile(filepath.Join(dir, urlHash+candidateExt))
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		detected := http.DetectContentType(raw)
+		switch detected {
+		case "image/jpeg":
+			return raw, detected, ".jpg", true
+		case "image/png":
+			return raw, detected, ".png", true
+		case "image/gif":
+			return raw, detected, ".gif", true
+		case "image/webp":
+			return raw, detected, ".webp", true
+		}
+	}
+	return nil, "", "", false
+}
+
+// ArtistImageCandidatePreview fetches the image for a pending review item,
+// serving from local preview cache when available and isolating rate-limit
+// cooldowns per remote host.
 func (m *Manager) ArtistImageCandidatePreview(ctx context.Context, candidateID int64) ([]byte, string, error) {
 	cand, err := m.store.ArtistImageCandidateByID(ctx, candidateID)
 	if err != nil {
@@ -326,12 +423,20 @@ func (m *Manager) ArtistImageCandidatePreview(ctx context.Context, candidateID i
 	if cand.Status != "pending" {
 		return nil, "", sql.ErrNoRows
 	}
-	data, mimeType, _, err := m.downloadPublicImage(ctx, cand.ImageURL, "artist image preview")
-	return data, mimeType, err
+	if cachedData, cachedMIME, _, ok := m.readCandidatePreviewBytes(cand.ImageURL); ok {
+		return cachedData, cachedMIME, nil
+	}
+	data, mimeType, ext, err := m.downloadPublicImage(ctx, cand.ImageURL, previewSourceCooldownKey(cand.ImageURL))
+	if err != nil {
+		return nil, "", err
+	}
+	m.cacheCandidatePreviewBytes(cand.ImageURL, ext, data)
+	return data, mimeType, nil
 }
 
-// ApproveArtistImageCandidate downloads a pending candidate avatar, caches it
-// on disk, saves it to artist_image_cache, and marks the candidate approved.
+// ApproveArtistImageCandidate downloads (or reuses cached preview bytes of) a
+// pending candidate avatar, caches it on disk, saves it to artist_image_cache,
+// and marks the candidate approved.
 func (m *Manager) ApproveArtistImageCandidate(ctx context.Context, candidateID int64) error {
 	cand, err := m.store.ArtistImageCandidateByID(ctx, candidateID)
 	if err != nil {
@@ -340,9 +445,18 @@ func (m *Manager) ApproveArtistImageCandidate(ctx context.Context, candidateID i
 	if cand.Status != "pending" {
 		return sql.ErrNoRows
 	}
-	data, mimeType, ext, err := m.downloadPublicImage(ctx, cand.ImageURL, "artist image")
-	if err != nil {
-		return err
+	if _, subErr := m.store.ArtistImageBackfillSubjectForMode(ctx, cand.ArtistID, "all"); subErr != nil {
+		if errors.Is(subErr, sql.ErrNoRows) {
+			return storage.ErrArtistImageBackfillState
+		}
+		return subErr
+	}
+	data, mimeType, ext, cached := m.readCandidatePreviewBytes(cand.ImageURL)
+	if !cached {
+		data, mimeType, ext, err = m.downloadPublicImage(ctx, cand.ImageURL, previewSourceCooldownKey(cand.ImageURL))
+		if err != nil {
+			return err
+		}
 	}
 	if _, _, ok, reason := netfetch.InspectImageQuality(data); !ok {
 		return fmt.Errorf("invalid candidate image: %s", reason)
@@ -373,10 +487,12 @@ func (m *Manager) SearchArtistImageCandidateNow(ctx context.Context, artistID in
 	if err != nil {
 		return storage.ArtistImageCandidate{}, false, err
 	}
-	found, ok, err := m.discoverArtistImageFromWeb(ctx, artistID, nil, settings)
+	officialURLs, _ := m.store.ArtistConfirmedPageURLs(ctx, artistID)
+	found, ok, err := m.discoverArtistImageFromWeb(ctx, artistID, officialURLs, settings)
 	if err != nil || !ok {
 		return storage.ArtistImageCandidate{}, false, err
 	}
+	m.cacheCandidatePreviewBytes(found.ImageURL, found.Ext, found.Data)
 	cand := storage.ArtistImageCandidate{
 		ArtistID:   artistID,
 		Source:     found.Source,

@@ -361,7 +361,15 @@ func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
 	for _, item := range []struct {
 		table, key string
 		cols       []string
-	}{{"lastfm_scrobble_settings", "id", []string{"api_secret", "session_key", "username"}}, {"listenbrainz_settings", "id", []string{"server_url", "user_token", "username"}}, {"metadata_source_settings", "source", []string{"api_key"}}, {"ai_settings", "id", []string{"base_url", "api_key", "proxy_url"}}, {"acquisition_settings", "id", []string{"jackett_url", "jackett_api_key", "jackett_indexer", "qb_url", "qb_username", "qb_password", "qb_category"}}} {
+	}{
+		{"lastfm_scrobble_settings", "id", []string{"api_secret", "session_key", "username"}},
+		{"listenbrainz_settings", "id", []string{"server_url", "user_token", "username"}},
+		{"metadata_source_settings", "source", []string{"api_key"}},
+		{"ai_settings", "id", []string{"base_url", "api_key", "proxy_url"}},
+		{"acquisition_settings", "id", []string{"jackett_url", "jackett_api_key", "jackett_indexer", "qb_url", "qb_username", "qb_password", "qb_category"}},
+		{"artist_image_settings", "id", []string{"fanart_api_key"}},
+		{"artist_alias_settings", "id", []string{"deepseek_key"}},
+	} {
 		source, e := tableColumns(ctx, tx, "prerestore", item.table)
 		if e != nil {
 			return e

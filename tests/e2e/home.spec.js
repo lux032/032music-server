@@ -86,7 +86,7 @@ test('专辑卡把多位艺人收在一行，点 +N 展开原始连接词', asyn
       return `${sep}<a class="artist-name" href="/admin/artists/${index + 1}">${name}</a>`;
     }).join('');
     host.innerHTML = `<span class="artist-links is-compact" data-artist-links="compact"><span class="artist-links-line">${parts}</span><button type="button" class="artist-more" hidden aria-expanded="false" aria-haspopup="dialog">+0</button></span>`;
-    document.body.appendChild(host);
+    (document.querySelector('#app-main') || document.body).appendChild(host);
   });
   const more = probe.locator('.artist-more');
   await expect(more).toBeVisible();

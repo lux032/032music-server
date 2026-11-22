@@ -526,3 +526,54 @@ func TestComprehensiveImageBackfill_WebFallbackQueuesMediumCandidate(t *testing.
 		t.Fatalf("candidate preview: bytes=%d mime=%q err=%v", len(data), mimeType, err)
 	}
 }
+
+func TestDeezerQuotaAndResetIdentityImageCleanup(t *testing.T) {
+	ctx := context.Background()
+	bt := newBackfillTransport()
+	const mbid = "66666666-6666-4666-8666-666666666666"
+	manager, artistID := imageBackfillManager(t, bt, "QuotaSinger", mbid)
+	confirmBackfillIdentity(t, manager.store, artistID, "musicbrainz", mbid, "")
+	if err := manager.store.SaveArtistImageSettings(ctx, storage.ArtistImageSettings{
+		DeezerEnabled:     true,
+		NegativeCacheDays: 30,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "api.deezer.com" {
+			return cannedResponse(http.StatusOK, http.Header{}, `{"error":{"type":"Exception","message":"Quota limit exceeded","code":4}}`), nil
+		}
+		return cannedResponse(http.StatusNotFound, http.Header{}, `{}`), nil
+	})
+	_, _, dzErr := manager.deezerSearchArtistImage(ctx, storage.ArtistBiographyAnchor{Name: "QuotaSinger", KnownAlbums: []string{"Album"}})
+	if rate := asRateLimited(dzErr); rate == nil || rate.Source != "deezer" {
+		t.Fatalf("expected deezer RateLimitError on HTTP 200 code 4, got %v", dzErr)
+	}
+
+	// Verify ResetArtistIdentity clears fanart fallback cache, attempts, and pending candidates.
+	portrait := makeValidAvatarPNG(t)
+	cachePath, err := writeCacheFile(manager.imageDirectory, "fanart-test.png", []byte(portrait))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.store.SaveArtistImage(ctx, storage.ArtistImageInput{
+		ArtistID: artistID, ByteSize: int64(len(portrait)), Source: "fanart", RemoteURL: "http://93.184.216.34/fanart.png", Hash: "h-fanart", MIMEType: "image/png", CachePath: cachePath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = manager.store.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+		ArtistID: artistID, Source: "ai_web", ImageURL: "http://93.184.216.34/cand.png", Confidence: "medium",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.store.ResetArtistIdentity(ctx, artistID, "musicbrainz", mbid); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := imageBackfillCacheRow(t, manager, artistID); ok {
+		t.Fatal("fanart fallback avatar must be cleared when musicbrainz identity is reset")
+	}
+	pending, err := manager.store.PendingArtistImageCandidates(ctx, 10)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending candidates must be cleared on identity reset: %+v err=%v", pending, err)
+	}
+}

@@ -20,18 +20,20 @@
       <div class="header-actions matches-header-actions">
         <form method="post" action="/admin/matches/run">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
           <button>扫描未检查的艺术家</button>
         </form>
         <form method="post" action="/admin/matches/run">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="mode" value="full">
+          <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
           <button class="secondary-button">全局补全扫描</button>
         </form>
         {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
         <form method="post" action="/admin/ai-review/run">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="scope" value="artists_all">
-          <input type="hidden" name="returnTo" value="{{if .ReturnTo}}{{.ReturnTo}}{{else}}/admin/matches{{end}}">
+          <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
           <button type="submit" class="secondary-button">AI 预审</button>
         </form>
         {{end}}
@@ -55,14 +57,17 @@
             <div class="run-actions match-active-actions">
               <form method="post" action="/admin/matches/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">暂停</button>
               </form>
               <form method="post" action="/admin/matches/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="compact-button">继续</button>
               </form>
               <form method="post" action="/admin/matches/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">停止</button>
               </form>
             </div>
@@ -91,17 +96,17 @@
             <div class="run-actions match-active-actions">
               <form method="post" action="/admin/ai-review/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <input type="hidden" name="returnTo" value="/admin/matches">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">暂停</button>
               </form>
               <form method="post" action="/admin/ai-review/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <input type="hidden" name="returnTo" value="/admin/matches">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="compact-button">继续</button>
               </form>
               <form method="post" action="/admin/ai-review/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <input type="hidden" name="returnTo" value="/admin/matches">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">停止</button>
               </form>
             </div>
@@ -128,14 +133,17 @@
             <div class="run-actions match-active-actions">
               <form method="post" action="/admin/matches/images/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">暂停</button>
               </form>
               <form method="post" action="/admin/matches/images/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="compact-button">继续</button>
               </form>
               <form method="post" action="/admin/matches/images/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">停止</button>
               </form>
             </div>
@@ -164,14 +172,17 @@
             <div class="run-actions match-active-actions">
               <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">暂停</button>
               </form>
               <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="compact-button">继续</button>
               </form>
               <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
                 <button class="secondary-button compact-button">停止</button>
               </form>
             </div>
@@ -193,11 +204,11 @@
     <nav class="match-tabs" role="tablist" aria-label="艺术家匹配工作区">
       <button type="button" class="match-tab{{if eq .MatchTab "identity"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "identity"}}true{{else}}false{{end}}" aria-controls="match-panel-identity" data-match-tab="identity">
         <span>待审身份</span>
-        <span class="match-tab-count">{{if gt (len .CreditCorrectionReview) 0}}{{len .Review}}{{else}}{{.ReviewTotal}}{{end}}</span>
+        <span class="match-tab-count">{{.ReviewTotal}}</span>
       </button>
       <button type="button" class="match-tab{{if eq .MatchTab "credits"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "credits"}}true{{else}}false{{end}}" aria-controls="match-panel-credits" data-match-tab="credits">
         <span>复合署名</span>
-        <span class="match-tab-count">{{len .CreditCorrectionReview}}</span>
+        <span class="match-tab-count">{{.CreditReviewTotal}}</span>
       </button>
       <button type="button" class="match-tab{{if eq .MatchTab "avatars"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "avatars"}}true{{else}}false{{end}}" aria-controls="match-panel-avatars" data-match-tab="avatars">
         <span>待审头像</span>
@@ -220,6 +231,8 @@
             <option value="musicbrainz"{{if eq .ReviewSource "musicbrainz"}} selected{{end}}>MusicBrainz</option>
             <option value="lastfm"{{if eq .ReviewSource "lastfm"}} selected{{end}}>Last.fm</option>
           </select>
+          <input type="hidden" name="tab" value="identity">
+          <input type="hidden" name="creditsPage" value="{{.CreditReviewPage}}">
           <input type="hidden" name="runsPage" value="{{.ArtistRunsPage}}">
           <button class="secondary-button">筛选</button>
           <span class="match-filter-summary muted" data-match-filter-summary>共 {{.ReviewTotal}} 位待审核艺术家</span>
@@ -248,7 +261,7 @@
             <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form match-inline-confirm-form">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="source" value="{{$.ReviewSource}}">
-              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
               <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝">全部拒绝</button>
             </form>
             {{end}}
@@ -258,7 +271,7 @@
             <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
             <div class="match-ai-strip-body">
               {{with $item.AIRecommendedCandidate}}
-              <span class="ai-target-pointer">推荐：<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）</span>
+              <span class="ai-target-pointer">{{if eq $item.AI.Action "recommend_accept"}}推荐：{{else}}关联候选：{{end}}<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）</span>
               {{end}}
               <p class="match-ai-reason">{{.Reason}}{{if .WebSearched}} <span class="match-web-tag">已联网核验</span>{{end}}</p>
             </div>
@@ -266,7 +279,7 @@
           {{end}}
           <div class="match-cand-list">
             {{range $item.SortedCandidates}}
-            {{$isRec := and $item.AI (eq $item.AI.SelectedCandidateID .ID)}}
+            {{$isRec := $item.IsAIRecommended .ID}}
             {{$conflict := $item.ConflictFor .ID}}
             <div class="match-cand-row{{if $isRec}} is-recommended{{end}}">
               <div class="match-cand-info">
@@ -287,13 +300,13 @@
                 {{if not $conflict}}
                 <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
                   <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                  <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
                   <button class="{{if $isRec}}primary-button{{else}}secondary-button match-confirm-btn{{end}} compact-button">{{if $isRec}}确认（AI 推荐）{{else}}确认{{end}}</button>
                 </form>
                 {{end}}
                 <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
                   <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                  <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
                   <button class="match-ghost-btn compact-button">拒绝</button>
                 </form>
               </div>
@@ -306,7 +319,7 @@
                     <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                     <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
                     <input type="hidden" name="confirm" value="1">
-                    <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches{{end}}">
+                    <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
                     <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认并入对方">将 {{$item.Artist.Name}} 并入对方</button>
                   </form>
                   <a class="conflict-detail-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">去歌手页核对</a>
@@ -323,7 +336,7 @@
         {{else}}
         <div class="zero-state">
           <strong>没有等待审核的候选</strong>
-          <span>{{if .CreditCorrectionReview}}本页还有 {{len .CreditCorrectionReview}} 位待处理复合署名，可切换到「复合署名」页签查看。{{else}}可以启动一次艺术家匹配扫描。{{end}}</span>
+          <span>{{if gt .CreditReviewTotal 0}}还有 {{.CreditReviewTotal}} 位待处理复合署名，可切换到「复合署名」页签查看。{{else}}可以启动一次艺术家匹配扫描。{{end}}</span>
         </div>
         {{end}}
         <div class="zero-state" data-match-filter-empty hidden>
@@ -334,9 +347,9 @@
 
       {{if or (gt $.ReviewOffset 0) (gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit))}}
       <nav class="page-nav review-pages" aria-label="待审核分页">
-        {{if gt $.ReviewOffset 0}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{subtract $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">上一页</a>{{end}}
+        {{if gt $.ReviewOffset 0}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{subtract $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}{{if gt $.CreditReviewPage 1}}&creditsPage={{$.CreditReviewPage}}{{end}}&tab=identity">上一页</a>{{end}}
         <span>第 {{$.ReviewPage}} 页 · 共 {{$.ReviewTotal}} 位</span>
-        {{if gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit)}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{add $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}">下一页</a>{{end}}
+        {{if gt $.ReviewTotal (add $.ReviewOffset $.ReviewLimit)}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{add $.ReviewPage 1}}&runsPage={{$.ArtistRunsPage}}{{if gt $.CreditReviewPage 1}}&creditsPage={{$.CreditReviewPage}}{{end}}&tab=identity">下一页</a>{{end}}
       </nav>
       {{end}}
     </section>
@@ -346,13 +359,13 @@
       <div class="match-section-hint">
         <div>
           <h2>需先修正署名</h2>
-          <p class="muted">以下艺术家疑似合作署名，系统不会自动绑定个人身份；可一键应用 AI 拆分，或在艺术家详情页手动修正后再重新扫描。</p>
+          <p class="muted">以下艺术家疑似合作署名，系统不会自动绑定个人身份；可一键应用 AI 拆分，或在艺术家详情页手动修正后再重新扫描。{{if or .ReviewQuery .ReviewSource}}（当前筛选：{{if .ReviewQuery}}「{{.ReviewQuery}}」{{end}}{{if and .ReviewQuery .ReviewSource}} · {{end}}{{.ReviewSource}} · <a href="/admin/matches?tab=credits&amp;runsPage={{.ArtistRunsPage}}">清除筛选</a>）{{end}}</p>
         </div>
         {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
         <form method="post" action="/admin/ai-review/run">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="scope" value="credit_splits">
-          <input type="hidden" name="returnTo" value="/admin/matches?tab=credits">
+          <input type="hidden" name="returnTo" value="{{.TabReturnTo "credits"}}" data-match-return-to="credits">
           <button type="submit" class="secondary-button compact-button">AI 分析复合署名</button>
         </form>
         {{end}}
@@ -369,7 +382,7 @@
             <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form match-inline-confirm-form">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="source" value="{{$.ReviewSource}}">
-              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches?tab=credits{{end}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
               <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝">全部拒绝</button>
             </form>
             {{end}}
@@ -390,18 +403,18 @@
             {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
             <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches?tab=credits{{end}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
               {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
               <button type="submit" class="primary-button compact-button">一键应用拆分到关联曲目</button>
             </form>
             {{else}}
-            <a class="secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
+            <a class="button-link secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
             {{end}}
           </div>
           {{else}}
           <div class="match-split-body">
             <p class="muted match-ai-reason">疑似合作署名，需先修正艺术家关系。</p>
-            <a class="secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页拆分 →</a>
+            <a class="button-link secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页拆分 →</a>
           </div>
           {{end}}
         </article>
@@ -412,6 +425,13 @@
         </div>
         {{end}}
       </div>
+      {{if or (gt $.CreditReviewOffset 0) (gt $.CreditReviewTotal (add $.CreditReviewOffset $.CreditReviewLimit))}}
+      <nav class="page-nav review-pages" aria-label="复合署名分页">
+        {{if gt $.CreditReviewOffset 0}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&creditsPage={{subtract $.CreditReviewPage 1}}&runsPage={{$.ArtistRunsPage}}&tab=credits">上一页</a>{{end}}
+        <span>第 {{$.CreditReviewPage}} 页 · 共 {{$.CreditReviewTotal}} 位</span>
+        {{if gt $.CreditReviewTotal (add $.CreditReviewOffset $.CreditReviewLimit)}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&creditsPage={{add $.CreditReviewPage 1}}&runsPage={{$.ArtistRunsPage}}&tab=credits">下一页</a>{{end}}
+      </nav>
+      {{end}}
     </section>
 
     <!-- Tab 3: 待审头像 -->
@@ -447,12 +467,12 @@
           <div class="match-avatar-actions">
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/approve">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="returnTo" value="/admin/matches?tab=avatars">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
               <button class="primary-button compact-button">采纳并缓存</button>
             </form>
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-              <input type="hidden" name="returnTo" value="/admin/matches?tab=avatars">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
               <button class="secondary-button compact-button">忽略</button>
             </form>
           </div>
@@ -471,26 +491,28 @@
     <section class="match-panel" id="match-panel-tasks" role="tabpanel" data-match-panel="tasks"{{if ne .MatchTab "tasks"}} hidden{{end}}>
       <div class="match-pipeline-grid">
         <!-- Card 1: 艺术家身份匹配扫描 -->
-        <article class="match-pipeline-card"{{if not .ActiveArtistRun}} data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist"{{end}}>
+        <article class="match-pipeline-card" data-pipeline-kind="artist"{{if not .ActiveArtistRun}} data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist"{{end}}>
           <header class="match-pipeline-head">
             <div>
               <h2>艺术家身份匹配扫描</h2>
               <p class="muted">以 MusicBrainz / Last.fm 匹配外部身份，低置信候选送入待审。</p>
             </div>
-            <span class="run-status {{if .ActiveArtistRun}}status-{{.ActiveArtistRun.Status}}{{else}}match-status-idle{{end}}">{{if .ActiveArtistRun}}{{runStatusLabel .ActiveArtistRun.Status}}{{else}}空闲{{end}}</span>
+            <span class="run-status {{if .ActiveArtistRun}}status-{{.ActiveArtistRun.Status}}{{else}}match-status-idle{{end}}" data-pipeline-status>{{if .ActiveArtistRun}}{{runStatusLabel .ActiveArtistRun.Status}}{{else}}空闲{{end}}</span>
           </header>
           {{if .ActiveArtistRun}}
-          <p class="muted match-pipeline-running-note">当前任务 #{{.ActiveArtistRun.ID}} 已置顶在页面上方实时显示，可随时暂停、继续或停止。</p>
+          <p class="muted match-pipeline-running-note" data-pipeline-running-note>当前任务 #{{.ActiveArtistRun.ID}} 已置顶在页面上方实时显示，可随时暂停、继续或停止。</p>
           {{else}}
           <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的任务。</p>
           <div class="match-pipeline-actions">
             <form method="post" action="/admin/matches/run">
               <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
               <button class="secondary-button compact-button">扫描未检查的艺术家</button>
             </form>
             <form method="post" action="/admin/matches/run">
               <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
               <input type="hidden" name="mode" value="full">
+              <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
               <button class="secondary-button compact-button">全局补全扫描</button>
             </form>
           </div>
@@ -517,16 +539,16 @@
             </div>
             {{if gt $.ArtistRunsTotal $.ArtistRunsLimit}}
             <nav class="page-nav run-history-pages" aria-label="任务记录分页">
-              {{if gt $.ArtistRunsPage 1}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{subtract $.ArtistRunsPage 1}}&tab=tasks">上一页</a>{{end}}
+              {{if gt $.ArtistRunsPage 1}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{subtract $.ArtistRunsPage 1}}{{if gt $.CreditReviewPage 1}}&creditsPage={{$.CreditReviewPage}}{{end}}&tab=tasks">上一页</a>{{end}}
               <span>第 {{$.ArtistRunsPage}} 页 · 共 {{$.ArtistRunsTotal}} 条</span>
-              {{if lt (mul $.ArtistRunsPage $.ArtistRunsLimit) $.ArtistRunsTotal}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{add $.ArtistRunsPage 1}}&tab=tasks">下一页</a>{{end}}
+              {{if lt (mul $.ArtistRunsPage $.ArtistRunsLimit) $.ArtistRunsTotal}}<a href="/admin/matches?q={{urlquery $.ReviewQuery}}&source={{$.ReviewSource}}&page={{$.ReviewPage}}&runsPage={{add $.ArtistRunsPage 1}}{{if gt $.CreditReviewPage 1}}&creditsPage={{$.CreditReviewPage}}{{end}}&tab=tasks">下一页</a>{{end}}
             </nav>
             {{end}}
           </details>
         </article>
 
         <!-- Card 2: AI 艺术家预审与复合署名分析 -->
-        <article class="match-pipeline-card"{{if not .ActiveAIRun}} data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview"{{end}}>
+        <article class="match-pipeline-card" data-pipeline-kind="aiReview"{{if not .ActiveAIRun}} data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview"{{end}}>
           <header class="match-pipeline-head">
             <div>
               <h2>AI 艺术家预审与复合署名分析</h2>
@@ -536,16 +558,16 @@
                 {{else}}批量消歧待审艺术家身份（高置信且无身份冲突时自动绑定），并为复合署名生成一键拆分方案。{{end}}
               </p>
             </div>
-            <span class="run-status {{if .ActiveAIRun}}status-{{.ActiveAIRun.Status}}{{else if and .AIConfigured .AIReviewEnabled}}match-status-idle{{else}}status-paused{{end}}">
+            <span class="run-status {{if .ActiveAIRun}}status-{{.ActiveAIRun.Status}}{{else if and .AIConfigured .AIReviewEnabled}}match-status-idle{{else}}status-paused{{end}}" data-pipeline-status>
               {{if .ActiveAIRun}}{{runStatusLabel .ActiveAIRun.Status}}{{else if and .AIConfigured .AIReviewEnabled}}就绪{{else}}未开启{{end}}
             </span>
           </header>
           {{if .ActiveAIRun}}
-          <p class="muted match-pipeline-running-note">AI 预审任务 #{{.ActiveAIRun.ID}} 已置顶在页面上方实时显示。</p>
+          <p class="muted match-pipeline-running-note" data-pipeline-running-note>AI 预审任务 #{{.ActiveAIRun.ID}} 已置顶在页面上方实时显示。</p>
           {{else if and .AIConfigured .AIReviewEnabled}}
           <form method="post" action="/admin/ai-review/run" class="match-pipeline-form">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/matches?tab=tasks">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
             <select name="scope" aria-label="AI 预审范围">
               <option value="artists_all" selected>全部（待审艺术家 + 复合署名）</option>
               <option value="artist_matches">仅待审艺术家身份</option>
@@ -569,7 +591,7 @@
                 <small class="muted">置信度 {{.Decision.Confidence}}% · {{.Decision.Reason}}</small>
                 <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" class="match-revert-form">
                   <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                  <input type="hidden" name="returnTo" value="{{if $.ReturnTo}}{{$.ReturnTo}}{{else}}/admin/matches?tab=tasks{{end}}">
+                  <input type="hidden" name="returnTo" value="{{$.TabReturnTo "tasks"}}" data-match-return-to="tasks">
                   <button type="submit" class="secondary-button compact-button">撤销</button>
                 </form>
               </li>
@@ -580,24 +602,25 @@
         </article>
 
         <!-- Card 3: 艺术家头像补全 -->
-        <article class="match-pipeline-card"{{if not .ImageBackfill.Active}} data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage"{{end}}>
+        <article class="match-pipeline-card" data-pipeline-kind="artistImage"{{if not .ImageBackfill.Active}} data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage"{{end}}>
           <header class="match-pipeline-head">
             <div>
               <h2>艺术家头像补全</h2>
               <p class="muted">默认仅补全已确认身份的艺人。所有模式均保留自定义头像。</p>
             </div>
-            <span class="run-status {{if .ImageBackfill.Active}}status-{{.ImageBackfill.Active.Status}}{{else}}match-status-idle{{end}}">{{if .ImageBackfill.Active}}{{runStatusLabel .ImageBackfill.Active.Status}}{{else}}{{.ImageCoveragePercent}}%{{end}}</span>
+            <span class="run-status {{if .ImageBackfill.Active}}status-{{.ImageBackfill.Active.Status}}{{else}}match-status-idle{{end}}" data-pipeline-status data-idle-label="{{.ImageCoveragePercent}}%">{{if .ImageBackfill.Active}}{{runStatusLabel .ImageBackfill.Active.Status}}{{else}}{{.ImageCoveragePercent}}%{{end}}</span>
           </header>
           <div class="match-coverage">
             <p class="muted">已确认身份的艺术家 {{.ImageBackfill.Total}} 位 · 本地有效头像 {{.ImageBackfill.Cached}} · 待补 {{.ImageBackfill.Missing}}</p>
             <div class="progress"><span style="width:{{.ImageCoveragePercent}}%"></span></div>
           </div>
           {{if .ImageBackfill.Active}}
-          <p class="muted match-pipeline-running-note">头像补全任务 #{{.ImageBackfill.Active.ID}} 已置顶在页面上方实时显示。</p>
+          <p class="muted match-pipeline-running-note" data-pipeline-running-note>头像补全任务 #{{.ImageBackfill.Active.ID}} 已置顶在页面上方实时显示。</p>
           {{else}}
           <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
           <form method="post" action="/admin/matches/images/backfill" class="match-pipeline-form">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
             <select name="mode" aria-label="头像补全模式">
               <option value="all" selected>全库补全（按设置使用图源）</option>
               <option value="matched">仅已匹配身份（按设置使用图源）</option>
@@ -621,24 +644,25 @@
         </article>
 
         <!-- Card 4: 歌手简介补全 -->
-        <article class="match-pipeline-card"{{if not .BioBackfill.Active}} data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio"{{end}}>
+        <article class="match-pipeline-card" data-pipeline-kind="artistBio"{{if not .BioBackfill.Active}} data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio"{{end}}>
           <header class="match-pipeline-head">
             <div>
               <h2>歌手简介补全</h2>
               <p class="muted">按已确认身份抓取 Wikipedia / Last.fm 简介，不覆盖人工填写版本，可在歌手页固定版本。</p>
             </div>
-            <span class="run-status {{if .BioBackfill.Active}}status-{{.BioBackfill.Active.Status}}{{else}}match-status-idle{{end}}">{{if .BioBackfill.Active}}{{runStatusLabel .BioBackfill.Active.Status}}{{else}}{{.BioCoveragePercent}}%{{end}}</span>
+            <span class="run-status {{if .BioBackfill.Active}}status-{{.BioBackfill.Active.Status}}{{else}}match-status-idle{{end}}" data-pipeline-status data-idle-label="{{.BioCoveragePercent}}%">{{if .BioBackfill.Active}}{{runStatusLabel .BioBackfill.Active.Status}}{{else}}{{.BioCoveragePercent}}%{{end}}</span>
           </header>
           <div class="match-coverage">
             <p class="muted">歌手 {{.BioBackfill.Total}} 位 · 缺简介待补 {{.BioBackfill.Missing}}</p>
             <div class="progress"><span style="width:{{.BioCoveragePercent}}%"></span></div>
           </div>
           {{if .BioBackfill.Active}}
-          <p class="muted match-pipeline-running-note">简介补全任务 #{{.BioBackfill.Active.ID}} 已置顶在页面上方实时显示。</p>
+          <p class="muted match-pipeline-running-note" data-pipeline-running-note>简介补全任务 #{{.BioBackfill.Active.ID}} 已置顶在页面上方实时显示。</p>
           {{else}}
           <p class="muted run-empty" data-run-empty>当前没有进行或暂停中的补全任务。</p>
           <form method="post" action="/admin/matches/biographies/backfill" class="match-pipeline-form">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
             <select name="mode" aria-label="简介补全模式">
               <option value="missing" selected>补全缺失简介</option>
               <option value="retranslate">重译已有简介（复用缓存）</option>
@@ -658,7 +682,7 @@
     <dialog id="artist-image-settings-dialog" class="match-settings-dialog" aria-labelledby="artist-image-settings-title">
       <form method="post" action="/admin/settings/artist-images" class="match-dialog-form">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <input type="hidden" name="returnTo" value="/admin/matches?tab={{.MatchTab}}" data-match-return-to>
+        <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
         <header class="match-dialog-head">
           <h2 id="artist-image-settings-title">头像补全数据源与 AI 策略设置</h2>
           <button type="button" class="icon-button" data-dialog-close aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -216,12 +217,14 @@ func (s *Store) ReserveArtistImageWebRequest(ctx context.Context, c ArtistImageB
 //   - "rescan_all": all unmerged artists without custom images, ignoring cooldown
 func (s *Store) ArtistImageBackfillCacheScanForMode(ctx context.Context, mode string) ([]ArtistImageBackfillCacheRow, error) {
 	mode = NormalizeArtistImageBackfillMode(mode)
+	var extraFilter string
 	if mode == "matched" {
-		return s.ArtistImageBackfillCacheScan(ctx)
+		extraFilter = ` AND EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=a.id)`
 	}
 	var cooldownClause string
 	if mode != "rescan_all" {
-		cooldownClause = ` AND NOT EXISTS(
+		cooldownClause = ` AND NOT EXISTS(SELECT 1 FROM artist_image_candidates cand WHERE cand.artist_id=a.id AND cand.status='pending')`
+		cooldownClause += ` AND NOT EXISTS(
 			SELECT 1 FROM artist_image_attempts att
 			WHERE att.artist_id=a.id AND att.cooldown_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		if mode == "web_fallback" {
@@ -231,7 +234,7 @@ func (s *Store) ArtistImageBackfillCacheScanForMode(ctx context.Context, mode st
 		}
 		cooldownClause += ")"
 	}
-	query := `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id OR c.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id) ORDER BY (c.artist_id=a.id) DESC,c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)` + cooldownClause + ` ORDER BY a.id`
+	query := `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id OR c.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id) ORDER BY (c.artist_id=a.id) DESC,c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)` + extraFilter + cooldownClause + ` ORDER BY a.id`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -298,6 +301,15 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 	if err = requireArtistImageFallbackCheckpoint(ctx, tx, c, image.ArtistID); err != nil {
 		return err
 	}
+	if image.Source == "fanart" && candidateID == 0 {
+		var hasMB bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles WHERE artist_id=? AND source='musicbrainz')`, image.ArtistID).Scan(&hasMB); err != nil {
+			return err
+		}
+		if !hasMB {
+			return ErrArtistImageBackfillState
+		}
+	}
 	if candidateID != 0 {
 		res, reviewErr := tx.ExecContext(ctx, `UPDATE artist_image_candidates SET status='approved',reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND artist_id=? AND image_url=? AND status='pending'`, candidateID, image.ArtistID, image.RemoteURL)
 		if reviewErr != nil {
@@ -309,6 +321,9 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 		}
 		if n != 1 {
 			return sql.ErrNoRows
+		}
+		if _, reviewErr = tx.ExecContext(ctx, `UPDATE artist_image_candidates SET status='rejected',reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE artist_id=? AND id<>? AND status='pending'`, image.ArtistID, candidateID); reviewErr != nil {
+			return reviewErr
 		}
 	} else if image.Source == "ai_web" {
 		var rejected bool
@@ -376,8 +391,8 @@ func upsertArtistImageCandidate(ctx context.Context, db queryRower, c ArtistImag
 	if c.Confidence != "high" && c.Confidence != "medium" && c.Confidence != "low" {
 		c.Confidence = "medium"
 	}
-	if len(c.Reason) > 500 {
-		c.Reason = c.Reason[:500]
+	if runes := []rune(c.Reason); len(runes) > 500 {
+		c.Reason = strings.TrimSpace(string(runes[:500]))
 	}
 	if c.ArtistID <= 0 || c.ImageURL == "" || c.Source == "" {
 		return 0, errors.New("invalid artist image candidate")
@@ -394,7 +409,7 @@ func upsertArtistImageCandidate(ctx context.Context, db queryRower, c ArtistImag
 	return id, err
 }
 
-const pendingArtistImageCandidates = ` FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.status='pending' AND a.merged_into_artist_id IS NULL`
+const pendingArtistImageCandidates = ` FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.status='pending' AND a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)`
 
 func (s *Store) PendingArtistImageCandidateCount(ctx context.Context) (int, error) {
 	var count int
@@ -432,13 +447,79 @@ func (s *Store) ReviewArtistImageCandidate(ctx context.Context, id int64, status
 	if status != "approved" && status != "rejected" {
 		return errors.New("invalid candidate review status")
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE artist_image_candidates SET status=?,reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='pending'`, status, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err == nil && n == 0 {
-		return sql.ErrNoRows
+	defer tx.Rollback()
+	var artistID int64
+	err = tx.QueryRowContext(ctx, `UPDATE artist_image_candidates SET status=?,reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='pending' RETURNING artist_id`, status, id).Scan(&artistID)
+	if err != nil {
+		return err
 	}
-	return err
+	if status == "rejected" {
+		var cooldownDays int
+		if stErr := tx.QueryRowContext(ctx, `SELECT negative_cache_days FROM artist_image_settings WHERE id=1`).Scan(&cooldownDays); stErr != nil || cooldownDays < 1 {
+			cooldownDays = 30
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_image_attempts(artist_id,tier_reached,last_outcome,last_error,checked_at,cooldown_until) VALUES(?,'web_fallback','rejected','',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now',?)) ON CONFLICT(artist_id) DO UPDATE SET tier_reached=excluded.tier_reached,last_outcome=excluded.last_outcome,last_error=excluded.last_error,checked_at=excluded.checked_at,cooldown_until=excluded.cooldown_until`,
+			artistID, fmt.Sprintf("+%d days", cooldownDays)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// RejectedArtistImageURLs returns URLs previously rejected for artistID so web
+// image discovery does not repeatedly select an already-rejected candidate.
+func (s *Store) RejectedArtistImageURLs(ctx context.Context, artistID int64) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT image_url FROM artist_image_candidates WHERE artist_id=? AND status='rejected'`, artistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var u string
+		if err = rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		if u = strings.TrimSpace(u); u != "" {
+			out[u] = true
+		}
+	}
+	return out, rows.Err()
+}
+
+// ArtistConfirmedPageURLs returns confirmed external profile URLs for an artist
+// (and merged-in source artists) to anchor web image discovery.
+func (s *Store) ArtistConfirmedPageURLs(ctx context.Context, artistID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT COALESCE(page_url,'') FROM artist_external_profiles WHERE (artist_id=? OR artist_id IN (SELECT id FROM artists WHERE merged_into_artist_id=?)) AND COALESCE(page_url,'')<>'' ORDER BY (artist_id=?) DESC, source='musicbrainz' DESC`, artistID, artistID, artistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var urls []string
+	seen := map[string]bool{}
+	for rows.Next() {
+		var u string
+		if err = rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		u = strings.TrimSpace(u)
+		if u != "" && !seen[u] {
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	return urls, rows.Err()
+}
+
+func (s *Store) ArtistExternalProfileRaw(ctx context.Context, artistID int64, source, expectedID string) (json.RawMessage, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(raw_json,'') FROM artist_external_profiles WHERE artist_id=? AND source=? AND external_id=?`, artistID, source, expectedID).Scan(&raw)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
 }

@@ -53,7 +53,12 @@ for (const timezoneId of ['Asia/Shanghai', 'America/New_York', 'UTC']) {
       await expect(page.locator('#no-zone')).toHaveText('ambiguous');
 
       await page.evaluate(() => { window.__timezoneNavigationMarker = true; });
-      await page.locator('.sidebar a[data-nav="playback"]:visible').click();
+      if (await page.locator('#sidebar-more').isVisible()) {
+        await page.locator('#sidebar-more').click();
+        await page.locator('#sidebar-more-sheet a[data-nav="playback"]:visible').click();
+      } else {
+        await page.locator('.sidebar a[data-nav="playback"]:visible').click();
+      }
       await expect(page).toHaveURL(/\/admin\/playback/);
       await page.locator('.sidebar a[data-nav="home"]:visible').click();
       await expect(page).toHaveURL(/\/admin\/home/);

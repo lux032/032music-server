@@ -225,6 +225,8 @@ func TestBackupRestoreCrashReentryAndOldWAL(t *testing.T) {
 					t.Fatal(e)
 				}
 				if crash != "prerestore_done" {
+					// 原有连接在 replaceDatabase 前关闭，兼容 Windows 对已打开 WAL 的文件锁。
+					s.Close()
 					if e = b.replaceDatabase(ctx, b.pendingPath(), pre); e != nil {
 						t.Fatal(e)
 					}
@@ -518,5 +520,63 @@ func TestBackupLibraryRootMismatch(t *testing.T) {
 	v, e := b.Validate(context.Background(), filepath.Join(b.Directory, name))
 	if e != nil || !v.RootMismatch {
 		t.Fatalf("root warning %+v %v", v, e)
+	}
+}
+
+func TestBackupPreserveCredentialsIncludesFanartAndDeepSeek(t *testing.T) {
+	ctx := context.Background()
+	s, b := backupFixture(t, 0)
+	if err := s.SaveArtistImageSettings(ctx, ArtistImageSettings{FanartEnabled: true, FanartAPIKey: "revoked-fanart", NegativeCacheDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	aliasCfg, err := s.ArtistAliasSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasCfg.DeepSeekKey = "revoked-deepseek"
+	if err = s.SaveArtistAliasSettings(ctx, aliasCfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := b.Create(ctx, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rotate Fanart key and clear DeepSeek key after snapshot; restoring must keep current credentials.
+	if err = s.SaveArtistImageSettings(ctx, ArtistImageSettings{FanartEnabled: true, FanartAPIKey: "live-fanart", NegativeCacheDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	aliasCfg.DeepSeekKey = ""
+	if err = s.SaveArtistAliasSettings(ctx, aliasCfg); err != nil {
+		t.Fatal(err)
+	}
+	stage, _, err := b.Stage(ctx, filepath.Join(b.Directory, snap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = b.Arm(ctx, stage); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if restored, err := b.PrepareRestore(ctx); err != nil || !restored {
+		t.Fatalf("prepare restore: %v %v", restored, err)
+	}
+	current, err := Open(b.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Close()
+	if err = current.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = b.CompleteRestore(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	imgSt, err := current.ArtistImageSettings(ctx)
+	if err != nil || imgSt.FanartAPIKey != "live-fanart" {
+		t.Fatalf("fanart_api_key=%q err=%v, want live-fanart", imgSt.FanartAPIKey, err)
+	}
+	aliasSt, err := current.ArtistAliasSettings(ctx)
+	if err != nil || aliasSt.DeepSeekKey != "" {
+		t.Fatalf("deepseek_key=%q err=%v, want empty (not resurrected)", aliasSt.DeepSeekKey, err)
 	}
 }

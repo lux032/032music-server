@@ -56,10 +56,14 @@ func (m matchReviewItem) CanQuickAcceptAI() bool {
 		m.AIRecommendedCandidate() != nil && m.ConflictFor(m.AI.SelectedCandidateID) == nil
 }
 
+func (m matchReviewItem) IsAIRecommended(candidateID int64) bool {
+	return m.AI != nil && m.AI.Action == storage.AIActionRecommendAccept && m.AI.SelectedCandidateID == candidateID
+}
+
 // SortedCandidates puts the AI-recommended candidate first while preserving
 // the relative order of all other candidates.
 func (m matchReviewItem) SortedCandidates() []storage.ArtistCandidate {
-	if m.AI == nil || m.AI.SelectedCandidateID <= 0 || len(m.Candidates) <= 1 {
+	if m.AI == nil || m.AI.Action != storage.AIActionRecommendAccept || m.AI.SelectedCandidateID <= 0 || len(m.Candidates) <= 1 {
 		return m.Candidates
 	}
 	idx := -1
@@ -119,11 +123,13 @@ type identityPageData struct {
 	ReleaseGroups                          []artistReleaseGroup
 	Tracks                                 []storage.Track
 	TracksArePopular                       bool
-	Review                                 []matchReviewItem
-	CreditCorrectionReview                 []matchReviewItem
-	ReviewTotal, ReviewLimit, ReviewOffset int
-	ReviewPage                             int
-	ReviewQuery, ReviewSource              string
+	Review                                                   []matchReviewItem
+	CreditCorrectionReview                                   []matchReviewItem
+	ReviewTotal, ReviewLimit, ReviewOffset                   int
+	ReviewPage                                               int
+	CreditReviewTotal, CreditReviewLimit, CreditReviewOffset int
+	CreditReviewPage                                         int
+	ReviewQuery, ReviewSource                                string
 	// 历史任务分页（GET server 控制，1 起页码）。
 	ArtistRunsPage  int
 	ArtistRunsTotal int
@@ -138,6 +144,29 @@ type identityPageData struct {
 	LastAIRun       *storage.AIReviewRun
 	AIApplied       []storage.AIReviewAppliedItem
 	MatchTab        string
+}
+
+func (d identityPageData) TabReturnTo(tab string) string {
+	base := d.ReturnTo
+	if base == "" {
+		base = "/admin/matches"
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		if tab == "" || tab == "identity" {
+			return "/admin/matches"
+		}
+		return "/admin/matches?tab=" + url.QueryEscape(tab)
+	}
+	q := u.Query()
+	q.Del("notice")
+	if tab == "identity" && q.Get("runsPage") == "" && q.Get("creditsPage") == "" {
+		q.Del("tab")
+	} else if tab != "" {
+		q.Set("tab", tab)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (d identityPageData) HasAnyActiveRun() bool {
@@ -351,7 +380,7 @@ func (a *App) handleCancelArtistMatching(w http.ResponseWriter, r *http.Request)
 		a.logger.Error("cancel artist run", "error", err)
 		message = "停止任务失败，请稍后重试"
 	}
-	redirectWithNotice(w, r, "/admin/matches", message)
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), message)
 }
 
 func artistScanModeLabel(mode string) string {
@@ -366,8 +395,9 @@ func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", 403)
 		return
 	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches")
 	if a.enrichment == nil {
-		redirectWithNotice(w, r, "/admin/matches", "任务服务不可用")
+		redirectWithNotice(w, r, returnTo, "任务服务不可用")
 		return
 	}
 	mode := storage.ParseArtistScanMode(r.FormValue("mode"))
@@ -387,15 +417,15 @@ func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.logger.Error("start artist matching", "error", err)
 		}
-		redirectWithNotice(w, r, "/admin/matches", message)
+		redirectWithNotice(w, r, returnTo, message)
 		return
 	}
 
 	if mode == storage.ArtistScanFull {
-		redirectWithNotice(w, r, "/admin/matches", "全局补全扫描任务已启动")
+		redirectWithNotice(w, r, returnTo, "全局补全扫描任务已启动")
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "自动匹配任务已启动")
+	redirectWithNotice(w, r, returnTo, "自动匹配任务已启动")
 }
 
 func (a *App) handleMatchArtist(w http.ResponseWriter, r *http.Request) {
@@ -552,6 +582,12 @@ func (a *App) handleRefreshArtistBiographies(w http.ResponseWriter, r *http.Requ
 		}
 		redirectWithNotice(w, r, artistProfilePath(id), "简介刷新失败："+enrichment.RedactSourceError(err).Error())
 		return
+	}
+	if allowWeb {
+		if detail, dErr := a.store.ArtistDetail(r.Context(), id); dErr == nil && detail.Biography == "" {
+			redirectWithNotice(w, r, artistProfilePath(id), "未能从公开网页确认该歌手的可靠简介资料")
+			return
+		}
 	}
 	redirectWithNotice(w, r, artistProfilePath(id), "简介缓存已刷新")
 }
@@ -834,11 +870,20 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		a.logger.Error("matches active run", "error", err)
 	}
 	data.ArtistRunsPage, data.ArtistRunsLimit = runsPageNumber(r), 10
+	creditsPage, _ := strconv.Atoi(r.URL.Query().Get("creditsPage"))
+	if creditsPage < 1 {
+		creditsPage = 1
+	}
+	if creditsPage > 1000000 {
+		creditsPage = 1000000
+	}
 	switch r.URL.Query().Get("tab") {
 	case "identity", "credits", "avatars", "tasks":
 		data.MatchTab = r.URL.Query().Get("tab")
 	default:
-		if data.ArtistRunsPage > 1 {
+		if creditsPage > 1 && r.URL.Query().Get("page") == "" {
+			data.MatchTab = "credits"
+		} else if data.ArtistRunsPage > 1 && r.URL.Query().Get("page") == "" && r.URL.Query().Get("q") == "" && r.URL.Query().Get("source") == "" {
 			data.MatchTab = "tasks"
 		} else {
 			data.MatchTab = "identity"
@@ -885,37 +930,38 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid source", 400)
 		return
 	}
-	page, err := a.store.PendingArtistReviewPage(r.Context(), storage.ArtistReviewFilter{Query: r.URL.Query().Get("q"), Source: source, Limit: 50, Offset: (pageNumber - 1) * 50})
+	identityPage, creditsPageData, err := a.store.PendingArtistReviewSplitPages(r.Context(), storage.ArtistReviewFilter{Query: r.URL.Query().Get("q"), Source: source, Limit: 50, Offset: (pageNumber - 1) * 50}, 50, (creditsPage-1)*50)
 	if err != nil {
 		http.Error(w, "加载艺术家审核失败", 500)
 		return
 	}
-	data.ReviewTotal, data.ReviewLimit, data.ReviewOffset = page.Total, page.Limit, page.Offset
+	data.ReviewTotal, data.ReviewLimit, data.ReviewOffset = identityPage.Total, identityPage.Limit, identityPage.Offset
 	data.ReviewPage = pageNumber
+	data.CreditReviewTotal, data.CreditReviewLimit, data.CreditReviewOffset = creditsPageData.Total, creditsPageData.Limit, creditsPageData.Offset
+	data.CreditReviewPage = creditsPage
 	data.ReviewQuery, data.ReviewSource = r.URL.Query().Get("q"), source
 	var reviewIDs, creditIDs []int64
-	for _, item := range page.Items {
-		if item.NeedsCreditCorrection {
-			creditIDs = append(creditIDs, item.Artist.ID)
-		} else {
-			reviewIDs = append(reviewIDs, item.Artist.ID)
-		}
+	for _, item := range identityPage.Items {
+		reviewIDs = append(reviewIDs, item.Artist.ID)
+	}
+	for _, item := range creditsPageData.Items {
+		creditIDs = append(creditIDs, item.Artist.ID)
 	}
 	artistAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetArtistMatch, reviewIDs)
 	creditAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetCreditSplit, creditIDs)
-	for _, item := range page.Items {
+	for _, item := range identityPage.Items {
 		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs}
-		if item.NeedsCreditCorrection {
-			if d, ok := creditAIMap[item.Artist.ID]; ok {
-				review.AI = buildAIDecisionView(d)
-			}
-			data.CreditCorrectionReview = append(data.CreditCorrectionReview, review)
-		} else {
-			if d, ok := artistAIMap[item.Artist.ID]; ok {
-				review.AI = buildAIDecisionView(d)
-			}
-			data.Review = append(data.Review, review)
+		if d, ok := artistAIMap[item.Artist.ID]; ok {
+			review.AI = buildAIDecisionView(d)
 		}
+		data.Review = append(data.Review, review)
+	}
+	for _, item := range creditsPageData.Items {
+		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs}
+		if d, ok := creditAIMap[item.Artist.ID]; ok {
+			review.AI = buildAIDecisionView(d)
+		}
+		data.CreditCorrectionReview = append(data.CreditCorrectionReview, review)
 	}
 	artistAIScopes := []string{"artists_all", "artist_matches", "credit_splits"}
 	data.AIConfigured, data.AIReviewEnabled, data.ActiveAIRun, data.LastAIRun = a.aiReviewMeta(r.Context(), artistAIScopes)

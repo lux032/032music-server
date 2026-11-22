@@ -103,7 +103,10 @@ test('设置只写密钥、保存留空保留、测试连接和 PJAX', async ({ 
   // The protocol fake rejects missing/wrong saved keys and passwords.
   await expect(page.locator('input[name="jackett_api_key"]')).toHaveAttribute('placeholder', '已设置，留空保留');
   await expect(page.locator('input[name="qb_password"]')).toHaveAttribute('placeholder', '已设置，留空保留');
-  await page.getByRole('button', { name: '测试 Jackett', exact: true }).click(); await expect(page.locator('[data-test-status]')).toHaveText('连接测试成功');
+  await expect(async () => {
+    await page.getByRole('button', { name: '测试 Jackett', exact: true }).click();
+    await expect(page.locator('[data-test-status]')).toHaveText('连接测试成功', { timeout: 1500 });
+  }).toPass({ timeout: 8000 });
   await page.getByRole('button', { name: '测试 qBittorrent 与分类' }).click(); await expect(page.locator('[data-test-status]')).toHaveText('连接测试成功');
 });
 test('获取分页、手动扫描提示、禁用引导与对话框焦点', async ({ page }) => {

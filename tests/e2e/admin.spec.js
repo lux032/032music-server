@@ -531,6 +531,7 @@ test('matches/enrichment run-task pages: naming, collapsed history, no polling s
   await expect(page.getByRole('button', { name: '全局补全扫描' })).toBeVisible();
   await expect(page.locator('.review-filter input[name="q"]')).toBeVisible();
   await expect(page.locator('.review-filter select[name="source"]')).toBeVisible();
+  await expect(page.locator('[data-match-filter-empty]')).toBeHidden();
   // 空闲态下任务与历史收纳在「任务与补全」页签。
   await page.locator('.match-tabs [data-match-tab="tasks"]').click();
   await expect(page.locator('[data-run-tasks][data-run-kind="artist"]')).toBeVisible();

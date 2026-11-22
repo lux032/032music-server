@@ -36,7 +36,7 @@ func (m *Manager) launchArtistRunLocked(runID int64) {
 			m.mu.Unlock()
 			close(done)
 			if shouldRerun {
-				m.startAutoArtist(m.baseCtx, false)
+				m.startAutoArtist(m.baseCtx, true)
 			}
 		}()
 		completed = m.executeArtistRun(ctx, runID)
@@ -80,7 +80,10 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) bool {
 		for {
 			if item.MatchedFact {
 				if err = m.store.CompleteArtistRunItem(ctx, checkpoint, "matched"); err != nil {
-					m.artistRuntimeFailure(runID, err)
+					if !errors.Is(err, storage.ErrArtistRunState) {
+						m.artistRuntimeFailure(runID, err)
+					}
+					return false
 				}
 				break
 			}

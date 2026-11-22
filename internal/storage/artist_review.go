@@ -143,3 +143,154 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 	}
 	return page, candidates.Err()
 }
+
+// PendingArtistReviewSplitPages splits regular identity-review artists and
+// composite-credit artists prior to pagination so each workbench tab gets an
+// accurate total and independent page slice.
+func (s *Store) PendingArtistReviewSplitPages(ctx context.Context, f ArtistReviewFilter, creditsLimit, creditsOffset int) (identityPage, creditsPage ArtistReviewPage, err error) {
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+	if f.Limit > 200 {
+		f.Limit = 200
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	if creditsLimit <= 0 {
+		creditsLimit = 50
+	}
+	if creditsLimit > 200 {
+		creditsLimit = 200
+	}
+	if creditsOffset < 0 {
+		creditsOffset = 0
+	}
+	identityPage = ArtistReviewPage{Limit: f.Limit, Offset: f.Offset}
+	creditsPage = ArtistReviewPage{Limit: creditsLimit, Offset: creditsOffset}
+
+	where := `ar.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM ai_review_decisions d WHERE d.target_kind='artist_match' AND d.target_id=ar.id AND d.applied=1 AND d.reverted=0) AND (?='' OR instr(lower(COALESCE(ar.user_display_name,ar.display_name)),lower(?))>0) AND EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate' AND (?='' OR c.source=?) AND ` + artistCandidateUnmatchedSQL + `)`
+	q := strings.TrimSpace(f.Query)
+	args := []any{q, q, f.Source, f.Source}
+
+	rows, err := s.db.QueryContext(ctx, artistInheritedProfilesCTE+`SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM artists ar WHERE `+where+` ORDER BY COALESCE(ar.user_display_name,ar.display_name),ar.id`, args...)
+	if err != nil {
+		return identityPage, creditsPage, err
+	}
+	var identityIDs, creditIDs []int64
+	for rows.Next() {
+		var id int64
+		var name string
+		if err = rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return identityPage, creditsPage, err
+		}
+		if metadata.CompositeArtistCredit(name) {
+			creditIDs = append(creditIDs, id)
+		} else {
+			identityIDs = append(identityIDs, id)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return identityPage, creditsPage, err
+	}
+	rows.Close()
+
+	identityPage.Total = len(identityIDs)
+	creditsPage.Total = len(creditIDs)
+
+	sliceIDs := func(all []int64, offset, limit int) []int64 {
+		if offset >= len(all) {
+			return nil
+		}
+		end := offset + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		return all[offset:end]
+	}
+
+	if identityPage.Items, err = s.hydrateArtistReviewItems(ctx, sliceIDs(identityIDs, f.Offset, f.Limit), f.Source, false); err != nil {
+		return identityPage, creditsPage, err
+	}
+	if creditsPage.Items, err = s.hydrateArtistReviewItems(ctx, sliceIDs(creditIDs, creditsOffset, creditsLimit), f.Source, true); err != nil {
+		return identityPage, creditsPage, err
+	}
+	return identityPage, creditsPage, nil
+}
+
+func (s *Store) hydrateArtistReviewItems(ctx context.Context, ids []int64, source string, isCredit bool) ([]ArtistReviewItem, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT count(DISTINCT album_id) FROM album_artists WHERE artist_id=ar.id),(SELECT count(DISTINCT track_id) FROM track_artists WHERE artist_id=ar.id) FROM artists ar WHERE ar.id IN (SELECT value FROM json_each(?))`, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]ArtistReviewItem, len(ids))
+	for rows.Next() {
+		var item ArtistReviewItem
+		if err = rows.Scan(&item.Artist.ID, &item.Artist.Name, &item.Artist.ImageURL, &item.Artist.AlbumCount, &item.Artist.TrackCount); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		item.NeedsCreditCorrection = isCredit
+		byID[item.Artist.ID] = item
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	items := make([]ArtistReviewItem, 0, len(ids))
+	positions := make(map[int64]int, len(ids))
+	for _, id := range ids {
+		if item, ok := byID[id]; ok {
+			positions[id] = len(items)
+			items = append(items, item)
+		}
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	candidates, err := s.db.QueryContext(ctx, artistInheritedProfilesCTE+`SELECT c.id,c.artist_id,c.source,c.external_id,c.display_name,COALESCE(c.sort_name,''),COALESCE(c.disambiguation,''),COALESCE(c.country,''),COALESCE(c.artist_type,''),COALESCE(c.mbid,''),c.score,c.evidence_json,c.status,COALESCE(json_extract(c.payload_json,'$.pageUrl'),'') FROM artist_match_candidates c WHERE c.status='candidate' AND c.artist_id IN (SELECT value FROM json_each(?)) AND (?='' OR c.source=?) AND `+artistCandidateUnmatchedSQL+` ORDER BY c.score DESC,c.id`, string(encoded), source, source)
+	if err != nil {
+		return nil, err
+	}
+	defer candidates.Close()
+	for candidates.Next() {
+		var c ArtistCandidate
+		var evidence, rawPageURL string
+		if err = candidates.Scan(&c.ID, &c.ArtistID, &c.Source, &c.ExternalID, &c.DisplayName, &c.SortName, &c.Disambiguation, &c.Country, &c.ArtistType, &c.MBID, &c.Score, &evidence, &c.Status, &rawPageURL); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal([]byte(evidence), &c.Evidence); err != nil {
+			return nil, fmt.Errorf("decode candidate evidence: %w", err)
+		}
+		i, ok := positions[c.ArtistID]
+		if !ok {
+			continue
+		}
+		items[i].Candidates = append(items[i].Candidates, c)
+		if extURL := candidateExternalURL(c.Source, c.ExternalID, c.MBID, c.DisplayName, rawPageURL); extURL != "" {
+			if items[i].PageURLs == nil {
+				items[i].PageURLs = map[int64]string{}
+			}
+			items[i].PageURLs[c.ID] = extURL
+		}
+		if conflict, conflictErr := artistIdentityConflict(ctx, s.db, c.ArtistID, c.ID); conflictErr == nil {
+			if items[i].Conflicts == nil {
+				items[i].Conflicts = map[int64]ArtistIdentityConflict{}
+			}
+			items[i].Conflicts[c.ID] = conflict
+		}
+	}
+	return items, candidates.Err()
+}

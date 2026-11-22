@@ -301,8 +301,12 @@ func (m *Manager) processArtistBiographyBackfillItem(ctx context.Context, checkp
 	lastFMNeeded := lastFMEnabled && m.biographySourceNeedsRefresh(ctx, item.ArtistID, "lastfm", languages, settings.CacheDays)
 	aiTranslateNeeded := false
 	if settings.AITranslateEnabled && targetTag != "" {
-		fresh, _ := m.store.ArtistBiographyFresh(ctx, item.ArtistID, "ai_translated", targetTag, settings.CacheDays)
-		aiTranslateNeeded = !fresh
+		if cachedTranslationOnly {
+			aiTranslateNeeded = true
+		} else {
+			fresh, _ := m.store.ArtistBiographyFresh(ctx, item.ArtistID, "ai_translated", targetTag, settings.CacheDays)
+			aiTranslateNeeded = !fresh
+		}
 	}
 	aiWebNeeded := false
 	if aiWebEnabled && targetTag != "" {

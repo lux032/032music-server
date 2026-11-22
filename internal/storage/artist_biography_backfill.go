@@ -3,9 +3,12 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // 歌手简介补全的持久化任务层：完整镜像 040 头像补全的 durable run 语义
@@ -112,6 +115,72 @@ func NormalizeArtistBiographyBackfillMode(mode string) string {
 	}
 }
 
+var (
+	storageLastFMReadMoreRe  = regexp.MustCompile(`(?is)\s*<a\s+href="https?://[^"]*last\.fm[^"]*">.*?</a>\.?\s*$`)
+	storageLastFMPlainTailRe = regexp.MustCompile(`(?is)\s*Read more on Last\.fm\.?\s*$`)
+	storageWikiCitationRe    = regexp.MustCompile(`\[\d+\]`)
+)
+
+func storageBiographyInfoScore(source, text string) float64 {
+	s := strings.TrimSpace(text)
+	if source == "lastfm" {
+		s = storageLastFMReadMoreRe.ReplaceAllString(s, "")
+		s = storageLastFMPlainTailRe.ReplaceAllString(s, "")
+	}
+	s = strings.TrimSpace(storageWikiCitationRe.ReplaceAllString(s, ""))
+	var cjk, other int
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return float64(cjk)*2.5 + float64(other)
+}
+
+func (s *Store) biographySettingsOrDefault(ctx context.Context) BiographySettings {
+	st, err := s.BiographySettings(ctx)
+	if err != nil {
+		return BiographySettings{PreferredLanguages: "zh,ja,en", SourcePriority: "wikipedia,lastfm", WikipediaEnabled: true, EnglishFallback: true, CacheDays: 30, TargetLanguage: "zh-Hans"}
+	}
+	return st
+}
+
+// artistBiographyDisplayableSQL matches selectBiography's exact visibility rules
+// so untranslated foreign sitelink rows never mask a blank artist page.
+func artistBiographyDisplayableSQL(alias string, settings BiographySettings) (string, []any) {
+	targetTag := normalizeTargetLanguage(settings.TargetLanguage)
+	langs := splitCSV(settings.PreferredLanguages)
+	if settings.EnglishFallback && !contains(langs, "en") {
+		langs = append(langs, "en")
+	}
+	if settings.AITranslateEnabled {
+		tl := normalizeLanguage(settings.TargetLanguage)
+		if tl == "" {
+			if len(langs) > 0 {
+				tl = langs[0]
+			} else {
+				tl = "zh"
+			}
+		}
+		if tl != "" && !contains(langs, tl) {
+			langs = append(langs, tl)
+		}
+	}
+	langJSON, _ := json.Marshal(langs)
+	cond := `EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=` + alias + `.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id)) AND b.status='found' AND b.biography<>'' AND (` +
+		`(COALESCE(` + alias + `.preferred_biography_source,'')<>'' AND b.source=` + alias + `.preferred_biography_source AND b.language=COALESCE(` + alias + `.preferred_biography_language,''))` +
+		` OR (?=1 AND b.source='ai_translated' AND b.language=?)` +
+		` OR (b.source='ai_web' AND b.language=?)` +
+		` OR (b.source IN ('wikipedia','lastfm') AND b.language IN (SELECT value FROM json_each(?)))` +
+		`))`
+	return cond, []any{boolInt(settings.AITranslateEnabled), targetTag, targetTag, string(langJSON)}
+}
+
 // ArtistBiographyBackfillCandidatesForMode 按模式返回待处理歌手列表，始终跳过已合并与有人工简介的歌手。
 func (s *Store) ArtistBiographyBackfillCandidatesForMode(ctx context.Context, mode, targetLanguage string) ([]ArtistBiographyBackfillCandidate, error) {
 	mode = NormalizeArtistBiographyBackfillMode(mode)
@@ -119,32 +188,73 @@ func (s *Store) ArtistBiographyBackfillCandidatesForMode(ctx context.Context, mo
 		return s.ArtistBiographyBackfillCandidates(ctx)
 	}
 	var query string
-	var args []any
 	if mode == "retranslate" {
-		targetTag := normalizeTargetLanguage(targetLanguage)
-		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' AND EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=a.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id)) AND b.source IN ('wikipedia','lastfm') AND b.status='found' AND b.biography<>'') AND NOT EXISTS(SELECT 1 FROM artist_biographies t WHERE t.artist_id=a.id AND t.source='ai_translated' AND t.language=? AND t.status='found' AND t.biography<>'') ORDER BY a.id`
-		args = []any{targetTag}
+		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' AND EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=a.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id)) AND b.source IN ('wikipedia','lastfm') AND b.status='found' AND b.biography<>'') ORDER BY a.id`
 	} else {
 		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' ORDER BY a.id`
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var list []ArtistBiographyBackfillCandidate
+	var raw []ArtistBiographyBackfillCandidate
 	for rows.Next() {
 		var v ArtistBiographyBackfillCandidate
 		if err = rows.Scan(&v.ID, &v.Name); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		list = append(list, v)
+		raw = append(raw, v)
 	}
-	return list, rows.Err()
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if mode != "retranslate" {
+		return raw, nil
+	}
+	targetTag := normalizeTargetLanguage(targetLanguage)
+	targetShort := normalizeLanguage(targetTag)
+	var filtered []ArtistBiographyBackfillCandidate
+	for _, cand := range raw {
+		// Traditional Chinese targets should never skip zhwiki rows that may be Simplified.
+		if targetTag != "zh-Hant" && targetShort != "" {
+			bios, bErr := s.ArtistBiographies(ctx, cand.ID)
+			if bErr == nil {
+				var bestScore, nativeScore float64
+				var bestSource, bestLang, nativeSource string
+				for _, b := range bios {
+					if b.Source != "wikipedia" && b.Source != "lastfm" {
+						continue
+					}
+					sc := storageBiographyInfoScore(b.Source, b.Biography)
+					if sc <= 0 {
+						continue
+					}
+					if b.Language == targetShort && sc > nativeScore {
+						nativeScore = sc
+						nativeSource = b.Source
+					}
+					if sc > bestScore {
+						bestScore = sc
+						bestSource = b.Source
+						bestLang = b.Language
+					}
+				}
+				if nativeScore > 0 && bestScore > 0 && ((bestLang == targetShort && bestSource == nativeSource) || (nativeScore >= 300.0 && nativeScore >= bestScore*0.70)) {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, cand)
+	}
+	return filtered, nil
 }
 
 func (s *Store) ArtistBiographyBackfillCandidates(ctx context.Context) ([]ArtistBiographyBackfillCandidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate+` AND `+artistBiographyGapPredicate+` ORDER BY a.id`)
+	cond, args := artistBiographyDisplayableSQL("a", s.biographySettingsOrDefault(ctx))
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate+` AND COALESCE(a.user_biography,'')='' AND NOT `+cond+` ORDER BY a.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +282,9 @@ func (s *Store) ArtistIsPerformer(ctx context.Context, id int64) (bool, error) {
 // 供 worker 在任务提交前再次验证当前状态；不合格返回 sql.ErrNoRows。
 func (s *Store) ArtistBiographyBackfillSubject(ctx context.Context, artistID int64) (ArtistBiographyBackfillCandidate, error) {
 	var v ArtistBiographyBackfillCandidate
-	err := s.db.QueryRowContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.id=? AND a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate+` AND `+artistBiographyGapPredicate, artistID).Scan(&v.ID, &v.Name)
+	cond, args := artistBiographyDisplayableSQL("a", s.biographySettingsOrDefault(ctx))
+	queryArgs := append([]any{artistID}, args...)
+	err := s.db.QueryRowContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.id=? AND a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate+` AND COALESCE(a.user_biography,'')='' AND NOT `+cond, queryArgs...).Scan(&v.ID, &v.Name)
 	return v, err
 }
 
@@ -256,12 +368,55 @@ func (s *Store) ArtistBiographySource(ctx context.Context, artistID int64) (Arti
 	return resolveArtistBiographySource(ctx, s.db, artistID)
 }
 
-// ArtistBiographyFoundExists 报告规范歌手（含合并来源继承）是否已有可用
+// ArtistBiographyFoundExists 报告规范歌手（含合并来源继承）是否已有当前可展示
 // 的 found 简介版本行，供补全项区分 filled/missing 终态。
 func (s *Store) ArtistBiographyFoundExists(ctx context.Context, artistID int64) (bool, error) {
 	var found bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=? OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=?)) AND b.status='found' AND b.biography<>'')`, artistID, artistID).Scan(&found)
+	cond, args := artistBiographyDisplayableSQL("a", s.biographySettingsOrDefault(ctx))
+	queryArgs := append([]any{artistID}, args...)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artists a WHERE a.id=? AND `+cond+`)`, queryArgs...).Scan(&found)
 	return found, err
+}
+
+// UpsertUnmatchedArtistWebBiographyGuarded persists an on-demand AI web-search
+// biography for an artist that does not yet have a confirmed external profile,
+// rejecting writes if the artist was concurrently merged.
+func (s *Store) UpsertUnmatchedArtistWebBiographyGuarded(ctx context.Context, artistID int64, value ArtistBiography) error {
+	value.Source = strings.ToLower(strings.TrimSpace(value.Source))
+	if value.Source != "ai_web" {
+		return ErrArtistBiographyBackfillState
+	}
+	value.Language = normalizeBiographyLanguage(value.Source, value.Language)
+	value.Biography = strings.TrimSpace(value.Biography)
+	value.PageURL = strings.TrimSpace(value.PageURL)
+	value.OriginSource = strings.ToLower(strings.TrimSpace(value.OriginSource))
+	value.OriginLanguage = normalizeLanguage(value.OriginLanguage)
+	value.Model = strings.TrimSpace(value.Model)
+	if value.Status == "" {
+		value.Status = "found"
+	}
+	if value.Biography == "" {
+		value.Status = "missing"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_biographies SET id=id WHERE 0`); err != nil {
+		return err
+	}
+	var canonical bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artists WHERE id=? AND merged_into_artist_id IS NULL)`, artistID).Scan(&canonical); err != nil {
+		return err
+	}
+	if !canonical {
+		return ErrArtistBiographyBackfillState
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_biographies(artist_id,source,language,biography,page_url,origin_source,origin_language,model,status) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,source,language) DO UPDATE SET biography=excluded.biography,page_url=excluded.page_url,origin_source=excluded.origin_source,origin_language=excluded.origin_language,model=excluded.model,status=excluded.status,fetched_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, artistID, value.Source, value.Language, value.Biography, value.PageURL, value.OriginSource, value.OriginLanguage, value.Model, value.Status); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // UpsertArtistBiographyGuarded 在单事务内写入一条简介版本行（H1 围栏）：

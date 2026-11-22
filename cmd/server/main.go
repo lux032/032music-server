@@ -90,7 +90,7 @@ func run() error {
 	scannerManager := scanner.New(rootCtx, db, logger, library, cfg.DataDirectory)
 	scannerManager.ProtectRestoreScan(backups.ScanProtectionPath())
 	enrichmentManager := enrichment.New(rootCtx, db, logger, cfg.DataDirectory)
-	gate := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"bangumi": enrichment.BangumiIntervalFromEnv(logger), "musicbrainz": enrichment.MBIntervalFromEnv(logger), "coverartarchive": time.Second, "jackett": 3 * time.Second}})
+	gate := sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"bangumi": enrichment.BangumiIntervalFromEnv(logger), "musicbrainz": enrichment.MBIntervalFromEnv(logger), "deezer": 150 * time.Millisecond, "coverartarchive": time.Second, "jackett": 3 * time.Second}})
 	enrichmentManager.SetSourceGate(gate)
 	discoveryService := discovery.New(db, logger, discovery.Options{Bangumi: enrichmentManager, BaseContext: rootCtx, CoverBackfill: true, Scheduler: true, Gate: gate, DataDir: cfg.DataDirectory, UserAgent: enrichmentManager.MetadataUserAgent})
 	if err := discoveryService.Start(rootCtx); err != nil {

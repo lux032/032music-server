@@ -61,8 +61,9 @@ func (a *App) handleStartArtistBiographyBackfill(w http.ResponseWriter, r *http.
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches")
 	if a.enrichment == nil {
-		redirectWithNotice(w, r, "/admin/matches", "任务服务不可用")
+		redirectWithNotice(w, r, returnTo, "任务服务不可用")
 		return
 	}
 	mode := storage.NormalizeArtistBiographyBackfillMode(r.FormValue("mode"))
@@ -79,7 +80,7 @@ func (a *App) handleStartArtistBiographyBackfill(w http.ResponseWriter, r *http.
 		default:
 			a.logger.Error("start artist biography backfill", "error", err)
 		}
-		redirectWithNotice(w, r, "/admin/matches", message)
+		redirectWithNotice(w, r, returnTo, message)
 		return
 	}
 	notice := "歌手简介补全任务已启动"
@@ -89,7 +90,7 @@ func (a *App) handleStartArtistBiographyBackfill(w http.ResponseWriter, r *http.
 	case "rescan_all":
 		notice = "歌手简介全量重扫任务已启动（按新策略重新抓取并翻译）"
 	}
-	redirectWithNotice(w, r, "/admin/matches", notice)
+	redirectWithNotice(w, r, returnTo, notice)
 }
 
 func (a *App) handlePauseArtistBiographyBackfill(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +106,7 @@ func (a *App) handlePauseArtistBiographyBackfill(w http.ResponseWriter, r *http.
 		a.artistBiographyRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "补全任务已暂停，可手动继续")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "补全任务已暂停，可手动继续")
 }
 
 func (a *App) handleResumeArtistBiographyBackfill(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +122,7 @@ func (a *App) handleResumeArtistBiographyBackfill(w http.ResponseWriter, r *http
 		a.artistBiographyRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "补全任务已继续，已处理对象不会重复")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "补全任务已继续，已处理对象不会重复")
 }
 
 func (a *App) handleCancelArtistBiographyBackfill(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +138,7 @@ func (a *App) handleCancelArtistBiographyBackfill(w http.ResponseWriter, r *http
 		a.artistBiographyRunError(w, err)
 		return
 	}
-	redirectWithNotice(w, r, "/admin/matches", "补全任务已停止")
+	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "补全任务已停止")
 }
 
 // handleActiveArtistBiographyBackfill 是 run-card 轮询端点：返回当前未完成

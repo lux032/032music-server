@@ -14,9 +14,38 @@ import (
 	"strings"
 
 	"github.com/lux032/032music-server/internal/netfetch"
+	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
 	"golang.org/x/text/unicode/norm"
 )
+
+type deezerAPIError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	Code    int    `json:"code"`
+}
+
+func (m *Manager) waitDeezerRateLimit(ctx context.Context) error {
+	if m.gate == nil || !m.gate.Owns("deezer") {
+		return nil
+	}
+	err := m.gate.Wait(ctx, "deezer")
+	var cd *sourcegate.CooldownError
+	if errors.As(err, &cd) {
+		return &RateLimitError{CooldownOnly: true, Source: cd.Source, StatusCode: http.StatusTooManyRequests, RetryAfter: cd.RetryAfter}
+	}
+	return err
+}
+
+func (m *Manager) checkDeezerError(apiErr *deezerAPIError) error {
+	if apiErr == nil {
+		return nil
+	}
+	if apiErr.Code == 4 {
+		return m.rateLimitedError("deezer", http.StatusTooManyRequests, defaultRateLimitBackoff)
+	}
+	return fmt.Errorf("deezer api error %d", apiErr.Code)
+}
 
 var (
 	reDeezerArtistPath = regexp.MustCompile(`(?i)/(?:[a-z]{2}/)?artist/(\d+)`)
@@ -120,18 +149,25 @@ func (m *Manager) deezerArtistImageByID(ctx context.Context, deezerID string) (s
 	if deezerID == "" {
 		return "", nil
 	}
+	if err := m.waitDeezerRateLimit(ctx); err != nil {
+		return "", err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.deezer.com/artist/"+url.PathEscape(deezerID), nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", m.metadataUserAgent(ctx))
 	var resp struct {
-		ID         int64  `json:"id"`
-		Name       string `json:"name"`
-		PictureXL  string `json:"picture_xl"`
-		PictureBig string `json:"picture_big"`
+		ID         int64           `json:"id"`
+		Name       string          `json:"name"`
+		PictureXL  string          `json:"picture_xl"`
+		PictureBig string          `json:"picture_big"`
+		Error      *deezerAPIError `json:"error"`
 	}
 	if err = m.doSourceJSON(m.client, req, "deezer", &resp); err != nil {
+		return "", err
+	}
+	if err = m.checkDeezerError(resp.Error); err != nil {
 		return "", err
 	}
 	return pickValidDeezerPicture(resp.PictureXL, resp.PictureBig), nil
@@ -159,6 +195,7 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 	names := normalizedAnchorNameSet(anchor)
 	albums := normalizedStringSet(anchor.KnownAlbums)
 	albumMatches := map[int64]bool{}
+	seenAllIDs := map[int64]bool{}
 	var lookupErr error
 	type hit struct {
 		imageURL string
@@ -166,6 +203,9 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 	}
 
 	for _, qName := range buildArtistSearchNames(anchor) {
+		if err := m.waitDeezerRateLimit(ctx); err != nil {
+			return "", "", err
+		}
 		q := url.Values{"q": {qName}, "limit": {"10"}}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.deezer.com/search/artist?"+q.Encode(), nil)
 		if err != nil {
@@ -180,12 +220,20 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 				PictureXL  string `json:"picture_xl"`
 				PictureBig string `json:"picture_big"`
 			} `json:"data"`
+			Error *deezerAPIError `json:"error"`
 		}
 		if err := m.doSourceJSON(m.client, req, "deezer", &resp); err != nil {
 			if asRateLimited(err) != nil || ctx.Err() != nil {
 				return "", "", err
 			}
 			lookupErr = err
+			continue
+		}
+		if apiErr := m.checkDeezerError(resp.Error); apiErr != nil {
+			if asRateLimited(apiErr) != nil {
+				return "", "", apiErr
+			}
+			lookupErr = apiErr
 			continue
 		}
 
@@ -195,6 +243,7 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 			if item.ID <= 0 || !names[compactArtistName(item.Name)] {
 				continue
 			}
+			seenAllIDs[item.ID] = true
 			img := pickValidDeezerPicture(item.PictureXL, item.PictureBig)
 			prior, exists := matches[item.ID]
 			if !exists {
@@ -204,7 +253,7 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 				matches[item.ID] = hit{imageURL: img, pageURL: strings.TrimSpace(item.Link)}
 			}
 		}
-		if len(albums) == 0 && len(matches) > 1 {
+		if len(albums) == 0 && len(seenAllIDs) > 1 {
 			return "", "", nil
 		}
 
@@ -250,6 +299,9 @@ func (m *Manager) deezerSearchArtistImage(ctx context.Context, anchor storage.Ar
 }
 
 func (m *Manager) deezerArtistHasAlbumOverlap(ctx context.Context, deezerID int64, albumSet map[string]bool) (bool, error) {
+	if err := m.waitDeezerRateLimit(ctx); err != nil {
+		return false, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.deezer.com/artist/%d/albums?limit=15", deezerID), nil)
 	if err != nil {
 		return false, err
@@ -259,8 +311,12 @@ func (m *Manager) deezerArtistHasAlbumOverlap(ctx context.Context, deezerID int6
 		Data []struct {
 			Title string `json:"title"`
 		} `json:"data"`
+		Error *deezerAPIError `json:"error"`
 	}
 	if err = m.doSourceJSON(m.client, req, "deezer", &resp); err != nil {
+		return false, err
+	}
+	if err = m.checkDeezerError(resp.Error); err != nil {
 		return false, err
 	}
 	for _, album := range resp.Data {
@@ -354,7 +410,7 @@ func (m *Manager) bangumiPersonImage(ctx context.Context, anchor storage.ArtistB
 				infobox := p.Infobox
 				if len(infobox) == 0 {
 					var detailErr error
-					infobox, detailErr = m.bangumiPersonInfobox(ctx, base, p.ID)
+					infobox, detailErr = m.bangumiPersonInfobox(ctx, base, setting, p.ID)
 					if detailErr != nil {
 						if asRateLimited(detailErr) != nil || ctx.Err() != nil {
 							return "", "", detailErr
@@ -387,7 +443,7 @@ func validStructuredArtistImageURL(raw string) bool {
 }
 
 // The search response can omit infobox fields, which are available on the person detail endpoint.
-func (m *Manager) bangumiPersonInfobox(ctx context.Context, base string, id int64) ([]bangumiPersonInfoboxEntry, error) {
+func (m *Manager) bangumiPersonInfobox(ctx context.Context, base string, setting storage.MetadataSourceSetting, id int64) ([]bangumiPersonInfoboxEntry, error) {
 	if err := m.waitBangumiRateLimit(ctx); err != nil {
 		return nil, err
 	}
@@ -395,7 +451,10 @@ func (m *Manager) bangumiPersonInfobox(ctx context.Context, base string, id int6
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", m.metadataUserAgent(ctx))
+	req.Header.Set("User-Agent", userAgent(setting))
+	if token := strings.TrimSpace(setting.APIKey); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	var resp struct {
 		Infobox []bangumiPersonInfoboxEntry `json:"infobox"`
 	}

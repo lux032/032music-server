@@ -140,6 +140,7 @@ test('artist candidate preview and approval use the dedicated form', async ({ pa
 
   await page.goto('/admin/artists/album');
   await page.locator('.artist-row a[href^="/admin/artists/"]').first().click();
+  await expect(page).toHaveURL(/\/admin\/artists\/\d+$/);
   const artistPath = new URL(page.url()).pathname;
   const candidatePath = '/admin/matches/images/candidates/42';
   await page.route('**' + artistPath + '/image/web-search', route => route.fulfill({

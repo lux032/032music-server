@@ -4,6 +4,7 @@
 let measureCtx = null;
 let popover = null;
 let anchorButton = null;
+let anchorRect = null;
 let pinned = false;
 let openTimer = 0;
 let closeTimer = 0;
@@ -82,22 +83,31 @@ export function layoutArtistLinks(root) {
     names.forEach(name => { name.hidden = false; name.classList.remove('is-ellipsis'); });
     seps.forEach(sep => { sep.hidden = false; });
     root.classList.remove('is-ellipsis');
+    root.style.maxWidth = '';
     more.hidden = true;
 
     const available = availableWidth(root);
     if (available < 8) return;
-    root.style.maxWidth = `${available}px`;
 
     const nameWidths = names.map(name => name.getBoundingClientRect().width);
     const sepWidth = seps[0] ? seps[0].getBoundingClientRect().width : 0;
     const gap = parseFloat(getComputedStyle(root).columnGap) || 0;
+    const total = nameWidths.reduce((sum, width) => sum + width, 0) + sepWidth * Math.max(0, names.length - 1);
     const shown = fitArtistCount(nameWidths, sepWidth, gap, available, hidden => measureChip(more, `+${hidden}`));
     if (shown >= names.length) {
+      if (total > available) {
+        root.style.maxWidth = `${available}px`;
+        if (names.length === 1) {
+          names[0].classList.add('is-ellipsis');
+          root.classList.add('is-ellipsis');
+        }
+      }
       more.hidden = true;
       if (more.getAttribute('aria-expanded') === 'true' && anchorButton === more) closePopover();
       more.setAttribute('aria-expanded', 'false');
       return;
     }
+    root.style.maxWidth = `${available}px`;
     const hidden = names.length - shown;
     more.hidden = false;
     more.textContent = `+${hidden}`;
@@ -246,6 +256,7 @@ function placePopover(button) {
   const panel = ensurePopover();
   panel.hidden = false;
   const rect = button.getBoundingClientRect();
+  anchorRect = { top: rect.top, left: rect.left };
   const margin = 8;
   const width = panel.offsetWidth;
   const height = panel.offsetHeight;
@@ -268,7 +279,7 @@ function openPopover(button, pin) {
   fillPopover(root);
   placePopover(button);
   button.setAttribute('aria-expanded', 'true');
-  if (pin) popover.querySelector('a')?.focus();
+  if (pin) popover.querySelector('a')?.focus({ preventScroll: true });
 }
 
 function closePopover() {
@@ -276,6 +287,7 @@ function closePopover() {
   window.clearTimeout(closeTimer);
   if (anchorButton) anchorButton.setAttribute('aria-expanded', 'false');
   anchorButton = null;
+  anchorRect = null;
   pinned = false;
   if (popover) popover.hidden = true;
 }
@@ -353,6 +365,10 @@ export function setupArtistLinks() {
   window.addEventListener('scroll', event => {
     if (!popover || popover.hidden) return;
     if (event.target instanceof Node && popover.contains(event.target)) return;
+    if (anchorButton && anchorRect) {
+      const rect = anchorButton.getBoundingClientRect();
+      if (Math.abs(rect.top - anchorRect.top) < 1 && Math.abs(rect.left - anchorRect.left) < 1) return;
+    }
     closePopover();
   }, true);
   window.addEventListener('resize', () => {

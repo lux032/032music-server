@@ -34,14 +34,25 @@ func (s *Store) ResetArtistIdentity(ctx context.Context, artistID int64, source,
 			return ErrIdentityConflictStale
 		}
 		// Reset only this source's prior decisions so a correct identity may be
-		// reviewed again. Cross-source bindings require their own explicit reset.
-		for _, statement := range []string{
-			`DELETE FROM artist_source_match_state WHERE artist_id=? AND source=?`,
-			`DELETE FROM artist_image_cache WHERE artist_id=? AND source=?`,
-		} {
-			if _, err = tx.ExecContext(ctx, statement, artistID, source); err != nil {
-				return err
-			}
+		// reviewed again. Cross-source bindings require their own explicit reset,
+		// while fallback avatars/cooldowns/candidates anchored to the removed
+		// identity are cleared unless another confirmed identity still owns them.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM artist_source_match_state WHERE artist_id=? AND source=?`, artistID, source); err != nil {
+			return err
+		}
+		if source == "musicbrainz" {
+			_, err = tx.ExecContext(ctx, `DELETE FROM artist_image_cache WHERE artist_id=? AND (source<>'lastfm' OR NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=? AND p.source='lastfm'))`, artistID, artistID)
+		} else {
+			_, err = tx.ExecContext(ctx, `DELETE FROM artist_image_cache WHERE artist_id=? AND (source='lastfm' OR NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=? AND p.source='musicbrainz'))`, artistID, artistID)
+		}
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM artist_image_attempts WHERE artist_id=?`, artistID); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM artist_image_candidates WHERE artist_id=? AND status='pending'`, artistID); err != nil {
+			return err
 		}
 		// Other candidates of this source become reviewable again; the reset
 		// identity stays rejected until the user explicitly picks it again.

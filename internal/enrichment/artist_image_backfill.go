@@ -102,19 +102,23 @@ func (m *Manager) cacheMissingMatchedArtistImage(ctx context.Context, artistID i
 	if valid, err := m.hasValidArtistImage(ctx, artistID); valid || err != nil {
 		return err
 	}
-	source, externalID, remoteURL, err := m.store.ArtistImageIdentitySource(ctx, artistID)
+	if _, _, _, err := m.store.ArtistImageIdentitySource(ctx, artistID); err != nil {
+		return err
+	}
+	profiles, err := m.store.ArtistImageProfileSources(ctx, artistID)
 	if err != nil {
 		return err
 	}
-	save := func(image storage.ArtistImageInput) error {
-		return m.store.SaveAutoMatchedArtistImage(ctx, image, source, externalID, remoteURL)
-	}
-	if remoteURL != "" {
-		err = m.cacheArtistProfileImage(ctx, artistID, source, remoteURL, save)
+	for _, prof := range profiles {
+		p := prof
+		saveProfile := func(image storage.ArtistImageInput) error {
+			return m.store.SaveAutoMatchedArtistImage(ctx, image, p.Source, p.ExternalID, p.RemoteURL)
+		}
+		err = m.cacheArtistProfileImage(ctx, artistID, p.Source, p.RemoteURL, saveProfile)
 		if err == nil || asRateLimited(err) != nil || errors.Is(err, storage.ErrArtistImageBackfillState) || ctx.Err() != nil {
 			return err
 		}
-		m.logger.Debug("stored artist image unavailable after automatic match", "artistId", artistID, "source", source, "error", RedactSourceError(err))
+		m.logger.Debug("stored artist image unavailable after automatic match", "artistId", artistID, "source", p.Source, "error", RedactSourceError(err))
 	}
 	settings, err := m.store.ArtistImageSettings(ctx)
 	if err != nil {
@@ -127,7 +131,10 @@ func (m *Manager) cacheMissingMatchedArtistImage(ctx context.Context, artistID i
 	if err != nil {
 		return err
 	}
-	outcome, errText, rate := m.processStructuredArtistImageFallback(ctx, artistID, anchor, settings, save)
+	saveFallback := func(image storage.ArtistImageInput, guardSource, guardExternalID string) error {
+		return m.store.SaveAutoMatchedArtistImage(ctx, image, guardSource, guardExternalID, "")
+	}
+	outcome, errText, rate, _ := m.processStructuredArtistImageFallback(ctx, artistID, anchor, settings, saveFallback)
 	if rate != nil {
 		return rate
 	}
@@ -317,12 +324,33 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 	}
 
 	// Tier 1: 已确认身份的库存 URL 与 MusicBrainz/Last.fm 刷新
-	source, externalID, remoteURL, err := m.store.ArtistImageProfileSource(ctx, item.ArtistID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	profiles, err := m.store.ArtistImageProfileSources(ctx, item.ArtistID)
+	if err != nil {
 		return "failed", err.Error(), nil
 	}
-	if errors.Is(err, sql.ErrNoRows) {
-		queryErr := m.queryConfirmedArtistImageURL(ctx, item.ArtistID, &checkpoint, runMode != "matched")
+	var tier1TransientErr bool
+	for _, prof := range profiles {
+		if m.testImageBackfillHook != nil {
+			m.testImageBackfillHook(item.ArtistID)
+		}
+		p := prof
+		save := func(image storage.ArtistImageInput) error {
+			return m.store.SaveArtistImageGuarded(ctx, image, p.Source, p.ExternalID, p.RemoteURL, &checkpoint)
+		}
+		if dlErr := m.cacheArtistProfileImage(ctx, item.ArtistID, p.Source, p.RemoteURL, save); dlErr != nil {
+			if rateErr := asRateLimited(dlErr); rateErr != nil {
+				return "", "", rateErr
+			}
+			if errors.Is(dlErr, storage.ErrArtistImageBackfillState) {
+				return "skipped", "状态已变化，写入被安全拒绝", nil
+			}
+			tier1TransientErr = true
+		} else {
+			return "cached", "", nil
+		}
+	}
+	if len(profiles) == 0 {
+		queryErr := m.queryConfirmedArtistImageURL(ctx, item.ArtistID, &checkpoint, true)
 		if queryErr != nil {
 			if rateErr := asRateLimited(queryErr); rateErr != nil {
 				return "", "", rateErr
@@ -330,53 +358,58 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 			if errors.Is(queryErr, storage.ErrArtistImageBackfillState) {
 				return "skipped", "身份或任务状态已变化，资料未写入", nil
 			}
-			if !errors.Is(queryErr, sql.ErrNoRows) && runMode == "matched" {
-				return "failed", queryErr.Error(), nil
+			if !errors.Is(queryErr, sql.ErrNoRows) {
+				if runMode == "matched" {
+					return "failed", queryErr.Error(), nil
+				}
+				tier1TransientErr = true
 			}
 		} else {
-			source, externalID, remoteURL, err = m.store.ArtistImageProfileSource(ctx, item.ArtistID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return "failed", err.Error(), nil
+			refreshedProfiles, pErr := m.store.ArtistImageProfileSources(ctx, item.ArtistID)
+			if pErr != nil {
+				return "failed", pErr.Error(), nil
+			}
+			for _, prof := range refreshedProfiles {
+				if m.testImageBackfillHook != nil {
+					m.testImageBackfillHook(item.ArtistID)
+				}
+				p := prof
+				save := func(image storage.ArtistImageInput) error {
+					return m.store.SaveArtistImageGuarded(ctx, image, p.Source, p.ExternalID, p.RemoteURL, &checkpoint)
+				}
+				if dlErr := m.cacheArtistProfileImage(ctx, item.ArtistID, p.Source, p.RemoteURL, save); dlErr != nil {
+					if rateErr := asRateLimited(dlErr); rateErr != nil {
+						return "", "", rateErr
+					}
+					if errors.Is(dlErr, storage.ErrArtistImageBackfillState) {
+						return "skipped", "状态已变化，写入被安全拒绝", nil
+					}
+					tier1TransientErr = true
+				} else {
+					return "cached", "", nil
+				}
 			}
 		}
 	}
 
-	if err == nil && remoteURL != "" {
-		if m.testImageBackfillHook != nil {
-			m.testImageBackfillHook(item.ArtistID)
-		}
-		save := func(image storage.ArtistImageInput) error {
-			return m.store.SaveArtistImageGuarded(ctx, image, source, externalID, remoteURL, &checkpoint)
-		}
-		if err = m.cacheArtistProfileImage(ctx, item.ArtistID, source, remoteURL, save); err != nil {
-			if rateErr := asRateLimited(err); rateErr != nil {
-				return "", "", rateErr
-			}
-			if errors.Is(err, storage.ErrArtistImageBackfillState) {
-				return "skipped", "状态已变化，写入被安全拒绝", nil
-			}
-		} else {
-			return "cached", "", nil
-		}
-	}
-
-	return m.processComprehensiveArtistImageFallback(ctx, checkpoint, item.ArtistID, runMode)
+	return m.processComprehensiveArtistImageFallback(ctx, checkpoint, item.ArtistID, runMode, tier1TransientErr)
 }
 
 // processStructuredArtistImageFallback tries the enabled Tier 2 sources in
 // priority order. The caller supplies the write guard for its workflow.
-func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, artistID int64, anchor storage.ArtistBiographyAnchor, imgSettings storage.ArtistImageSettings, save func(storage.ArtistImageInput) error) (outcome, errText string, rate *RateLimitError) {
+func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, artistID int64, anchor storage.ArtistBiographyAnchor, imgSettings storage.ArtistImageSettings, save func(image storage.ArtistImageInput, guardSource, guardExternalID string) error) (outcome, errText string, rate *RateLimitError, hadTransientErr bool) {
 	logSourceResult := func(source, reason string, details ...any) {
 		fields := []any{"artistId", artistID, "artist", anchor.Name, "source", source, "reason", reason}
 		m.logger.Debug("artist image fallback source result", append(fields, details...)...)
 	}
 
-	trySaveStructured := func(srcName, imgURL string, lookupErr error) (bool, string, string, *RateLimitError) {
+	trySaveStructured := func(srcName, guardSource, guardExternalID, imgURL string, lookupErr error) (bool, string, string, *RateLimitError) {
 		if lookupErr != nil {
 			if rateErr := asRateLimited(lookupErr); rateErr != nil {
 				logSourceResult(srcName, "rate_limited", "stage", "lookup")
 				return true, "", "", rateErr
 			}
+			hadTransientErr = true
 			logSourceResult(srcName, "lookup_failed")
 			return false, "", "", nil
 		}
@@ -394,6 +427,7 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 				logSourceResult(srcName, "rate_limited", "stage", "download")
 				return true, "", "", rateErr
 			}
+			hadTransientErr = true
 			logSourceResult(srcName, "download_failed")
 			return false, "", "", nil
 		}
@@ -416,7 +450,7 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 			Hash:      hash,
 			MIMEType:  mimeType,
 			CachePath: cachePath,
-		}); saveErr != nil {
+		}, guardSource, guardExternalID); saveErr != nil {
 			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
 				logSourceResult(srcName, "state_changed")
 				return true, "skipped", "状态已变化，写入被安全拒绝", nil
@@ -429,37 +463,48 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 	}
 
 	// Tier 2: MBID-anchored Fanart, then Deezer's large portraits, then Bangumi.
+	mbid, mbErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
 	if imgSettings.FanartEnabled && imgSettings.FanartAPIKey != "" {
-		mbid, mbErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
 		switch {
 		case errors.Is(mbErr, sql.ErrNoRows) || mbErr == nil && mbid == "":
 			logSourceResult("fanart", "missing_mbid")
 		case mbErr != nil:
+			hadTransientErr = true
 			logSourceResult("fanart", "lookup_failed")
 		default:
 			imgURL, lookupErr := m.fanartArtistImage(ctx, mbid, imgSettings.FanartAPIKey)
-			if done, out, eText, rErr := trySaveStructured("fanart", imgURL, lookupErr); done {
-				return out, eText, rErr
+			if done, out, eText, rErr := trySaveStructured("fanart", "musicbrainz", mbid, imgURL, lookupErr); done {
+				return out, eText, rErr, hadTransientErr
 			}
 		}
 	}
 	if imgSettings.DeezerEnabled {
+		if mbErr == nil && mbid != "" {
+			if raw, pErr := m.store.ArtistExternalProfileRaw(ctx, artistID, "musicbrainz", mbid); pErr == nil && len(raw) > 0 {
+				for _, dzID := range extractStoredDeezerIDs(raw) {
+					imgURL, lookupErr := m.deezerArtistImageByID(ctx, dzID)
+					if done, out, eText, rErr := trySaveStructured("deezer", "musicbrainz", mbid, imgURL, lookupErr); done {
+						return out, eText, rErr, hadTransientErr
+					}
+				}
+			}
+		}
 		imgURL, _, lookupErr := m.deezerSearchArtistImage(ctx, anchor)
-		if done, out, eText, rErr := trySaveStructured("deezer", imgURL, lookupErr); done {
-			return out, eText, rErr
+		if done, out, eText, rErr := trySaveStructured("deezer", "", "", imgURL, lookupErr); done {
+			return out, eText, rErr, hadTransientErr
 		}
 	}
 	if imgSettings.BangumiEnabled {
 		imgURL, _, lookupErr := m.bangumiPersonImage(ctx, anchor)
-		if done, out, eText, rErr := trySaveStructured("bangumi", imgURL, lookupErr); done {
-			return out, eText, rErr
+		if done, out, eText, rErr := trySaveStructured("bangumi", "", "", imgURL, lookupErr); done {
+			return out, eText, rErr, hadTransientErr
 		}
 	}
 
-	return "", "", nil
+	return "", "", nil, hadTransientErr
 }
 
-func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, runMode string) (outcome, errText string, rate *RateLimitError) {
+func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, runMode string, hadPriorTransientErr bool) (outcome, errText string, rate *RateLimitError) {
 	imgSettings, err := m.store.ArtistImageSettings(ctx)
 	if err != nil {
 		return "failed", err.Error(), nil
@@ -469,10 +514,14 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 		return "failed", err.Error(), nil
 	}
 
-	save := func(image storage.ArtistImageInput) error {
+	save := func(image storage.ArtistImageInput, _, _ string) error {
 		return m.store.SaveArtistImageBackfillGuarded(ctx, image, &checkpoint)
 	}
-	if outcome, errText, rate := m.processStructuredArtistImageFallback(ctx, artistID, anchor, imgSettings, save); outcome != "" || rate != nil {
+	outcome, errText, rate, hadTransientErr := m.processStructuredArtistImageFallback(ctx, artistID, anchor, imgSettings, save)
+	if hadPriorTransientErr {
+		hadTransientErr = true
+	}
+	if outcome != "" || rate != nil {
 		return outcome, errText, rate
 	}
 	log := m.logger.With("artistId", artistID, "artist", anchor.Name)
@@ -481,85 +530,98 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 	webAllowed := runMode == "web_fallback" || imgSettings.WebFallbackEnabled
 	tierReached := "structured"
 	if webAllowed {
-		reserved, reserveErr := m.store.ReserveArtistImageWebRequest(ctx, checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
-		if errors.Is(reserveErr, storage.ErrArtistImageBackfillState) {
-			return "skipped", "任务状态已变化", nil
-		}
-		if reserveErr != nil {
-			return "failed", reserveErr.Error(), nil
-		}
-		if !reserved {
-			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "budget_exhausted")
-			return "no_url", "本轮联网搜索预算已用完", nil
-		}
-		tierReached = "web_fallback"
-		found, ok, webErr := m.discoverArtistImageFromWeb(ctx, artistID, nil, imgSettings)
-		if webErr != nil {
-			if rateErr := asRateLimited(webErr); rateErr != nil {
-				log.Debug("artist image fallback source result", "source", "ai_web", "reason", "rate_limited")
-				return "", "", rateErr
+		if ready, cfgErr := m.canRunArtistImageWebFallback(ctx, imgSettings); !ready {
+			if runMode == "web_fallback" && cfgErr != nil {
+				return "failed", cfgErr.Error(), nil
 			}
-			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "lookup_failed")
-			return "failed", RedactSourceError(webErr).Error(), nil
-		}
-		if !ok {
-			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "no_match")
+			log.Debug("artist image fallback source result", "source", "ai_web", "reason", "not_configured")
 		} else {
-			if found.Confidence == "high" && imgSettings.WebAutoApplyHigh {
-				hash := fmt.Sprintf("%x", sha256.Sum256(found.Data))
-				cachePath, wErr := writeCacheFile(m.imageDirectory, hash+found.Ext, found.Data)
-				if wErr != nil {
-					return "failed", wErr.Error(), nil
+			reserved, reserveErr := m.store.ReserveArtistImageWebRequest(ctx, checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
+			if errors.Is(reserveErr, storage.ErrArtistImageBackfillState) {
+				return "skipped", "任务状态已变化", nil
+			}
+			if reserveErr != nil {
+				return "failed", reserveErr.Error(), nil
+			}
+			if !reserved {
+				log.Debug("artist image fallback source result", "source", "ai_web", "reason", "budget_exhausted")
+				return "no_url", "本轮联网搜索预算已用完", nil
+			}
+			tierReached = "web_fallback"
+			officialURLs, _ := m.store.ArtistConfirmedPageURLs(ctx, artistID)
+			found, ok, webErr := m.discoverArtistImageFromWeb(ctx, artistID, officialURLs, imgSettings)
+			if webErr != nil {
+				if rateErr := asRateLimited(webErr); rateErr != nil {
+					log.Debug("artist image fallback source result", "source", "ai_web", "reason", "rate_limited")
+					return "", "", rateErr
 				}
-				if saveErr := m.store.SaveArtistImageBackfillGuarded(ctx, storage.ArtistImageInput{
-					ArtistID:  artistID,
-					ByteSize:  int64(len(found.Data)),
-					Source:    found.Source,
-					RemoteURL: found.ImageURL,
-					Hash:      hash,
-					MIMEType:  found.MIMEType,
-					CachePath: cachePath,
-				}, &checkpoint); saveErr != nil {
-					if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
-						return "skipped", "状态已变化，写入被安全拒绝", nil
+				log.Debug("artist image fallback source result", "source", "ai_web", "reason", "lookup_failed")
+				return "failed", RedactSourceError(webErr).Error(), nil
+			}
+			if !ok {
+				log.Debug("artist image fallback source result", "source", "ai_web", "reason", "no_match")
+			} else {
+				if found.Confidence == "high" && imgSettings.WebAutoApplyHigh {
+					hash := fmt.Sprintf("%x", sha256.Sum256(found.Data))
+					cachePath, wErr := writeCacheFile(m.imageDirectory, hash+found.Ext, found.Data)
+					if wErr != nil {
+						return "failed", wErr.Error(), nil
 					}
-					return "failed", saveErr.Error(), nil
+					if saveErr := m.store.SaveArtistImageBackfillGuarded(ctx, storage.ArtistImageInput{
+						ArtistID:  artistID,
+						ByteSize:  int64(len(found.Data)),
+						Source:    found.Source,
+						RemoteURL: found.ImageURL,
+						Hash:      hash,
+						MIMEType:  found.MIMEType,
+						CachePath: cachePath,
+					}, &checkpoint); saveErr != nil {
+						if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
+							_ = m.store.RecordArtistImageBackfillMiss(ctx, checkpoint, artistID, tierReached, imgSettings.NegativeCacheDays)
+							return "skipped", "状态已变化，写入被安全拒绝", nil
+						}
+						return "failed", saveErr.Error(), nil
+					}
+					log.Debug("artist image fallback source result", "source", found.Source, "reason", "cached", "width", found.Width, "height", found.Height)
+					return "cached", "", nil
 				}
-				log.Debug("artist image fallback source result", "source", found.Source, "reason", "cached", "width", found.Width, "height", found.Height)
-				return "cached", "", nil
+				m.cacheCandidatePreviewBytes(found.ImageURL, found.Ext, found.Data)
+				id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
+					ArtistID:   artistID,
+					Source:     found.Source,
+					ImageURL:   found.ImageURL,
+					PageURL:    found.PageURL,
+					Title:      found.Title,
+					Confidence: found.Confidence,
+					Reason:     found.Reason,
+					Width:      found.Width,
+					Height:     found.Height,
+				})
+				if errors.Is(candErr, storage.ErrArtistImageBackfillState) {
+					return "skipped", "任务或艺术家状态已变化", nil
+				}
+				if candErr != nil {
+					return "failed", candErr.Error(), nil
+				}
+				if id != 0 {
+					log.Debug("artist image fallback source result", "source", found.Source, "reason", "candidate")
+					return "candidate", "", nil
+				}
+				_ = m.store.RecordArtistImageBackfillMiss(ctx, checkpoint, artistID, tierReached, imgSettings.NegativeCacheDays)
+				log.Debug("artist image fallback source result", "source", found.Source, "reason", "already_reviewed")
+				return "skipped", "该候选已审核", nil
 			}
-			id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
-				ArtistID:   artistID,
-				Source:     found.Source,
-				ImageURL:   found.ImageURL,
-				PageURL:    found.PageURL,
-				Title:      found.Title,
-				Confidence: found.Confidence,
-				Reason:     found.Reason,
-				Width:      found.Width,
-				Height:     found.Height,
-			})
-			if errors.Is(candErr, storage.ErrArtistImageBackfillState) {
-				return "skipped", "任务或艺术家状态已变化", nil
-			}
-			if candErr != nil {
-				return "failed", candErr.Error(), nil
-			}
-			if id != 0 {
-				log.Debug("artist image fallback source result", "source", found.Source, "reason", "candidate")
-				return "candidate", "", nil
-			}
-			log.Debug("artist image fallback source result", "source", found.Source, "reason", "already_reviewed")
-			return "skipped", "该候选已审核", nil
 		}
 	}
 
-	m.logger.Debug("artist image backfill no match across enabled sources", "artistId", artistID, "artist", anchor.Name, "mode", runMode, "tier", tierReached)
-	if err := m.store.RecordArtistImageBackfillMiss(ctx, checkpoint, artistID, tierReached, imgSettings.NegativeCacheDays); err != nil {
-		if errors.Is(err, storage.ErrArtistImageBackfillState) {
-			return "skipped", "任务或艺术家状态已变化", nil
+	m.logger.Debug("artist image backfill no match across enabled sources", "artistId", artistID, "artist", anchor.Name, "mode", runMode, "tier", tierReached, "transientErr", hadTransientErr)
+	if !hadTransientErr {
+		if err := m.store.RecordArtistImageBackfillMiss(ctx, checkpoint, artistID, tierReached, imgSettings.NegativeCacheDays); err != nil {
+			if errors.Is(err, storage.ErrArtistImageBackfillState) {
+				return "skipped", "任务或艺术家状态已变化", nil
+			}
+			return "failed", err.Error(), nil
 		}
-		return "failed", err.Error(), nil
 	}
 	return "no_url", "", nil
 }

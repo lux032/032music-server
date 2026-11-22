@@ -374,6 +374,26 @@
   }
   function clearRunHint(container) { container.querySelector('.run-update-hint')?.remove(); }
 
+  function syncPipelineCard(kind, run) {
+    if (!kind) return;
+    const pipeline = document.querySelector(`[data-pipeline-kind="${kind}"]`);
+    if (!pipeline) return;
+    const badge = pipeline.querySelector('[data-pipeline-status]');
+    const note = pipeline.querySelector('[data-pipeline-running-note]');
+    if (!run) {
+      if (badge) {
+        badge.textContent = badge.dataset.idleLabel || '已结束';
+        badge.className = 'run-status match-status-idle';
+      }
+      if (note) note.textContent = '任务已结束，刷新页面查看最新结果或再次启动。';
+      return;
+    }
+    if (badge) {
+      badge.textContent = RUN_STATUS_LABELS[run.status] || run.status;
+      badge.className = `run-status status-${run.status}`;
+    }
+  }
+
   // updateRunCard returns 'reload' when the visible card no longer matches
   // the server state (new run id), true when an active card is shown.
   function updateRunCard(container, run, kind) {
@@ -386,11 +406,14 @@
         done.setAttribute('data-run-empty', '');
         done.textContent = '任务已结束，刷新页面查看最新结果。';
         card.replaceWith(done);
+        syncPipelineCard(kind, null);
       }
       return false;
     }
     if (!card || card.dataset.runId !== String(run.id)) return 'reload';
     card.dataset.runStatus = run.status;
+    card.classList.toggle('is-paused', run.status === 'paused');
+    syncPipelineCard(kind, run);
     const statusEl = runField(card, 'status');
     if (statusEl) {
       statusEl.textContent = RUN_STATUS_LABELS[run.status] || run.status;
@@ -438,6 +461,9 @@
         // 失败时保留现有卡片，绝不能把未知状态误报为完成。
         showRunHint(container, '状态更新中断，重试连接中…');
       }
+    }
+    if (!document.querySelector('[data-run-card]')) {
+      document.querySelectorAll('.match-tab-dot').forEach((dot) => { dot.hidden = true; });
     }
     ensureRunCountdown();
     return failed ? 'failed' : 'ok';
@@ -910,13 +936,26 @@ document.addEventListener('submit', async (event) => {
     root.querySelectorAll('[data-match-panel]').forEach((panel) => {
       panel.hidden = panel.getAttribute('data-match-panel') !== tab;
     });
+    const baseUrl = new URL(window.location.href);
+    baseUrl.searchParams.delete('notice');
     root.querySelectorAll('[data-match-return-to]').forEach((input) => {
-      input.value = `/admin/matches?tab=${encodeURIComponent(tab)}`;
+      const fixedTab = input.getAttribute('data-match-return-to') || tab;
+      const retUrl = new URL(baseUrl.href);
+      if (fixedTab === 'identity' && !retUrl.searchParams.has('runsPage') && !retUrl.searchParams.has('creditsPage')) {
+        retUrl.searchParams.delete('tab');
+      } else {
+        retUrl.searchParams.set('tab', fixedTab);
+      }
+      input.value = retUrl.pathname + retUrl.search;
     });
     if (syncUrl && window.history && window.history.replaceState) {
       const url = new URL(window.location.href);
-      if (tab === 'identity') url.searchParams.delete('tab');
-      else url.searchParams.set('tab', tab);
+      url.searchParams.delete('notice');
+      if (tab === 'identity' && !url.searchParams.has('runsPage') && !url.searchParams.has('creditsPage')) {
+        url.searchParams.delete('tab');
+      } else {
+        url.searchParams.set('tab', tab);
+      }
       window.history.replaceState(window.history.state, '', url.href);
     }
   }

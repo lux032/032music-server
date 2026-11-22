@@ -138,12 +138,12 @@
 .h-hero-side-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 750; }
 .h-hero-side-head span { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .h-hero-tracks { display: grid; align-content: start; gap: 2px; margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 0; flex: 1 1 0; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-.h-hero-tracks button {
+.h-hero-tracks > li > button {
   display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px;
   width: 100%; min-height: 50px; border: 0; border-radius: var(--radius-md); padding: 6px 8px;
   color: var(--text); background: transparent; font-weight: 400; text-align: left;
 }
-.h-hero-tracks button:hover { color: var(--text); background: color-mix(in oklab, var(--surface) 80%, transparent); }
+.h-hero-tracks > li > button:hover { color: var(--text); background: color-mix(in oklab, var(--surface) 80%, transparent); }
 .h-hero-tracks .no { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; text-align: center; }
 .h-hero-tracks .t { min-width: 0; display: grid; }
 .h-hero-tracks b, .h-hero-tracks small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -154,11 +154,11 @@
   position: absolute; z-index: 1; left: 42px; right: 4.75rem; bottom: 8px; margin: 0;
   overflow: hidden; text-overflow: clip; pointer-events: none;
 }
-.h-hero-artists .artist-links, .h-hero-artists .artist-name, .h-hero-artists .artist-more { pointer-events: auto; }
+.h-hero-artists a.artist-name, .h-hero-artists .artist-more { pointer-events: auto; }
 .h-hero-tracks b { font-size: var(--fs-sm); font-weight: 600; }
 .h-hero-tracks small { color: var(--muted); font-size: var(--fs-xs); }
 .h-hero-tracks .d { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-.h-hero-tracks.is-albums button { grid-template-columns: 44px minmax(0, 1fr) auto; }
+.h-hero-tracks.is-albums > li > button { grid-template-columns: 44px minmax(0, 1fr) auto; }
 .h-hero-tracks.is-albums img, .h-hero-tracks.is-albums .cover-placeholder { width: 44px; height: 44px; border-radius: var(--radius-sm); object-fit: cover; display: grid; place-items: center; color: var(--muted); background: var(--surface-sunken); font-size: 0.7rem; }
 .h-hero-tracks .now-playing-row b, .h-hero-tracks .now-playing-row .no { color: var(--accent-strong-text); }
 .h-hero-tracks .now-playing-row .no { font-weight: 700; }

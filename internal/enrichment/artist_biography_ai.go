@@ -19,6 +19,10 @@ import (
 	"github.com/lux032/032music-server/internal/websearch"
 )
 
+// ErrNoWebBiographyFound indicates an interactive web-search biography request
+// completed cleanly without finding reliable evidence for the artist.
+var ErrNoWebBiographyFound = errors.New("未找到可靠的公开艺人简介资料")
+
 // BiographyRefreshOptions tunes per-call biography refresh behavior.
 type BiographyRefreshOptions struct {
 	// AllowWebFallback enables Tier 3 AI web-search synthesis for this single
@@ -98,7 +102,7 @@ Rules:
 4. Write in a natural, neutral, concise encyclopedic tone suitable for a music library artist page.
 5. Remove wiki citation markers (such as [1], [citation needed]), phonetic/IPA clutter that reads poorly in targetLanguage, and boilerplate footers like "Read more on Last.fm".
 6. Output plain text paragraphs separated by "\n\n". Do not use Markdown headings, bullet lists, or meta-commentary.
-7. Return JSON only matching the required schema.`
+7. Return a single JSON object of the form {"biography": "..."} matching the required schema (always use the exact key "biography").`
 
 var bioTranslateSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["biography"],"properties":{"biography":{"type":"string"}}}`)
 
@@ -247,7 +251,14 @@ func selectBestBiographyCandidate(candidates []biographyCandidate, targetShort s
 }
 
 func shouldSkipAITranslation(nativeTarget, best biographyCandidate) bool {
+	return shouldSkipAITranslationForTarget(nativeTarget, best, "zh-Hans")
+}
+
+func shouldSkipAITranslationForTarget(nativeTarget, best biographyCandidate, targetTag string) bool {
 	if strings.TrimSpace(nativeTarget.Text) == "" || best.Score <= 0 {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(targetTag), "zh-Hant") && nativeTarget.Language == "zh" {
 		return false
 	}
 	if nativeTarget.Language == best.Language && nativeTarget.Source == best.Source {

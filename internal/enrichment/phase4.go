@@ -92,30 +92,33 @@ func (m *Manager) StartRun(ctx context.Context, request RunRequest) (storage.Enr
 	return run, err
 }
 
-func (m *Manager) startRun(ctx context.Context, request RunRequest, queueAutoOnBusy bool) (storage.EnrichmentRun, bool, error) {
+func (m *Manager) startRun(ctx context.Context, request RunRequest, queueAutoOnBusy bool) (storage.EnrichmentRun, string, error) {
 	request, err := normalizeRunRequest(request)
 	if err != nil {
-		return storage.EnrichmentRun{}, false, err
+		return storage.EnrichmentRun{}, "", err
 	}
 	m.phaseMu.Lock()
 	defer m.phaseMu.Unlock()
 	if m.phaseRunning {
 		if queueAutoOnBusy {
 			m.phaseAutoRerunPending = true
-			return storage.EnrichmentRun{}, true, nil
+			return storage.EnrichmentRun{}, "active", nil
 		}
-		return storage.EnrichmentRun{}, false, storage.ErrEnrichmentRunState
+		return storage.EnrichmentRun{}, "", storage.ErrEnrichmentRunState
 	}
 	run, err := m.store.CreateDurableEnrichmentRun(ctx, request.Scope, request.TargetID, request.Force, phaseStages(request))
 	if err != nil {
 		if queueAutoOnBusy && errors.Is(err, storage.ErrEnrichmentRunState) {
 			m.phaseAutoRerunPending = true
-			return storage.EnrichmentRun{}, true, nil
+			return storage.EnrichmentRun{}, "paused", nil
 		}
-		return storage.EnrichmentRun{}, false, err
+		return storage.EnrichmentRun{}, "", err
+	}
+	if request.Scope == "all" {
+		m.phaseAutoRerunPending = false
 	}
 	m.launchDurablePhaseLocked(run)
-	return run.EnrichmentRun, false, nil
+	return run.EnrichmentRun, "", nil
 }
 func (m *Manager) CancelRun(runID int64) error { return m.stopPhaseRun(runID, "cancel") }
 func (m *Manager) PauseRun(runID int64) error  { return m.stopPhaseRun(runID, "pause") }

@@ -327,3 +327,75 @@ func TestStartAutoWorkPosterBackfillRerunsWhenAlreadyRunning(t *testing.T) {
 		t.Fatalf("expected 2 passes covering both works; passes=%d result=%+v", passes, result)
 	}
 }
+
+func TestStartAutoPhaseFailedRunClearsQueuedRerun(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var failMode sync.Mutex
+	shouldFail := true
+	m, s, _, _ := phase4TestManager(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+		failMode.Lock()
+		f := shouldFail
+		failMode.Unlock()
+		if f {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	ctx := context.Background()
+	library := mustLibrary(t, s)
+	for i := 1; i <= 5; i++ {
+		name := "FailTrack" + strings.Repeat("X", i)
+		if err := s.ImportTrack(ctx, storage.ImportInput{
+			LibraryID:    library,
+			RelativePath: name + "/01.flac",
+			FileSize:     1,
+			ModifiedAtNS: 1,
+			Metadata:     metadata.AudioMetadata{Title: name, Album: "Album-" + name, Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"}, DiscNumber: 1, TrackNumber: 1, TrackType: "tv_size"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.StartRun(ctx, RunRequest{Scope: "all"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not start")
+	}
+	m.StartAuto(ctx)
+	close(release)
+	m.Wait()
+
+	runs, err := s.ListEnrichmentRuns(ctx, 10, 0)
+	if err != nil || len(runs) != 1 || runs[0].Status != "failed" {
+		t.Fatalf("expected 1 failed run, got %+v err=%v", runs, err)
+	}
+	// A later single-album manual run must not trigger a stale full-library auto rerun.
+	failMode.Lock()
+	shouldFail = false
+	failMode.Unlock()
+	albums, err := s.AlbumsForBangumiTieup(ctx, true, 0)
+	if err != nil || len(albums) == 0 {
+		t.Fatalf("albums=%v err=%v", albums, err)
+	}
+	if _, err = m.StartRun(ctx, RunRequest{Scope: "album", TargetID: albums[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	runs, err = s.ListEnrichmentRuns(ctx, 10, 0)
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("failed run leaked stale phaseAutoRerunPending into later scoped run; runs=%+v err=%v", runs, err)
+	}
+}
