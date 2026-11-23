@@ -24,6 +24,7 @@ func TestSimilarityHTTPValidationAndAuth(t *testing.T) {
 		{"/api/v1/tracks/abc/similar", true, 400},
 		{"/api/v1/tracks/1/similar?exclude=abc", true, 400},
 		{"/api/v1/tracks/1/similar?diverse=maybe", true, 400},
+		{"/api/v1/tracks/1/similar?hideInstrumental=maybe", true, 400},
 		{"/api/v1/tracks/1/similar?maxPerArtist=0", true, 400},
 		{"/api/v1/tracks/1/similar?maxPerArtist=11", true, 400},
 		{"/api/v1/tracks/999999/similar", true, 404},

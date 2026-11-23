@@ -110,3 +110,99 @@ func TestSimilarTracksBlocksExcludeAndDiversity(t *testing.T) {
 		t.Fatalf("expected diversity order [3, 6, 4], got [%d, %d, %d]", items[0].Track.ID, items[1].Track.ID, items[2].Track.ID)
 	}
 }
+
+func TestSimilarTracksExcludesAccompanimentAndInstrumentalSignals(t *testing.T) {
+	s := similarityFixture(t)
+	ctx := context.Background()
+	// 1: vocal seed
+	// 2: valid vocal song whose title starts with "Instinct" (must NOT be false-positive filtered)
+	// 3..8: various accompaniment / instrumental tracks marked only as track_type='regular'
+	// 9: pure instrumental track (track_type='instrumental')
+	// 10: track with clean title but relative_path in an Off Vocal folder
+	// 11: track with clean title/path but AI tag vocal='instrumental'
+	// 12: track with clean title/path/untagged but EffNet heads_json voice=0.08
+	// 13: track with EffNet heads_json voice=0.88 (vocal -> must be kept)
+	tracks := []struct {
+		id    int
+		title string
+		kind  string
+	}{
+		{1, "Hero Song", "regular"},
+		{2, "Hero (Instinct)", "regular"},
+		{3, "Starlight -Instrumental-", "regular"},
+		{4, "Starlight (Off Vocal)", "regular"},
+		{5, "Starlight (Inst.)", "regular"},
+		{6, "Starlight（カラオケ）", "regular"},
+		{7, "Starlight (伴奏)", "regular"},
+		{8, "Starlight -Less Vocal-", "regular"},
+		{9, "Piano Solo", "instrumental"},
+		{10, "Clean Title Path", "regular"},
+		{11, "Clean Title AI Inst", "regular"},
+		{12, "Clean Title Audio Inst", "regular"},
+		{13, "Clean Title Audio Vocal", "regular"},
+	}
+	for _, tr := range tracks {
+		addSimilarityTrack(t, s, tr.id, tr.title, tr.kind, true)
+	}
+	if _, e := s.db.ExecContext(ctx, `UPDATE audio_files SET relative_path='Album/Off Vocal/10 Clean.flac' WHERE track_id=10`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.db.ExecContext(ctx, `INSERT INTO track_tag_meta(track_id,source_stamp,input_hash,vocab_version,prompt_version,model,vocal,tagged_at) VALUES(11,'s','h',1,1,'m','instrumental','2026-01-01T00:00:00Z')`); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.SaveTrackAudioFeatures(ctx, TrackAudioFeatures{
+		TrackID: 12, Fingerprint: "fp12", AnalysisVersion: "v1", Mode: "fast",
+		Genre: []byte{1}, MoodTheme: []byte{1}, Instrument: []byte{1}, Embedding: []byte{1, 2, 3, 4},
+		HeadsJSON: `{"voice":0.08}`,
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.SaveTrackAudioFeatures(ctx, TrackAudioFeatures{
+		TrackID: 13, Fingerprint: "fp13", AnalysisVersion: "v1", Mode: "fast",
+		Genre: []byte{1}, MoodTheme: []byte{1}, Instrument: []byte{1}, Embedding: []byte{1, 2, 3, 4},
+		HeadsJSON: `{"voice":0.88}`,
+	}); e != nil {
+		t.Fatal(e)
+	}
+
+	items, e := s.SimilarTracks(ctx, 1, 30)
+	if e != nil {
+		t.Fatal(e)
+	}
+	gotIDs := make([]int64, 0, len(items))
+	for _, it := range items {
+		gotIDs = append(gotIDs, it.Track.ID)
+	}
+	// Only tracks 2 ("Instinct") and 13 (vocal voice=0.88) should survive for vocal seed 1.
+	if len(gotIDs) != 2 || (gotIDs[0] != 2 && gotIDs[1] != 2) || (gotIDs[0] != 13 && gotIDs[1] != 13) {
+		t.Fatalf("vocal seed expected [2, 13], got %v", gotIDs)
+	}
+
+	// Seeding from instrumental track 9: must STILL block off-vocal/karaoke/accompaniment (4,6,7,8,10),
+	// while allowing other pure instrumentals (11,12) unless HideInstrumental is set.
+	instItems, e := s.SimilarTracks(ctx, 9, 30)
+	if e != nil {
+		t.Fatal(e)
+	}
+	instSet := map[int64]bool{}
+	for _, it := range instItems {
+		instSet[it.Track.ID] = true
+	}
+	for _, blocked := range []int64{4, 6, 7, 8, 10} {
+		if instSet[blocked] {
+			t.Fatalf("accompaniment track %d leaked into instrumental seed results: %v", blocked, instSet)
+		}
+	}
+	if !instSet[11] || !instSet[12] {
+		t.Fatalf("expected pure instrumental tracks 11 and 12 for instrumental seed, got %v", instSet)
+	}
+	strictItems, e := s.SimilarTracksWithOptions(ctx, 9, 30, SimilarTracksOptions{HideInstrumental: true})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, it := range strictItems {
+		if it.Track.ID == 11 || it.Track.ID == 12 {
+			t.Fatalf("HideInstrumental leaked instrumental track %d", it.Track.ID)
+		}
+	}
+}

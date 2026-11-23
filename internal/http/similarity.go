@@ -63,6 +63,16 @@ func parseSimilarOptions(r *http.Request) (storage.SimilarTracksOptions, bool) {
 		}
 		opts.MaxPerArtist = n
 	}
+	if rawHide, hasHide := r.URL.Query()["hideInstrumental"]; hasHide {
+		val := strings.ToLower(strings.TrimSpace(rawHide[0]))
+		switch val {
+		case "1", "true":
+			opts.HideInstrumental = true
+		case "0", "false", "":
+		default:
+			return opts, false
+		}
+	}
 	return opts, true
 }
 func (a *App) handleSimilarTracks(w http.ResponseWriter, r *http.Request) {

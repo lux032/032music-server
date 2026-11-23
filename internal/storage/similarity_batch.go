@@ -13,13 +13,13 @@ func (s *Store) similarityBatch(ctx context.Context, ids []int64) (map[int64]*si
 	for start := 0; start < len(ids); start += 500 {
 		part := ids[start:min(start+500, len(ids))]
 		in, args := inClause(part)
-		rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),COALESCE(a.user_release_year,a.release_year,0),COALESCE(pp.play_count,0),COALESCE(pp.skip_count,0) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id IN (`+in+`)`, args...)
+		rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),COALESCE(a.user_release_year,a.release_year,0),COALESCE(pp.play_count,0),COALESCE(pp.skip_count,0),COALESCE(tm.vocal,''),COALESCE(CAST(json_extract(af.heads_json,'$.voice') AS REAL),-1) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN playback_progress pp ON pp.track_id=t.id LEFT JOIN track_tag_meta tm ON tm.track_id=t.id LEFT JOIN track_audio_features af ON af.track_id=t.id WHERE t.id IN (`+in+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
-			m := &similarityMeta{}
-			if err = rows.Scan(&m.track.ID, &m.track.AlbumID, &m.track.Title, &m.track.TrackType, &m.track.Year, &m.playCount, &m.skipCount); err != nil {
+			m := &similarityMeta{voiceProb: -1}
+			if err = rows.Scan(&m.track.ID, &m.track.AlbumID, &m.track.Title, &m.track.TrackType, &m.track.Year, &m.playCount, &m.skipCount, &m.vocal, &m.voiceProb); err != nil {
 				break
 			}
 			result[m.track.ID] = m
@@ -42,7 +42,6 @@ func (s *Store) similarityBatch(ctx context.Context, ids []int64) (map[int64]*si
 			{`SELECT g.track_id,g.genre_id FROM track_genres g WHERE g.track_id IN (` + in + `) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides o WHERE o.track_id=g.track_id)`, 1, func(m *similarityMeta, n int64) { m.genre = set(m.genre, n) }},
 			{`SELECT track_id,work_id FROM work_tracks WHERE track_id IN (` + in + `) UNION SELECT t.id,aw.work_id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE t.id IN (` + in + `)`, 2, func(m *similarityMeta, n int64) { m.work = set(m.work, n) }},
 			{`SELECT track_id,playlist_id FROM playlist_items WHERE track_id IN (` + in + `)`, 1, func(m *similarityMeta, n int64) { m.playlists = set(m.playlists, n) }},
-			{`SELECT track_id,1 FROM audio_files WHERE status='available' AND track_id IN (` + in + `)`, 1, func(m *similarityMeta, _ int64) { m.available = true }},
 			{`SELECT track_id,1 FROM recommendation_track_blocks WHERE track_id IN (` + in + `)`, 1, func(m *similarityMeta, _ int64) { m.blocked = true }},
 		} {
 			queryArgs := args
@@ -69,6 +68,32 @@ func (s *Store) similarityBatch(ctx context.Context, ids []int64) (map[int64]*si
 			if err != nil {
 				return nil, err
 			}
+		}
+		// Fetch availability and relative_path together so path-based accompaniment markers
+		// (e.g. /Off Vocal/ or "(Inst).flac") can also be filtered without an extra query.
+		rows, err = s.db.QueryContext(ctx, `SELECT track_id,COALESCE(relative_path,'') FROM audio_files WHERE status='available' AND track_id IN (`+in+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			var rel string
+			if err = rows.Scan(&id, &rel); err != nil {
+				break
+			}
+			if m := result[id]; m != nil {
+				m.available = true
+				if m.relativePath == "" {
+					m.relativePath = rel
+				}
+			}
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil {
+			return nil, err
 		}
 	}
 	return result, nil
@@ -229,6 +254,10 @@ func primaryKey(m *similarityMeta) string {
 	return fmt.Sprint(sortedKeys(m.primary))
 }
 func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small bool) ([]scoredCandidate, error) {
+	return s.rankedCandidatesWithOptions(ctx, seed, small, false)
+}
+
+func (s *Store) rankedCandidatesWithOptions(ctx context.Context, seed similarityMeta, small, hideInstrumental bool) ([]scoredCandidate, error) {
 	ids, e := s.similarityCandidates(ctx, seed, small)
 	if e != nil {
 		return nil, e
@@ -255,7 +284,7 @@ func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small
 	ranked := []scoredCandidate{}
 	for _, id := range ids {
 		m := batch[id]
-		if m == nil || !m.available || m.blocked || (!nonMain(seed.track.TrackType) && nonMain(m.track.TrackType)) {
+		if m == nil || !m.available || m.blocked || shouldExcludeSimilarityCandidate(seed, *m, hideInstrumental) {
 			continue
 		}
 		score, reasons := compareSimilarityWith(seed, *m, acoustic)
@@ -272,8 +301,9 @@ func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small
 
 // SimilarTracksOptions controls optional filtering and diversity when fetching similar tracks.
 type SimilarTracksOptions struct {
-	Exclude      map[int64]bool
-	MaxPerArtist int
+	Exclude          map[int64]bool
+	MaxPerArtist     int
+	HideInstrumental bool
 }
 
 func dedupeCandidates(seed similarityMeta, ranked []scoredCandidate, limit int) []scoredCandidate {
@@ -334,7 +364,7 @@ func (s *Store) SimilarTracksWithOptions(ctx context.Context, id int64, limit in
 	if e != nil {
 		return nil, e
 	}
-	ranked, e := s.rankedCandidates(ctx, seed, false)
+	ranked, e := s.rankedCandidatesWithOptions(ctx, seed, false, opts.HideInstrumental)
 	if e != nil {
 		return nil, e
 	}

@@ -21,7 +21,7 @@ func TestSimilarityCandidateQueryPlans(t *testing.T) {
 		{`SELECT track_id FROM track_genres WHERE genre_id=? AND track_id>=? AND track_id<>? ORDER BY track_id LIMIT ?`, []any{1, 1, 1, 300}},
 		{`SELECT track_id FROM track_genre_overrides WHERE genre_id=? AND track_id<? AND track_id<>? ORDER BY track_id LIMIT ?`, []any{1, 1, 1, 300}},
 		{`SELECT track_id FROM track_genres WHERE genre_id=? AND track_id<? AND track_id<>? ORDER BY track_id LIMIT ?`, []any{1, 1, 1, 300}},
-		{`SELECT t.id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),COALESCE(a.user_release_year,a.release_year,0) FROM tracks t JOIN albums a ON a.id=t.album_id WHERE t.id IN (?)`, []any{1}},
+		{`SELECT t.id,t.album_id,COALESCE(t.user_title,t.title),COALESCE(NULLIF(t.user_track_type,''),NULLIF(t.track_type,''),'regular'),COALESCE(a.user_release_year,a.release_year,0),COALESCE(tm.vocal,''),COALESCE(CAST(json_extract(af.heads_json,'$.voice') AS REAL),-1) FROM tracks t JOIN albums a ON a.id=t.album_id LEFT JOIN track_tag_meta tm ON tm.track_id=t.id LEFT JOIN track_audio_features af ON af.track_id=t.id WHERE t.id IN (?)`, []any{1}},
 		{`SELECT ta.track_id,COALESCE(ar.merged_into_artist_id,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role='primary' AND ta.track_id IN (?)`, []any{1}},
 		{`SELECT ta.track_id,COALESCE(ar.merged_into_artist_id,ar.id) FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND ta.track_id IN (?)`, []any{1}},
 		{`SELECT track_id,genre_id FROM track_genre_overrides WHERE track_id IN (?)`, []any{1}},

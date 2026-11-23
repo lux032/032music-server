@@ -2,6 +2,7 @@ package storage
 
 import (
 	"math"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -18,6 +19,9 @@ type similarityMeta struct {
 	playlists                    map[int64]bool
 	available                    bool
 	blocked                      bool
+	relativePath                 string
+	vocal                        string  // "", "vocal", "instrumental", "mixed" (from track_tag_meta)
+	voiceProb                    float64 // -1 when absent; 0..1 from track_audio_features heads_json $.voice
 	playCount, skipCount         int64
 }
 type similarityFactors struct {
@@ -108,6 +112,84 @@ func compareSimilarityWith(a, b similarityMeta, acoustic *AcousticSnapshot) (flo
 func nonMain(t string) bool {
 	switch t {
 	case "instrumental", "off_vocal", "tv_size", "drama_track":
+		return true
+	}
+	return false
+}
+
+// accompanimentVoiceThreshold is the EffNet voice_instrumental probability below which an
+// untagged track is treated as instrumental when the seed is a vocal track.
+const accompanimentVoiceThreshold = 0.25
+
+var (
+	accompanimentMarkerPattern = regexp.MustCompile(`(?i)(off[\s._-]*(vocal|vo\.?)|オフ[\s・._-]*(ボーカル|ヴォーカル)|karaoke|カラオケ|からおけ|backing[\s._-]*track|minus[\s._-]*one|(less|without|no|w/o)[\s._-]*vocal|vocal[\s._-]*less|ボーカル(なし|レス)|歌なし|伴奏)`)
+	instrumentalMarkerPattern  = regexp.MustCompile(`(?i)(\binstrumentals?\b|(^|[\s(\[【「\-–—~～/\\])inst\.?(\s*(ver\.?|version|mix|edit))?($|[\s)\]】」\-–—~～._/\\])|インスト(ゥルメンタル|ルメンタル)?|纯音乐|純音楽)`)
+)
+
+func foldSimilarityText(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= 0xff01 && r <= 0xff5e {
+			r -= 0xfee0
+		}
+		if r == 0x3000 {
+			r = ' '
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
+}
+
+func isAccompanimentMeta(m similarityMeta) bool {
+	if m.track.TrackType == "off_vocal" {
+		return true
+	}
+	if accompanimentMarkerPattern.MatchString(foldSimilarityText(m.track.Title)) {
+		return true
+	}
+	if m.relativePath != "" && accompanimentMarkerPattern.MatchString(foldSimilarityText(m.relativePath)) {
+		return true
+	}
+	return false
+}
+
+func isInstrumentalMeta(m similarityMeta) bool {
+	if m.track.TrackType == "instrumental" || isAccompanimentMeta(m) {
+		return true
+	}
+	if instrumentalMarkerPattern.MatchString(foldSimilarityText(m.track.Title)) {
+		return true
+	}
+	if m.relativePath != "" && instrumentalMarkerPattern.MatchString(foldSimilarityText(m.relativePath)) {
+		return true
+	}
+	if m.vocal == "instrumental" {
+		return true
+	}
+	if m.vocal == "" && m.voiceProb >= 0 && m.voiceProb < accompanimentVoiceThreshold {
+		return true
+	}
+	return false
+}
+
+func shouldExcludeSimilarityCandidate(seed, candidate similarityMeta, hideInstrumental bool) bool {
+	if hideInstrumental && isInstrumentalMeta(candidate) {
+		return true
+	}
+	// Never mix karaoke/off-vocal/accompaniment tracks into regular or pure-instrumental seeds.
+	if !isAccompanimentMeta(seed) && isAccompanimentMeta(candidate) {
+		return true
+	}
+	if !nonMain(seed.track.TrackType) && nonMain(candidate.track.TrackType) {
+		return true
+	}
+	// When seeding from a vocal track, exclude instrumental/accompaniment tracks detected
+	// via track type, title/path markers, AI vocal tags, or low EffNet voice probability.
+	if !isInstrumentalMeta(seed) && isInstrumentalMeta(candidate) {
 		return true
 	}
 	return false
