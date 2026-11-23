@@ -45,7 +45,7 @@
 | `PUT` / `DELETE` | `/api/v1/tracks/{id}/lyrics/source` | `PUT {source, id}`：手动选择这首歌的在线歌词（优先于本地歌词，对所有客户端生效）；`DELETE`：清除在线歌词并停止自动搜索（本地歌词不受影响），返回 204。 |
 | `GET` | `/api/v1/artwork/{id}`、`/api/v1/artists/{id}/image` | 图片，可传 `size` 获取缩略图。 |
 | `GET` | `/api/v1/tracks/{id}/transcode.{mp3\|ogg\|flac}` | 转码媒体。 |
-| `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 元数据相似度与路径（JSON 凭据）。 |
+| `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 相似曲目（元数据 + 声学混合，支持 `limit`/`exclude`/`diverse`/`maxPerArtist`）与渐变路径（JSON 凭据）。 |
 | `POST` | `/api/v1/enrichment/run` | 启动增强；`/api/v1/enrichment/jobs` 和 `/{id}` 查状态，POST `/{id}/cancel` 取消。 |
 | `GET` | `/api/v1/audio-analysis` | 声学分析状态：开关、进度、校准、分析服务信息（`capabilities.features.audioAnalysis` 表示已部署且已开启）。 |
 | `GET` | `/api/v1/ai/tagging` | AI 打标状态：进度、用量、复核与抽样对比（`capabilities.features.trackTags` 表示已配置且已开启）。 |
@@ -61,7 +61,7 @@
 
 `{artists|albums|tracks}` 及格式枚举仅为表格简写，不是实际 URL。候选审核接口也在 `internal/http/app.go` 注册。
 
-普通列表返回 `{"items":[],"total":0,"limit":100,"offset":0}`，单页最多 500 条；同步接口使用独立游标响应。浏览参数包括 `q`、`artist`、`album`、`year`、`genre`、`sort`、`limit`、`offset`，适用性取决于资源。歌手列表支持 `role=album|track|all`、`favorite=true`；歌曲支持 `hideInstrumental=true`，`sort` 支持 `title`、`year`、`date`、`plays`（播放次数）、`recentlyPlayed`（最近播放）。支持假名变体匹配，罗马音搜索需标签提供 reading/sort 字段。相似推荐基于元数据，**不是声学分析**。
+普通列表返回 `{"items":[],"total":0,"limit":100,"offset":0}`，单页最多 500 条；同步接口使用独立游标响应。浏览参数包括 `q`、`artist`、`album`、`year`、`genre`、`sort`、`limit`、`offset`，适用性取决于资源。歌手列表支持 `role=album|track|all`、`favorite=true`；歌曲支持 `hideInstrumental=true`，`sort` 支持 `title`、`year`、`date`、`plays`（播放次数）、`recentlyPlayed`（最近播放）。支持假名变体匹配，罗马音搜索需标签提供 reading/sort 字段。相似推荐在存在声学特征时采用元数据 + 声学混合打分（`capabilities.similarity.method` 为 `hybrid`），否则回退为纯元数据（`metadata`），并自动过滤「不再推荐」曲目。
 
 ### 浏览接口
 

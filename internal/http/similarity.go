@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"github.com/lux032/032music-server/internal/storage"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
+
+const maxSimilarExcludeIDs = 200
 
 func similarityLimit(r *http.Request, def, min int) (int, bool) {
 	raw := r.URL.Query().Get("limit")
@@ -21,14 +25,55 @@ func positiveID(raw string) (int64, bool) {
 	n, e := strconv.ParseInt(raw, 10, 64)
 	return n, e == nil && n > 0
 }
+func parseSimilarOptions(r *http.Request) (storage.SimilarTracksOptions, bool) {
+	var opts storage.SimilarTracksOptions
+	if rawExclude := strings.TrimSpace(r.URL.Query().Get("exclude")); rawExclude != "" {
+		parts := strings.Split(rawExclude, ",")
+		if len(parts) > maxSimilarExcludeIDs {
+			return opts, false
+		}
+		exclude := make(map[int64]bool, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, ok := positiveID(part)
+			if !ok {
+				return opts, false
+			}
+			exclude[id] = true
+		}
+		opts.Exclude = exclude
+	}
+	if rawDiverse, hasDiverse := r.URL.Query()["diverse"]; hasDiverse {
+		val := strings.ToLower(strings.TrimSpace(rawDiverse[0]))
+		switch val {
+		case "1", "true":
+			opts.MaxPerArtist = 2
+		case "0", "false", "":
+		default:
+			return opts, false
+		}
+	}
+	if rawCap := strings.TrimSpace(r.URL.Query().Get("maxPerArtist")); rawCap != "" {
+		n, err := strconv.Atoi(rawCap)
+		if err != nil || n < 1 || n > 10 {
+			return opts, false
+		}
+		opts.MaxPerArtist = n
+	}
+	return opts, true
+}
 func (a *App) handleSimilarTracks(w http.ResponseWriter, r *http.Request) {
 	id, ok := positiveID(r.PathValue("id"))
 	limit, valid := similarityLimit(r, 30, 1)
-	if !ok || !valid {
-		writeAPIError(w, 400, "invalid_request", "Invalid track id or limit.")
+	opts, optsValid := parseSimilarOptions(r)
+	if !ok || !valid || !optsValid {
+		writeAPIError(w, 400, "invalid_request", "Invalid track id, limit, exclude, or diversity parameter.")
 		return
 	}
-	items, err := a.store.SimilarTracks(r.Context(), id, limit)
+	items, err := a.store.SimilarTracksWithOptions(r.Context(), id, limit, opts)
 	if r.Context().Err() != nil {
 		return
 	}

@@ -17,6 +17,7 @@ type similarityMeta struct {
 	primary, credit, genre, work map[int64]bool
 	playlists                    map[int64]bool
 	available                    bool
+	blocked                      bool
 	playCount, skipCount         int64
 }
 type similarityFactors struct {

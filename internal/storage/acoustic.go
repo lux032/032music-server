@@ -200,6 +200,20 @@ func f16(h uint16) float32 {
 	return math.Float32frombits(sign | (exp+127-15)<<23 | frac<<13)
 }
 
+// HasAcousticFeatures cheaply checks whether any analysed acoustic embeddings exist,
+// without triggering an index build.
+func (s *Store) HasAcousticFeatures(ctx context.Context) bool {
+	c := &s.acoustic
+	c.mu.Lock()
+	if c.snap != nil && len(c.snap.ids) > 0 {
+		c.mu.Unlock()
+		return true
+	}
+	c.mu.Unlock()
+	var one int
+	return s.db.QueryRowContext(ctx, `SELECT 1 FROM track_audio_features WHERE length(embedding) >= 4 LIMIT 1`).Scan(&one) == nil
+}
+
 // AcousticIndex returns the current snapshot (nil when no track has been analysed).
 func (s *Store) AcousticIndex(ctx context.Context) (*AcousticSnapshot, error) {
 	c := &s.acoustic

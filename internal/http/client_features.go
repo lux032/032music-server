@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+func similarityMethod(hasAcoustic bool) string {
+	if hasAcoustic {
+		return "hybrid"
+	}
+	return "metadata"
+}
+
 func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": "v1", "apiRevision": 3,
@@ -55,7 +62,10 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 				"flac": map[string]any{"available": a.transcoder.available["flac"], "live": false, "ranges": true, "offset": false, "maxSampleRates": []int{48000}},
 			},
 		},
-		"similarity": map[string]any{"method": "metadata", "distanceRange": []int{0, 1}},
+		"similarity": map[string]any{
+			"method":        similarityMethod(a.store.HasAcousticFeatures(r.Context())),
+			"distanceRange": []int{0, 1},
+		},
 		"playback": map[string]any{
 			// Playback sessions (plan C, apiRevision 3). The legacy timeline
 			// and scrobble endpoints were removed and answer 410.

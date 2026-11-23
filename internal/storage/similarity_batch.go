@@ -43,6 +43,7 @@ func (s *Store) similarityBatch(ctx context.Context, ids []int64) (map[int64]*si
 			{`SELECT track_id,work_id FROM work_tracks WHERE track_id IN (` + in + `) UNION SELECT t.id,aw.work_id FROM tracks t JOIN album_works aw ON aw.album_id=t.album_id WHERE t.id IN (` + in + `)`, 2, func(m *similarityMeta, n int64) { m.work = set(m.work, n) }},
 			{`SELECT track_id,playlist_id FROM playlist_items WHERE track_id IN (` + in + `)`, 1, func(m *similarityMeta, n int64) { m.playlists = set(m.playlists, n) }},
 			{`SELECT track_id,1 FROM audio_files WHERE status='available' AND track_id IN (` + in + `)`, 1, func(m *similarityMeta, _ int64) { m.available = true }},
+			{`SELECT track_id,1 FROM recommendation_track_blocks WHERE track_id IN (` + in + `)`, 1, func(m *similarityMeta, _ int64) { m.blocked = true }},
 		} {
 			queryArgs := args
 			if spec.copies == 2 {
@@ -254,7 +255,7 @@ func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small
 	ranked := []scoredCandidate{}
 	for _, id := range ids {
 		m := batch[id]
-		if m == nil || !m.available || (!nonMain(seed.track.TrackType) && nonMain(m.track.TrackType)) {
+		if m == nil || !m.available || m.blocked || (!nonMain(seed.track.TrackType) && nonMain(m.track.TrackType)) {
 			continue
 		}
 		score, reasons := compareSimilarityWith(seed, *m, acoustic)
@@ -268,23 +269,67 @@ func (s *Store) rankedCandidates(ctx context.Context, seed similarityMeta, small
 	})
 	return ranked, nil
 }
+
+// SimilarTracksOptions controls optional filtering and diversity when fetching similar tracks.
+type SimilarTracksOptions struct {
+	Exclude      map[int64]bool
+	MaxPerArtist int
+}
+
 func dedupeCandidates(seed similarityMeta, ranked []scoredCandidate, limit int) []scoredCandidate {
+	return dedupeCandidatesWithOptions(seed, ranked, limit, SimilarTracksOptions{})
+}
+
+func dedupeCandidatesWithOptions(seed similarityMeta, ranked []scoredCandidate, limit int, opts SimilarTracksOptions) []scoredCandidate {
 	seen := map[string]bool{normalizedTitle(seed.track.Title) + "\x00" + primaryKey(&seed): true}
-	out := []scoredCandidate{}
+	unique := make([]scoredCandidate, 0, len(ranked))
 	for _, r := range ranked {
+		if opts.Exclude[r.id] {
+			continue
+		}
 		key := normalizedTitle(r.meta.track.Title) + "\x00" + primaryKey(r.meta)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
+		unique = append(unique, r)
+	}
+	if opts.MaxPerArtist <= 0 {
+		if len(unique) > limit {
+			return unique[:limit]
+		}
+		return unique
+	}
+	// Two-pass artist cap: prioritize artist diversity first, then backfill if the library is small.
+	artistCounts := map[string]int{}
+	out := make([]scoredCandidate, 0, min(limit, len(unique)))
+	deferred := make([]scoredCandidate, 0)
+	for _, r := range unique {
+		pk := primaryKey(r.meta)
+		if artistCounts[pk] >= opts.MaxPerArtist {
+			deferred = append(deferred, r)
+			continue
+		}
+		artistCounts[pk]++
 		out = append(out, r)
+		if len(out) >= limit {
+			return out
+		}
+	}
+	for _, r := range deferred {
 		if len(out) >= limit {
 			break
 		}
+		out = append(out, r)
 	}
 	return out
 }
+
 func (s *Store) SimilarTracks(ctx context.Context, id int64, limit int) ([]SimilarTrack, error) {
+	return s.SimilarTracksWithOptions(ctx, id, limit, SimilarTracksOptions{})
+}
+
+func (s *Store) SimilarTracksWithOptions(ctx context.Context, id int64, limit int, opts SimilarTracksOptions) ([]SimilarTrack, error) {
 	seed, e := s.similarityMeta(ctx, id)
 	if e != nil {
 		return nil, e
@@ -293,7 +338,7 @@ func (s *Store) SimilarTracks(ctx context.Context, id int64, limit int) ([]Simil
 	if e != nil {
 		return nil, e
 	}
-	ranked = dedupeCandidates(seed, ranked, limit)
+	ranked = dedupeCandidatesWithOptions(seed, ranked, limit, opts)
 	ids := make([]int64, len(ranked))
 	for i, r := range ranked {
 		ids[i] = r.id

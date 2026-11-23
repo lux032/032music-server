@@ -61,3 +61,52 @@ func TestSimilarityGraphFactorsAndSeedDedupe(t *testing.T) {
 		t.Fatal("expected cancelled query")
 	}
 }
+
+func TestSimilarTracksBlocksExcludeAndDiversity(t *testing.T) {
+	s := similarityFixture(t)
+	ctx := context.Background()
+	// Add a third primary artist so we can test artist diversity capping.
+	if _, e := s.db.ExecContext(ctx, `INSERT INTO artists(id,display_name,sort_name,identity_key) VALUES(3,'Other','other','other')`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.db.ExecContext(ctx, `INSERT INTO genres(id,name) VALUES(1,'Pop')`); e != nil {
+		t.Fatal(e)
+	}
+	// Tracks 1..5 all share artist 1 & genre 1; track 6 has artist 3 & genre 1.
+	for i, title := range []string{"Seed", "A1", "A2", "A3", "Blocked", "B1"} {
+		addSimilarityTrack(t, s, i+1, title, "regular", true)
+		if _, e := s.db.ExecContext(ctx, `INSERT INTO track_genres(track_id,genre_id) VALUES(?,1)`, i+1); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if _, e := s.db.ExecContext(ctx, `UPDATE track_artists SET artist_id=3 WHERE track_id=6`); e != nil {
+		t.Fatal(e)
+	}
+	// Block track 5 via recommendation_track_blocks.
+	if e := s.SetRecommendationBlock(ctx, 5, true); e != nil {
+		t.Fatal(e)
+	}
+	// Blocked track must never appear; excluded track 2 must be omitted.
+	items, e := s.SimilarTracksWithOptions(ctx, 1, 10, SimilarTracksOptions{
+		Exclude:      map[int64]bool{2: true},
+		MaxPerArtist: 1,
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items (3,4,6), got %d", len(items))
+	}
+	for _, it := range items {
+		if it.Track.ID == 5 {
+			t.Fatal("blocked track appeared in similar results")
+		}
+		if it.Track.ID == 2 {
+			t.Fatal("excluded track appeared in similar results")
+		}
+	}
+	// With MaxPerArtist=1, artist 2 (track 6) must be promoted ahead of the second artist-1 track (track 4).
+	if items[0].Track.ID != 3 || items[1].Track.ID != 6 || items[2].Track.ID != 4 {
+		t.Fatalf("expected diversity order [3, 6, 4], got [%d, %d, %d]", items[0].Track.ID, items[1].Track.ID, items[2].Track.ID)
+	}
+}
