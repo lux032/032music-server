@@ -137,9 +137,9 @@ func TestSimilarTracksExcludesAccompanimentAndInstrumentalSignals(t *testing.T) 
 		{8, "Starlight -Less Vocal-", "regular"},
 		{9, "Piano Solo", "instrumental"},
 		{10, "Clean Title Path", "regular"},
-		{11, "Clean Title AI Inst", "regular"},
-		{12, "Clean Title Audio Inst", "regular"},
-		{13, "Clean Title Audio Vocal", "regular"},
+		{11, "Moonlight Sonata", "regular"},
+		{12, "Evening Breeze", "regular"},
+		{13, "Morning Chorus", "regular"},
 	}
 	for _, tr := range tracks {
 		addSimilarityTrack(t, s, tr.id, tr.title, tr.kind, true)
@@ -178,8 +178,8 @@ func TestSimilarTracksExcludesAccompanimentAndInstrumentalSignals(t *testing.T) 
 		t.Fatalf("vocal seed expected [2, 13], got %v", gotIDs)
 	}
 
-	// Seeding from instrumental track 9: must STILL block off-vocal/karaoke/accompaniment (4,6,7,8,10),
-	// while allowing other pure instrumentals (11,12) unless HideInstrumental is set.
+	// Seeding from instrumental track 9: must STILL block all accompaniment / "(instrumental)"
+	// version tracks (3,4,5,6,7,8,10), while allowing clean pure instrumentals (11,12) unless HideInstrumental is set.
 	instItems, e := s.SimilarTracks(ctx, 9, 30)
 	if e != nil {
 		t.Fatal(e)
@@ -188,9 +188,21 @@ func TestSimilarTracksExcludesAccompanimentAndInstrumentalSignals(t *testing.T) 
 	for _, it := range instItems {
 		instSet[it.Track.ID] = true
 	}
-	for _, blocked := range []int64{4, 6, 7, 8, 10} {
+	for _, blocked := range []int64{3, 4, 5, 6, 7, 8, 10} {
 		if instSet[blocked] {
 			t.Fatalf("accompaniment track %d leaked into instrumental seed results: %v", blocked, instSet)
+		}
+	}
+	// Even when seeding directly from an "(instrumental)" track (3), other accompaniment versions must NOT be recommended.
+	accSeedItems, e := s.SimilarTracks(ctx, 3, 30)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, it := range accSeedItems {
+		for _, blocked := range []int64{4, 5, 6, 7, 8, 10} {
+			if it.Track.ID == blocked {
+				t.Fatalf("accompaniment track %d leaked when seeding from accompaniment track 3", blocked)
+			}
 		}
 	}
 	if !instSet[11] || !instSet[12] {

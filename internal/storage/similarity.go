@@ -148,23 +148,21 @@ func isAccompanimentMeta(m similarityMeta) bool {
 	if m.track.TrackType == "off_vocal" {
 		return true
 	}
-	if accompanimentMarkerPattern.MatchString(foldSimilarityText(m.track.Title)) {
+	foldedTitle := foldSimilarityText(m.track.Title)
+	if accompanimentMarkerPattern.MatchString(foldedTitle) || instrumentalMarkerPattern.MatchString(foldedTitle) {
 		return true
 	}
-	if m.relativePath != "" && accompanimentMarkerPattern.MatchString(foldSimilarityText(m.relativePath)) {
-		return true
+	if m.relativePath != "" {
+		foldedPath := foldSimilarityText(m.relativePath)
+		if accompanimentMarkerPattern.MatchString(foldedPath) || instrumentalMarkerPattern.MatchString(foldedPath) {
+			return true
+		}
 	}
 	return false
 }
 
 func isInstrumentalMeta(m similarityMeta) bool {
 	if m.track.TrackType == "instrumental" || isAccompanimentMeta(m) {
-		return true
-	}
-	if instrumentalMarkerPattern.MatchString(foldSimilarityText(m.track.Title)) {
-		return true
-	}
-	if m.relativePath != "" && instrumentalMarkerPattern.MatchString(foldSimilarityText(m.relativePath)) {
 		return true
 	}
 	if m.vocal == "instrumental" {
@@ -180,15 +178,17 @@ func shouldExcludeSimilarityCandidate(seed, candidate similarityMeta, hideInstru
 	if hideInstrumental && isInstrumentalMeta(candidate) {
 		return true
 	}
-	// Never mix karaoke/off-vocal/accompaniment tracks into regular or pure-instrumental seeds.
-	if !isAccompanimentMeta(seed) && isAccompanimentMeta(candidate) {
+	// Never recommend karaoke / off-vocal / "(instrumental)" accompaniment versions of vocal
+	// songs — even when the seed itself happens to be an accompaniment or instrumental track
+	// (e.g. the last track of a J-Pop single CD).
+	if isAccompanimentMeta(candidate) {
 		return true
 	}
 	if !nonMain(seed.track.TrackType) && nonMain(candidate.track.TrackType) {
 		return true
 	}
-	// When seeding from a vocal track, exclude instrumental/accompaniment tracks detected
-	// via track type, title/path markers, AI vocal tags, or low EffNet voice probability.
+	// When seeding from a vocal track, also exclude pure instrumental tracks detected via
+	// track type, AI vocal tags, or low EffNet voice probability.
 	if !isInstrumentalMeta(seed) && isInstrumentalMeta(candidate) {
 		return true
 	}
