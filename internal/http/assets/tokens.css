@@ -1,9 +1,9 @@
 /* 032 Music Server — design tokens.
-   Direction (2026-10-06): the library-player category standard, played
-   straight. Neutral grays carry the interface, covers and titles carry the
-   page, and one violet accent marks primary action, playback and selection.
-   theme.js sets data-theme on <html> before first paint; light is the
-   no-script default. */
+   Editorial Player + Admin Workspace token system aligned with 032player-rs v3.
+   Neutral layered surfaces carry the interface, sharp square covers and crisp
+   600-weight CJK typography carry the page, and one violet accent marks primary
+   action, playback, and selection. theme.js sets data-theme on <html> before
+   first paint; light is the no-script default. */
 
 @font-face {
   font-family: "Inter";
@@ -25,132 +25,163 @@
 :root {
   color-scheme: light;
 
-  /* Surfaces */
-  --bg: #fafafa;
-  --bg-soft: #f4f4f5;
+  /* Surfaces — neutral editorial ladder (032 Light) */
+  --bg: #f7f7f9;
+  --bg-chrome: #efeff3;
+  --bg-soft: #f0f0f4;
   --bg-panel: #ffffff;
   --surface: #ffffff;
-  --surface-hover: #f0f0f2;
-  --surface-sunken: #ededf0;
-  --surface-glass: rgba(255, 255, 255, 0.9);
+  --surface-hover: #eaeaf0;
+  --surface-sunken: #e6e6ec;
+  --surface-glass: rgba(247, 247, 249, 0.92);
   /* Filled controls (search, chips, secondary buttons). */
-  --fill: #efeff2;
-  --fill-hover: #e4e4e9;
-  --scrim: rgba(17, 17, 19, 0.45);
+  --fill: #e8e8ee;
+  --fill-hover: #dcdce5;
+  --scrim: rgba(17, 17, 19, 0.48);
+
+  /* Hero band (neutral editorial gradient, zero cover-color bleed) */
+  --hero-from: #ebebf1;
+  --hero-to: #f7f7f9;
+  --hero-line: #dedee6;
 
   /* Lines */
-  --line: #e6e6ea;
-  --line-strong: #d4d4da;
+  --line: #e2e2e9;
+  --line-strong: #cfcfd9;
 
   /* Text — every pair ≥4.5:1 on --bg, --surface and --surface-hover. */
   --text: #111113;
-  --text-secondary: #4f4f59;
-  --muted: #64646e;
+  --text-secondary: #4c4c57;
+  --muted: #6c6c78;
   --text-on-accent: #ffffff;
   --text-on-danger: #ffffff;
 
   /* Accent (violet): primary action, playback, selection only. */
   --accent: #5b47e0;
-  --accent-hover: #4a37c9;
+  --accent-hover: #4a36d0;
   --accent-active: #3d2db0;
   --accent-soft: rgba(91, 71, 224, 0.09);
   --accent-soft-strong: rgba(91, 71, 224, 0.16);
-  --accent-line: rgba(91, 71, 224, 0.35);
-  --accent-strong-text: #4a37c9;
+  --accent-line: rgba(91, 71, 224, 0.36);
+  --accent-strong-text: #4a36d0;
 
   /* Semantic */
   --danger: #c42b44;
-  --danger-soft: rgba(196, 43, 68, 0.08);
-  --success: #0e7651;
+  --danger-soft: rgba(196, 43, 68, 0.09);
+  --success: #16794c;
+  --success-soft: rgba(22, 121, 76, 0.10);
   --warning: #9a5b00;
+  --warning-soft: rgba(154, 91, 0, 0.10);
 
-  /* Radius */
+  /* Radius — sharp 0px square covers in grids/heroes; soft chrome/cards */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
-  --radius-xl: 20px;
-  --radius-cover: 6px;
+  --radius-xl: 18px;
+  --radius-cover: 0px;
   --radius-pill: 999px;
 
   /* Shadows */
   --shadow-xs: 0 1px 2px rgba(17, 17, 19, 0.06);
-  --shadow-card: 0 2px 6px rgba(17, 17, 19, 0.1);
-  --shadow-card-hover: 0 16px 30px -12px rgba(17, 17, 19, 0.38);
-  --shadow-cover: 0 28px 50px -22px rgba(17, 17, 19, 0.55);
-  --shadow-pop: 0 14px 40px rgba(17, 17, 19, 0.16);
+  --shadow-card: 0 2px 8px rgba(17, 17, 19, 0.08);
+  --shadow-card-hover: 0 16px 32px -12px rgba(17, 17, 19, 0.28);
+  --shadow-cover: 0 22px 44px -18px rgba(17, 17, 19, 0.34);
+  --shadow-pop: 0 16px 40px rgba(17, 17, 19, 0.16);
   --shadow-bar: 0 -1px 0 var(--line);
 
-  /* Detail backdrop: blurred cover under the album hero. */
-  --backdrop-opacity: 0.5;
-  --backdrop-fade: rgba(250, 250, 250, 0.6);
+  /* Legacy backdrop tokens kept as neutral fallbacks */
+  --backdrop-opacity: 0;
+  --backdrop-fade: var(--bg);
 
-  /* Type: Inter for Latin and numerals, the platform CJK sans for the rest. */
+  /* Type: Inter for Latin/numerals, platform CJK sans for Chinese/Japanese.
+     PingFang SC / Microsoft YaHei precede Noto Sans CJK SC so Windows renders
+     clean medium/semibold glyphs instead of Heavy/Black fallback bloat. */
   --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
-  --fs-xs: 0.74rem;
-  --fs-sm: 0.84rem;
-  --fs-md: 0.92rem;
-  --fs-lg: 1.05rem;
-  --fs-title: clamp(1.9rem, 2.8vw, 2.4rem);
-  --fs-display: clamp(2.2rem, 3.6vw, 3.3rem);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --fs-xs: 0.76rem;
+  --fs-sm: 0.85rem;
+  --fs-md: 0.9375rem;
+  --fs-lg: 1.06rem;
+  --fs-title: clamp(1.75rem, 2.3vw, 2.15rem);
+  --fs-display: clamp(2.05rem, 3.1vw, 2.85rem);
 
   /* Motion */
   --dur-fast: 0.14s;
   --dur: 0.2s;
-  --dur-slow: 0.32s;
+  --dur-slow: 0.3s;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Shell metrics */
-  --sidebar-w: 232px;
-  --nowplaying-w: 340px;
+  --sidebar-w: 236px;
+  --nowplaying-w: 348px;
   --content-right: var(--nowplaying-w);
-  --player-h: 80px;
-  --content-gutter: clamp(22px, 3.4vw, 48px);
+  --player-h: 82px;
+  --content-gutter: clamp(24px, 3vw, 48px);
+  --admin-max: 1860px;
+}
+
+/* Wide desktop tier (≥1760px, e.g. 2K/4K monitors): matches 032player-rs wide proportions. */
+@media (min-width: 1760px) {
+  :root {
+    --sidebar-w: 268px;
+    --nowplaying-w: 416px;
+    --player-h: 92px;
+    --content-gutter: 48px;
+    --admin-max: 2040px;
+  }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #111113;
-  --bg-soft: #161619;
-  --bg-panel: #18181b;
-  --surface: #19191c;
-  --surface-hover: #242428;
-  --surface-sunken: #222226;
-  --surface-glass: rgba(25, 25, 28, 0.9);
-  --fill: #232327;
-  --fill-hover: #2e2e33;
-  --scrim: rgba(0, 0, 0, 0.62);
+  /* Surfaces — neutral editorial ladder (032 Dark) */
+  --bg: #0f0f13;
+  --bg-chrome: #0b0b0e;
+  --bg-soft: #131319;
+  --bg-panel: #15151b;
+  --surface: #15151b;
+  --surface-hover: #1f1f27;
+  --surface-sunken: #1b1b22;
+  --surface-glass: rgba(15, 15, 19, 0.9);
+  --fill: #1f1f27;
+  --fill-hover: #282833;
+  --scrim: rgba(0, 0, 0, 0.66);
 
-  --line: #2a2a2f;
-  --line-strong: #3a3a41;
+  --hero-from: #1b1b22;
+  --hero-to: #101015;
+  --hero-line: #23232c;
 
-  --text: #f4f4f6;
-  --text-secondary: #b8b8c2;
-  --muted: #9a9aa5;
-  --text-on-accent: #140f33;
+  --line: #24242d;
+  --line-strong: #353542;
+
+  --text: #f3f2f7;
+  --text-secondary: #a9a7b6;
+  --muted: #828094;
+  --text-on-accent: #120d2e;
   --text-on-danger: #2a0710;
 
   --accent: #8d7dff;
   --accent-hover: #a194ff;
-  --accent-active: #b4aaff;
+  --accent-active: #b6abff;
   --accent-soft: rgba(141, 125, 255, 0.14);
   --accent-soft-strong: rgba(141, 125, 255, 0.24);
-  --accent-line: rgba(141, 125, 255, 0.5);
+  --accent-line: rgba(141, 125, 255, 0.48);
   --accent-strong-text: #b4aaff;
 
-  --danger: #ff6f83;
-  --danger-soft: rgba(255, 111, 131, 0.12);
-  --success: #45d39a;
+  --danger: #ff7a85;
+  --danger-soft: rgba(255, 122, 133, 0.13);
+  --success: #5fd38d;
+  --success-soft: rgba(95, 211, 141, 0.13);
   --warning: #f2b84b;
+  --warning-soft: rgba(242, 184, 75, 0.13);
 
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.4);
-  --shadow-card-hover: 0 16px 30px -12px rgba(0, 0, 0, 0.8);
-  --shadow-cover: 0 28px 50px -20px rgba(0, 0, 0, 0.85);
-  --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.55);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.42);
+  --shadow-card-hover: 0 18px 34px -12px rgba(0, 0, 0, 0.78);
+  --shadow-cover: 0 28px 56px -22px rgba(0, 0, 0, 0.88);
+  --shadow-pop: 0 18px 44px rgba(0, 0, 0, 0.62);
 
-  --backdrop-opacity: 0.55;
-  --backdrop-fade: rgba(17, 17, 19, 0.55);
+  --backdrop-opacity: 0;
+  --backdrop-fade: var(--bg);
 }
 
 body.np-collapsed { --content-right: 0px; }

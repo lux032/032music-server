@@ -92,14 +92,23 @@
         {{end}}
 
         {{if .ReleaseGroups}}<div class="artist-discography">
-          {{range .ReleaseGroups}}
+          {{range $idx, $group := .ReleaseGroups}}
           <section class="artist-release-group">
             <div class="section-title">
-              <div><p class="kicker">发行目录 · 最新优先</p><h2>{{.Title}}</h2>{{if .Description}}<p class="muted">{{.Description}}</p>{{end}}</div>
-              <span>{{len .Releases}} 个发行</span>
+              <div><p class="kicker">发行目录 · 最新优先</p><h2>{{$group.Title}}</h2>{{if $group.Description}}<p class="muted">{{$group.Description}}</p>{{end}}</div>
+              <div class="artist-discog-tools">
+                {{if eq $idx 0}}
+                <label class="grid-size-control artist-grid-size-control" title="调节每行显示的专辑数量">
+                  <span>每行</span>
+                  <input type="range" min="2" max="10" step="1" value="{{if $.ArtistAlbumCols}}{{$.ArtistAlbumCols}}{{else}}5{{end}}" aria-label="每行显示的专辑数量" data-artist-grid-cols>
+                  <output>{{if $.ArtistAlbumCols}}{{$.ArtistAlbumCols}}{{else}}5{{end}}</output>
+                </label>
+                {{end}}
+                <span>{{len $group.Releases}} 个发行</span>
+              </div>
             </div>
-            <section class="album-browser detail-album-grid">
-              {{range .Releases}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
+            <section class="album-browser detail-album-grid"{{if $.ArtistAlbumCols}} style="--artist-cols: {{$.ArtistAlbumCols}}"{{end}}>
+              {{range $group.Releases}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
               {{end}}
             </section>
           </section>

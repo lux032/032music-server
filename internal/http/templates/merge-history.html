@@ -14,6 +14,11 @@
         <p class="result-count">回退只撤销对应操作创建的关系，不覆盖合并之后新增的数据。</p>
       </div>
     </header>
+    <nav class="admin-domain-tabs" aria-label="艺术家治理视图">
+      <a href="/admin/matches">身份 / 署名 / 头像审核</a>
+      <a href="/admin/artist-aliases">中文别名补全</a>
+      <a href="/admin/merges" class="is-active" aria-current="page">合并历史与回退</a>
+    </nav>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <section class="merge-list">

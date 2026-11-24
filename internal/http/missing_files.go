@@ -106,7 +106,7 @@ func (a *App) handleMissingFilesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := missingFilesPageData{
-		Chrome: a.chromeFor(r.Context(), session, "console"), Notice: r.URL.Query().Get("notice"),
+		Chrome: a.chromeFor(r.Context(), session, "missing"), Notice: r.URL.Query().Get("notice"),
 		Files: files, Total: total, Page: page, Purge: a.purgeMissingView(r.Context()),
 	}
 	data.PageCount = int((total + adminFeaturePageSize - 1) / adminFeaturePageSize)

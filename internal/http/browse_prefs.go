@@ -176,16 +176,15 @@ func browseOrderFilters(r *http.Request, f *storage.Filters) {
 }
 
 const (
-	albumGridColsCookie  = "032_album_cols"
-	albumGridMinCols     = 2
-	albumGridMaxCols     = 10
-	albumGridDefaultCols = 4
+	albumGridColsCookie       = "032_album_cols"
+	artistAlbumGridColsCookie = "032_artist_cols"
+	albumGridMinCols          = 2
+	albumGridMaxCols          = 10
+	albumGridDefaultCols      = 4
 )
 
-// albumGridCols returns the remembered number of album covers per row, or 0
-// when the user never changed it (the stylesheet default then applies).
-func albumGridCols(r *http.Request) int {
-	cookie, err := r.Cookie(albumGridColsCookie)
+func readGridColsCookie(r *http.Request, name string) int {
+	cookie, err := r.Cookie(name)
 	if err != nil {
 		return 0
 	}
@@ -194,4 +193,16 @@ func albumGridCols(r *http.Request) int {
 		return 0
 	}
 	return cols
+}
+
+// albumGridCols returns the remembered number of album covers per row, or 0
+// when the user never changed it (the stylesheet default then applies).
+func albumGridCols(r *http.Request) int {
+	return readGridColsCookie(r, albumGridColsCookie)
+}
+
+// artistAlbumGridCols returns the remembered per-row album cover count on
+// artist detail pages, or 0 when the user has not customised it.
+func artistAlbumGridCols(r *http.Request) int {
+	return readGridColsCookie(r, artistAlbumGridColsCookie)
 }

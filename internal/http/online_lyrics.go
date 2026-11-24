@@ -176,7 +176,7 @@ func (a *App) handleOnlineLyricsPage(w http.ResponseWriter, r *http.Request) {
 	session, _ := a.sessions.get(r)
 	ctx := r.Context()
 	q := r.URL.Query()
-	data := onlineLyricsPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: q.Get("notice"), Enabled: a.onlineLyrics != nil,
+	data := onlineLyricsPageData{Chrome: a.chromeFor(ctx, session, "online-lyrics"), Notice: q.Get("notice"), Enabled: a.onlineLyrics != nil,
 		Query: strings.TrimSpace(q.Get("q")), Status: q.Get("status")}
 	data.Page, _ = strconv.Atoi(q.Get("page"))
 	if data.Page < 1 {

@@ -5,6 +5,7 @@
  {{template "sidebar" .}}{{template "nowplaying" .}}
  <main id="app-main" class="browser-main feature-main audio-analysis-main artist-aliases-main">
   <header class="browser-header"><div><h1>中文别名补全</h1><p class="result-count">为歌手补充有来源依据的简体中文搜索别名。存量由你启动，新歌手确认身份后自动处理。</p></div><a class="secondary-button" href="/admin">返回控制台</a></header>
+  <nav class="admin-domain-tabs" aria-label="艺术家治理视图"><a href="/admin/matches">身份 / 署名 / 头像审核</a><a href="/admin/artist-aliases" class="is-active" aria-current="page">中文别名补全</a><a href="/admin/merges">合并历史与回退</a></nav>
   {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
   <section class="feature-card" aria-labelledby="alias-progress-heading">
    <h2 id="alias-progress-heading">补全进度</h2>

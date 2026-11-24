@@ -270,7 +270,7 @@ func (a *App) handleLyricsTranslationsPage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	q := r.URL.Query()
-	data := lyricsTranslationPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: q.Get("notice"), Enabled: tr.Enabled, Model: tr.Model, FallbackModel: tr.FallbackModel,
+	data := lyricsTranslationPageData{Chrome: a.chromeFor(ctx, session, "lyrics-translations"), Notice: q.Get("notice"), Enabled: tr.Enabled, Model: tr.Model, FallbackModel: tr.FallbackModel,
 		TaggingModel: ai.Model, Configured: strings.TrimSpace(ai.BaseURL) != "" && ai.APIKey != "", Effective: storage.EffectiveTranslationModel(ai, tr),
 		Query: strings.TrimSpace(q.Get("q")), Language: q.Get("lang")}
 	data.Page, _ = strconv.Atoi(q.Get("page"))
@@ -410,7 +410,7 @@ func (a *App) handleLyricsTranslationDetail(w http.ResponseWriter, r *http.Reque
 		a.renderAdminFeatureError(w, "console", err)
 		return
 	}
-	data := lyricsTranslationDetailData{Chrome: a.chromeFor(ctx, session, "console"), Notice: r.URL.Query().Get("notice"), Item: item,
+	data := lyricsTranslationDetailData{Chrome: a.chromeFor(ctx, session, "lyrics-translations"), Notice: r.URL.Query().Get("notice"), Item: item,
 		LanguageName: lyricstrans.LanguageName(item.TargetLanguage), Configured: strings.TrimSpace(ai.BaseURL) != "" && ai.APIKey != "",
 		DefaultModel: storage.EffectiveTranslationModel(ai, tr)}
 	seen := map[string]bool{}

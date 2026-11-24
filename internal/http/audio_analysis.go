@@ -208,7 +208,7 @@ func (a *App) handleAudioAnalysisPage(w http.ResponseWriter, r *http.Request) {
 		a.renderAdminFeatureError(w, "console", err)
 		return
 	}
-	data := audioAnalysisPageData{Chrome: a.chromeFor(r.Context(), session, "console"), Notice: r.URL.Query().Get("notice"),
+	data := audioAnalysisPageData{Chrome: a.chromeFor(r.Context(), session, "audio-analysis"), Notice: r.URL.Query().Get("notice"),
 		Status: snap, View: buildAudioAnalysisView(snap), WindowEnabled: snap.WindowStart != nil,
 		WindowStart: minuteText(snap.WindowStart), WindowEnd: minuteText(snap.WindowEnd)}
 	if data.WindowStart == "" {

@@ -450,3 +450,99 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 .h-mix-open:hover { color: var(--accent-strong-text); background: var(--surface-sunken); }
 .h-mix-open .icon { width: 16px; height: 16px; }
 .h-mix-row.is-loading { opacity: 0.6; }
+
+/* ------------------------------------------------- editorial v3 alignment (2026-11) */
+/* Clean neutral Spotlight band (zero blurred cover bleed), sharp 0px covers,
+   extending hairline section rules, and crisp 600-weight CJK typography. */
+.h-head h1 { font-weight: 600; letter-spacing: 0; }
+.h-section-head {
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.h-section-head h2 {
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.h-section-head::after {
+  content: "";
+  flex: 1 1 24px;
+  height: 1px;
+  background: var(--line);
+  order: 2;
+}
+.h-section-head h2,
+.h-section-head .h-count { order: 1; }
+.h-section-head .h-seg,
+.h-section-head .h-tools { order: 3; margin-left: 0; }
+.h-era-result .h-section-head h3 { font-weight: 600; letter-spacing: 0; }
+
+.h-hero {
+  border: 1px solid var(--hero-line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--hero-from) 0%, var(--hero-to) 100%);
+  box-shadow: none;
+}
+.h-hero-bg { display: none; }
+.h-hero-art > img,
+.h-fan img,
+.h-hero-art > .cover-placeholder {
+  border-radius: var(--radius-cover);
+}
+.h-hero h2 {
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.18;
+}
+.h-hero-by { font-weight: 500; }
+.h-hero-side {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--surface) 78%, transparent);
+  backdrop-filter: none;
+}
+.h-hero-side-head h3 { font-weight: 600; }
+.h-spec-tag {
+  background: var(--fill);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.h-chip {
+  background: var(--fill);
+  color: var(--text-secondary);
+}
+.h-chip:hover { background: var(--fill-hover); color: var(--text); }
+
+.h-cover,
+.h-row-art,
+.h-trow-art,
+.h-work-art {
+  border-radius: var(--radius-cover);
+}
+.h-card-title { font-weight: 600; }
+.h-work {
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+.h-work:hover {
+  box-shadow: none;
+  outline-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+.h-work-title { font-weight: 600; }
+.h-first-run h2 { font-weight: 600; letter-spacing: 0; }
+@container app-main (max-width: 760px) {
+  .h-section-head::after { display: none; }
+}
+@container app-main (max-width: 640px) {
+  .h-hero-inner {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    padding: 18px;
+  }
+  .h-hero-art { width: min(220px, 64vw); }
+  .h-seg button { white-space: nowrap; }
+}
+

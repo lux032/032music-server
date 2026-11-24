@@ -15,6 +15,10 @@
       </div>
       <a class="secondary-button" href="/admin">返回控制台</a>
     </header>
+    <nav class="admin-domain-tabs" aria-label="声学与打标视图">
+      <a href="/admin/audio-analysis" class="is-active" aria-current="page">声学分析</a>
+      <a href="/admin/ai-tagging">AI 曲库打标</a>
+    </nav>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
     {{if not .Status.Configured}}

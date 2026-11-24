@@ -4373,3 +4373,327 @@ dialog.match-settings-dialog::backdrop { background: var(--scrim); }
   .match-cand-actions { justify-content: flex-start; }
   .match-filter-summary { margin-left: 0; width: 100%; }
 }
+
+/* ================================================= editorial v3 & admin workspace (2026-11) */
+/* 1. Crisp CJK typography: cap headings at font-weight 600 with natural tracking
+      to avoid Heavy/Black CJK bloat on Windows while keeping Inter crisp. */
+h1, h2, h3,
+.browser-header h1,
+.album-heading h1,
+.artist-hero h1,
+.work-hero h1,
+.playlist-hero h1,
+.feature-card h2,
+.source-card h2,
+.identity-panel h2,
+.feature-section h2,
+.section-title h2,
+.album-inspector .kicker,
+.review-subject-meta h2,
+.drawer-head h2,
+.playlist-picker header h2,
+.match-dialog-head h2 {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 2. Sharp square covers (0px) + clean neutral editorial hero bands (no blurred cover bleed). */
+.album-backdrop { display: none; }
+.album-hero,
+.artist-hero,
+.work-hero {
+  position: relative;
+  margin: -10px calc(var(--content-gutter) * -1) 28px;
+  padding: 26px var(--content-gutter) 34px;
+  border-bottom: 1px solid var(--hero-line);
+  background: linear-gradient(180deg, var(--hero-from) 0%, var(--hero-to) 100%);
+}
+.hero-cover,
+.cover-wrap,
+.library-album-card .cover-wrap,
+.work-poster,
+.work-hero .work-cover,
+.playlist-hero .playlist-cover.large,
+.feature-cover, .feature-cover img, .feature-cover .cover-placeholder,
+.artist-track-cover, .artist-track-cover img, .artist-track-cover .cover-placeholder,
+.search-best-art,
+.search-item-art,
+.cover-placeholder {
+  border-radius: var(--radius-cover);
+}
+.artist-avatar,
+.artist-portrait,
+.person-avatar,
+.search-avatar,
+.search-item-art.search-avatar {
+  border-radius: 50%;
+}
+.section-title {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+}
+
+/* 3. Artist Detail page adjustable per-row discography slider. */
+.artist-discog-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.artist-discog-tools .grid-size-control {
+  margin-left: 0;
+}
+.album-browser.detail-album-grid {
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 28px 22px;
+}
+.album-browser.detail-album-grid[style*="--artist-cols"] {
+  grid-template-columns: repeat(var(--artist-cols-eff, var(--artist-cols)), minmax(0, 1fr));
+}
+@media (max-width: 900px) {
+  .artist-grid-size-control { display: none; }
+}
+@media (max-width: 599px) {
+  .album-browser.detail-album-grid,
+  .album-browser.detail-album-grid[style*="--artist-cols"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 12px;
+  }
+}
+
+/* 4. Admin Workspace Mode: generous centered canvas on wide/4K displays,
+      shared cross-page domain tabs, quiet flat cards, and dashboard redesign. */
+body.admin-workspace #app-main > *,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) #app-main > * {
+  max-width: var(--admin-max);
+  margin-inline: auto;
+}
+body.admin-workspace .browser-header,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .browser-header {
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+body.admin-workspace .browser-header > div:first-child:has(> .result-count),
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .browser-header > div:first-child:has(> .result-count) {
+  display: grid;
+  gap: 6px;
+}
+
+/* Cross-page Admin Domain Sub-Tabs */
+.admin-domain-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 22px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+.matches-title-block .admin-domain-tabs {
+  margin: 12px 0 6px;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.admin-domain-tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.admin-domain-tabs a:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+.admin-domain-tabs a.is-active {
+  color: var(--accent-strong-text);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+/* Dashboard Overview (/admin) */
+.console-header { margin-bottom: 22px; }
+.console-stats {
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.console-kpi {
+  display: grid;
+  gap: 8px;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: inherit;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.console-kpi:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+.console-kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+}
+.console-kpi-head .icon { width: 17px; height: 17px; color: var(--muted); }
+.console-kpi strong {
+  font-size: clamp(1.9rem, 2.2vw, 2.3rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.console-kpi-sub {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.console-kpi.has-warn .console-kpi-sub {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+.console-grid {
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 28px;
+}
+.console-side-stack {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.console-card,
+.scan-console,
+.console-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 24px 26px;
+  background: var(--surface);
+  box-shadow: none;
+}
+.console-card { display: grid; gap: 12px; }
+.console-card h2,
+.scan-console h2,
+.console-note h2 {
+  margin: 0;
+  font-size: 1.14rem;
+  font-weight: 600;
+}
+.console-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.console-card-head .kicker { margin-bottom: 4px; }
+.console-card-head .scan-actions { margin-top: 0; }
+.console-disclosure {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.console-disclosure > summary {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.console-disclosure > summary:hover { color: var(--text); }
+.console-quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.console-quick-links .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  min-height: 34px;
+  padding: 0 14px;
+}
+.console-hub-section { margin-top: 8px; }
+.console-hub-section .client-feature-links {
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+/* Wide-screen settings & feature cards: balanced 2-column grid starting at 1280px
+   so forms never stretch across a 2K/4K screen or sit cramped in one left column. */
+.feature-card,
+.source-card {
+  padding: 24px 26px;
+}
+.settings-grid {
+  gap: 20px;
+}
+.source-card-form, .security-card, .security-flash { max-width: none; }
+.source-card-form > .source-card + .source-card { margin-top: 20px; }
+@container app-main (min-width: 1220px) {
+  .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container app-main (min-width: 2500px) {
+  .settings-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.acquisition-main [data-acquisition-tests] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.acquisition-main [data-acquisition-tests] button {
+  background: var(--fill);
+  color: var(--text);
+}
+.acquisition-main [data-acquisition-tests] button:hover { background: var(--fill-hover); }
+.acquisition-main [data-acquisition-tests] p { margin: 0; color: var(--text-secondary); font-size: var(--fs-sm); }
+
+/* Tables inside admin workbenches */
+.ai-tagging-table th {
+  padding: 10px 10px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.ai-tagging-table td { padding: 11px 10px; }
+.ai-tagging-table tbody tr:hover { background: var(--bg-soft); }
+
+@media (max-width: 1080px) {
+  .console-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .album-hero,
+  .artist-hero,
+  .work-hero {
+    margin: -8px -18px 22px;
+    padding: 20px 18px 26px;
+  }
+  .console-card,
+  .scan-console,
+  .console-note,
+  .feature-card,
+  .source-card {
+    padding: 18px;
+  }
+}
+

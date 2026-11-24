@@ -4,7 +4,7 @@ import { s } from './state.js';
 import { formatTime, svgIcon, showUndoToast, showToast, showActionToast, apiFetch, swapIcon } from './util.js';
 import { navigateFromPlayer } from './router.js';
 import { bindSeekBar, updateTrackRowsUI, updatePlayerMetaUI, updatePlayButtonUI } from './player-bar.js';
-import { loadLyrics } from './lyrics.js';
+import { loadLyrics, scrollLyricsToActive } from './lyrics.js';
 import { isCasting, mediaTime, mediaDuration } from './cast.js';
 import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQueuePlayback, saveState, updateMediaSession } from './player-core.js';
 import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
@@ -199,12 +199,24 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
   }
 
   const PANEL_KEY = '032_np_collapsed';
+  const ADMIN_NAV_KEYS = [
+    'console', 'missing', 'work-review', 'matches', 'artist-aliases',
+    'merges', 'series', 'enrichment', 'audio-analysis', 'ai-tagging',
+    'online-lyrics', 'lyrics-translations', 'daily-mixes', 'settings',
+    'acquisition-settings', 'ai-settings', 'backups', 'security'
+  ];
+  let activePanelTab = 'queue';
+
+  function isAdminWorkspace() {
+    return document.body.classList.contains('admin-workspace') || ADMIN_NAV_KEYS.includes(document.body.dataset.nav || '');
+  }
 
   function panelCollapsedDefault() {
     return window.innerWidth < 1440;
   }
 
   function isPanelCollapsed() {
+    if (isAdminWorkspace()) return true;
     let stored = null;
     try { stored = localStorage.getItem(PANEL_KEY); } catch (_) {}
     if (stored === null) return panelCollapsedDefault();
@@ -216,6 +228,37 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
     return !document.body.classList.contains('np-collapsed');
   }
 
+  export function getNowPlayingTab() { return activePanelTab; }
+
+  function syncPlayerBarTabButtons() {
+    const open = isPanelOpen();
+    const queueBtn = document.getElementById('player-btn-queue');
+    if (queueBtn) {
+      queueBtn.setAttribute('aria-expanded', String(open && activePanelTab === 'queue'));
+      queueBtn.classList.toggle('active', open && activePanelTab === 'queue');
+    }
+    const lyricsBtn = document.getElementById('player-btn-lyrics');
+    if (lyricsBtn) {
+      lyricsBtn.setAttribute('aria-expanded', String(open && activePanelTab === 'lyrics'));
+      lyricsBtn.classList.toggle('active', open && activePanelTab === 'lyrics');
+    }
+  }
+
+  export function setNowPlayingTab(tab) {
+    const next = tab === 'lyrics' ? 'lyrics' : 'queue';
+    activePanelTab = next;
+    const queueTab = document.getElementById('np-tab-queue');
+    const lyricsTab = document.getElementById('np-tab-lyrics');
+    const queuePane = document.getElementById('np-queue-pane');
+    const lyricsPane = document.getElementById('np-lyrics-pane');
+    if (queueTab) { queueTab.classList.toggle('is-active', next === 'queue'); queueTab.setAttribute('aria-selected', String(next === 'queue')); }
+    if (lyricsTab) { lyricsTab.classList.toggle('is-active', next === 'lyrics'); lyricsTab.setAttribute('aria-selected', String(next === 'lyrics')); }
+    if (queuePane) queuePane.hidden = next !== 'queue';
+    if (lyricsPane) lyricsPane.hidden = next !== 'lyrics';
+    if (next === 'lyrics') requestAnimationFrame(() => scrollLyricsToActive(true));
+    syncPlayerBarTabButtons();
+  }
+
   // [M2] syncPanelA11y keeps focusability in line with visibility: a hidden
   // panel must never receive Tab focus.
   export function syncPanelA11y() {
@@ -224,24 +267,24 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
     const open = isPanelOpen();
     panel.inert = !open;
     panel.setAttribute('aria-hidden', String(!open));
+    syncPlayerBarTabButtons();
   }
 
   function applyPanelState() {
+    document.body.classList.toggle('admin-workspace', isAdminWorkspace());
     if (window.innerWidth <= 900) {
       document.body.classList.remove('np-collapsed');
     } else {
       document.body.classList.toggle('np-collapsed', isPanelCollapsed());
       document.body.classList.remove('np-open');
     }
-    const queueBtn = document.getElementById('player-btn-queue');
-    if (queueBtn) queueBtn.setAttribute('aria-expanded', String(isPanelOpen()));
     syncPanelA11y();
   }
 
-  // [M5] persist=false on the mobile drawer so a phone never overwrites the
-  // desktop collapse preference.
+  // [M5] persist=false on the mobile drawer and in Admin Workspace so neither
+  // overwrites the desktop player-mode collapse preference.
   function setPanelCollapsed(collapsed, persist) {
-    if (persist && window.innerWidth > 900) {
+    if (persist && window.innerWidth > 900 && !isAdminWorkspace()) {
       try { localStorage.setItem(PANEL_KEY, collapsed ? '1' : '0'); } catch (_) {}
     }
     if (window.innerWidth <= 900) {
@@ -251,19 +294,27 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
       document.body.classList.toggle('np-collapsed', collapsed);
       document.body.classList.remove('np-open');
     }
-    const queueBtn = document.getElementById('player-btn-queue');
-    if (queueBtn) queueBtn.setAttribute('aria-expanded', String(!collapsed));
     syncPanelA11y();
   }
 
-  export function toggleNowPlayingPanel() {
+  export function toggleNowPlayingPanel(preferredTab) {
+    const targetTab = preferredTab === 'lyrics' || preferredTab === 'queue' ? preferredTab : null;
+    const open = isPanelOpen();
+    if (targetTab && open && activePanelTab !== targetTab) {
+      setNowPlayingTab(targetTab);
+      return;
+    }
+    if (targetTab && !open) {
+      setNowPlayingTab(targetTab);
+      setPanelCollapsed(false, true);
+      if (window.innerWidth <= 900) document.getElementById('np-collapse')?.focus();
+      return;
+    }
     if (window.innerWidth <= 900) {
-      const open = !document.body.classList.contains('np-open');
-      document.body.classList.toggle('np-open', open);
-      const queueBtn = document.getElementById('player-btn-queue');
-      if (queueBtn) queueBtn.setAttribute('aria-expanded', String(open));
+      const nextOpen = !document.body.classList.contains('np-open');
+      document.body.classList.toggle('np-open', nextOpen);
       syncPanelA11y();
-      if (open) document.getElementById('np-collapse')?.focus();
+      if (nextOpen) document.getElementById('np-collapse')?.focus();
       return;
     }
     setPanelCollapsed(!document.body.classList.contains('np-collapsed'), true);
@@ -271,6 +322,11 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
 
   export function setupNowPlayingPanel() {
     applyPanelState();
+    setNowPlayingTab('queue');
+
+    document.getElementById('np-tab-queue')?.addEventListener('click', () => setNowPlayingTab('queue'));
+    document.getElementById('np-tab-lyrics')?.addEventListener('click', () => setNowPlayingTab('lyrics'));
+    document.addEventListener('032:nav-mode-changed', () => applyPanelState());
 
     const collapseBtn = document.getElementById('np-collapse');
     if (collapseBtn) collapseBtn.addEventListener('click', () => {

@@ -183,6 +183,20 @@ type Chrome struct {
 	PendingReviewCount int
 }
 
+// IsAdminNav reports whether the active page belongs to the dedicated admin
+// workspace (rather than the music-library player experience).
+func (c Chrome) IsAdminNav() bool {
+	switch c.Nav {
+	case "console", "missing", "work-review", "matches", "artist-aliases",
+		"merges", "series", "enrichment", "audio-analysis", "ai-tagging",
+		"online-lyrics", "lyrics-translations", "daily-mixes", "settings",
+		"acquisition-settings", "ai-settings", "backups", "security":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) chromeFor(ctx context.Context, session adminSession, nav string) Chrome {
 	chrome := Chrome{Username: session.Username, CSRFToken: session.CSRFToken, Nav: nav}
 	total, err := a.store.PendingWorkReviewTotal(ctx)

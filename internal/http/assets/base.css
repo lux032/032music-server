@@ -19,8 +19,9 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 h1, h2, h3, p { margin-top: 0; }
-h1 { margin-bottom: 0.25rem; font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.02em; }
-h2 { margin-bottom: 0.4rem; }
+h1 { margin-bottom: 0.25rem; font-size: var(--fs-title); font-weight: 600; letter-spacing: 0; }
+h2 { margin-bottom: 0.4rem; font-weight: 600; letter-spacing: 0; }
+h3 { font-weight: 600; letter-spacing: 0; }
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-hover); }

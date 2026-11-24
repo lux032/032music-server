@@ -121,6 +121,7 @@ type identityPageData struct {
 	Artists                                []storage.Artist
 	Albums                                 []storage.Album
 	ReleaseGroups                          []artistReleaseGroup
+	ArtistAlbumCols                        int
 	Tracks                                 []storage.Track
 	TracksArePopular                       bool
 	Review                                                   []matchReviewItem
@@ -707,6 +708,7 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.ReleaseGroups = groupArtistDiscography(releases)
+	data.ArtistAlbumCols = artistAlbumGridCols(r)
 	data.Tracks, data.TracksArePopular, err = a.store.ArtistHighlightTracks(r.Context(), id, storage.ArtistTopTrackLimit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

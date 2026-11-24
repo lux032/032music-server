@@ -245,7 +245,7 @@ func (a *App) handleAITaggingPage(w http.ResponseWriter, r *http.Request) {
 		a.renderAdminFeatureError(w, "console", err)
 		return
 	}
-	data := aiTaggingPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: r.URL.Query().Get("notice"), Status: snap, View: buildAITaggingView(snap),
+	data := aiTaggingPageData{Chrome: a.chromeFor(ctx, session, "ai-tagging"), Notice: r.URL.Query().Get("notice"), Status: snap, View: buildAITaggingView(snap),
 		BaseURL: st.BaseURL, Model: st.Model, FallbackModel: st.FallbackModel, ReviewModel: st.ReviewModel, ReviewEnabled: st.ReviewEnabled, KeySet: st.APIKey != "", ProxySet: st.ProxyURL != "",
 		Reasoning: st.ReasoningEffort, IncludeLyrics: st.IncludeLyrics, RPM: st.RequestsPerMinute, Concurrency: st.Concurrency, FirstEnabled: st.FirstEnabledAt}
 	data.Usage, data.UsageTotal = a.buildAIUsageView(ctx)

@@ -239,15 +239,51 @@
     note.title = capped ? `当前宽度最多容纳 ${state.cols} 列；加宽窗口或收起播放面板后按 ${state.chosen} 列显示` : '';
   }
   function fitGrid(grid) {
-    if (grid.classList.contains('detail-album-grid')) return;
+    if (grid.classList.contains('detail-album-grid')) {
+      fitArtistGrid(grid);
+      return;
+    }
     const state = effectiveCols(grid);
     if (!state) return;
     grid.style.setProperty('--album-cols-eff', String(state.cols));
     syncGridOutput(state);
   }
+  const ARTIST_MIN_COVER = 140;
+  function fitArtistGrid(grid) {
+    const width = grid.clientWidth;
+    if (!width) return;
+    const gap = parseFloat(getComputedStyle(grid).columnGap) || 22;
+    const fit = (cover) => Math.max(2, Math.floor((width + gap) / (cover + gap)));
+    const chosen = parseInt(grid.style.getPropertyValue('--artist-cols'), 10);
+    const input = document.querySelector('[data-artist-grid-cols]');
+    const output = input?.parentElement.querySelector('output');
+    if (chosen) {
+      const cols = Math.min(chosen, fit(ARTIST_MIN_COVER));
+      grid.style.setProperty('--artist-cols-eff', String(cols));
+      if (input && output) {
+        let note = output.parentElement.querySelector('.grid-cap-note');
+        if (!note) { note = document.createElement('small'); note.className = 'grid-cap-note'; output.after(note); }
+        output.textContent = String(chosen);
+        const capped = cols < chosen;
+        note.textContent = capped ? `当前 ${cols} 列` : '';
+        note.title = capped ? `当前宽度最多容纳 ${cols} 列；加宽窗口或收起播放面板后按 ${chosen} 列显示` : '';
+      }
+      return;
+    }
+    // No explicit preference saved: mirror actual rendered auto-fill column count in the slider UI.
+    grid.style.removeProperty('--artist-cols-eff');
+    if (input && output) {
+      const tracks = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
+      const autoCols = Math.min(10, Math.max(2, tracks || fit(170)));
+      input.value = String(autoCols);
+      output.textContent = String(autoCols);
+      const note = output.parentElement.querySelector('.grid-cap-note');
+      if (note) { note.textContent = ''; note.title = ''; }
+    }
+  }
   const gridObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => entries.forEach(entry => fitGrid(entry.target))) : null;
   function observeGrids() {
-    document.querySelectorAll('.album-browser:not(.detail-album-grid)').forEach(grid => {
+    document.querySelectorAll('.album-browser').forEach(grid => {
       if (gridObserver) gridObserver.observe(grid); else fitGrid(grid);
     });
   }
@@ -258,13 +294,28 @@
     document.querySelectorAll('.album-browser:not(.detail-album-grid)').forEach(grid => { grid.style.setProperty('--album-cols', String(cols)); fitGrid(grid); });
     return cols;
   }
+  function applyArtistGridCols(input) {
+    const cols = Math.min(10, Math.max(2, parseInt(input.value, 10) || 5));
+    document.querySelectorAll('.album-browser.detail-album-grid').forEach(grid => {
+      grid.style.setProperty('--artist-cols', String(cols));
+      fitArtistGrid(grid);
+    });
+    return cols;
+  }
   document.addEventListener('input', e => {
-    if (e.target instanceof HTMLInputElement && e.target.matches('[data-grid-cols]')) applyGridCols(e.target);
+    if (!(e.target instanceof HTMLInputElement)) return;
+    if (e.target.matches('[data-grid-cols]')) applyGridCols(e.target);
+    else if (e.target.matches('[data-artist-grid-cols]')) applyArtistGridCols(e.target);
   });
   document.addEventListener('change', e => {
-    if (!(e.target instanceof HTMLInputElement) || !e.target.matches('[data-grid-cols]')) return;
-    const cols = applyGridCols(e.target);
-    document.cookie = `032_album_cols=${cols}; path=/admin; max-age=31536000; samesite=lax`;
+    if (!(e.target instanceof HTMLInputElement)) return;
+    if (e.target.matches('[data-grid-cols]')) {
+      const cols = applyGridCols(e.target);
+      document.cookie = `032_album_cols=${cols}; path=/admin; max-age=31536000; samesite=lax`;
+    } else if (e.target.matches('[data-artist-grid-cols]')) {
+      const cols = applyArtistGridCols(e.target);
+      document.cookie = `032_artist_cols=${cols}; path=/admin; max-age=31536000; samesite=lax`;
+    }
   });
   // Selects marked data-autosubmit (e.g. favorites sort/page-size) submit
   // their GET form immediately; the router turns that into a PJAX navigation.

@@ -63,36 +63,37 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
         </div>
         <span id="player-cast-label" class="player-cast-label" aria-hidden="true"></span>
         <button id="player-btn-cast" class="player-tool-btn" title="投送到 Sonos / DLNA 设备" aria-label="投送到其他设备" aria-haspopup="menu" aria-expanded="false" aria-controls="cast-menu"><span class="icon-slot" data-icon="icon-cast"></span></button>
-        <button id="player-btn-lyrics" class="player-tool-btn" title="歌词 (L)" aria-label="歌词" aria-expanded="false" aria-controls="lyrics-overlay"><span class="icon-slot" data-icon="icon-lyrics"></span></button>
+        <button id="player-btn-lyrics" class="player-tool-btn" title="歌词 (L)" aria-label="歌词" aria-expanded="false" aria-controls="np-lyrics-pane"><span class="icon-slot" data-icon="icon-lyrics"></span></button>
         <button id="player-btn-queue" class="player-tool-btn" title="播放队列" aria-label="播放队列" aria-expanded="false" aria-controls="now-playing"><span class="icon-slot" data-icon="icon-queue"></span></button>
         <button id="player-btn-fullscreen" class="player-tool-btn" title="全屏" aria-label="全屏"><span class="icon-slot" data-icon="icon-fullscreen"></span></button>
         <button id="player-btn-shortcuts" class="player-tool-btn" title="快捷键说明" aria-label="快捷键说明" aria-expanded="false"><span class="icon-slot" data-icon="icon-dots"></span></button>
-        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>Space 播放/暂停 · L 歌词 · Esc 关闭歌词 · 队列中 Alt+↑/↓ 调整顺序</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
+        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>Space 播放/暂停 · L 歌词 · Esc 退出面板/全屏 · 队列中 Alt+↑/↓ 调整顺序</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
       </div>
     `;
     hydrateIconSlots(playerBar);
 
-    // Lyrics overlay
-    const lyricsOverlay = document.createElement('div');
-    lyricsOverlay.id = 'lyrics-overlay';
-    lyricsOverlay.className = 'lyrics-overlay';
-    lyricsOverlay.style.display = 'none';
-    lyricsOverlay.innerHTML = `
-      <div class="lyrics-header">
-        <div class="lyrics-track-info">
-          <strong id="lyrics-title"></strong>
-          <small id="lyrics-artist"></small>
-        </div>
-        <button id="lyrics-close-btn" class="lyrics-close-btn" title="关闭歌词" aria-label="关闭歌词"><span class="icon-slot" data-icon="icon-close"></span></button>
-      </div>
-      <div id="lyrics-scroll-container" class="lyrics-content">
-        <div class="lyrics-zero-state">暂无歌词</div>
-      </div>
-    `;
-    hydrateIconSlots(lyricsOverlay);
-
     document.body.appendChild(playerBar);
-    document.body.appendChild(lyricsOverlay);
+    // Keep floating lyrics overlay only as a fallback if #now-playing lacks an embedded lyrics pane.
+    if (!document.getElementById('lyrics-scroll-container')) {
+      const lyricsOverlay = document.createElement('div');
+      lyricsOverlay.id = 'lyrics-overlay';
+      lyricsOverlay.className = 'lyrics-overlay';
+      lyricsOverlay.style.display = 'none';
+      lyricsOverlay.innerHTML = `
+        <div class="lyrics-header">
+          <div class="lyrics-track-info">
+            <strong id="lyrics-title"></strong>
+            <small id="lyrics-artist"></small>
+          </div>
+          <button id="lyrics-close-btn" class="lyrics-close-btn" title="关闭歌词" aria-label="关闭歌词"><span class="icon-slot" data-icon="icon-close"></span></button>
+        </div>
+        <div id="lyrics-scroll-container" class="lyrics-content">
+          <div class="lyrics-zero-state">暂无歌词</div>
+        </div>
+      `;
+      hydrateIconSlots(lyricsOverlay);
+      document.body.appendChild(lyricsOverlay);
+    }
     document.body.classList.add('has-global-player');
 
     s.audio = document.getElementById('global-audio-element');
@@ -119,7 +120,7 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
     if (nextBtn) nextBtn.addEventListener('click', playNext);
     if (loopBtn) loopBtn.addEventListener('click', cycleLoopMode);
     if (shuffleBtn) shuffleBtn.addEventListener('click', toggleShuffle);
-    if (queueBtn) queueBtn.addEventListener('click', toggleNowPlayingPanel);
+    if (queueBtn) queueBtn.addEventListener('click', () => toggleNowPlayingPanel('queue'));
 
     if (progressBar) {
       bindSeekBar(progressBar, (fill, thumb) => {
@@ -162,6 +163,10 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
 
     if (lyricsBtn) {
       lyricsBtn.addEventListener('click', () => {
+        if (document.getElementById('np-lyrics-pane')) {
+          toggleNowPlayingPanel('lyrics');
+          return;
+        }
         const overlay = document.getElementById('lyrics-overlay');
         if (!overlay) return;
         const isVisible = overlay.style.display !== 'none';

@@ -80,7 +80,7 @@ func (a *App) handleOnlineLyricsDiagnose(w http.ResponseWriter, r *http.Request)
 	}
 	session, _ := a.sessions.get(r)
 	ctx := r.Context()
-	data := lyricsDiagnosePageData{Chrome: a.chromeFor(ctx, session, "console"), Enabled: a.onlineLyrics != nil,
+	data := lyricsDiagnosePageData{Chrome: a.chromeFor(ctx, session, "online-lyrics"), Enabled: a.onlineLyrics != nil,
 		Query: strings.TrimSpace(r.FormValue("q"))}
 	if data.Query == "" {
 		a.render(w, http.StatusOK, "online-lyrics-diagnose.html", data)

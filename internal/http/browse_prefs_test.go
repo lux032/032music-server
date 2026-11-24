@@ -3,8 +3,12 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/lux032/032music-server/internal/metadata"
+	"github.com/lux032/032music-server/internal/storage"
 )
 
 func TestBrowsePagesRememberSortAndAlbumGridCols(t *testing.T) {
@@ -84,5 +88,81 @@ func TestBrowsePagesRememberSortAndAlbumGridCols(t *testing.T) {
 	_, body = get("/admin/albums", &http.Cookie{Name: "032_album_cols", Value: "99"})
 	if strings.Contains(body, "--album-cols") {
 		t.Fatalf("out-of-range columns applied")
+	}
+}
+
+func TestArtistGridColsCookieAndDualModeShell(t *testing.T) {
+	app, cookie, _ := csrfSessionApp(t)
+	ctx := t.Context()
+	root := t.TempDir()
+	if err := app.store.EnsureLibrary(ctx, "GridTest", root); err != nil {
+		t.Fatal(err)
+	}
+	library, err := app.store.LibraryByRoot(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = app.store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: library.ID, RelativePath: "Album1/01.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Song 1", Album: "Album 1", Artists: []string{"Yorushika"}, AlbumArtists: []string{"Yorushika"},
+			DiscNumber: 1, TrackNumber: 1, Raw: map[string][]string{"DATE": {"2024-01-01"}, "RELEASETYPE": {"album"}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	artists, err := app.store.ListArtists(ctx, storage.Filters{Query: "Yorushika", Limit: 10})
+	if err != nil || len(artists) != 1 {
+		t.Fatalf("artists = %+v, err = %v", artists, err)
+	}
+	artistPath := "/admin/artists/" + strconv.FormatInt(artists[0].ID, 10)
+
+	get := func(path string, extra ...*http.Cookie) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(cookie)
+		for _, c := range extra {
+			req.AddCookie(c)
+		}
+		rec := httptest.NewRecorder()
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Default artist page emits slider without inline --artist-cols.
+	body := get(artistPath)
+	if strings.Contains(body, "--artist-cols") || !strings.Contains(body, `data-artist-grid-cols`) {
+		t.Fatalf("default artist page should render slider without inline --artist-cols")
+	}
+	// Valid 032_artist_cols cookie emits inline style and slider value.
+	body = get(artistPath, &http.Cookie{Name: "032_artist_cols", Value: "6"})
+	if !strings.Contains(body, `style="--artist-cols: 6"`) || !strings.Contains(body, `value="6"`) {
+		t.Fatalf("artist grid columns cookie not applied")
+	}
+	// Out-of-range cookie is ignored.
+	body = get(artistPath, &http.Cookie{Name: "032_artist_cols", Value: "99"})
+	if strings.Contains(body, "--artist-cols") {
+		t.Fatalf("out-of-range artist grid columns applied")
+	}
+
+	// Dual-mode shell: player page vs admin workspace page + integrated queue/lyrics panel.
+	homeBody := get("/admin/home")
+	if strings.Contains(homeBody, `class="sidebar is-admin-workspace"`) {
+		t.Fatalf("home page should not activate admin workspace sidebar")
+	}
+	for _, want := range []string{`id="sidebar-admin-entry"`, `id="np-tab-queue"`, `id="np-tab-lyrics"`, `id="lyrics-scroll-container"`} {
+		if !strings.Contains(homeBody, want) {
+			t.Fatalf("home page missing %s", want)
+		}
+	}
+
+	for _, adminPath := range []string{"/admin", "/admin/library/missing", "/admin/audio-analysis", "/admin/ai-tagging", "/admin/artist-aliases", "/admin/online-lyrics", "/admin/lyrics-translations", "/admin/settings/acquisition"} {
+		adminBody := get(adminPath)
+		if !strings.Contains(adminBody, `class="sidebar is-admin-workspace"`) {
+			t.Fatalf("%s should activate admin workspace sidebar", adminPath)
+		}
 	}
 }

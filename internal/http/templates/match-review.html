@@ -12,6 +12,11 @@
       <div class="matches-title-block">
         <h1>艺术家匹配与审核</h1>
         <p class="result-count">以 MusicBrainz / Last.fm 为来源扫描艺术家身份；低于自动确认阈值的候选在这里人工审核。</p>
+        <nav class="admin-domain-tabs" aria-label="艺术家治理视图">
+          <a href="/admin/matches" class="is-active" aria-current="page">身份 / 署名 / 头像审核</a>
+          <a href="/admin/artist-aliases">中文别名补全</a>
+          <a href="/admin/merges">合并历史与回退</a>
+        </nav>
         <details class="match-help">
           <summary>扫描规则说明</summary>
           <p>“扫描未检查的艺术家”及服务启动自动扫描仅检查从未初次扫描过的艺术家（已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家均保持不动）；“全局补全扫描”会对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>

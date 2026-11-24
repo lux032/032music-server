@@ -37,7 +37,7 @@ func (a *App) handleArtistAliasPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, _ := a.sessions.get(r)
-	data := artistAliasPageData{Chrome: a.chromeFor(ctx, session, "console"), Notice: r.URL.Query().Get("notice"), Settings: st, KeySet: st.DeepSeekKey != "", Eligible: 0}
+	data := artistAliasPageData{Chrome: a.chromeFor(ctx, session, "artist-aliases"), Notice: r.URL.Query().Get("notice"), Settings: st, KeySet: st.DeepSeekKey != "", Eligible: 0}
 	ai, e := a.store.AISettings(ctx)
 	if e != nil {
 		a.renderAdminFeatureError(w, "artist aliases", e)

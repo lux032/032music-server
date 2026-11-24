@@ -1008,3 +1008,485 @@ body.player-buffering .np-queue-list li.current .eq-bars i { animation-play-stat
 :root[data-theme="dark"] .wordmark-icon {
   filter: drop-shadow(0 0 0.75px color-mix(in oklab, var(--text) 45%, transparent));
 }
+
+/* ------------------------------------------------- editorial v3 & admin workspace (2026-11) */
+/* Neutral editorial chrome aligned with 032player-rs v3.
+   Sidebar and bottom player bar share --bg-chrome; right Now Playing panel uses
+   --bg-panel. Admin routes automatically enter Admin Workspace Mode via body[data-nav]. */
+.sidebar {
+  background: var(--bg-chrome);
+  border-right: 1px solid var(--line);
+  padding: 20px 12px 14px;
+}
+.wordmark {
+  align-items: center;
+  margin: 0 8px 18px;
+  gap: 8px;
+  font-weight: 700;
+}
+.wordmark span {
+  font-size: 1.32rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.wordmark small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+.wordmark-sub-admin,
+.wordmark-badge,
+.sidebar-back-library {
+  display: none;
+}
+.wordmark-badge {
+  margin-left: 2px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-style: normal;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent-strong-text);
+  background: var(--accent-soft);
+}
+
+/* Player mode: quiet single entry into Admin Workspace; full admin group stays
+   in DOM for accessibility and mobile sheet, revealed immediately in Admin Workspace. */
+.sidebar-admin-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.sidebar-admin-entry .icon { width: 17px; height: 17px; color: var(--muted); }
+.sidebar-admin-entry .nav-badge { margin-left: auto; }
+.sidebar-admin-entry:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--fill);
+}
+.sidebar-admin-entry:hover .icon { color: var(--accent); }
+
+.sidebar-group-toggle { display: none; }
+.sidebar .sidebar-group { margin-top: 0; }
+.sidebar-group .group-items { display: none; gap: 2px; padding-left: 0; }
+.sidebar-group .group-items a {
+  padding: 7px 10px;
+  min-height: 36px;
+  font-size: var(--fs-sm);
+  border-radius: 8px;
+}
+.sidebar-group .group-items p.admin-nav-section {
+  margin: 14px 10px 4px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+.sidebar-group .group-items p.admin-nav-section:first-child { margin-top: 4px; }
+
+.sidebar nav a {
+  min-height: 37px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.sidebar nav a .icon { width: 17px; height: 17px; color: var(--muted); }
+.sidebar nav a:hover { color: var(--text); background: var(--fill); }
+.sidebar nav a.active { color: var(--text); background: var(--fill); font-weight: 600; }
+.sidebar nav a.active .icon { color: var(--accent); }
+
+/* Admin Workspace Mode — activates cleanly on SSR & PJAX without FOUC */
+body.admin-workspace .wordmark-sub-music,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .wordmark-sub-music {
+  display: none;
+}
+body.admin-workspace .wordmark-sub-admin,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .wordmark-sub-admin,
+body.admin-workspace .wordmark-badge,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .wordmark-badge {
+  display: inline-block;
+}
+body.admin-workspace .sidebar-player-nav,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-player-nav,
+body.admin-workspace .sidebar-admin-entry,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-admin-entry {
+  display: none;
+}
+body.admin-workspace .sidebar-back-library,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-back-library {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.sidebar-back-library:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--fill);
+}
+.sidebar-back-library .icon { width: 16px; height: 16px; color: var(--accent); }
+
+body.admin-workspace .sidebar-group .group-items,
+body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-group .group-items {
+  display: grid;
+}
+
+/* In Admin Workspace on desktop, #app-main always enjoys the full canvas width;
+   if the user expands #now-playing manually, it overlays cleanly from the right. */
+@media (min-width: 901px) {
+  body.admin-workspace,
+  body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) {
+    --content-right: 0px;
+  }
+  body.admin-workspace:not(.np-collapsed) .now-playing,
+  body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]):not(.np-collapsed) .now-playing {
+    box-shadow: -18px 0 44px rgba(0, 0, 0, 0.28);
+  }
+}
+
+/* Mobile bottom bar overrides — keep primary player destinations visible even
+   when visiting an admin route on mobile! */
+@media (max-width: 900px) {
+  .sidebar { background: var(--bg-chrome); }
+  .sidebar-back-library,
+  .sidebar-admin-entry,
+  .sidebar .sidebar-group,
+  body.admin-workspace .sidebar-back-library,
+  body.admin-workspace .sidebar-admin-entry,
+  body.admin-workspace .sidebar-group,
+  body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-back-library,
+  body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-admin-entry,
+  body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-group {
+    display: none !important;
+  }
+  .sidebar .sidebar-player-nav,
+  body.admin-workspace .sidebar-player-nav,
+  body:is([data-nav="console"], [data-nav="missing"], [data-nav="work-review"], [data-nav="matches"], [data-nav="artist-aliases"], [data-nav="merges"], [data-nav="series"], [data-nav="enrichment"], [data-nav="audio-analysis"], [data-nav="ai-tagging"], [data-nav="online-lyrics"], [data-nav="lyrics-translations"], [data-nav="daily-mixes"], [data-nav="settings"], [data-nav="acquisition-settings"], [data-nav="ai-settings"], [data-nav="backups"], [data-nav="security"]) .sidebar-player-nav {
+    display: flex !important;
+  }
+}
+
+/* ------------------------------------------------- editorial Now Playing panel + Queue/Lyrics tabs */
+.now-playing {
+  background: var(--bg-panel);
+  border-left: 1px solid var(--line);
+}
+.np-head {
+  justify-content: space-between;
+  padding: 14px 18px 8px;
+}
+.np-head-label {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.np-cover {
+  border-radius: 10px;
+  box-shadow: var(--shadow-cover);
+}
+.np-current h2, .np-queue-head h2 {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.np-meta strong { font-weight: 600; }
+
+/* Integrated Queue | Lyrics pill switch */
+.np-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 14px 18px 0;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--fill);
+  flex: none;
+}
+.np-tab {
+  min-height: 30px;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.np-tab:hover { color: var(--text); background: transparent; }
+.np-tab.is-active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+:root[data-theme="dark"] .np-tab.is-active { background: var(--fill-hover); }
+
+.np-queue-section { margin-top: 12px; border-top: 0; }
+.np-queue-section[hidden], .np-lyrics-section[hidden] { display: none; }
+.np-queue-list li.current .q-title { font-weight: 600; }
+
+.np-lyrics-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+}
+.np-lyrics-head {
+  display: none;
+}
+.np-lyrics-section .lyrics-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px 28px;
+  text-align: left;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.np-lyrics-section .lyric-line {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  text-align: left;
+}
+.np-lyrics-section .lyric-line.active {
+  color: var(--text);
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+.np-lyrics-section .lyrics-zero-state,
+.np-lyrics-section .lyrics-loading {
+  padding-top: 48px;
+  text-align: center;
+}
+
+/* ------------------------------------------------- editorial bottom player bar + D4 cover rule */
+.global-player {
+  background: var(--bg-chrome);
+  border-top: 1px solid var(--line);
+}
+.player-cover-wrap { border-radius: 6px; }
+.player-meta strong { font-weight: 600; }
+
+/* D4: When the docked right Now Playing panel is open on desktop (and NOT in
+   Admin Workspace overlay), hide the duplicate tiny cover in the player bar. */
+@media (min-width: 901px) {
+  body:not(.np-collapsed):not(.admin-workspace) .player-cover-wrap {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .player-cover-wrap { display: block; }
+}
+
+/* ------------------------------------------------- neutral 3-column fullscreen stage */
+#player-fullscreen {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(320px, 1.45fr) minmax(240px, 320px);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  justify-content: stretch;
+  gap: 20px clamp(24px, 3vw, 48px);
+  padding: 24px clamp(24px, 4vw, 56px) 36px;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+#player-fullscreen::before,
+#player-fullscreen::after {
+  display: none;
+  content: none;
+}
+#player-fullscreen:not(.has-cover) {
+  grid-template-columns: minmax(280px, 380px) minmax(320px, 1.45fr) minmax(240px, 320px);
+}
+#player-fullscreen .fs-topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+#player-fullscreen .fs-brand {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+#player-fullscreen .fs-close {
+  grid-column: auto;
+  justify-self: end;
+  background: var(--fill);
+  color: var(--text);
+  box-shadow: none;
+  border-radius: 999px;
+  min-width: 38px;
+  min-height: 38px;
+}
+#player-fullscreen .fs-close:hover { background: var(--fill-hover); }
+
+#player-fullscreen .fs-stage-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+}
+#player-fullscreen .fs-cover {
+  grid-row: auto;
+  width: 100%;
+  max-width: 380px;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  box-shadow: var(--shadow-cover);
+  object-fit: cover;
+}
+#player-fullscreen .fs-meta {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+#player-fullscreen .fs-title {
+  font-size: clamp(1.35rem, 2vw, 1.85rem);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+#player-fullscreen .fs-artist, #player-fullscreen .fs-album {
+  color: var(--text-secondary);
+  font-size: var(--fs-md);
+}
+#player-fullscreen .fs-album { color: var(--muted); font-size: var(--fs-sm); }
+#player-fullscreen .fs-controls { justify-content: flex-start; gap: 12px; }
+
+#player-fullscreen .fs-stage-center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 0 clamp(20px, 3vw, 44px);
+}
+#player-fullscreen .fs-lyrics {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  padding: 18vh 0;
+  text-align: left;
+  color: var(--muted);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+#player-fullscreen .fs-lyrics p {
+  margin: 18px 0;
+  font-size: clamp(1.1rem, 1.55vw, 1.45rem);
+  line-height: 1.55;
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+#player-fullscreen .fs-lyrics p:hover { color: var(--text-secondary); }
+#player-fullscreen .fs-lyrics p.active {
+  color: var(--text);
+  font-weight: 600;
+  transform: translateX(4px);
+}
+
+#player-fullscreen .fs-stage-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+#player-fullscreen .fs-queue-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+#player-fullscreen .fs-queue-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+#player-fullscreen .fs-queue-list li button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-weight: 400;
+  text-align: left;
+}
+#player-fullscreen .fs-queue-list li button:hover { background: var(--fill); color: var(--text); }
+#player-fullscreen .fs-queue-list li.is-current button { background: var(--accent-soft); color: var(--accent-strong-text); }
+#player-fullscreen .fs-queue-list li strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 500; color: inherit; }
+#player-fullscreen .fs-queue-list li small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--muted); }
+#player-fullscreen .fs-queue-list li .fs-q-num,
+#player-fullscreen .fs-queue-list li .fs-q-dur { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1120px) {
+  #player-fullscreen,
+  #player-fullscreen:not(.has-cover) {
+    grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  }
+  #player-fullscreen .fs-stage-right { display: none; }
+  #player-fullscreen .fs-stage-center { border-right: 0; padding-right: 0; }
+}
+@media (max-width: 900px) {
+  #player-fullscreen,
+  #player-fullscreen:not(.has-cover) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(180px, 1fr);
+    overflow-y: auto;
+    padding: 18px 20px 28px;
+    gap: 16px;
+  }
+  #player-fullscreen .fs-cover { max-width: min(62vw, 260px); margin-inline: auto; }
+  #player-fullscreen .fs-controls { justify-content: center; }
+  #player-fullscreen .fs-stage-center { border-left: 0; border-top: 1px solid var(--line); padding: 14px 0 0; }
+  #player-fullscreen .fs-lyrics { padding: 12px 0; text-align: center; }
+  #player-fullscreen .fs-lyrics p.active { transform: none; }
+}
+

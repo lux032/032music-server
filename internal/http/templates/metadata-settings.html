@@ -10,10 +10,14 @@
   <main id="app-main" class="browser-main identity-main">
     <header class="browser-header">
       <div>
-        <h1>数据来源</h1><a href="/admin/settings/acquisition">获取设置</a>
-        <p class="result-count">身份、图片和简介分别选择最可靠的来源，并全部缓存到本地。</p>
+        <h1>数据来源与同步</h1>
+        <p class="result-count">身份、图片、简介、Scrobble 与红心同步分别选择最可靠的来源，并全部缓存到本地。</p>
       </div>
     </header>
+    <nav class="admin-domain-tabs" aria-label="数据来源与集成视图">
+      <a href="/admin/settings/metadata" class="is-active" aria-current="page">数据来源与同步</a>
+      <a href="/admin/settings/acquisition">获取设置</a>
+    </nav>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     <div class="settings-grid">

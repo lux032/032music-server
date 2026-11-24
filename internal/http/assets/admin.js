@@ -9,16 +9,23 @@
 
   // ------------------------------------------------- sidebar admin group
   const GROUP_KEY = '032_admin_group';
-  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'series', 'enrichment', 'merges', 'settings', 'security', 'backups'];
+  const ADMIN_NAV_KEYS = [
+    'console', 'missing', 'work-review', 'matches', 'artist-aliases',
+    'merges', 'series', 'enrichment', 'audio-analysis', 'ai-tagging',
+    'online-lyrics', 'lyrics-translations', 'daily-mixes', 'settings',
+    'acquisition-settings', 'ai-settings', 'backups', 'security'
+  ];
 
   function applyGroupState() {
     const group = document.getElementById('sidebar-admin-group');
+    const nav = document.body.dataset.nav || '';
+    const isAdmin = ADMIN_NAV_KEYS.includes(nav);
+    document.body.classList.toggle('admin-workspace', isAdmin);
     if (!group) return;
     const toggle = document.getElementById('sidebar-group-toggle');
-    const nav = document.body.dataset.nav || '';
     let open;
-    if (ADMIN_NAV_KEYS.includes(nav)) {
-      // The active page lives inside the group: force it open.
+    if (isAdmin) {
+      // The active page lives inside the admin workspace: force it open.
       open = true;
     } else {
       let stored = null;

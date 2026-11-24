@@ -15,6 +15,11 @@
       </div>
       <a class="secondary-button" href="/admin/online-lyrics">返回在线歌词</a>
     </header>
+    <nav class="admin-domain-tabs" aria-label="歌词与翻译视图">
+      <a href="/admin/online-lyrics">在线歌词缓存</a>
+      <a href="/admin/online-lyrics/diagnose" class="is-active" aria-current="page">歌词诊断</a>
+      <a href="/admin/lyrics-translations">歌词翻译</a>
+    </nav>
     {{if not .Enabled}}<div class="toast" role="status">在线歌词未启用，只使用本地歌词。</div>{{end}}
 
     <section class="feature-card">

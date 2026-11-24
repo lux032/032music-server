@@ -235,3 +235,8 @@ a.discovery-cover { color: inherit; }
 [data-acquisition-controls] { margin-top:16px }
 [data-acquisition-controls] button { margin:4px }
 
+/* Editorial v3 alignment */
+.discovery-cover { border-radius: var(--radius-cover); }
+.discovery-card h2, .discovery-mapping h2 { font-weight: 600; letter-spacing: 0; }
+
+

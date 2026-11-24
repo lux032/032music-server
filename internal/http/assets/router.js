@@ -270,15 +270,27 @@ import { updateTrackRowsUI } from './player-bar.js';
     } catch (_) { sessionStorage.removeItem(draftStorageKey); }
   }
 
-  const ADMIN_NAV_KEYS = ['console', 'matches', 'work-review', 'series', 'enrichment', 'merges', 'settings', 'security', 'backups'];
+  const ADMIN_NAV_KEYS = [
+    'console', 'missing', 'work-review', 'matches', 'artist-aliases',
+    'merges', 'series', 'enrichment', 'audio-analysis', 'ai-tagging',
+    'online-lyrics', 'lyrics-translations', 'daily-mixes', 'settings',
+    'acquisition-settings', 'ai-settings', 'backups', 'security'
+  ];
 
   // syncChrome copies just the per-page bits of the persistent shell from
   // the freshly fetched document: the navigation highlight, the admin
-  // group expansion and the logout form's CSRF field. The sidebar itself
+  // workspace mode and the logout form's CSRF field. The sidebar itself
   // is never rebuilt, so it does not flash on navigation.
   function syncChrome(doc) {
     const nav = (doc.body && doc.body.dataset && doc.body.dataset.nav) || '';
+    const isAdmin = ADMIN_NAV_KEYS.includes(nav);
+    const wasAdmin = document.body.classList.contains('admin-workspace');
     document.body.dataset.nav = nav;
+    document.body.classList.toggle('admin-workspace', isAdmin);
+    const sidebar = document.getElementById('app-sidebar');
+    if (sidebar) sidebar.classList.toggle('is-admin-workspace', isAdmin);
+    const wordmark = document.getElementById('sidebar-wordmark');
+    if (wordmark) wordmark.setAttribute('href', isAdmin ? '/admin' : '/admin/home');
     document.querySelectorAll('.sidebar [data-nav]').forEach((link) => {
       const active = link.getAttribute('data-nav') === nav;
       link.classList.toggle('active', active);
@@ -288,7 +300,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     const group = document.getElementById('sidebar-admin-group');
     if (group) {
       const toggle = document.getElementById('sidebar-group-toggle');
-      if (ADMIN_NAV_KEYS.includes(nav)) {
+      if (isAdmin) {
         group.classList.add('open');
         if (toggle) toggle.setAttribute('aria-expanded', 'true');
       } else {
@@ -309,7 +321,7 @@ import { updateTrackRowsUI } from './player-bar.js';
       document.querySelectorAll('.sidebar input[name="csrfToken"]').forEach((field) => { field.value = incomingCsrfField.value; });
     }
     const incomingBadge = doc.querySelector('.sidebar a[data-nav="work-review"] .nav-badge');
-    document.querySelectorAll('.sidebar a[data-nav="work-review"], .sidebar-more-sheet a[data-nav="work-review"]').forEach((link) => {
+    document.querySelectorAll('.sidebar a[data-nav="work-review"], .sidebar-more-sheet a[data-nav="work-review"], #sidebar-admin-entry').forEach((link) => {
       const existing = link.querySelector('.nav-badge');
       if (incomingBadge && incomingBadge.textContent.trim()) {
         if (existing) {
@@ -324,6 +336,9 @@ import { updateTrackRowsUI } from './player-bar.js';
         existing.remove();
       }
     });
+    if (wasAdmin !== isAdmin) {
+      document.dispatchEvent(new CustomEvent('032:nav-mode-changed', { detail: { isAdmin } }));
+    }
   }
 
   // backTarget records where a detail page's "返回" button leads: the page
@@ -361,7 +376,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     doc.querySelectorAll('[autofocus]').forEach((el) => el.removeAttribute('autofocus'));
     document.title = doc.title || document.title;
     // Keep the shell state classes the page cannot know about.
-    const keepShellClasses = ['has-global-player', 'np-collapsed', 'np-open', 'np-animated'];
+    const keepShellClasses = ['has-global-player', 'np-collapsed', 'np-open', 'np-animated', 'admin-workspace'];
     const kept = keepShellClasses.filter((cls) => document.body.classList.contains(cls));
     document.body.className = doc.body.className;
     kept.forEach((cls) => document.body.classList.add(cls));

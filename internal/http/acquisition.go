@@ -314,5 +314,5 @@ func (a *App) handleAcquisitionSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	session, _ := a.sessions.get(r)
-	a.render(w, 200, "acquisition-settings.html", acquisitionSettingsPage{Chrome: a.chromeFor(r.Context(), session, "settings"), Settings: settings, Notice: r.URL.Query().Get("notice")})
+	a.render(w, 200, "acquisition-settings.html", acquisitionSettingsPage{Chrome: a.chromeFor(r.Context(), session, "acquisition-settings"), Settings: settings, Notice: r.URL.Query().Get("notice")})
 }

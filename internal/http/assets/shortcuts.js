@@ -1,5 +1,5 @@
 // 032 Music Server - shortcuts.js
-import { syncPanelA11y } from './now-playing.js';
+import { syncPanelA11y, getNowPlayingTab, setNowPlayingTab } from './now-playing.js';
 import { togglePlay } from './player-core.js';
 
   export function bindGlobalShortcuts() {
@@ -7,7 +7,8 @@ import { togglePlay } from './player-core.js';
       const target = e.target instanceof Element ? e.target : document.activeElement;
       const interactive = target?.closest('input, textarea, select, button, a, summary, [contenteditable="true"], [role="slider"]');
       if (e.key === 'Escape') {
-        if (document.getElementById('lyrics-overlay')?.style.display !== 'none') {
+        const overlay = document.getElementById('lyrics-overlay');
+        if (overlay && overlay.style.display !== 'none') {
           e.preventDefault(); document.getElementById('lyrics-close-btn')?.click(); return;
         }
         // [M2] Esc closes the mobile queue drawer and returns focus to its
@@ -18,6 +19,11 @@ import { togglePlay } from './player-core.js';
           syncPanelA11y();
           const queueBtn = document.getElementById('player-btn-queue');
           if (queueBtn) { queueBtn.setAttribute('aria-expanded', 'false'); queueBtn.focus(); }
+          return;
+        }
+        if (getNowPlayingTab() === 'lyrics' && !document.body.classList.contains('np-collapsed')) {
+          e.preventDefault();
+          setNowPlayingTab('queue');
           return;
         }
       }
