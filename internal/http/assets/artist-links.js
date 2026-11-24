@@ -46,8 +46,26 @@ function measureChip(button, label) {
   return width;
 }
 
-function availableWidth(root) {
+function layoutParent(root) {
   const parent = root.parentElement;
+  if (!parent) return { container: null, target: root };
+  const grand = parent.parentElement;
+  if (grand) {
+    const grandStyle = getComputedStyle(grand);
+    const style = getComputedStyle(parent);
+    if (
+      (grandStyle.display === 'flex' || grandStyle.display === 'inline-flex') &&
+      (grandStyle.flexDirection === 'row' || grandStyle.flexDirection === 'row-reverse') &&
+      parseFloat(style.flexGrow) === 0
+    ) {
+      return { container: grand, target: parent };
+    }
+  }
+  return { container: parent, target: root };
+}
+
+function availableWidth(root) {
+  const { container: parent, target } = layoutParent(root);
   if (!parent) return root.clientWidth;
   const style = getComputedStyle(parent);
   const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
@@ -56,7 +74,7 @@ function availableWidth(root) {
   let others = 0;
   const range = document.createRange();
   for (const node of parent.childNodes) {
-    if (node === root) continue;
+    if (node === target) continue;
     if (node.nodeType === Node.ELEMENT_NODE) others += node.getBoundingClientRect().width;
     else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
       range.selectNodeContents(node);
@@ -132,7 +150,7 @@ export function layoutArtistLinks(root) {
 
 function watch(root) {
   layoutArtistLinks(root);
-  const parent = root.parentElement;
+  const { container: parent } = layoutParent(root);
   if (!parent || !observer || observedParents.has(parent)) return;
   observedParents.add(parent);
   observer.observe(parent);

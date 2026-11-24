@@ -7,8 +7,8 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main console-main">
-    <header class="browser-header console-header">
+  <main id="app-main" class="admin-wrap browser-main console-main">
+    <header class="admin-header browser-header console-header">
       <div>
         <h1>控制台总览</h1>
         <p class="result-count path">{{.LibraryName}} · {{.MusicDirectory}} · 本地标签优先，源文件始终只读。</p>
@@ -18,34 +18,35 @@
 
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <section class="console-stats" aria-label="曲库统计">
-      <a href="/admin/albums" class="console-kpi">
-        <div class="console-kpi-head"><small>专辑</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg></div>
-        <strong id="albums-count">{{.Statistics.Albums}}</strong>
-        <span class="console-kpi-sub">浏览专辑库 →</span>
+    <section class="kpi-grid" aria-label="曲库统计">
+      <a href="/admin/albums" class="kpi-card console-kpi">
+        <div class="kpi-label console-kpi-head"><small>专辑</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg></div>
+        <strong class="kpi-val" id="albums-count">{{.Statistics.Albums}}</strong>
+        <span class="kpi-sub console-kpi-sub">浏览专辑库 →</span>
       </a>
-      <a href="/admin/artists/album" class="console-kpi">
-        <div class="console-kpi-head"><small>歌手与幕后</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg></div>
-        <strong id="artists-count">{{.Statistics.Artists}}</strong>
-        <span class="console-kpi-sub">浏览歌手与资料 →</span>
+      <a href="/admin/artists/album" class="kpi-card console-kpi">
+        <div class="kpi-label console-kpi-head"><small>歌手与幕后</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-artist"></use></svg></div>
+        <strong class="kpi-val" id="artists-count">{{.Statistics.Artists}}</strong>
+        <span class="kpi-sub console-kpi-sub">浏览歌手与资料 →</span>
       </a>
-      <a href="/admin/tracks" class="console-kpi">
-        <div class="console-kpi-head"><small>歌曲</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-tracks"></use></svg></div>
-        <strong id="tracks-count">{{.Statistics.Tracks}}</strong>
-        <span class="console-kpi-sub">浏览曲目列表 →</span>
+      <a href="/admin/tracks" class="kpi-card console-kpi">
+        <div class="kpi-label console-kpi-head"><small>歌曲</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-tracks"></use></svg></div>
+        <strong class="kpi-val" id="tracks-count">{{.Statistics.Tracks}}</strong>
+        <span class="kpi-sub console-kpi-sub">浏览曲目列表 →</span>
       </a>
-      <a href="/admin/library/missing" class="console-kpi{{if .Statistics.MissingFiles}} has-warn{{end}}">
-        <div class="console-kpi-head"><small>音频文件 / 缺失</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-folder-x"></use></svg></div>
-        <strong id="files-count">{{.Statistics.AudioFiles}}</strong>
-        <span class="console-kpi-sub">{{if .Statistics.MissingFiles}}{{.Statistics.MissingFiles}} 个缺失文件待处理 →{{else}}全部文件在线 · 清理策略 →{{end}}</span>
+      <a href="/admin/library/missing" class="kpi-card console-kpi{{if .Statistics.MissingFiles}} has-warn{{end}}">
+        <div class="kpi-label console-kpi-head"><small>音频文件 / 缺失</small><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-folder-x"></use></svg></div>
+        <strong class="kpi-val" id="files-count">{{.Statistics.AudioFiles}}</strong>
+        <span class="kpi-sub console-kpi-sub">{{if .Statistics.MissingFiles}}{{.Statistics.MissingFiles}} 个缺失文件待处理 →{{else}}全部文件在线 · 清理策略 →{{end}}</span>
       </a>
     </section>
 
-    <section class="console-grid">
-      <article class="scan-console">
-        <div class="console-card-head">
+    <div class="admin-split">
+      <div class="admin-stack">
+      <article class="card scan-console">
+        <div class="card-head">
           <div>
-            <p class="kicker">曲库扫描引擎</p>
+            <p class="card-kicker kicker">曲库扫描引擎</p>
             <h2 id="scan-title">扫描状态：{{scanStatusLabel .Scan.Status}}</h2>
             <small id="scan-last-updated" class="muted">最后更新：--:--:--</small>
           </div>
@@ -63,7 +64,7 @@
           </div>
         </div>
         <p id="scan-path" class="scan-current">{{.Scan.CurrentRelativePath}}</p>
-        <div class="progress"><span id="scan-progress"></span></div>
+        <div class="progress"><span id="scan-progress"{{if or (eq .Scan.Status "completed") (eq .Scan.Status "never") (not .Scan.Status)}} class="ok" style="width:100%"{{else}} style="width:{{scanProgress .Scan}}%"{{end}}></span></div>
         <p id="scan-detail" class="result-count">发现 {{.Scan.DiscoveredFiles}} · 已处理 {{.Scan.ProcessedFiles}} · 跳过 {{.Scan.SkippedFiles}} · 失败 {{.Scan.FailedFiles}}</p>
 
         {{with .LibraryWatch}}{{if .Available}}
@@ -74,7 +75,7 @@
           </div>
           <form class="library-watch-form" method="post" action="/admin/settings/library-watch">
             <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-            <label class="switch"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 监控音乐目录</label>
+            <label class="switch switch-row"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}><span>监控音乐目录</span></label>
             <label class="library-watch-interval">检查间隔
               <select name="interval_seconds">
                 {{range .Options}}<option value="{{.Seconds}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
@@ -97,13 +98,13 @@
           <a href="/admin/library/missing">{{if .Statistics.MissingFiles}}{{.Statistics.MissingFiles}} 个缺失文件，查看与清理 →{{else}}没有缺失文件 · 清理设置 →{{end}}</a>
         </div>
 
-        <details class="console-disclosure">
+        <details class="console-disclosure disclosure">
           <summary>旧文件兼容：按逗号拆分幕后署名（作词 / 作曲 / 编曲 / 制作）</summary>
           <p class="muted">仅本次完整扫描按英文/中文逗号拆分作词、作曲、编曲、制作。普通扫描不启用此规则；已有明确多值署名优先。名字本身含逗号可能误拆，请先备份数据库。</p>
           <form method="post" action="/admin/scan">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
             <input type="hidden" name="legacyCreators" value="1">
-            <label class="switch"><input type="checkbox" name="confirmLegacyCreators" value="1" required> 我已备份并接受旧署名可能误拆的风险</label>
+            <label class="inline-check"><input type="checkbox" name="confirmLegacyCreators" value="1" required> 我已备份并接受旧署名可能误拆的风险</label>
             <button class="secondary-round">兼容旧幕后署名并完整重扫</button>
           </form>
         </details>
@@ -120,14 +121,58 @@
         {{end}}
       </article>
 
-      <div class="console-side-stack">
-        <section class="console-card" aria-label="MusicBrainz 身份">
-          <div class="console-card-head">
+        <section class="console-hub-section" aria-label="待办审核与后台流水线">
+          <div class="section-head">
+            <h2>待办审核与后台流水线</h2>
+            <span class="section-rule" aria-hidden="true"></span>
+          </div>
+          <div class="hub-grid">
+            <a class="hub-tile" href="/admin/work-review">
+              <span class="hub-ic"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg></span>
+              <div><strong>作品关联审核</strong><span>{{if .PendingReviewCount}}有 {{.PendingReviewCount}} 条待审候选（Bangumi 专辑/曲目/系列）{{else}}当前无待审候选 · 查看历史与系列建议{{end}}</span></div>
+            </a>
+            <a class="hub-tile" href="/admin/matches">
+              <span class="hub-ic"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg></span>
+              <div><strong>艺术家与身份审核</strong><span>MusicBrainz 身份匹配、复合署名拆分与待审头像</span></div>
+            </a>
+            <a class="hub-tile" href="/admin/enrichment">
+              <span class="hub-ic"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-enrichment"></use></svg></span>
+              <div><strong>元数据自动增强</strong><span>Bangumi 作品对齐与缺失海报批量补全</span></div>
+            </a>
+            <a class="hub-tile" href="/admin/audio-analysis" id="audio-analysis-card">
+              <span class="hub-ic"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-wave"></use></svg></span>
+              <div><strong>声学分析</strong><span id="aa-summary">{{.AudioAnalysis.SummaryText}}</span></div>
+            </a>
+            <a class="hub-tile" href="/admin/online-lyrics" id="online-lyrics-card">
+              <span class="hub-ic"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-lyrics"></use></svg></span>
+              <div><strong>在线歌词</strong><span>{{.OnlineLyrics}}</span></div>
+            </a>
+            <a class="hub-tile" href="/admin/daily-mixes" id="daily-mix-card">
+              <span class="hub-ic"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-sparkle"></use></svg></span>
+              <div><strong>每日推荐</strong><span>{{.DailyMixes}}</span></div>
+            </a>
+          </div>
+          <nav class="chip-row hub-shortcuts" aria-label="更多后台任务">
+            <a class="chip" href="/admin/artist-aliases">
+              <strong>中文别名补全</strong><span>存量手动匹配，新歌手自动补全与来源审核</span>
+            </a>
+            <a class="chip" href="/admin/ai-tagging" id="ai-tagging-card">
+              <strong>AI 打标</strong><span id="at-summary">{{.AITagging.SummaryText}}</span>
+            </a>
+            <a class="chip" href="/admin/lyrics-translations" id="lyrics-translation-card">
+              <strong>歌词翻译</strong><span>{{.Translation}}</span>
+            </a>
+          </nav>
+        </section>
+      </div>
+      <div class="admin-stack">
+        <section class="card console-card" aria-label="MusicBrainz 身份">
+          <div class="card-head">
             <div>
-              <p class="kicker">发现新音乐前置身份</p>
+              <p class="card-kicker kicker">发现新音乐前置身份</p>
               <h2>MusicBrainz Release Group</h2>
             </div>
-            <span class="status-badge{{if eq .Identity.Status "ready"}} success{{else if eq .Identity.Status "rebuilding"}} warning{{end}}">{{if eq .Identity.Status "ready"}}身份已就绪{{else}}身份未就绪 · {{.Identity.Status}}{{end}}</span>
+            <span class="status-badge{{if eq .Identity.Status "ready"}} success{{else if eq .Identity.Status "rebuilding"}} warning{{end}}">{{if eq .Identity.Status "ready"}}身份已就绪{{else}}身份未就绪{{if eq .Identity.Status "rebuilding"}} · 正在重建{{end}}{{end}}</span>
           </div>
           <p class="result-count">已重读标签：{{.Identity.Processed}} / {{.Identity.Discovered}}</p>
           {{if .Identity.Error}}<p class="form-error" role="alert">{{.Identity.Error}}</p>{{end}}
@@ -139,72 +184,22 @@
           </form>
         </section>
 
-        <aside class="console-note">
-          <p class="kicker">曲库保护与快捷入口</p>
-          <h2>本地标签优先 · 只读保护</h2>
-          <p>扫描仅读取嵌入标签与封面，管理端编辑与自动增强全部保存在独立覆盖层，源音频文件始终只读。</p>
-          <div class="console-quick-links">
+        <aside class="card console-note">
+          <header class="card-head"><div><h2 class="card-title">自动备份与安全</h2><p class="card-desc">数据库快照与登录保护</p></div></header>
+          <dl class="facts-list">
+            <div class="fact-row"><dt>最近备份</dt><dd>{{with .BackupStatus}}{{if .Time.IsZero}}尚无备份记录{{else}}{{if .Success}}成功{{else}}失败{{end}} · {{formatAdminTime (.Time.Format "2006-01-02T15:04:05Z07:00")}}{{end}}{{else}}未配置{{end}}</dd></div>
+            <div class="fact-row"><dt>两步验证</dt><dd>{{if .TOTPEnabled}}已开启{{else}}未开启{{end}}</dd></div>
+            <div class="fact-row"><dt>登录保护</dt><dd>封禁 {{.BannedCount}} · 白名单 {{.AllowlistCount}}</dd></div>
+          </dl>
+          <div class="card-foot console-quick-links">
             <a class="secondary-button" href="/admin/backups">数据库备份</a>
             <a class="secondary-button" href="/admin/settings/security">账号与安全</a>
             <a class="secondary-button" href="/admin/albums">专辑浏览器 →</a>
           </div>
         </aside>
       </div>
-    </section>
+    </div>
 
-    <section class="console-hub-section" aria-label="待办审核与后台流水线">
-      <div class="section-title">
-        <h2>待办审核与后台流水线</h2>
-        <span>所有管理模块亦可在左侧导航按业务域直达</span>
-      </div>
-      <div class="client-feature-links">
-        <a href="/admin/work-review">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg>
-          <div><strong>作品关联审核</strong><span>{{if .PendingReviewCount}}有 {{.PendingReviewCount}} 条待审候选（Bangumi 专辑/曲目/系列）{{else}}当前无待审候选 · 查看历史与系列建议{{end}}</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/matches">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg>
-          <div><strong>艺术家与身份审核</strong><span>MusicBrainz 身份匹配、复合署名拆分与待审头像</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/artist-aliases">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-lang"></use></svg>
-          <div><strong>中文别名补全</strong><span>存量手动匹配，新歌手自动补全与来源审核</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/enrichment">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-enrichment"></use></svg>
-          <div><strong>元数据自动增强</strong><span>Bangumi 作品对齐与缺失海报批量补全</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/audio-analysis" id="audio-analysis-card">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-wave"></use></svg>
-          <div><strong>声学分析</strong><span id="aa-summary">{{.AudioAnalysis.SummaryText}}</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/ai-tagging" id="ai-tagging-card">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-tag"></use></svg>
-          <div><strong>AI 打标</strong><span id="at-summary">{{.AITagging.SummaryText}}</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/online-lyrics" id="online-lyrics-card">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-lyrics"></use></svg>
-          <div><strong>在线歌词</strong><span>{{.OnlineLyrics}}</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/lyrics-translations" id="lyrics-translation-card">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-translate"></use></svg>
-          <div><strong>歌词翻译</strong><span>{{.Translation}}</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-        <a href="/admin/daily-mixes" id="daily-mix-card">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-sparkle"></use></svg>
-          <div><strong>每日推荐</strong><span>{{.DailyMixes}}</span></div>
-          <svg class="icon card-arrow" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg>
-        </a>
-      </div>
-    </section>
   </main>
 </body>
 </html>

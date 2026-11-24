@@ -21,7 +21,7 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
       <audio id="global-audio-element" preload="metadata"></audio>
       <div class="player-left">
         <div class="player-cover-wrap">
-          <img id="player-cover" src="" alt="" style="display:none;">
+          <img id="player-cover" alt="" style="display:none;">
           <div id="player-cover-placeholder" class="player-cover-placeholder">032</div>
         </div>
         <div class="player-meta">
@@ -57,17 +57,19 @@ import { isCasting, castVolume, mediaDuration, mediaTime, mediaSeek } from './ca
       </div>
 
       <div class="player-right">
-        <div class="player-volume-wrap">
-          <button id="player-btn-mute" class="player-tool-btn" title="静音" aria-label="静音"><span class="icon-slot" data-icon="icon-volume"></span></button>
-          <input id="player-volume-slider" type="range" min="0" max="1" step="0.01" value="1" title="音量">
-        </div>
         <span id="player-cast-label" class="player-cast-label" aria-hidden="true"></span>
-        <button id="player-btn-cast" class="player-tool-btn" title="投送到 Sonos / DLNA 设备" aria-label="投送到其他设备" aria-haspopup="menu" aria-expanded="false" aria-controls="cast-menu"><span class="icon-slot" data-icon="icon-cast"></span></button>
+        <button id="player-btn-cast" class="player-tool-btn cast-chip" title="投送到 Sonos / DLNA 设备" aria-label="投送到其他设备" aria-haspopup="menu" aria-expanded="false" aria-controls="cast-menu"><span class="icon-slot" data-icon="icon-cast"></span><span>投放</span></button>
+        <span class="bar-sep" aria-hidden="true"></span>
         <button id="player-btn-lyrics" class="player-tool-btn" title="歌词 (L)" aria-label="歌词" aria-expanded="false" aria-controls="np-lyrics-pane"><span class="icon-slot" data-icon="icon-lyrics"></span></button>
         <button id="player-btn-queue" class="player-tool-btn" title="播放队列" aria-label="播放队列" aria-expanded="false" aria-controls="now-playing"><span class="icon-slot" data-icon="icon-queue"></span></button>
         <button id="player-btn-fullscreen" class="player-tool-btn" title="全屏" aria-label="全屏"><span class="icon-slot" data-icon="icon-fullscreen"></span></button>
         <button id="player-btn-shortcuts" class="player-tool-btn" title="快捷键说明" aria-label="快捷键说明" aria-expanded="false"><span class="icon-slot" data-icon="icon-dots"></span></button>
-        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>Space 播放/暂停 · L 歌词 · Esc 退出面板/全屏 · 队列中 Alt+↑/↓ 调整顺序</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
+        <span class="bar-sep" aria-hidden="true"></span>
+        <div class="player-volume-wrap">
+          <button id="player-btn-mute" class="player-tool-btn" title="静音" aria-label="静音"><span class="icon-slot" data-icon="icon-volume"></span></button>
+          <input id="player-volume-slider" type="range" min="0" max="1" step="0.01" value="1" title="音量">
+        </div>
+        <div id="player-shortcuts-help" class="player-shortcuts-help" hidden><span>/ 或 Ctrl+K 搜索 · Space 播放/暂停 · L 歌词 · Esc 退出面板/全屏 · 队列中 Alt+↑/↓ 调整顺序</span><button type="button" id="player-shortcuts-disable">关闭快捷键</button></div>
       </div>
     `;
     hydrateIconSlots(playerBar);

@@ -7,26 +7,30 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main online-lyrics-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main ai-tagging-main online-lyrics-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>在线歌词</h1>
         <p class="result-count">歌曲没有本地歌词（同目录 .lrc、内嵌歌词）时，服务端在首次请求时从网易云、LRCLIB 搜索匹配并缓存；没找到的 12 小时后再试。客户端里手动选择的歌词优先于本地歌词，对所有设备生效。</p>
       </div>
-      <a class="secondary-button" href="/admin">返回控制台</a>
     </header>
-    <nav class="admin-domain-tabs" aria-label="歌词与翻译视图">
-      <a href="/admin/online-lyrics" class="is-active" aria-current="page">在线歌词缓存</a>
-      <a href="/admin/online-lyrics/diagnose">歌词诊断</a>
-      <a href="/admin/lyrics-translations">歌词翻译</a>
+    <nav class="admin-tabs" aria-label="歌词与翻译视图">
+      <a href="/admin/online-lyrics" class="admin-tab active" aria-current="page">在线歌词缓存</a>
+      <a href="/admin/online-lyrics/diagnose" class="admin-tab">歌词诊断</a>
+      <a href="/admin/lyrics-translations" class="admin-tab">歌词翻译</a>
     </nav>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
     {{if not .Enabled}}<div class="toast" role="status">在线歌词未启用，只使用本地歌词。</div>{{end}}
 
-    <section class="feature-card">
-      <div class="audio-analysis-head">
+    <section class="kpi-grid kpi-grid-3" aria-label="歌词缓存状态">
+      <div class="kpi-card"><span class="kpi-label">已找到</span><strong class="kpi-val">{{index .Counts "found"}}</strong></div>
+      <div class="kpi-card"><span class="kpi-label">未找到</span><strong class="kpi-val">{{index .Counts "not_found"}}</strong></div>
+      <div class="kpi-card"><span class="kpi-label">已清除</span><strong class="kpi-val">{{index .Counts "suppressed"}}</strong></div>
+    </section>
+    <section class="card feature-card">
+      <div class="card-head audio-analysis-head">
         <div>
-          <p class="kicker">排查</p>
+          <p class="card-kicker kicker">排查</p>
           <h2>某首歌没有歌词？</h2>
           <p class="result-count">查看服务端用来搜索的歌名、艺人、时长，以及网易云、LRCLIB 各自返回了什么、为什么没有选中。</p>
         </div>
@@ -39,10 +43,10 @@
       </form>
     </section>
 
-    <section class="feature-card">
-      <div class="audio-analysis-head">
+    <section class="card feature-card">
+      <div class="card-head audio-analysis-head">
         <div>
-          <p class="kicker">缓存</p>
+          <p class="card-kicker kicker">缓存</p>
           <h2>已找到 {{index .Counts "found"}} 首 · 未找到 {{index .Counts "not_found"}} 首 · 已清除 {{index .Counts "suppressed"}} 首</h2>
         </div>
         {{if index .Counts "not_found"}}
@@ -72,7 +76,7 @@
       <form method="post" action="/admin/online-lyrics/delete">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <input type="hidden" name="return" value="{{.ReturnURL}}">
-        <table class="ai-tagging-table">
+        <div class="data-table-wrap"><table class="data-table">
           <thead><tr><th><input type="checkbox" aria-label="全选" data-check-all></th><th>曲目</th><th>状态</th><th>匹配结果</th><th>更新时间</th></tr></thead>
           <tbody>
             {{range .Items}}
@@ -85,7 +89,7 @@
             </tr>
             {{end}}
           </tbody>
-        </table>
+        </table></div>
         <p><button class="secondary-button danger-button">删除选中</button> <span class="result-count">删除后这些歌曲下次播放时会重新自动匹配（手动选择和“已清除”也会恢复为自动）。</span></p>
       </form>
       {{else}}

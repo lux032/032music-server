@@ -8,7 +8,7 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main feature-main">
-    <header class="browser-header">
+    <header class="browser-header collection-header">
       <div>
         <h1>我的收藏</h1>
         <p class="result-count">{{.AlbumTotal}} 张专辑 · {{.SingerTotal}} 位歌手 · {{.CreditTotal}} 位幕后人员 · {{.TrackTotal}} 首歌曲</p>
@@ -23,8 +23,8 @@
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <nav class="favorites-tabs" aria-label="收藏分类">
-      {{range .Tabs}}<a href="{{.URL}}" class="{{if .Current}}current{{end}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}} <span class="tab-count">{{.Count}}</span></a>{{end}}
+    <nav class="admin-tabs" aria-label="收藏分类">
+      {{range .Tabs}}<a href="{{.URL}}" class="admin-tab{{if .Current}} active{{end}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}} <span class="tab-count">{{.Count}}</span></a>{{end}}
     </nav>
 
     <div class="favorites-toolbar">

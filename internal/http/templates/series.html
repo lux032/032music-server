@@ -7,8 +7,8 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main series-admin-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main series-admin-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>系列管理</h1>
         <p class="result-count">共 {{.Total}} 个系列 · 新建、改名、调整成员、合并与解散都在此进行。</p>
@@ -20,29 +20,9 @@
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    <section class="feature-card series-create-card">
-      <div>
-        <h2>新建系列</h2>
-        <p class="result-count">至少选择一部作品；名字可以留空（跟随代表作）。创建后可继续加入成员。</p>
-      </div>
-      <form method="post" action="/admin/series" class="series-create-form">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label>系列名（可选）<input name="title" placeholder="留空则跟随代表作"></label>
-        <div class="work-picker" data-work-picker="/admin/options/works">
-          <label>选择作品<input data-work-search placeholder="搜索作品标题…" autocomplete="off"></label>
-          <input type="hidden" name="workId" data-work-id-input>
-          <div class="work-picker-results" data-work-results hidden></div>
-        </div>
-        <div class="work-picker" data-work-picker="/admin/options/works">
-          <label>第二部作品（可选）<input data-work-search placeholder="搜索作品标题…" autocomplete="off"></label>
-          <input type="hidden" name="workId" data-work-id-input>
-          <div class="work-picker-results" data-work-results hidden></div>
-        </div>
-        <button type="submit" class="primary-button">创建系列</button>
-      </form>
-    </section>
-
-    <section class="series-list">
+    <div class="admin-split">
+      <div class="admin-stack">
+    <section class="cand-list series-list">
       {{range .Rows}}
       <article class="series-list-row">
         <a href="/admin/series/{{.Series.ID}}" class="series-list-poster">
@@ -69,6 +49,30 @@
       {{if .NextURL}}<a href="{{.NextURL}}">下一页</a>{{else}}<span>下一页</span>{{end}}
     </nav>
     {{end}}
+      </div>
+    <section class="card feature-card series-create-card">
+      <div>
+        <h2>新建系列</h2>
+        <p class="result-count">至少选择一部作品；名字可以留空（跟随代表作）。创建后可继续加入成员。</p>
+      </div>
+      <form method="post" action="/admin/series" class="form-stack series-create-form">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label>系列名（可选）<input name="title" placeholder="留空则跟随代表作"></label>
+        <div class="work-picker" data-work-picker="/admin/options/works">
+          <label>选择作品<input data-work-search placeholder="搜索作品标题…" autocomplete="off"></label>
+          <input type="hidden" name="workId" data-work-id-input>
+          <div class="work-picker-results" data-work-results hidden></div>
+        </div>
+        <div class="work-picker" data-work-picker="/admin/options/works">
+          <label>第二部作品（可选）<input data-work-search placeholder="搜索作品标题…" autocomplete="off"></label>
+          <input type="hidden" name="workId" data-work-id-input>
+          <div class="work-picker-results" data-work-results hidden></div>
+        </div>
+        <button type="submit" class="primary-button">创建系列</button>
+      </form>
+    </section>
+
+    </div>
   </main>
 </body>
 </html>

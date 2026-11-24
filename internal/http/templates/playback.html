@@ -8,7 +8,7 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main feature-main">
-    <header class="browser-header">
+    <header class="browser-header collection-header">
       <div>
         <h1>播放记录</h1>
         <p class="result-count">{{.Total}} 首有播放记录的歌曲；断点位置由客户端持续同步。</p>
@@ -46,13 +46,13 @@
     {{end}}
 
     {{if .Total}}
-    <section class="feature-card danger-zone playback-clear">
+    <section class="card feature-card danger-zone playback-clear">
       <div>
         <p class="kicker">隐私设置</p>
         <h2>清空播放历史</h2>
         <p class="result-count">这会永久清除全部播放次数和断点位置，不会删除歌曲或收藏。</p>
       </div>
-      <details class="danger-confirm">
+      <details class="danger-confirm disclosure danger-disclosure">
         <summary class="danger-button">清空播放历史…</summary>
         <div class="danger-confirm-panel">
           <strong>确定清空全部播放记录吗？</strong>

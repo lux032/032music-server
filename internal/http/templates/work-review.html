@@ -7,8 +7,8 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main work-review-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main work-review-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>作品关联审核</h1>
         <p class="result-count">集中审核来自 Bangumi 的专辑、曲目及作品对齐建议，永久保留人工决策意图。</p>
@@ -23,35 +23,9 @@
       {{end}}
     </header>
 
-    <nav class="work-review-toolbar" aria-label="审核类型">
-      <div class="review-tabs">
-        <a href="/admin/work-review?tab=albums{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&group={{.Group}}" class="review-tab {{if eq .ActiveTab "albums"}}active{{end}}">
-          <span>专辑候选</span>
-          <span class="review-tab-badge">{{.AlbumSubjectCount}}</span>
-        </a>
-        <a href="/admin/work-review?tab=tracks{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&group={{.Group}}" class="review-tab {{if eq .ActiveTab "tracks"}}active{{end}}">
-          <span>曲目候选</span>
-          <span class="review-tab-badge">{{.TrackSubjectCount}}</span>
-        </a>
-        <a href="/admin/work-review?tab=works" class="review-tab {{if eq .ActiveTab "works"}}active{{end}}">
-          <span>作品对齐候选 · 身份匹配</span>
-          <span class="review-tab-badge">{{.WorkCandidateCount}}</span>
-        </a>
-        <a href="/admin/work-review?tab=series" class="review-tab {{if eq .ActiveTab "series"}}active{{end}}">
-          <span>系列建议</span>
-          <span class="review-tab-badge">{{.SeriesSuggestionCount}}</span>
-        </a>
-      </div>
-      {{if .AlbumID}}
-      <div class="review-filter-indicator">
-        <span>当前按专辑 #{{.AlbumID}} 过滤，专辑/曲目 Tab 计数为过滤后数量</span>
-        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}" class="secondary-button">查看全部</a>
-      </div>
-      {{end}}
-    </nav>
-
-    <section class="feature-section ai-review-toolbar-card" data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=works" data-run-type="aiReview">
+    <section class="ai-banner ai-review-toolbar-card" data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=works" data-run-type="aiReview">
       <div class="ai-review-head">
+        <span class="ai-banner-icon"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-ai"></use></svg></span>
         <div>
           <strong>AI 存量预审助手</strong>
           <p class="muted" style="margin:2px 0 0;font-size:var(--fs-xs);">
@@ -118,7 +92,7 @@
       </div>
 
       {{if .AIApplied}}
-      <details class="run-history" style="margin-top:10px;">
+      <details class="run-history disclosure" style="margin-top:10px;">
         <summary>AI 最近自动处理记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
         <ul class="ai-applied-list">
           {{range .AIApplied}}
@@ -137,11 +111,38 @@
       </details>
       {{end}}
     </section>
+    <div class="work-review-toolbar">
+      <nav class="admin-tabs" aria-label="审核类型">
+        <a href="/admin/work-review?tab=albums{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&group={{.Group}}" class="admin-tab {{if eq .ActiveTab "albums"}}active{{end}}">
+          <span>专辑候选</span>
+          <span class="review-tab-badge">{{.AlbumSubjectCount}}</span>
+        </a>
+        <a href="/admin/work-review?tab=tracks{{if .AlbumID}}&albumId={{.AlbumID}}{{end}}&group={{.Group}}" class="admin-tab {{if eq .ActiveTab "tracks"}}active{{end}}">
+          <span>曲目候选</span>
+          <span class="review-tab-badge">{{.TrackSubjectCount}}</span>
+        </a>
+        <a href="/admin/work-review?tab=works" class="admin-tab {{if eq .ActiveTab "works"}}active{{end}}">
+          <span>作品对齐候选 · 身份匹配</span>
+          <span class="review-tab-badge">{{.WorkCandidateCount}}</span>
+        </a>
+        <a href="/admin/work-review?tab=series" class="admin-tab {{if eq .ActiveTab "series"}}active{{end}}">
+          <span>系列建议</span>
+          <span class="review-tab-badge">{{.SeriesSuggestionCount}}</span>
+        </a>
+      </nav>
+      {{if .AlbumID}}
+      <div class="review-filter-indicator">
+        <span>当前按专辑 #{{.AlbumID}} 过滤，专辑/曲目 Tab 计数为过滤后数量</span>
+        <a href="/admin/work-review?tab={{.ActiveTab}}&group={{.Group}}" class="secondary-button">查看全部</a>
+      </div>
+      {{end}}
+    </div>
+
     {{if .ConflictWork}}<div class="toast">该条目已对齐到作品<a href="/admin/works/{{.ConflictWork.ID}}">《{{.ConflictWork.Title}}》</a></div>{{else if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
     {{if .BatchTotal}}
     {{/* Issue #3：批量审核栏。卡片复选框通过 form= 关联到本表单；页面脚本在
          提交时把每张卡片当前的勾选作品、角色与合并命名一并带上。 */}}
-    <form id="work-review-batch" class="review-batch-bar" method="post" action="/admin/work-review/batch" data-review-batch>
+    <form id="work-review-batch" class="bulk-bar review-batch-bar" method="post" action="/admin/work-review/batch" data-review-batch>
       <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
       <input type="hidden" name="returnTo" value="{{.BatchReturnTo}}">
       <label class="review-batch-all"><input type="checkbox" data-review-select-all aria-label="全选本页候选"> 全选本页</label>
@@ -293,7 +294,7 @@
             <label>手动指定 Bangumi 条目<input name="bangumiSubject" required placeholder="条目链接或数字 ID"></label>
             <button type="submit" class="secondary-button">按指定条目对齐</button>
           </form>
-          <div class="work-align-candidates">
+          <div class="cand-list work-align-candidates">
             {{if $item.AI}}
             <aside class="ai-decision-banner tone-{{$item.AI.BadgeTone}}">
               <div class="ai-decision-main">
@@ -307,7 +308,7 @@
             {{end}}
             {{range $item.Candidates}}
             {{$isWorkRec := and $item.AI (eq $item.AI.SelectedCandidateID .ID)}}
-            <div class="work-align-option{{if $isWorkRec}} is-ai-recommended{{end}}">
+            <div class="cand-item work-align-option{{if $isWorkRec}} ai-pick is-ai-recommended{{end}}">
               <span class="work-type-chip">{{with workTypeLabel .Type}}{{.}}{{else}}作品{{end}}</span>
               <div class="work-align-info">
                 <div class="candidate-head-row">
@@ -351,7 +352,7 @@
 
 {{define "wrAlbumCandCard"}}
 {{$card := .}}
-<div class="review-candidate-body is-selectable{{if .IsAIRecCandidate}} is-ai-recommended{{end}}">
+<div class="review-card review-candidate-body is-selectable{{if .IsAIRecCandidate}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="album:{{.Cand.AlbumID}}:{{.Cand.ID}}" data-review-state-form="album-accept-{{.Cand.ID}}" data-review-album aria-label="选择专辑候选《{{.Cand.Title}}》"></label>
   {{if .AI}}
   {{if or (eq .AI.SelectedCandidateID .Cand.ID) (eq .AI.SelectedCandidateID 0)}}
@@ -371,6 +372,17 @@
   </aside>
   {{end}}
   {{end}}
+  <div class="review-compare">
+  <div class="review-source">
+    {{with .Cand.AlbumArtworkURL}}<img src="{{thumb . 128}}" alt="" loading="lazy" decoding="async">{{end}}
+    <div>
+      <p class="card-kicker">本地专辑</p>
+      <strong><a href="/admin/albums/{{.Cand.AlbumID}}">{{.Cand.AlbumTitle}}</a></strong>
+      <p class="card-desc">{{if .Cand.AlbumArtist}}{{.Cand.AlbumArtist}} · {{end}}{{if .Cand.AlbumYear}}{{.Cand.AlbumYear}} · {{end}}{{.Cand.AlbumTrackCount}} 首</p>
+    </div>
+  </div>
+    <span class="review-arrow" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></span>
+    <div class="cand-list">
   <div class="bgm-candidate-bar">
     <div class="bgm-candidate-title">
       <a class="bgm-link" href="https://bgm.tv/subject/{{.Cand.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Cand.Title}} ↗</a>
@@ -388,9 +400,9 @@
   <form id="album-accept-{{.Cand.ID}}" method="post" action="/admin/enrichment/albums/{{.Cand.AlbumID}}/subjects/{{.Cand.ID}}/accept">
     <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
     <input type="hidden" name="returnTo" value="/admin/work-review?tab=albums&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
-    <div class="candidate-tieup-list">
+    <div class="cand-list candidate-tieup-list">
       {{range .Cand.Tieups}}
-      <div class="candidate-tieup-row{{if $card.HasAIPick}}{{if $card.IsWorkAIPicked .SubjectID}} is-ai-picked{{else}} is-ai-unpicked{{end}}{{end}}">
+      <div class="cand-item candidate-tieup-row{{if $card.HasAIPick}}{{if $card.IsWorkAIPicked .SubjectID}} ai-pick is-ai-picked{{else}} is-ai-unpicked{{end}}{{end}}">
         <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" {{if $card.IsWorkChecked .SubjectID}}checked {{end}}title="勾选以接受">
         <div class="tieup-work-info">
           <strong>{{.Title}}{{if $card.IsWorkAIPicked .SubjectID}} <span class="status-badge ai-rec-pill">★ AI 勾选</span>{{end}}</strong>
@@ -402,6 +414,9 @@
       {{end}}
     </div>
   </form>
+
+    </div>
+  </div>
 
   <form id="album-reject-{{.Cand.ID}}" method="post" action="/admin/enrichment/albums/{{.Cand.AlbumID}}/subjects/{{.Cand.ID}}/reject">
     <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
@@ -421,7 +436,7 @@
 
 {{define "wrTrackCandCard"}}
 {{$card := .}}
-<div class="review-candidate-body is-selectable{{if .IsAIRecCandidate}} is-ai-recommended{{end}}">
+<div class="review-card review-candidate-body is-selectable{{if .IsAIRecCandidate}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="track:{{.Cand.TrackID}}:{{.Cand.ID}}" data-review-state-form="track-accept-{{.Cand.ID}}" aria-label="选择曲目候选《{{.Cand.TrackTitle}}》→《{{.Cand.Title}}》"></label>
   {{if .AI}}
   {{if or (eq .AI.SelectedCandidateID .Cand.ID) (eq .AI.SelectedCandidateID 0)}}
@@ -441,11 +456,15 @@
   </aside>
   {{end}}
   {{end}}
-  <div class="review-track-line">
+  <div class="review-compare">
+  <div class="review-track-line review-source">
+    {{with .Cand.AlbumArtworkURL}}<img src="{{thumb . 128}}" alt="" loading="lazy" decoding="async">{{end}}
     <strong>{{.Cand.TrackTitle}}</strong>
     <span class="muted">{{if .Cand.TrackArtist}}{{.Cand.TrackArtist}} · {{end}}专辑《<a href="/admin/albums/{{.Cand.AlbumID}}">{{.Cand.AlbumTitle}}</a>》{{if .Cand.TrackNumber}} · 曲目 {{.Cand.DiscNumber}}.{{.Cand.TrackNumber}}{{end}}{{if .Cand.DurationMillis}} · {{formatDurationMillis .Cand.DurationMillis}}{{end}}</span>
     <span class="match-kind-badge {{matchKindClass .Cand.MatchKind}}">{{matchKindLabel .Cand.MatchKind}}</span>
   </div>
+    <span class="review-arrow" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></span>
+    <div class="cand-list">
   <div class="bgm-candidate-bar">
     <div class="bgm-candidate-title">
       <a class="bgm-link" href="https://bgm.tv/subject/{{.Cand.ExternalID}}" target="_blank" rel="noopener noreferrer">{{.Cand.Title}} ↗</a>
@@ -462,10 +481,10 @@
   <form id="track-accept-{{.Cand.ID}}" method="post" action="/admin/enrichment/tracks/{{.Cand.TrackID}}/subjects/{{.Cand.ID}}/accept">
     <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
     <input type="hidden" name="returnTo" value="/admin/work-review?tab=tracks&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
-    <div class="candidate-tieup-list">
+    <div class="cand-list candidate-tieup-list">
       {{range .Cand.Tieups}}
       {{$effRole := $card.EffectiveRole .SubjectID .Role}}
-      <div class="candidate-tieup-row{{if $card.HasAIPick}}{{if $card.IsWorkAIPicked .SubjectID}} is-ai-picked{{else}} is-ai-unpicked{{end}}{{end}}">
+      <div class="cand-item candidate-tieup-row{{if $card.HasAIPick}}{{if $card.IsWorkAIPicked .SubjectID}} ai-pick is-ai-picked{{else}} is-ai-unpicked{{end}}{{end}}">
         <input type="checkbox" name="workSubjectIds" value="{{.SubjectID}}" {{if $card.IsWorkChecked .SubjectID}}checked {{end}}title="选择关联此作品">
         <div class="tieup-work-info">
           <strong>{{.Title}}{{if $card.IsWorkAIPicked .SubjectID}} <span class="status-badge ai-rec-pill">★ AI 勾选</span>{{end}}</strong>
@@ -490,6 +509,9 @@
     </div>
   </form>
 
+    </div>
+  </div>
+
   <form id="track-reject-{{.Cand.ID}}" method="post" action="/admin/enrichment/tracks/{{.Cand.TrackID}}/subjects/{{.Cand.ID}}/reject">
     <input type="hidden" name="csrfToken" value="{{.Ctx.CSRFToken}}">
     <input type="hidden" name="returnTo" value="/admin/work-review?tab=tracks&group={{.Ctx.Group}}{{if .Ctx.AlbumID}}&albumId={{.Ctx.AlbumID}}{{end}}">
@@ -506,7 +528,7 @@
 {{end}}
 
 {{define "wrSeriesSuggCard"}}
-<div class="review-candidate-body series-suggestion-card is-selectable{{if and .AI (eq .AI.Action "recommend_accept")}} is-ai-recommended{{end}}">
+<div class="review-card review-candidate-body series-suggestion-card is-selectable{{if and .AI (eq .AI.Action "recommend_accept")}} is-ai-recommended{{end}}">
   <label class="review-select-label" title="选中后可批量接受或拒绝"><input type="checkbox" class="review-select" form="work-review-batch" name="item" value="series:{{.ID}}" data-review-state-form="series-accept-{{.ID}}" aria-label="选择系列建议《{{.WorkA.Title}}》与《{{.WorkB.Title}}》"></label>
   {{if .AI}}
   <aside class="ai-decision-banner tone-{{.AI.BadgeTone}}">

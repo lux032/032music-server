@@ -1,0 +1,32 @@
+{{define "artist-review-cross-tabs"}}
+<a href="/admin/artist-aliases" class="admin-tab{{if eq .Nav "artist-aliases"}} active{{end}}"{{if eq .Nav "artist-aliases"}} aria-current="page"{{end}}>中文别名补全</a>
+<a href="/admin/merges" class="admin-tab{{if eq .Nav "merges"}} active{{end}}"{{if eq .Nav "merges"}} aria-current="page"{{end}}>合并历史与回退</a>
+{{end}}
+
+{{define "artist-review-route-tabs"}}
+<nav class="admin-tabs" aria-label="艺术家与身份审核">
+  <a class="admin-tab" href="/admin/matches?tab=identity">待审身份</a>
+  <a class="admin-tab" href="/admin/matches?tab=credits">复合署名</a>
+  <a class="admin-tab" href="/admin/matches?tab=avatars">待审头像</a>
+  {{template "artist-review-cross-tabs" .}}
+  <a class="admin-tab" href="/admin/matches?tab=tasks">任务与补全</a>
+</nav>
+{{end}}
+
+{{define "source-tabs"}}
+<nav class="admin-tabs" aria-label="数据来源与同步">
+  <a class="admin-tab" href="/admin/settings/metadata#metadata-sources" data-source-tab="sources">元数据来源与简介策略</a>
+  <a class="admin-tab" href="/admin/settings/metadata#playback-sync" data-source-tab="sync">播放记录与红心同步</a>
+  <a href="/admin/settings/acquisition" class="admin-tab{{if eq .Nav "acquisition-settings"}} active{{end}}"{{if eq .Nav "acquisition-settings"}} aria-current="page"{{end}}>资源获取集成</a>
+</nav>
+{{end}}
+
+{{define "artist-task-overview"}}
+<section class="match-active-strip" aria-label="当前任务" data-artist-task-overview hidden>
+  <div class="card-head">
+    <h2 class="card-title">当前任务</h2>
+    <a href="/admin/matches?tab=tasks" class="secondary-button compact-button">管理任务</a>
+  </div>
+  <ul class="chip-row" data-artist-task-list></ul>
+</section>
+{{end}}

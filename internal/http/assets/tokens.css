@@ -30,6 +30,9 @@
   --bg-chrome: #efeff3;
   --bg-soft: #f0f0f4;
   --bg-panel: #ffffff;
+  --stage: #f4f4f7;
+  --surface-alt: #f3f3f6;
+  --shadow-drawer: -12px 0 36px rgba(17, 17, 19, 0.14);
   --surface: #ffffff;
   --surface-hover: #eaeaf0;
   --surface-sunken: #e6e6ec;
@@ -111,11 +114,11 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Shell metrics */
-  --sidebar-w: 236px;
-  --nowplaying-w: 348px;
+  --sidebar-w: 248px;
+  --nowplaying-w: 396px;
   --content-right: var(--nowplaying-w);
-  --player-h: 82px;
-  --content-gutter: clamp(24px, 3vw, 48px);
+  --player-h: 86px;
+  --content-gutter: clamp(24px, 2.4vw, 40px);
   --admin-max: 1860px;
 }
 
@@ -123,7 +126,7 @@
 @media (min-width: 1760px) {
   :root {
     --sidebar-w: 268px;
-    --nowplaying-w: 416px;
+    --nowplaying-w: 420px;
     --player-h: 92px;
     --content-gutter: 48px;
     --admin-max: 2040px;
@@ -138,6 +141,9 @@
   --bg-chrome: #0b0b0e;
   --bg-soft: #131319;
   --bg-panel: #15151b;
+  --stage: #0d0d11;
+  --surface-alt: #121218;
+  --shadow-drawer: -12px 0 40px rgba(0, 0, 0, 0.55);
   --surface: #15151b;
   --surface-hover: #1f1f27;
   --surface-sunken: #1b1b22;

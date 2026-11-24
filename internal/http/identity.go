@@ -145,6 +145,9 @@ type identityPageData struct {
 	LastAIRun       *storage.AIReviewRun
 	AIApplied       []storage.AIReviewAppliedItem
 	MatchTab        string
+
+	ProfileCreditRoles  []storage.CreditRoleCount
+	ProfileCreditTracks []storage.Track
 }
 
 func (d identityPageData) TabReturnTo(tab string) string {
@@ -713,6 +716,17 @@ func (a *App) handleArtistPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if detail.CreditTrackCount > 0 {
+		data.ProfileCreditRoles, err = a.store.ArtistCreditRoles(r.Context(), id)
+		if err == nil {
+			data.ProfileCreditTracks, err = a.store.ListTracks(r.Context(), storage.Filters{
+				Limit: 4, Focus: storage.TrackFocus{Credits: []storage.CreditFilter{{Role: "any", ArtistID: id}}},
+			})
+		}
+		if err != nil {
+			a.logger.Warn("load artist profile credits", "artist", id, "error", err)
+		}
 	}
 	a.render(w, 200, "artist.html", data)
 }

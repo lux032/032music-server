@@ -6,6 +6,7 @@ import { togglePlay } from './player-core.js';
     document.addEventListener('keydown', (e) => {
       const target = e.target instanceof Element ? e.target : document.activeElement;
       const interactive = target?.closest('input, textarea, select, button, a, summary, [contenteditable="true"], [role="slider"]');
+      if (e.defaultPrevented) return;
       if (e.key === 'Escape') {
         const overlay = document.getElementById('lyrics-overlay');
         if (overlay && overlay.style.display !== 'none') {
@@ -26,6 +27,18 @@ import { togglePlay } from './player-core.js';
           setNowPlayingTab('queue');
           return;
         }
+      }
+      const search = (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.shiftKey) ||
+        (e.key.toLowerCase() === 'k' && (e.ctrlKey || e.metaKey));
+      const editing = target?.closest('input, textarea, select, [contenteditable="true"]');
+      if (search && !e.altKey && !e.isComposing && !editing &&
+          !document.querySelector('dialog[open], #player-fullscreen, .drawer-panel[aria-modal="true"]') &&
+          localStorage.getItem('032_shortcuts_disabled') !== '1') {
+        e.preventDefault();
+        const input = document.getElementById('library-search');
+        if (input) input.focus();
+        else document.getElementById('sidebar-search')?.click();
+        return;
       }
       if (localStorage.getItem('032_shortcuts_disabled') === '1' || interactive || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
       if (e.code === 'Space') { e.preventDefault(); togglePlay(); }

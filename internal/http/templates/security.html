@@ -7,8 +7,8 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main security-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main security-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>账号与安全</h1>
         <p class="result-count">管理登录账号、密码与客户端 Token。修改立即生效，每项操作都需要输入当前密码。</p>
@@ -24,11 +24,11 @@
 
     {{with .Notice}}<div class="{{if .Error}}form-error{{else}}toast{{end}} security-notice" role="{{if .Error}}alert{{else}}status{{end}}" data-security-notice>{{.Text}}</div>{{end}}
 
-    <div class="settings-grid">
+    <div class="admin-grid-2 security-grid">
     {{with .Flash}}
     <section class="security-flash" data-security-flash>
-      <header>
-        <p class="kicker">一次性显示</p>
+      <header class="card-head">
+        <p class="card-kicker kicker">一次性显示</p>
         <h2>{{.Label}}</h2>
       </header>
       <p class="security-flash-warning">此内容只显示这一次：刷新或离开页面后将无法再次查看，请立即复制并妥善保存。</p>
@@ -40,9 +40,9 @@
     </section>
     {{end}}
 
-    <section class="source-card security-card" data-security-item="username">
-      <header>
-        <div><p class="kicker">登录账号</p><h2>用户名</h2></div>
+    <section class="card source-card security-card" data-security-item="username">
+      <header class="card-head">
+        <div><p class="card-kicker kicker">登录账号</p><h2>用户名</h2></div>
         {{template "security-source" .Sources.Username}}
       </header>
       <p>当前用户名：<strong class="security-current" data-security-current-username>{{.CurrentUsername}}</strong>。修改后其他登录会话会全部退出，当前会话保持登录。</p>
@@ -52,10 +52,10 @@
           <label>新用户名<input name="new_username" autocomplete="username" maxlength="{{.MaxUsernameLength}}" required><small>1–{{.MaxUsernameLength}} 个字符，首尾空格会被去除。</small></label>
           <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
         </div>
-        <div class="editor-actions"><button type="submit">修改用户名</button></div>
+        <div class="card-foot editor-actions"><button type="submit">修改用户名</button></div>
       </form>
       {{if eq .Sources.Username "override"}}
-      <details class="danger-confirm security-reset">
+      <details class="danger-confirm disclosure danger-disclosure security-reset">
         <summary class="secondary-button">恢复为环境变量…</summary>
         <div class="danger-confirm-panel">
           <strong>改用环境变量 MUSIC_SERVER_ADMIN_USERNAME？</strong>
@@ -73,8 +73,8 @@
       {{end}}
     </section>
 
-    <section class="source-card security-card" data-security-item="password">
-      <header>
+    <section class="card source-card security-card" data-security-item="password">
+      <header class="card-head">
         <div><h2>登录密码</h2></div>
         {{template "security-source" .Sources.Password}}
       </header>
@@ -86,10 +86,10 @@
           <label>新密码<input type="password" name="new_password" autocomplete="new-password" required{{if .MinPasswordLength}} minlength="{{.MinPasswordLength}}"{{end}}><small>{{if .MinPasswordLength}}至少 {{.MinPasswordLength}} 个字符，且不能与当前密码相同。{{else}}开发模式：不能为空，且不能与当前密码相同。{{end}}</small></label>
           <label>确认新密码<input type="password" name="confirm_password" autocomplete="new-password" required></label>
         </div>
-        <div class="editor-actions"><button type="submit">修改密码</button></div>
+        <div class="card-foot editor-actions"><button type="submit">修改密码</button></div>
       </form>
       {{if eq .Sources.Password "override"}}
-      <details class="danger-confirm security-reset">
+      <details class="danger-confirm disclosure danger-disclosure security-reset">
         <summary class="secondary-button">恢复为环境变量…</summary>
         <div class="danger-confirm-panel">
           <strong>改用环境变量 MUSIC_SERVER_ADMIN_PASSWORD？</strong>
@@ -107,15 +107,15 @@
       {{end}}
     </section>
 
-    <section class="source-card security-card" data-security-item="totp">
-      <header>
+    <section class="card source-card security-card" data-security-item="totp">
+      <header class="card-head">
         <div><h2>两步验证（2FA）</h2></div>
         {{if .TOTPEnabled}}<span class="status-badge success" data-totp-status="enabled">已启用</span>{{else}}<span class="status-badge" data-totp-status="disabled">未启用</span>{{end}}
       </header>
       <p>登录管理面板时，除密码外还需输入身份验证器（Google Authenticator、1Password、Microsoft Authenticator 等）生成的 6 位验证码。只影响管理面板登录，不影响 API Token 与媒体 Token。启用或停用后其他登录会话会全部退出。</p>
       {{if .TOTPEnabled}}
       <p class="security-note">丢失手机时，可临时设置 <code>MUSIC_SERVER_RESET_CREDENTIALS=password</code> 并重启服务：会关闭两步验证，并把用户名与密码恢复为环境变量。</p>
-      <details class="danger-confirm security-totp-disable">
+      <details class="danger-confirm disclosure danger-disclosure security-totp-disable">
         <summary class="secondary-button">停用两步验证…</summary>
         <div class="danger-confirm-panel">
           <strong>停用后登录只需密码。</strong>
@@ -161,9 +161,9 @@
       {{end}}
     </section>
 
-    <section class="source-card security-card" data-security-item="login-protection">
+    <section class="card source-card security-card" data-security-item="login-protection">
       {{with .Login}}
-      <header>
+      <header class="card-head">
         <div><h2>登录保护</h2></div>
         {{if .Bans}}<span class="status-badge warning" data-ban-count="{{len .Bans}}">{{len .Bans}} 个地址被封禁</span>{{else}}<span class="status-badge" data-ban-count="0">无封禁</span>{{end}}
       </header>
@@ -227,15 +227,15 @@
             <label>备注（可选）<input name="note" maxlength="{{.MaxNote}}" autocomplete="off" placeholder="家里局域网"></label>
             <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
           </div>
-          <div class="editor-actions"><button type="submit">加入白名单</button></div>
+          <div class="card-foot editor-actions"><button type="submit">加入白名单</button></div>
         </form>
       </details>
       {{end}}
     </section>
 
-    <section class="source-card security-card" data-security-item="api-token">
-      <header>
-        <div><p class="kicker">客户端访问</p><h2>API Token</h2></div>
+    <section class="card source-card security-card" data-security-item="api-token">
+      <header class="card-head">
+        <div><p class="card-kicker kicker">客户端访问</p><h2>API Token</h2></div>
         {{template "security-source" .Sources.APIToken}}
       </header>
       <p>客户端通过 <code>Authorization: Bearer</code> 访问 JSON API。修改后所有使用旧 Token 的客户端需要更新。数据库只保存 Token 的哈希，新生成的 Token 只显示一次。</p>
@@ -252,11 +252,11 @@
             <label for="api-custom-token">自定义 Token<span class="masked-field"><input id="api-custom-token" type="password" name="custom_token" autocomplete="new-password" autocapitalize="off" spellcheck="false" required minlength="{{.MinTokenLength}}" maxlength="{{.MaxTokenLength}}"><button type="button" class="secondary-button" data-mask-toggle="api-custom-token" aria-controls="api-custom-token" aria-pressed="false">显示</button></span><small>至少 {{.MinTokenLength}} 位，只能包含字母、数字和 - _ . ~，不能与媒体 Token 相同。</small></label>
             <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
           </div>
-          <div class="editor-actions"><button type="submit">保存自定义 Token</button></div>
+          <div class="card-foot editor-actions"><button type="submit">保存自定义 Token</button></div>
         </form>
       </details>
       {{if eq .Sources.APIToken "override"}}
-      <details class="danger-confirm security-reset">
+      <details class="danger-confirm disclosure danger-disclosure security-reset">
         <summary class="secondary-button">恢复为环境变量…</summary>
         <div class="danger-confirm-panel">
           <strong>改用环境变量 MUSIC_SERVER_API_TOKEN？</strong>
@@ -274,9 +274,9 @@
       {{end}}
     </section>
 
-    <section class="source-card security-card" data-security-item="media-token">
-      <header>
-        <div><p class="kicker">客户端访问</p><h2>媒体 Token</h2></div>
+    <section class="card source-card security-card" data-security-item="media-token">
+      <header class="card-head">
+        <div><p class="card-kicker kicker">客户端访问</p><h2>媒体 Token</h2></div>
         {{template "security-source" .Sources.MediaToken}}
       </header>
       <p>Sonos 等外部播放器通过 <code>mediaToken</code> 参数读取音频、封面与歌词，不能访问其他 API。修改后正在播放的一首会播完，下一首开始需要新 Token；已写入 Sonos 播放队列的曲目需要重新投送。</p>
@@ -295,7 +295,7 @@
             <label for="media-custom-token">自定义 Token<span class="masked-field"><input id="media-custom-token" type="password" name="custom_token" autocomplete="new-password" autocapitalize="off" spellcheck="false" required minlength="{{.MinTokenLength}}" maxlength="{{.MaxTokenLength}}"><button type="button" class="secondary-button" data-mask-toggle="media-custom-token" aria-controls="media-custom-token" aria-pressed="false">显示</button></span><small>至少 {{.MinTokenLength}} 位，只能包含字母、数字和 - _ . ~，不能与 API Token 相同。</small></label>
             <label>当前密码<input type="password" name="current_password" autocomplete="current-password" required></label>
           </div>
-          <div class="editor-actions"><button type="submit">保存自定义 Token</button></div>
+          <div class="card-foot editor-actions"><button type="submit">保存自定义 Token</button></div>
         </form>
       </details>
       <details class="security-custom" data-security-reveal>
@@ -307,7 +307,7 @@
         </form>
       </details>
       {{if eq .Sources.MediaToken "override"}}
-      <details class="danger-confirm security-reset">
+      <details class="danger-confirm disclosure danger-disclosure security-reset">
         <summary class="secondary-button">恢复为环境变量…</summary>
         <div class="danger-confirm-panel">
           <strong>改用环境变量 MUSIC_SERVER_MEDIA_TOKEN？</strong>

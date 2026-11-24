@@ -8,142 +8,51 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main identity-main artist-profile-main">
-    <nav class="detail-toolbar" aria-label="页面导航">
+    <nav class="detail-toolbar detail-top-bar" aria-label="页面导航">
       <a class="back-button" href="/admin/artists/album" data-history-back>
         <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
         <span class="back-button-label">返回歌手列表</span>
       </a>
-      <span class="detail-context">歌手资料</span>
-    </nav>
-    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
-    {{if .ReleaseGroups}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
-
-    <section class="artist-hero">
-      {{if .Artist.ImageURL}}<img class="artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-portrait" role="img" aria-label="{{.Artist.Name}}">{{initial .Artist.Name}}</div>{{end}}
-      <div>
-        <h1>{{.Artist.Name}}</h1>
-        <p>{{.Artist.ArtistType}} {{.Artist.Country}}</p>
-        <div class="album-facts">
-          {{if .Artist.AlbumCount}}<span>{{.Artist.AlbumCount}} 张专辑</span>{{end}}
-          {{if .Artist.PerformedTrackCount}}<span>演唱 {{.Artist.PerformedTrackCount}} 首</span>{{end}}{{if .Artist.CreditTrackCount}}<span><a class="credit-fact-link" href="/admin/credits/{{.Artist.ID}}">幕后 {{.Artist.CreditTrackCount}} 首</a></span>{{end}}
-        </div>
-        <div class="artist-hero-actions">
-          {{template "artist-favorite" (artistFavorite .Artist.ID .Artist.Name .Artist.IsFavorite .CSRFToken .ReturnTo "hero")}}
+      <div class="detail-mgmt-tools">
           <form method="post" action="/admin/artists/{{.Artist.ID}}/match">
             <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <button>重新匹配资料</button>
+            <button class="secondary-button">重新匹配资料</button>
           </form>
-          <a href="#artist-edit" class="secondary-button" data-drawer-open="artist-edit" aria-haspopup="dialog">编辑歌手</a>
+          <a href="#artist-edit" class="secondary-button" data-drawer-open="artist-edit" aria-haspopup="dialog">编辑歌手 / 别名 / 合并</a>
+        <a class="secondary-button" href="/admin/matches">身份审核</a>
+      </div>
+    </nav>
+    {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+
+    <section class="detail-hero artist-hero artist-layout">
+      {{if .Artist.ImageURL}}<img class="artist-hero-portrait artist-portrait fade-img" src="{{thumb .Artist.ImageURL 768}}" alt="{{.Artist.Name}}" decoding="async">{{else}}<div class="artist-hero-portrait artist-portrait" role="img" aria-label="{{.Artist.Name}}">{{initial .Artist.Name}}</div>{{end}}
+      <div class="detail-heading">
+        <h1>{{.Artist.Name}}</h1>
+        <div class="detail-meta-line">
+          {{with .Artist.ArtistType}}<span class="format-pill">{{.}}</span>{{end}}
+          {{with .Artist.Country}}<span class="format-pill">{{.}}</span>{{end}}
+          {{range .SearchAliases}}<span class="format-pill">{{.Value}}</span>{{end}}
+          {{$mbid := false}}{{range .Artist.Profiles}}{{if eq .Source "musicbrainz"}}{{$mbid = true}}{{end}}{{end}}
+          <span class="status-badge{{if $mbid}} success{{end}}">{{if $mbid}}MBID 已确认{{else}}MBID 未绑定{{end}}</span>
+        </div>
+        <div class="artist-hero-actions">
+          {{if .Tracks}}<button type="button" data-play-list="artist-performed-tracks"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg> {{if .TracksArePopular}}播放热门歌曲{{else}}播放歌曲{{end}}</button>{{end}}
+          {{if .Artist.CreditTrackCount}}<a class="secondary-button" href="/admin/credits/{{.Artist.ID}}">幕后 {{.Artist.CreditTrackCount}} 首</a>{{end}}
+          {{template "artist-favorite" (artistFavorite .Artist.ID .Artist.Name .Artist.IsFavorite .CSRFToken .ReturnTo "hero")}}
         </div>
       </div>
+      <dl class="facts-list" aria-label="歌手资料">
+        <div class="fact-row"><dt>关联专辑</dt><dd>{{.Artist.AlbumCount}} 张</dd></div>
+        <div class="fact-row"><dt>演唱曲目</dt><dd>演唱 {{.Artist.PerformedTrackCount}} 首</dd></div>
+        <div class="fact-row"><dt>幕后参与</dt><dd>{{if .Artist.CreditTrackCount}}<a href="/admin/credits/{{.Artist.ID}}">幕后 {{.Artist.CreditTrackCount}} 首</a>{{else}}0 首{{end}}</dd></div>
+        <div class="fact-row"><dt>搜索别名</dt><dd><a href="#artist-edit" data-drawer-open="artist-edit">{{len .SearchAliases}} 个</a></dd></div>
+      </dl>
     </section>
 
- <div class="identity-columns">
-      <section>
-        <div class="section-title">
-          <h2>简介</h2>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
-              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-              <button class="secondary-button">刷新简介</button>
-            </form>
-            {{if not .Artist.Biography}}
-            <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
-              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-              <input type="hidden" name="web_fallback" value="1">
-              <button class="secondary-button">AI 联网生成</button>
-            </form>
-            {{end}}
-          </div>
-        </div>
-        {{if .Artist.BiographySource}}
-        <div class="biography-origin">
-          <span>{{biographyOriginLabel .Artist.BiographySource .Artist.BiographyLanguage .Artist.BiographyOriginSource .Artist.BiographyOriginLanguage}}</span>
-          {{if .Artist.BiographyModel}}<small>{{.Artist.BiographyModel}}</small>{{end}}
-          {{if .Artist.BiographyURL}}<a href="{{.Artist.BiographyURL}}" target="_blank" rel="noreferrer">{{biographyLinkLabel .Artist.BiographySource}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
-        </div>
-        {{end}}
-        <p class="artist-bio">{{if .Artist.Biography}}{{.Artist.Biography}}{{else}}尚无简介。确认 MusicBrainz 身份后刷新简介，或点击「AI 联网生成」尝试基于公开资料整理。{{end}}</p>
-        {{if eq .Artist.BiographySource "ai_web"}}<p class="muted" style="margin-top:-28px;margin-bottom:24px;font-size:0.8rem;">此简介由 AI 基于公开网络资料整理生成，如信息有误可通过「编辑歌手」手工覆盖。</p>{{end}}
-
-        {{if .Artist.Biographies}}
-        <details class="biography-versions">
-          <summary>可用简介版本（{{len .Artist.Biographies}}）</summary>
-          <div>
-            {{range .Artist.Biographies}}
-            <article class="{{if .Selected}}selected{{end}}">
-              <div><strong>{{biographyOriginLabel .Source .Language .OriginSource .OriginLanguage}}</strong>{{if .Model}}<small>{{.Model}}</small>{{end}}{{if .Selected}}<small>当前显示</small>{{end}}</div>
-              <p>{{.Biography}}</p>
-              <form method="post" action="/admin/artists/{{$.Artist.ID}}/biography">
-                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <input type="hidden" name="source" value="{{.Source}}">
-                <input type="hidden" name="language" value="{{.Language}}">
-                <button class="secondary-button">使用此版本</button>
-                {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">原文 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
-              </form>
-            </article>
-            {{end}}
-            <form method="post" action="/admin/artists/{{.Artist.ID}}/biography">
-              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-              <button class="secondary-button" name="reset" value="1">恢复全局优先级</button>
-            </form>
-          </div>
-        </details>
-        {{end}}
-
-        {{if .ReleaseGroups}}<div class="artist-discography">
-          {{range $idx, $group := .ReleaseGroups}}
-          <section class="artist-release-group">
-            <div class="section-title">
-              <div><p class="kicker">发行目录 · 最新优先</p><h2>{{$group.Title}}</h2>{{if $group.Description}}<p class="muted">{{$group.Description}}</p>{{end}}</div>
-              <div class="artist-discog-tools">
-                {{if eq $idx 0}}
-                <label class="grid-size-control artist-grid-size-control" title="调节每行显示的专辑数量">
-                  <span>每行</span>
-                  <input type="range" min="2" max="10" step="1" value="{{if $.ArtistAlbumCols}}{{$.ArtistAlbumCols}}{{else}}5{{end}}" aria-label="每行显示的专辑数量" data-artist-grid-cols>
-                  <output>{{if $.ArtistAlbumCols}}{{$.ArtistAlbumCols}}{{else}}5{{end}}</output>
-                </label>
-                {{end}}
-                <span>{{len $group.Releases}} 个发行</span>
-              </div>
-            </div>
-            <section class="album-browser detail-album-grid"{{if $.ArtistAlbumCols}} style="--artist-cols: {{$.ArtistAlbumCols}}"{{end}}>
-              {{range $group.Releases}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
-              {{end}}
-            </section>
-          </section>
-          {{else}}
-          <div class="zero-state"><strong>暂时没有关联发行</strong></div>
-          {{end}}
-        </div>
-
-        {{end}}
-        {{if .Tracks}}<section class="artist-tracks-section">
-          <div class="section-title">
-            <div><h2>{{if .TracksArePopular}}热门歌曲{{else}}歌曲{{end}}</h2></div>
-            <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.PerformedTrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
-          </div>
-          <div class="artist-track-list" data-track-list>
-            {{range .Tracks}}
-            <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{if .Artist}}{{.Artist}}{{else}}{{$.Artist.Name}}{{end}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
-              <a class="artist-track-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
-              <div class="artist-track-copy">
-                <strong>{{.Title}}</strong>
-                <small><a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}{{if $.TracksArePopular}} · 播放 {{.PlayCount}} 次{{end}}</small>
-              </div>
-              {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
-              <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
-            </article>
-            {{else}}
-            <div class="zero-state"><strong>暂时没有关联歌曲</strong></div>
-            {{end}}
-          </div>
-        </section>{{end}}
-      </section>
-      <aside>
+    <div class="artist-editorial">
         {{with .IdentityConflict}}
-        <section class="identity-panel danger-panel" aria-label="外部身份冲突">
-          <p class="kicker">身份已绑定，请先核对</p>
+        <section class="card danger-card identity-panel danger-panel" aria-label="外部身份冲突">
+          <h2 class="card-title">身份已绑定，请先核对</h2>
           <p>该身份（{{.Source}} · <code>{{.ExternalID}}</code>）已绑定到歌手
             <a href="/admin/artists/{{.TargetArtistID}}?view=profile" target="_blank" rel="noopener noreferrer">{{.TargetName}}</a>。
           </p>
@@ -165,119 +74,129 @@
           {{else}}<p>当前情况不适合直接合并：可能涉及合作署名，或身份所属歌手已合并到当前歌手。请打开已绑定歌手页面核对并解除错误身份；不要将个人歌手合并到合作署名。</p>{{end}}
         </section>
         {{end}}
-        <section class="identity-panel search-alias-panel" id="search-aliases" aria-labelledby="search-alias-heading">
-          <h2 id="search-alias-heading">搜索别名</h2><p class="field-hint"><a href="/admin/artist-aliases?status=accepted&amp;artistId={{.Artist.ID}}">查看中文别名来源与补全任务</a></p>
-          <p class="field-hint">添加中文译名或其他常用名字，搜索时也能找到这位歌手。不会更改展示名称。</p>
-          <form class="search-alias-add" method="post" action="/admin/artists/{{.Artist.ID}}/search-aliases">
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <label for="search-alias-value">添加人工别名</label>
-            <div><input id="search-alias-value" name="value" maxlength="200" required placeholder="例如：星街彗星"><button type="submit">添加</button></div>
-          </form>
-          <ul class="search-alias-list">
-            {{range .SearchAliases}}<li><span>{{.Value}} <small>{{if eq .Source "automatic"}}自动补全{{else}}人工{{end}}</small></span><form method="post" action="/admin/artists/{{$.Artist.ID}}/search-aliases/{{.ID}}/delete"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button type="submit" class="secondary-button" aria-label="删除搜索别名 {{.Value}}">删除</button></form></li>{{else}}<li class="field-hint">尚未添加搜索别名</li>{{end}}
-          </ul>
-          {{range .Artist.Profiles}}{{if .Aliases}}<details class="search-external-aliases"><summary>{{.Source}} 别名（{{len .Aliases}}）</summary><ul>{{range .Aliases}}<li>{{.}}</li>{{end}}</ul></details>{{end}}{{end}}
-        </section>
-        <section class="identity-panel">
-          <p class="kicker">外部身份</p>
-          {{range .Artist.Profiles}}
-          <article>
-            <strong>{{.Source}}</strong>
-            <span>{{.DisplayName}}</span>
-            <code>{{.ExternalID}}</code>
-            <button type="button" class="secondary-button" data-dialog-open="identity-reset-{{.Source}}">解除错误身份</button>
-            <dialog id="identity-reset-{{.Source}}" class="work-dialog danger-dialog">
-              <form method="post" action="/admin/artists/{{$.Artist.ID}}/identity/reset">
+
+      <section class="card artist-bio-card" aria-labelledby="artist-biography-title">
+        <header class="card-head">
+          <div><h2 class="card-title" id="artist-biography-title">歌手简介</h2>
+          {{if .Artist.BiographySource}}<p class="card-desc">{{biographyOriginLabel .Artist.BiographySource .Artist.BiographyLanguage .Artist.BiographyOriginSource .Artist.BiographyOriginLanguage}}{{if .Artist.BiographyModel}} · {{.Artist.BiographyModel}}{{end}}</p>{{end}}
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <button class="secondary-button">刷新简介</button>
+            </form>
+            {{if not .Artist.Biography}}
+            <form method="post" action="/admin/artists/{{.Artist.ID}}/biographies/refresh">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="web_fallback" value="1">
+              <button class="secondary-button">AI 联网生成</button>
+            </form>
+            {{end}}
+          </div>
+        </header>
+        {{if .Artist.BiographyURL}}<p class="biography-origin"><a href="{{.Artist.BiographyURL}}" target="_blank" rel="noreferrer">{{biographyLinkLabel .Artist.BiographySource}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></p>{{end}}
+        <p class="artist-bio">{{if .Artist.Biography}}{{.Artist.Biography}}{{else}}尚无简介。确认 MusicBrainz 身份后刷新简介，或点击「AI 联网生成」尝试基于公开资料整理。{{end}}</p>
+        {{if eq .Artist.BiographySource "ai_web"}}<p class="field-hint">此简介由 AI 基于公开网络资料整理生成，如信息有误可通过「编辑歌手」手工覆盖。</p>{{end}}
+
+        {{if .Artist.Biographies}}
+        <footer class="card-foot biography-switcher">
+          <div class="chip-row">
+            <span class="muted">可用简介版本（{{len .Artist.Biographies}}）</span>
+            {{range .Artist.Biographies}}
+            <form method="post" action="/admin/artists/{{$.Artist.ID}}/biography">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="source" value="{{.Source}}">
-                <input type="hidden" name="expectedID" value="{{.ExternalID}}">
-                <input type="hidden" name="confirm" value="1">
-                <h2>确认解除 {{.Source}} 身份</h2>
-                <p>本地歌手：{{$.Artist.Name}}；外部资料：{{.DisplayName}}（{{.ExternalID}}）。</p>
-                <p>移除此来源的绑定，并清除相关自动简介和图片缓存。该身份会记为“已排除”，之后重新匹配不会再自动绑定它（如误操作，可在“已排除的候选”中改回）。不会删除歌曲、变更艺术家关联或修改自定义资料。其他来源不会自动解绑。</p>
-                <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">确认解除，重新审核</button></div>
+                <input type="hidden" name="language" value="{{.Language}}">
+                <button class="chip{{if .Selected}} active{{end}}" aria-pressed="{{.Selected}}">{{biographyOriginLabel .Source .Language .OriginSource .OriginLanguage}}</button>
+                {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">原文 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
               </form>
-            </dialog>
-            {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
-          </article>
+            {{end}}
+          </div>
+          <form method="post" action="/admin/artists/{{.Artist.ID}}/biography">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <button class="secondary-button" name="reset" value="1">恢复全局优先级</button>
+            </form>
+        </footer>
+        <details class="disclosure biography-versions">
+          <summary>预览简介版本</summary>
+          {{range .Artist.Biographies}}
+          <article><strong>{{biographyOriginLabel .Source .Language .OriginSource .OriginLanguage}}</strong>{{if .Model}} <small>{{.Model}}</small>{{end}}<p>{{.Biography}}</p></article>
+          {{end}}
+        </details>
+        {{end}}
+      </section>
+
+        {{if .ReleaseGroups}}<div class="artist-discography">
+          <div class="section-head"><h2>发行目录</h2><span class="muted">最新优先</span><span class="section-rule" aria-hidden="true"></span>
+            <button type="button" class="secondary-button" data-album-select-mode aria-pressed="false">批量选择 / 合并</button>
+            <label class="grid-size-control artist-grid-size-control" title="调节每行显示的专辑数量">
+              <span>每行</span>
+              <input type="range" min="2" max="10" step="1" value="{{if .ArtistAlbumCols}}{{.ArtistAlbumCols}}{{else}}5{{end}}" aria-label="每行显示的专辑数量" data-artist-grid-cols>
+              <output>{{if .ArtistAlbumCols}}{{.ArtistAlbumCols}}{{else}}5{{end}}</output>
+            </label>
+          </div>
+    {{if .ReleaseGroups}}{{template "album-selection-bar" (albumSelectionBar .CSRFToken .ReturnTo)}}{{end}}
+          {{range $group := .ReleaseGroups}}
+          <section class="artist-release-group">
+            <header class="section-head">
+              <div><h2>{{$group.Title}}</h2>{{if $group.Description}}<p class="muted">{{$group.Description}}</p>{{end}}</div>
+              <span class="section-rule" aria-hidden="true"></span><span class="muted">{{len $group.Releases}} 个发行</span>
+            </header>
+            <section class="album-browser detail-album-grid"{{if $.ArtistAlbumCols}} style="--artist-cols: {{$.ArtistAlbumCols}}"{{end}}>
+              {{range $group.Releases}}{{template "album-card" (albumCard . $.CSRFToken $.ReturnTo)}}
+              {{end}}
+            </section>
+          </section>
           {{else}}
-          <p class="result-count">尚未绑定外部身份</p>
+          <div class="zero-state"><strong>暂时没有关联发行</strong></div>
           {{end}}
-        </section>
-        <section class="identity-panel">
-          <p class="kicker">匹配候选</p>
-          <form class="artist-candidate-search" method="post" action="/admin/artists/{{.Artist.ID}}/match/search">
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <label>手动搜索 MusicBrainz<input type="search" name="query" required value="{{.Artist.Name}}" placeholder="歌手名、MusicBrainz 链接或 MBID" autocomplete="off"></label>
-            <p class="field-hint">输入名称会列出候选供选择；粘贴 MusicBrainz 歌手链接或 MBID 会直接绑定该身份。</p>
-            <button class="secondary-button">搜索候选</button>
-          </form>
-          {{$pending := 0}}{{$rejected := 0}}
-          {{range .Artist.Candidates}}
-          {{if eq .Status "candidate"}}{{$pending = 1}}
-          <article>
-            <strong>{{.DisplayName}}</strong>
-            <span>{{.Source}} · {{.Score}} 分</span>
-            <small>{{.Disambiguation}} {{.Country}}</small>
-            {{range .Evidence}}<p class="field-hint">{{.}}</p>{{end}}
-            <div class="candidate-actions">
-              <form method="post" action="/admin/artists/{{$.Artist.ID}}/confirm/{{.ID}}">
-                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button>确认此候选</button>
-              </form>
-              <form method="post" action="/admin/artists/{{$.Artist.ID}}/reject/{{.ID}}">
-                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                <button class="secondary-button">拒绝</button>
-              </form>
-            </div>
-            {{if .MBID}}<a href="https://musicbrainz.org/artist/{{.MBID}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+        </div>
+
+        {{end}}
+        {{if .Tracks}}<section class="artist-tracks-section">
+          <div class="section-title">
+            <div><h2>{{if .TracksArePopular}}热门歌曲{{else}}歌曲{{end}}</h2></div>
+            <a class="section-link" href="/admin/tracks?artist={{.Artist.ID}}">查看全部 {{.Artist.PerformedTrackCount}} 首 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
+          </div>
+          <div class="artist-track-list" id="artist-performed-tracks" data-track-list>
+            {{range .Tracks}}
+            <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{if .Artist}}{{.Artist}}{{else}}{{$.Artist.Name}}{{end}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
+              <a class="artist-track-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
+              <div class="artist-track-copy">
+                <strong>{{.Title}}</strong>
+                <small><a href="/admin/albums/{{.AlbumID}}">{{.Album}}</a>{{if .Year}} · {{.Year}}{{end}}{{if $.TracksArePopular}} · 播放 {{.PlayCount}} 次{{end}}</small>
+              </div>
+              {{if .Container}}<span class="format-pill">{{.Container}}</span>{{end}}
+              <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
+            </article>
+            {{else}}
+            <div class="zero-state"><strong>暂时没有关联歌曲</strong></div>
+            {{end}}
+          </div>
+        </section>{{end}}
+      {{if .Artist.CreditTrackCount}}
+      <section aria-labelledby="backstage-heading">
+        <header class="section-head">
+          <h2 id="backstage-heading">幕后参与曲目</h2><span class="section-rule" aria-hidden="true"></span>
+          <a class="section-link" href="/admin/credits/{{.Artist.ID}}">查看全部 {{.Artist.CreditTrackCount}} 首</a>
+        </header>
+        <div class="chip-row artist-credit-roles">
+          {{range .ProfileCreditRoles}}<a class="chip" href="/admin/credits/{{$.Artist.ID}}?role={{.Role}}">{{creditLabel .Role}} · {{.Count}}</a>{{end}}
+        </div>
+        {{if .ProfileCreditTracks}}
+        <div class="artist-track-list" data-track-list>
+          {{range .ProfileCreditTracks}}
+          <article data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
+            <a class="artist-track-cover" href="/admin/albums/{{.AlbumID}}">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
+            <div class="artist-track-copy"><strong>{{.Title}}</strong><small>{{template "track-credits" .}}</small></div>
+            <span class="muted">{{formatDurationMillis .DurationMillis}}</span>
+            <button type="button" class="icon-action row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
           </article>
-          {{else if eq .Status "rejected"}}{{$rejected = 1}}
           {{end}}
-          {{end}}
-          {{if eq $pending 0}}<p class="result-count">没有待审核候选。匹配错误时可先解除错误身份，或在上方手动搜索。</p>{{else}}
-          <form method="post" action="/admin/artists/{{.Artist.ID}}/reject-all" class="review-reject-all-form">
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <button type="submit" class="secondary-button compact-button">全部拒绝待审候选</button>
-          </form>
-          {{end}}
-          {{if eq $rejected 1}}
-          <details class="biography-versions rejected-candidates">
-            <summary>已排除的候选</summary>
-            <div>
-              {{range .Artist.Candidates}}{{if eq .Status "rejected"}}
-              <article>
-                <strong>{{.DisplayName}}</strong>
-                <span>{{.Source}}{{if .Score}} · {{.Score}} 分{{end}}</span>
-                <small>{{.Disambiguation}} {{.Country}}</small>
-                {{range .Evidence}}<p class="field-hint">{{.}}</p>{{end}}
-                <div class="candidate-actions">
-                  <form method="post" action="/admin/artists/{{$.Artist.ID}}/confirm/{{.ID}}">
-                    <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-                    <button class="secondary-button">改用此身份</button>
-                  </form>
-                  {{if .MBID}}<a href="https://musicbrainz.org/artist/{{.MBID}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
-                </div>
-              </article>
-              {{end}}{{end}}
-            </div>
-          </details>
-          {{end}}
-        </section>
-        <section class="identity-panel danger-panel">
-          <p class="kicker">合并歌手</p>
-          <p>源歌手不会删除，所有关系迁移均可从合并历史回退。</p>
-          <form method="post" action="/admin/artists/{{.Artist.ID}}/merge" data-replace-history>
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <div class="work-picker artist-merge-picker" data-work-picker="/admin/options/artists?role=all" data-work-picker-required="请从搜索结果中选择目标歌手" data-work-exclude="{{.Artist.ID}}" data-work-limit="30" data-work-empty="没有匹配的歌手">
-              <label>合并到<input type="search" data-work-search required placeholder="输入歌手名或读音搜索…" autocomplete="off"></label>
-              <input type="hidden" name="targetArtist" data-work-id-input>
-              <div class="work-picker-results" data-work-results hidden></div>
-            </div>
-            <button>预期关系无误，执行合并</button>
-          </form>
-        </section>
-      </aside>
+        </div>
+        {{end}}
+      </section>
+      {{end}}
     </div>
 
     <section id="artist-edit" class="edit-drawer page-drawer album-editor" data-drawer>
@@ -286,7 +205,7 @@
         <header class="drawer-head editor-head">
           <div>
             <p class="kicker">元数据覆盖</p>
-            <h2 id="artist-drawer-title">编辑歌手</h2>
+            <h2 id="artist-drawer-title">编辑歌手 / 别名 / 合并</h2>
             <p>显示名称优先于文件标签，源音乐文件不会被修改。</p>
           </div>
           <button type="button" class="drawer-close" data-drawer-close aria-label="关闭" title="关闭"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button>
@@ -335,6 +254,120 @@
           <input type="hidden" name="returnTo" value="/admin/artists/{{.Artist.ID}}?view=profile">
         </form>
         {{end}}
+        <div class="artist-drawer-sections">
+        <section class="card identity-panel search-alias-panel" id="search-aliases" data-post-drawer aria-labelledby="search-alias-heading">
+          <h2 id="search-alias-heading">搜索别名</h2><p class="field-hint"><a href="/admin/artist-aliases?status=accepted&amp;artistId={{.Artist.ID}}">查看中文别名来源与补全任务</a></p>
+          <p class="field-hint">添加中文译名或其他常用名字，搜索时也能找到这位歌手。不会更改展示名称。</p>
+          <form class="search-alias-add" method="post" action="/admin/artists/{{.Artist.ID}}/search-aliases">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label for="search-alias-value">添加人工别名</label>
+            <div><input id="search-alias-value" name="value" maxlength="200" required placeholder="例如：星街彗星"><button type="submit">添加</button></div>
+          </form>
+          <ul class="search-alias-list">
+            {{range .SearchAliases}}<li><span>{{.Value}} <small>{{if eq .Source "automatic"}}自动补全{{else}}人工{{end}}</small></span><form method="post" action="/admin/artists/{{$.Artist.ID}}/search-aliases/{{.ID}}/delete"><input type="hidden" name="csrfToken" value="{{$.CSRFToken}}"><button type="submit" class="secondary-button" aria-label="删除搜索别名 {{.Value}}">删除</button></form></li>{{else}}<li class="field-hint">尚未添加搜索别名</li>{{end}}
+          </ul>
+          {{range .Artist.Profiles}}{{if .Aliases}}<details class="disclosure search-external-aliases"><summary>{{.Source}} 别名（{{len .Aliases}}）</summary><ul>{{range .Aliases}}<li>{{.}}</li>{{end}}</ul></details>{{end}}{{end}}
+        </section>
+        <section class="card identity-panel" id="artist-external-identity" data-post-drawer>
+          <p class="kicker">外部身份</p>
+          {{range .Artist.Profiles}}
+          <article>
+            <strong>{{.Source}}</strong>
+            <span>{{.DisplayName}}</span>
+            <code>{{.ExternalID}}</code>
+            <button type="button" class="secondary-button" data-dialog-open="identity-reset-{{.Source}}">解除错误身份</button>
+            <dialog id="identity-reset-{{.Source}}" class="work-dialog danger-dialog">
+              <form method="post" action="/admin/artists/{{$.Artist.ID}}/identity/reset">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="source" value="{{.Source}}">
+                <input type="hidden" name="expectedID" value="{{.ExternalID}}">
+                <input type="hidden" name="confirm" value="1">
+                <h2>确认解除 {{.Source}} 身份</h2>
+                <p>本地歌手：{{$.Artist.Name}}；外部资料：{{.DisplayName}}（{{.ExternalID}}）。</p>
+                <p>移除此来源的绑定，并清除相关自动简介和图片缓存。该身份会记为“已排除”，之后重新匹配不会再自动绑定它（如误操作，可在“已排除的候选”中改回）。不会删除歌曲、变更艺术家关联或修改自定义资料。其他来源不会自动解绑。</p>
+                <div class="dialog-actions"><button type="button" class="secondary-button" data-dialog-close>取消</button><button type="submit" class="danger-button">确认解除，重新审核</button></div>
+              </form>
+            </dialog>
+            {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+          </article>
+          {{else}}
+          <p class="result-count">尚未绑定外部身份</p>
+          {{end}}
+        </section>
+        <section class="card identity-panel" id="artist-match-candidates" data-post-drawer>
+          <p class="kicker">匹配候选</p>
+          <form class="artist-candidate-search" method="post" action="/admin/artists/{{.Artist.ID}}/match/search">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <label>手动搜索 MusicBrainz<input type="search" name="query" required value="{{.Artist.Name}}" placeholder="歌手名、MusicBrainz 链接或 MBID" autocomplete="off"></label>
+            <p class="field-hint">输入名称会列出候选供选择；粘贴 MusicBrainz 歌手链接或 MBID 会直接绑定该身份。</p>
+            <button class="secondary-button">搜索候选</button>
+          </form>
+          {{$pending := 0}}{{$rejected := 0}}
+          {{range .Artist.Candidates}}
+          {{if eq .Status "candidate"}}{{$pending = 1}}
+          <article>
+            <strong>{{.DisplayName}}</strong>
+            <span>{{.Source}} · {{.Score}} 分</span>
+            <small>{{.Disambiguation}} {{.Country}}</small>
+            {{range .Evidence}}<p class="field-hint">{{.}}</p>{{end}}
+            <div class="candidate-actions">
+              <form method="post" action="/admin/artists/{{$.Artist.ID}}/confirm/{{.ID}}">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button>确认此候选</button>
+              </form>
+              <form method="post" action="/admin/artists/{{$.Artist.ID}}/reject/{{.ID}}">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button">拒绝</button>
+              </form>
+            </div>
+            {{if .MBID}}<a href="https://musicbrainz.org/artist/{{.MBID}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+          </article>
+          {{else if eq .Status "rejected"}}{{$rejected = 1}}
+          {{end}}
+          {{end}}
+          {{if eq $pending 0}}<p class="result-count">没有待审核候选。匹配错误时可先解除错误身份，或在上方手动搜索。</p>{{else}}
+          <form method="post" action="/admin/artists/{{.Artist.ID}}/reject-all" class="review-reject-all-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <button type="submit" class="secondary-button compact-button">全部拒绝待审候选</button>
+          </form>
+          {{end}}
+          {{if eq $rejected 1}}
+          <details class="disclosure rejected-candidates">
+            <summary>已排除的候选</summary>
+            <div>
+              {{range .Artist.Candidates}}{{if eq .Status "rejected"}}
+              <article>
+                <strong>{{.DisplayName}}</strong>
+                <span>{{.Source}}{{if .Score}} · {{.Score}} 分{{end}}</span>
+                <small>{{.Disambiguation}} {{.Country}}</small>
+                {{range .Evidence}}<p class="field-hint">{{.}}</p>{{end}}
+                <div class="candidate-actions">
+                  <form method="post" action="/admin/artists/{{$.Artist.ID}}/confirm/{{.ID}}">
+                    <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                    <button class="secondary-button">改用此身份</button>
+                  </form>
+                  {{if .MBID}}<a href="https://musicbrainz.org/artist/{{.MBID}}" target="_blank" rel="noreferrer">查看来源 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>{{end}}
+                </div>
+              </article>
+              {{end}}{{end}}
+            </div>
+          </details>
+          {{end}}
+        </section>
+        <section class="card danger-card identity-panel danger-panel" id="artist-merge" data-post-drawer>
+          <p class="kicker">合并歌手</p>
+          <p>源歌手不会删除，所有关系迁移均可从合并历史回退。</p>
+          <form method="post" action="/admin/artists/{{.Artist.ID}}/merge" data-replace-history>
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <div class="work-picker artist-merge-picker" data-work-picker="/admin/options/artists?role=all" data-work-picker-required="请从搜索结果中选择目标歌手" data-work-exclude="{{.Artist.ID}}" data-work-limit="30" data-work-empty="没有匹配的歌手">
+              <label>合并到<input type="search" data-work-search required placeholder="输入歌手名或读音搜索…" autocomplete="off"></label>
+              <input type="hidden" name="targetArtist" data-work-id-input>
+              <div class="work-picker-results" data-work-results hidden></div>
+            </div>
+            <button>预期关系无误，执行合并</button>
+          </form>
+        </section>
+        </div>
       </div>
     </section>
   </main>

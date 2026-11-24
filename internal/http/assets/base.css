@@ -1,6 +1,7 @@
 /* 032 Music Server — base elements, shared primitives. */
 
-* { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -28,7 +29,7 @@ a:hover { color: var(--accent-hover); }
 
 ::selection { background: var(--accent-soft-strong); }
 
-/* Focus visibility: consistent blue ring everywhere. */
+/* Keyboard focus follows the active theme accent. */
 a:focus-visible, button:focus-visible, summary:focus-visible,
 input:focus-visible, select:focus-visible, textarea:focus-visible,
 [tabindex]:focus-visible {
@@ -65,7 +66,9 @@ button.secondary:hover, .secondary-button:hover {
   color: var(--text);
   background: var(--fill-hover);
 }
-.secondary-button { min-height: 38px; padding: 0.45rem 0.85rem; }
+.secondary-button { min-height: 38px; border-radius: var(--radius-pill); padding: 0.45rem 0.85rem; }
+
+a.secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 
 .danger-button { color: var(--text-on-danger); background: var(--danger); }
 .danger-button:hover { background: color-mix(in oklab, var(--danger) 86%, var(--text)); }

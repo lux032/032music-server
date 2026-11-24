@@ -1,52 +1,16 @@
 // 032 Music Server - Admin shell behaviours: adaptive scan-status polling
-// (drives both the sidebar scan card and the dashboard page), collapsible
-// sidebar admin group, unsaved-change highlighting on source cards.
+// for the sidebar and dashboard, mobile navigation, and settings forms.
 (function () {
   'use strict';
 
   if (window.__032_admin_initialized) return;
   window.__032_admin_initialized = true;
 
-  // ------------------------------------------------- sidebar admin group
-  const GROUP_KEY = '032_admin_group';
-  const ADMIN_NAV_KEYS = [
-    'console', 'missing', 'work-review', 'matches', 'artist-aliases',
-    'merges', 'series', 'enrichment', 'audio-analysis', 'ai-tagging',
-    'online-lyrics', 'lyrics-translations', 'daily-mixes', 'settings',
-    'acquisition-settings', 'ai-settings', 'backups', 'security'
-  ];
-
-  function applyGroupState() {
-    const group = document.getElementById('sidebar-admin-group');
-    const nav = document.body.dataset.nav || '';
-    const isAdmin = ADMIN_NAV_KEYS.includes(nav);
-    document.body.classList.toggle('admin-workspace', isAdmin);
-    if (!group) return;
-    const toggle = document.getElementById('sidebar-group-toggle');
-    let open;
-    if (isAdmin) {
-      // The active page lives inside the admin workspace: force it open.
-      open = true;
-    } else {
-      let stored = null;
-      try { stored = localStorage.getItem(GROUP_KEY); } catch (_) {}
-      open = stored === 'open';
-    }
-    group.classList.toggle('open', open);
-    if (toggle) toggle.setAttribute('aria-expanded', String(open));
+  // Server and PJAX both mark the active sidebar mode.
+  function syncWorkspaceMode() {
+    document.body.classList.toggle('admin-workspace',
+      !!document.getElementById('app-sidebar')?.classList.contains('is-admin-workspace'));
   }
-
-  document.addEventListener('click', (e) => {
-    if (!(e.target instanceof Element)) return;
-    const toggle = e.target.closest('#sidebar-group-toggle');
-    if (!toggle) return;
-    const group = document.getElementById('sidebar-admin-group');
-    if (!group) return;
-    const open = !group.classList.contains('open');
-    group.classList.toggle('open', open);
-    toggle.setAttribute('aria-expanded', String(open));
-    try { localStorage.setItem(GROUP_KEY, open ? 'open' : 'closed'); } catch (_) {}
-  });
 
   // ----------------------------------------- mobile “更多” sheet (M5/V7)
   // The bottom bar only fits the primary destinations; everything else,
@@ -87,8 +51,8 @@
     if (e.target.closest('#sidebar-more-sheet a[href]')) setMoreSheet(false);
   });
   document.addEventListener('032:pjax-applied', () => setMoreSheet(false));
-  document.addEventListener('032:pjax-applied', applyGroupState);
-  applyGroupState();
+  document.addEventListener('032:pjax-applied', syncWorkspaceMode);
+  syncWorkspaceMode();
 
   // Native dialogs used by the work detail editor and destructive confirm.
   document.addEventListener('click', (e) => {
@@ -144,43 +108,26 @@
     return `预计剩余 ${Math.round(remainingSec)} 秒`;
   }
 
-  function updateSidebarScanCard(value) {
-    const card = document.getElementById('sidebar-scan');
-    if (!card) return;
-    const ring = document.getElementById('sidebar-scan-ring');
+  function updateSidebarScanStatus(value) {
+    const status = document.getElementById('sidebar-scan');
+    if (!status) return;
     const title = document.getElementById('sidebar-scan-title');
     const detail = document.getElementById('sidebar-scan-detail');
     const scan = value.scan || {};
     const stats = value.statistics || {};
-
-    if (scan.status === 'running') {
-      card.classList.remove('idle');
-      const total = scan.discoveredFiles || 0;
-      const done = (scan.processedFiles || 0) + (scan.skippedFiles || 0) + (scan.failedFiles || 0);
-      const percent = total ? Math.min(100, (done / total) * 100) : 0;
-      if (ring) ring.style.strokeDashoffset = String(100 - percent);
-      if (title) title.textContent = '正在扫描音乐库';
-      if (detail) {
-        const parts = [`已扫描 ${done.toLocaleString()} / ${total.toLocaleString()}`];
-        const eta = formatEta(scan);
-        if (eta) parts.push(eta);
-        detail.textContent = parts.join(' · ');
-      }
-      return;
-    }
-
-    card.classList.add('idle');
-    if (scan.status === 'failed') {
-      if (title) title.textContent = '扫描失败';
-      if (detail) detail.textContent = scan.errorMessage || '请查看控制台日志';
-      return;
-    }
-    if (title) title.textContent = '音乐库已就绪';
-    if (detail) {
-      const tracks = stats.tracks || 0;
-      const albums = stats.albums || 0;
-      detail.textContent = `${tracks.toLocaleString()} 首歌曲 · ${albums.toLocaleString()} 张专辑`;
-    }
+    const running = scan.status === 'running';
+    const failed = scan.status === 'failed';
+    status.dataset.scanState = running ? 'running' : failed ? 'failed' : 'idle';
+    const total = scan.discoveredFiles || 0;
+    const done = (scan.processedFiles || 0) + (scan.skippedFiles || 0) + (scan.failedFiles || 0);
+    const label = running ? '正在扫描音乐库' : failed ? '扫描失败' :
+      stats.tracks ? '音乐库已就绪' : '曲库暂无歌曲';
+    const summary = running ? `${done.toLocaleString()} / ${total.toLocaleString()} · ${formatEta(scan)}`.replace(/ · $/, '') :
+      failed ? scan.errorMessage || '请查看控制台日志' :
+        `${(stats.tracks || 0).toLocaleString()} 首歌曲 · ${(stats.albums || 0).toLocaleString()} 张专辑`;
+    if (title.textContent !== label) title.textContent = label;
+    if (detail.textContent !== summary) detail.textContent = summary;
+    status.title = summary;
   }
 
   const refresh = async () => {
@@ -214,10 +161,12 @@
         const progress = document.querySelector('#scan-progress');
         if (progress) {
           const percent = scan.discoveredFiles ? Math.min(100, ((scan.processedFiles + scan.skippedFiles + scan.failedFiles) / scan.discoveredFiles) * 100) : 0;
-          progress.style.width = `${percent}%`;
+          const healthy = !scan.status || ['completed', 'never', 'success'].includes(scan.status);
+          progress.classList.toggle('ok', healthy);
+          progress.style.width = `${healthy && !scan.discoveredFiles ? 100 : percent}%`;
         }
       }
-      updateSidebarScanCard(value);
+      updateSidebarScanStatus(value);
     } catch (_) {
       if (lastUpdated) lastUpdated.textContent = '状态更新中断，重试连接中…';
     }
@@ -295,12 +244,65 @@
   window.addEventListener('pagehide', removeSecurityFlashes);
   window.addEventListener('pageshow', (e) => { if (e.persisted) removeSecurityFlashes(); });
 
+  function syncSourceTabs() {
+    const main = document.querySelector('.metadata-main');
+    if (!main) return;
+    const target = document.getElementById(window.location.hash.slice(1));
+    const sync = target?.id === 'playback-sync' || !!target?.closest('.metadata-sync-cards');
+    main.dataset.sourceView = sync ? 'sync' : 'sources';
+    for (const tab of main.querySelectorAll('[data-source-tab]')) {
+      if ((tab.dataset.sourceTab === 'sync') === sync) tab.setAttribute('aria-current', 'page');
+      else tab.removeAttribute('aria-current');
+    }
+  }
+  window.addEventListener('hashchange', syncSourceTabs);
+  document.addEventListener('032:pjax-applied', syncSourceTabs);
+  syncSourceTabs();
+
   // ------------------------------------------- durable run task polling
   // /admin/matches and /admin/enrichment pin their active run on top. While a
   // card is visible we poll its active.json every 2s; idle pages fall back to
   // a leisurely 30s check; hidden tabs never poll. All updates use
   // textContent only — no untrusted markup is ever built.
   const RUN_STATUS_LABELS = { running: '进行中', paused: '已暂停', completed: '已完成', failed: '已失败', cancelled: '已停止', queued: '排队中' };
+  const artistTaskSources = [
+    ['/admin/matches/runs/active.json', '身份匹配'],
+    ['/admin/ai-review/runs/active.json?group=artists', 'AI 初审'],
+    ['/admin/matches/images/runs/active.json', '头像补全'],
+    ['/admin/matches/biographies/runs/active.json', '简介补全']
+  ];
+  let artistTasksTimer;
+  let artistTasksRequest;
+  function watchArtistTasks() {
+    clearTimeout(artistTasksTimer);
+    artistTasksRequest?.abort();
+    const overview = document.querySelector('[data-artist-task-overview]');
+    if (!overview || document.hidden) return;
+    const request = new AbortController();
+    artistTasksRequest = request;
+    const refresh = async () => {
+      const runs = await Promise.allSettled(artistTaskSources.map(async ([url, label]) => {
+        const response = await fetch(url, { credentials: 'same-origin', signal: request.signal });
+        if (!response.ok) return null;
+        const { run } = await response.json();
+        if (!run || !['running', 'paused', 'queued'].includes(run.status)) return null;
+        const item = document.createElement('li');
+        item.className = 'chip';
+        item.textContent = `${label} #${run.id} · ${RUN_STATUS_LABELS[run.status]}`;
+        return item;
+      }));
+      if (request.signal.aborted) return;
+      const items = runs.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+      overview.querySelector('[data-artist-task-list]').replaceChildren(...items);
+      overview.hidden = items.length === 0;
+      artistTasksTimer = setTimeout(refresh, 15000);
+    };
+    refresh();
+  }
+  document.addEventListener('032:pjax-applied', watchArtistTasks);
+  document.addEventListener('visibilitychange', watchArtistTasks);
+  watchArtistTasks();
+
   const RUN_PAUSE_REASONS = { manual: '手动暂停', server_restart: '服务重启中断', shutdown: '服务关闭', rate_limit_count: '同一对象连续限流', rate_limit_wait_budget: '限流等待超出 30 分钟预算', rate_limit_exhausted: '自动重试已用尽', storage_or_runtime_error: '存储或运行错误' };
   let runPollTimer = null;
   let runCountdownTimer = null;

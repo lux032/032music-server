@@ -8,7 +8,7 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main feature-main playlist-detail-main" data-playlist-id="{{.Detail.Playlist.ID}}" data-playlist-revision="{{.Detail.Playlist.Revision}}">
-    <nav class="detail-toolbar" aria-label="页面导航">
+    <nav class="detail-toolbar detail-top-bar" aria-label="页面导航">
       <a class="back-button" href="/admin/playlists" data-history-back>
         <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
         <span class="back-button-label">返回歌单</span>
@@ -28,7 +28,7 @@
 
     <div class="playlist-layout">
       <section>
-        <div class="section-title"><h2>歌曲</h2><span>{{.Detail.Playlist.ItemCount}} 首</span></div>
+        <div class="section-head"><h2>歌曲</h2><span class="section-rule" aria-hidden="true"></span><span>{{.Detail.Playlist.ItemCount}} 首</span></div>
         <div class="playlist-selection"><button type="button" data-select-tracks>全选歌曲</button><button type="button" data-playlist-remove-selected>移除所选</button><span data-selected-count role="status">0 首已选</span></div>
         <div class="playlist-track-list" data-track-list data-track-select>
           {{range $index, $track := .Detail.Tracks}}
@@ -62,7 +62,7 @@
         </div>
       </section>
       <aside class="playlist-tools">
-        <section class="feature-card">
+        <section class="card feature-card">
           <h2>添加歌曲</h2>
           <form class="playlist-search" method="get">
             <label>搜索曲名、歌手或专辑<input name="q" value="{{.Query}}" placeholder="输入关键词" required></label>
@@ -86,7 +86,7 @@
           </div>
           {{end}}
         </section>
-        <details class="feature-card" data-playlist-editor>
+        <details class="card disclosure feature-card" data-playlist-editor>
           <summary>歌单信息与封面</summary>
           <form data-playlist-artwork class="stack-form" data-no-pjax>
             <label>自定义封面（JPEG / PNG / WebP，最多 10MB）<input type="file" name="image" accept="image/jpeg,image/png,image/webp" required></label>
@@ -101,11 +101,11 @@
             <button>保存信息</button>
           </form>
         </details>
-        <section class="feature-card danger-zone">
+        <section class="card feature-card danger-zone">
           <p class="kicker">危险操作</p>
           <h2>删除歌单</h2>
           <p class="result-count">仅删除歌单“{{.Detail.Playlist.Name}}”和其中的排序，不会删除任何音乐文件。此操作不可撤销。</p>
-          <details class="danger-confirm">
+          <details class="danger-confirm disclosure danger-disclosure">
             <summary class="danger-button">删除歌单…</summary>
             <div class="danger-confirm-panel">
               <strong>确定删除“{{.Detail.Playlist.Name}}”吗？</strong>

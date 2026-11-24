@@ -1,220 +1,214 @@
 import { s } from './state.js';
-import { artworkForSize, formatTime, svgIcon, swapIcon } from './util.js';
-import { togglePlay, playPrevious, playNext, playTrackAtIndex, cycleLoopMode, toggleShuffle } from './player-core.js';
+import { artworkForSize, formatTime, hydrateIconSlots, svgIcon } from './util.js';
+import { togglePlay, playTrackAtIndex } from './player-core.js';
+import { currentTrackDetail } from './now-playing.js';
 import { lyrics } from './lyrics.js';
-import { mediaTime, mediaDuration, mediaSeek } from './cast.js';
+import { castDevice, mediaTime, mediaSeek } from './cast.js';
 import { renderCompactArtists } from './artist-links.js';
 
-let overlay = null;
-let trigger = null;
-let pendingFullscreen = false;
-let previousOverflow = '';
-let activeLine = null;
-let seeking = false;
-let lastFsQueueSig = '';
+let stage, trigger, activeLine, previousOverflow;
+let renderedLyrics, queueSignature;
 
-function button(className, label, icon, action) {
-  const el = document.createElement('button');
-  el.type = 'button'; el.className = className;
-  el.setAttribute('aria-label', label);
-  el.title = label;
-  el.appendChild(svgIcon(icon));
-  el.addEventListener('click', action);
-  return el;
-}
-
-function syncFullscreenQueue() {
-  if (!overlay) return;
-  const list = overlay.querySelector('.fs-queue-list');
-  const count = overlay.querySelector('.fs-queue-count');
-  if (!list) return;
-  const sig = `${s.currentIndex}:${s.queue.length}:${s.queue.map(t => t.id).join(',')}`;
-  if (count) count.textContent = `${s.queue.length} 首`;
-  if (sig === lastFsQueueSig) return;
-  lastFsQueueSig = sig;
+function syncQueue() {
+  const list = stage.querySelector('.fs-queue-list');
+  const signature = `${s.currentIndex}:${s.queue.map(track => track.id).join(',')}`;
+  if (signature === queueSignature) return;
+  queueSignature = signature;
+  stage.querySelector('.fs-queue-count').textContent = `${s.queue.length} 首`;
   list.replaceChildren();
   if (!s.queue.length) {
     const empty = document.createElement('li');
     empty.className = 'np-queue-empty';
     empty.textContent = '队列为空';
-    list.appendChild(empty);
+    list.append(empty);
     return;
   }
   s.queue.forEach((track, index) => {
-    const li = document.createElement('li');
-    if (index === s.currentIndex) li.classList.add('is-current');
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    const num = document.createElement('span');
-    num.className = 'fs-q-num';
-    num.textContent = String(index + 1);
-    const meta = document.createElement('span');
+    const row = document.createElement('li');
+    const play = document.createElement('button');
+    play.type = 'button';
+    if (index === s.currentIndex) {
+      row.classList.add('is-current');
+      play.setAttribute('aria-current', 'true');
+    }
+    const cover = document.createElement(track.artwork ? 'img' : 'span');
+    cover.className = 'queue-cover';
+    if (track.artwork) {
+      cover.src = artworkForSize(track.artwork, 128);
+      cover.alt = '';
+      cover.loading = 'lazy';
+      cover.decoding = 'async';
+    } else {
+      cover.setAttribute('aria-hidden', 'true');
+      cover.append(svgIcon('icon-tracks'));
+    }
+    const copy = document.createElement('span');
     const title = document.createElement('strong');
     title.textContent = track.title || '未知曲目';
     const artist = document.createElement('small');
     artist.textContent = track.artist || '';
-    meta.append(title, artist);
-    const dur = document.createElement('span');
-    dur.className = 'fs-q-dur';
-    dur.textContent = track.durationMs > 0 ? formatTime(track.durationMs / 1000) : '';
-    btn.append(num, meta, dur);
-    btn.addEventListener('click', () => {
-      if (index === s.currentIndex) togglePlay();
-      else playTrackAtIndex(index);
-    });
-    li.appendChild(btn);
-    list.appendChild(li);
+    copy.append(title, artist);
+    const duration = document.createElement('span');
+    duration.className = 'fs-q-dur';
+    duration.textContent = track.durationMs > 0 ? formatTime(track.durationMs / 1000) : '';
+    play.append(cover, copy, duration);
+    play.addEventListener('click', () => index === s.currentIndex ? togglePlay() : playTrackAtIndex(index));
+    row.append(play);
+    list.append(row);
   });
 }
 
-export function syncFullscreen() {
-  if (!overlay) return;
-  const track = s.queue[s.currentIndex];
-  overlay.querySelector('.fs-title').textContent = track?.title || '未在播放';
-  renderCompactArtists(overlay.querySelector('.fs-artist'), track?.artists, track?.artist || '', { playerNav: true });
-  overlay.querySelector('.fs-album').textContent = track?.album || '';
-  const cover = overlay.querySelector('.fs-cover');
-  if (track?.artwork) {
-    const url = artworkForSize(track.artwork, 768);
-    if (cover.getAttribute('src') !== url) cover.src = url;
-    cover.hidden = false;
-    overlay.classList.add('has-cover');
-  } else {
-    cover.removeAttribute('src'); cover.hidden = true;
-    overlay.classList.remove('has-cover');
-  }
-  swapIcon(overlay.querySelector('.fs-play'), s.isPlaying ? 'icon-pause' : 'icon-play');
-  overlay.querySelector('.fs-shuffle').classList.toggle('active', s.shuffleOn);
-  overlay.querySelector('.fs-loop').classList.toggle('active', s.loopMode !== 'off');
-  swapIcon(overlay.querySelector('.fs-loop'), s.loopMode === 'one' ? 'icon-repeat-1' : 'icon-repeat');
-  const time = mediaTime(), duration = mediaDuration();
-  const progress = overlay.querySelector('.fs-progress');
-  progress.setAttribute('aria-valuemax', String(Math.floor(duration)));
-  progress.setAttribute('aria-valuenow', String(Math.floor(time)));
-  progress.setAttribute('aria-valuetext', `${formatTime(time)} / ${formatTime(duration)}`);
-  overlay.querySelector('.fs-time').textContent = formatTime(Math.round(time));
-  overlay.querySelector('.fs-duration').textContent = formatTime(duration);
-  if (!seeking) progress.value = duration > 0 ? String(Math.min(100, time / duration * 100)) : '0';
-
-  const content = overlay.querySelector('.fs-lyrics');
-  if (content.dataset.track !== String(track?.id || '')) {
-    content.dataset.track = String(track?.id || ''); content.textContent = '';
-    activeLine = null;
-  }
+function syncLyrics() {
+  const list = stage.querySelector('.fs-lyrics');
   const lines = lyrics();
-  if (content.childElementCount !== lines.length || (!lines.length && !content.textContent)) {
-    content.textContent = '';
-    if (!lines.length) content.textContent = '暂无歌词';
-    for (const line of lines) {
-      const p = document.createElement('p');
-      p.textContent = line.text;
-      if (line.timeMs !== undefined) {
-        p.addEventListener('click', () => {
-          mediaSeek(line.timeMs / 1000);
-          syncFullscreen();
-        });
+  if (renderedLyrics !== lines) {
+    renderedLyrics = lines;
+    activeLine = null;
+    list.textContent = lines.length ? '' : '暂无歌词';
+    lines.forEach(line => {
+      const row = document.createElement('p');
+      if (line.timeMs == null) row.textContent = line.text;
+      else {
+        const seek = document.createElement('button');
+        seek.type = 'button';
+        seek.className = 'lyrics-seek';
+        seek.textContent = line.text;
+        seek.addEventListener('click', () => mediaSeek(line.timeMs / 1000));
+        row.append(seek);
       }
-      content.appendChild(p);
-    }
+      list.append(row);
+    });
   }
-  const index = lines.findLastIndex(line => line.timeMs <= time * 1000);
-  const next = content.children[index] || null;
-  if (activeLine !== next) {
-    activeLine?.classList.remove('active');
-    next?.classList.add('active');
-    activeLine = next;
-    if (next) content.scrollTo({
-      top: Math.max(0, next.offsetTop - content.offsetTop - content.clientHeight / 2 + next.offsetHeight / 2),
+  const index = lines.findLastIndex(line => line.timeMs <= mediaTime() * 1000);
+  const next = list.children[index] || null;
+  if (activeLine === next) return;
+  activeLine?.classList.remove('active');
+  next?.classList.add('active');
+  activeLine = next;
+  if (next) {
+    const top = list.scrollTop + next.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    list.scrollTo({
+      top: Math.max(0, top - (list.clientHeight - next.offsetHeight) / 2),
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
     });
   }
-  syncFullscreenQueue();
+}
+
+export function syncFullscreen() {
+  if (!stage) return;
+  const track = s.queue[s.currentIndex];
+  const detail = currentTrackDetail();
+  const cover = stage.querySelector('.fs-cover');
+  const artwork = artworkForSize(track?.artwork, 768);
+  stage.querySelector('.fs-title').textContent = track?.title || '未在播放';
+  cover.hidden = !artwork;
+  if (artwork && cover.getAttribute('src') !== artwork) cover.src = artwork;
+  if (!artwork) cover.removeAttribute('src');
+  stage.querySelector('.fs-cover-empty').hidden = !!artwork;
+  renderCompactArtists(stage.querySelector('.fs-artist'), detail?.artists || track?.artists, track?.artist || '', { playerNav: true });
+  const album = stage.querySelector('.fs-album');
+  album.textContent = track?.album || '';
+  if (detail?.albumId) album.href = `/admin/albums/${detail.albumId}`;
+  else album.removeAttribute('href');
+  const spec = stage.querySelector('.fs-spec');
+  spec.textContent = track?.spec || track?.container?.toUpperCase() || '';
+  spec.hidden = !spec.textContent;
+  const cast = stage.querySelector('.fs-cast');
+  const device = castDevice();
+  cast.textContent = device ? `投放至 ${device.name}` : '';
+  cast.hidden = !device;
+  const tags = stage.querySelector('.fs-tags');
+  tags.hidden = !track;
+  if (track) tags.href = `/admin/tracks/${encodeURIComponent(track.id)}/tags`;
+  stage.querySelector('.fs-lyrics-status').textContent = lyrics().length ? '歌词' : '暂无歌词';
+  syncLyrics();
+  syncQueue();
 }
 
 function closeFullscreen() {
-  if (!overlay) return;
-  overlay.remove(); overlay = null; activeLine = null; seeking = false; lastFsQueueSig = '';
+  if (!stage) return;
+  stage.remove();
+  stage = null;
+  renderedLyrics = activeLine = queueSignature = null;
   document.body.style.overflow = previousOverflow;
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  trigger?.focus();
+  if (document.fullscreenElement === document.documentElement) document.exitFullscreen().catch(() => {});
+  if (trigger?.isConnected && !trigger.closest('[inert]')) trigger.focus();
+  else document.getElementById('player-btn-fullscreen')?.focus();
 }
 
 export function setupFullscreen() {
-  document.getElementById('player-btn-fullscreen')?.addEventListener('click', async e => {
-    trigger = e.currentTarget;
-    overlay = document.createElement('div'); overlay.id = 'player-fullscreen';
-    overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-label', '全屏播放');
-
-    const topbar = document.createElement('div'); topbar.className = 'fs-topbar';
-    const brand = document.createElement('span'); brand.className = 'fs-brand'; brand.textContent = '032 · 正在播放';
-    const close = button('fs-close np-icon-btn', '退出全屏', 'icon-close', closeFullscreen);
-    topbar.append(brand, close);
-
-    const left = document.createElement('div'); left.className = 'fs-stage-left';
-    const cover = document.createElement('img'); cover.className = 'fs-cover'; cover.alt = ''; cover.hidden = true;
-    const meta = document.createElement('div'); meta.className = 'fs-meta';
-    for (const cls of ['fs-title', 'fs-artist', 'fs-album']) {
-      const el = document.createElement(cls === 'fs-title' ? 'strong' : 'span'); el.className = cls; meta.appendChild(el);
-    }
-    const progressRow = document.createElement('div'); progressRow.className = 'fs-progress-row';
-    const time = document.createElement('span'); time.className = 'fs-time';
-    const progress = document.createElement('input'); progress.type = 'range'; progress.className = 'fs-progress';
-    progress.min = '0'; progress.max = '100'; progress.step = '0.1'; progress.setAttribute('aria-label', '播放进度');
-    progress.addEventListener('pointerdown', () => { seeking = true; });
-    progress.addEventListener('pointerup', () => { seeking = false; syncFullscreen(); });
-    progress.addEventListener('pointercancel', () => { seeking = false; syncFullscreen(); });
-    progress.addEventListener('lostpointercapture', () => { seeking = false; syncFullscreen(); });
-    progress.addEventListener('change', () => { seeking = false; syncFullscreen(); });
-    progress.addEventListener('input', () => {
-      if (!mediaDuration()) return;
-      mediaSeek(Number(progress.value) * mediaDuration() / 100);
-      syncFullscreen();
-    });
-    const duration = document.createElement('span'); duration.className = 'fs-duration';
-    progressRow.append(time, progress, duration);
-    const controls = document.createElement('div'); controls.className = 'fs-controls';
-    for (const [cls, label, icon, action] of [
-      ['fs-shuffle player-ctrl-btn', '随机播放', 'icon-shuffle', toggleShuffle],
-      ['fs-prev player-ctrl-btn', '上一首', 'icon-prev', playPrevious],
-      ['fs-play player-ctrl-btn play-main-btn', '播放 / 暂停', 'icon-play', togglePlay],
-      ['fs-next player-ctrl-btn', '下一首', 'icon-next', playNext],
-      ['fs-loop player-ctrl-btn', '循环模式', 'icon-repeat', cycleLoopMode]
-    ]) controls.appendChild(button(cls, label, icon, () => { action(); syncFullscreen(); }));
-    left.append(cover, meta, progressRow, controls);
-
-    const center = document.createElement('div'); center.className = 'fs-stage-center';
-    const content = document.createElement('div'); content.className = 'fs-lyrics';
-    center.appendChild(content);
-
-    const right = document.createElement('aside'); right.className = 'fs-stage-right';
-    const qHead = document.createElement('div'); qHead.className = 'fs-queue-head';
-    const qTitle = document.createElement('span'); qTitle.textContent = '接下来播放';
-    const qCount = document.createElement('span'); qCount.className = 'fs-queue-count';
-    qHead.append(qTitle, qCount);
-    const qList = document.createElement('ol'); qList.className = 'fs-queue-list';
-    right.append(qHead, qList);
-
-    overlay.append(topbar, left, center, right);
+  let requesting = false;
+  async function openFullscreen(event) {
+    if (stage) { closeFullscreen(); return; }
+    trigger = event.currentTarget;
+    stage = document.createElement('section');
+    stage.id = 'player-fullscreen';
+    stage.setAttribute('role', 'dialog');
+    stage.setAttribute('aria-label', '全屏播放');
+    stage.innerHTML = `
+      <header class="fs-topbar">
+        <button type="button" class="fs-close secondary-button"><span data-icon="icon-arrow-left"></span>退出全屏</button>
+        <strong class="fs-lyrics-status"></strong>
+        <a class="fs-tags secondary-button" data-player-nav="1"><span data-icon="icon-ai"></span>曲目 AI 标签</a>
+      </header>
+      <div class="fs-stage-left">
+        <img class="fs-cover" alt="" hidden>
+        <div class="fs-cover-empty cover-placeholder" aria-hidden="true">032</div>
+        <div class="fs-meta">
+          <h2 class="fs-title"></h2>
+          <span class="fs-artist"></span>
+          <a class="fs-album" data-player-nav="1"></a>
+          <div class="fs-badges"><span class="format-pill fs-spec" hidden></span><span class="cast-badge fs-cast" hidden></span></div>
+        </div>
+      </div>
+      <div class="fs-stage-center"><div class="fs-lyrics" aria-label="歌词"></div></div>
+      <aside class="fs-queue-card">
+        <div class="fs-queue-head"><strong>接下来播放</strong><small class="fs-queue-count"></small></div>
+        <ol class="fs-queue-list"></ol>
+      </aside>`;
+    stage.querySelectorAll('[data-icon]').forEach(node => node.classList.add('icon-slot'));
+    hydrateIconSlots(stage);
+    const close = stage.querySelector('.fs-close');
+    close.addEventListener('click', closeFullscreen);
     previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    document.body.appendChild(overlay); syncFullscreen(); close.focus();
-    pendingFullscreen = true;
+    document.body.append(stage);
+    syncFullscreen();
+    close.focus();
+    requesting = true;
     try {
-      await document.documentElement.requestFullscreen();
-      if (!overlay && document.fullscreenElement) await document.exitFullscreen();
-    } catch (_) { /* Keep the overlay when the Fullscreen API is unavailable. */ }
-    finally { pendingFullscreen = false; }
-  });
-  document.addEventListener('keydown', e => {
-    if (!overlay) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeFullscreen(); return; }
-    if (e.key !== 'Tab') return;
-    const focusable = Array.from(overlay.querySelectorAll('button, input'));
+      await document.documentElement.requestFullscreen?.();
+      if (!stage && document.fullscreenElement) await document.exitFullscreen();
+    } catch (_) {
+      // The in-page stage is also available without browser fullscreen.
+    } finally {
+      requesting = false;
+    }
+  }
+  for (const id of ['player-btn-fullscreen', 'np-fullscreen']) {
+    document.getElementById(id)?.addEventListener('click', openFullscreen);
+  }
+  document.addEventListener('keydown', event => {
+    if (!stage || event.target.closest?.('dialog, .np-more-menu, #cast-menu')) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeFullscreen();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...document.querySelectorAll('#player-fullscreen :is(button, a[href]), #global-player :is(button, input, a[href], [role="slider"])')]
+      .filter(element => !element.disabled && element.getClientRects().length);
     const index = focusable.indexOf(document.activeElement);
-    if (e.shiftKey && index <= 0) { e.preventDefault(); focusable.at(-1).focus(); }
-    else if (!e.shiftKey && (index === -1 || index === focusable.length - 1)) { e.preventDefault(); focusable[0].focus(); }
+    const next = index < 0 ? (event.shiftKey ? focusable.at(-1) : focusable[0]) :
+      focusable[(index + (event.shiftKey ? focusable.length - 1 : 1)) % focusable.length];
+    event.preventDefault();
+    next?.focus();
   }, true);
-  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && overlay && !pendingFullscreen) closeFullscreen(); });
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && !requesting) closeFullscreen();
+  });
+  document.addEventListener('032:pjax-applied', closeFullscreen);
   document.addEventListener('032:player-state', syncFullscreen);
-  if (s.audio) s.audio.addEventListener('timeupdate', syncFullscreen);
+  s.audio?.addEventListener('timeupdate', syncFullscreen);
 }

@@ -1,15 +1,19 @@
 import { openPlaylistPicker } from './playlist-picker.js';
 // 032 Music Server - now-playing.js
 import { s } from './state.js';
-import { formatTime, svgIcon, showUndoToast, showToast, showActionToast, apiFetch, swapIcon } from './util.js';
+import { artworkForSize, formatTime, svgIcon, showUndoToast, showToast, showActionToast, apiFetch, swapIcon } from './util.js';
 import { navigateFromPlayer } from './router.js';
-import { bindSeekBar, updateTrackRowsUI, updatePlayerMetaUI, updatePlayButtonUI } from './player-bar.js';
+import { updateTrackRowsUI, updatePlayerMetaUI, updatePlayButtonUI } from './player-bar.js';
 import { loadLyrics, scrollLyricsToActive } from './lyrics.js';
-import { isCasting, mediaTime, mediaDuration } from './cast.js';
+import { castDevice, mediaTime } from './cast.js';
 import { togglePlay, playTrackAtIndex, moveQueueTrack, removeQueueTrack, stopQueuePlayback, saveState, updateMediaSession } from './player-core.js';
 import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
 
   const trackDetails = new Map();
+  export function currentTrackDetail() {
+    return trackDetails.get(String(s.queue[s.currentIndex]?.id));
+  }
+
   let detailId = null;
   let favoriteBusy = false;
   let menu = null;
@@ -199,16 +203,10 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
   }
 
   const PANEL_KEY = '032_np_collapsed';
-  const ADMIN_NAV_KEYS = [
-    'console', 'missing', 'work-review', 'matches', 'artist-aliases',
-    'merges', 'series', 'enrichment', 'audio-analysis', 'ai-tagging',
-    'online-lyrics', 'lyrics-translations', 'daily-mixes', 'settings',
-    'acquisition-settings', 'ai-settings', 'backups', 'security'
-  ];
   let activePanelTab = 'queue';
 
   function isAdminWorkspace() {
-    return document.body.classList.contains('admin-workspace') || ADMIN_NAV_KEYS.includes(document.body.dataset.nav || '');
+    return !!document.getElementById('app-sidebar')?.classList.contains('is-admin-workspace');
   }
 
   function panelCollapsedDefault() {
@@ -254,6 +252,8 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
     if (queueTab) { queueTab.classList.toggle('is-active', next === 'queue'); queueTab.setAttribute('aria-selected', String(next === 'queue')); }
     if (lyricsTab) { lyricsTab.classList.toggle('is-active', next === 'lyrics'); lyricsTab.setAttribute('aria-selected', String(next === 'lyrics')); }
     if (queuePane) queuePane.hidden = next !== 'queue';
+    const save = document.getElementById('np-save-queue');
+    if (save) save.hidden = next !== 'queue';
     if (lyricsPane) lyricsPane.hidden = next !== 'lyrics';
     if (next === 'lyrics') requestAnimationFrame(() => scrollLyricsToActive(true));
     syncPlayerBarTabButtons();
@@ -330,20 +330,18 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
 
     const collapseBtn = document.getElementById('np-collapse');
     if (collapseBtn) collapseBtn.addEventListener('click', () => {
-      const mobile = window.innerWidth <= 900;
-      setPanelCollapsed(true, !mobile);
-      if (mobile) document.getElementById('player-btn-queue')?.focus();
+      const overlay = window.innerWidth <= 900 || isAdminWorkspace();
+      setPanelCollapsed(true, !overlay);
+      document.getElementById(overlay || activePanelTab === 'lyrics' ?
+        'player-btn-' + activePanelTab : 'np-expand')?.focus();
     });
     const expandBtn = document.getElementById('np-expand');
     if (expandBtn) expandBtn.addEventListener('click', () => setPanelCollapsed(false, true));
 
-    const panelBar = document.getElementById('np-progress-bar');
-    if (panelBar) {
-      bindSeekBar(panelBar, (fill) => {
-        const fillElem = document.getElementById('np-progress-fill');
-        if (fillElem && fill) fillElem.style.width = fill;
-      });
-    }
+    document.getElementById('np-queue-filter')?.addEventListener('input', filterQueue);
+    document.getElementById('np-save-queue')?.addEventListener('click', () => {
+      if (s.queue.length) openPlaylistPicker({ trackIds: s.queue.map(track => Number(track.id)) });
+    });
 
     document.getElementById('np-queue-clear')?.addEventListener('click', clearQueue);
     for (const id of ['np-favorite', 'player-btn-favorite']) document.getElementById(id)?.addEventListener('click', toggleFavorite);
@@ -389,7 +387,10 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
         if (!e.altKey || !['ArrowUp', 'ArrowDown'].includes(e.key)) return;
         const item = e.target.closest('li[data-qindex]'); if (!item) return;
         e.preventDefault();
-        const from = Number(item.dataset.qindex), to = from + (e.key === 'ArrowDown' ? 1 : -1);
+        const rows = Array.from(list.querySelectorAll('li[data-qindex]:not([hidden])'));
+        const neighbor = rows[rows.indexOf(item) + (e.key === 'ArrowDown' ? 1 : -1)];
+        if (!neighbor) return;
+        const from = Number(item.dataset.qindex), to = Number(neighbor.dataset.qindex);
         if (moveQueueTrack(from, to)) { lastQueueSignature = null; renderQueueList(); list.querySelector(`li[data-qindex="${to}"] .q-row`)?.focus(); announce(`已移到第 ${to + 1} 位`); }
       });
       list.addEventListener('pointerdown', e => {
@@ -420,7 +421,7 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
         // offsetTop is relative to the list's offset parent, not the viewport.
         const parentTop = list.offsetParent?.getBoundingClientRect().top || 0;
         const pointerY = y - parentTop + list.scrollTop;
-        const rows = Array.from(list.children).filter(row => row !== item && row.hasAttribute('data-qindex'));
+        const rows = Array.from(list.children).filter(row => row !== item && !row.hidden && row.hasAttribute('data-qindex'));
         // The captured pointer still hits the dragged row. Inspect the stack
         // below it, while using layout offsets rather than animated rectangles.
         const hit = document.elementsFromPoint(x, y).find(el => list.contains(el) && !item.contains(el));
@@ -428,14 +429,16 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
         if (overList && rows.length) {
           const insertion = rows.find(row => pointerY < row.offsetTop + row.offsetHeight / 2);
           const next = insertion || null;
-          if (next !== item.nextSibling) {
+          const visibleNext = Array.from(list.children).slice(Array.from(list.children).indexOf(item) + 1).find(row => !row.hidden);
+          if (next !== (visibleNext || null)) {
             const previous = new Map(Array.from(list.children, child => [child, child.offsetTop]));
             list.insertBefore(item, next);
-            drag.to = Array.from(list.children).indexOf(item);
+            const before = next ? Number(next.dataset.qindex) : s.queue.length;
+            drag.to = before > drag.from ? before - 1 : before;
             drag.y += item.offsetTop - previous.get(item);
             if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
               for (const child of list.children) {
-                if (child === item) continue;
+                if (child === item || child.hidden) continue;
                 const delta = previous.get(child) - child.offsetTop;
                 if (delta) child.animate([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0)' }], { duration: 150, easing: 'ease-out' });
               }
@@ -543,7 +546,7 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
     const lyricsArtist = document.getElementById('lyrics-artist');
     if (lyricsArtist) renderCompactArtists(lyricsArtist, detail?.artists, track?.artist || '', { playerNav: true });
     let creditsEl = document.getElementById('np-credits');
-    if (!creditsEl && artistEl) { creditsEl = document.createElement('div'); creditsEl.id = 'np-credits'; artistEl.after(creditsEl); }
+    if (!creditsEl && artistEl) { creditsEl = document.createElement('div'); creditsEl.id = 'np-credits'; (artistEl.closest('.np-sub') || artistEl).after(creditsEl); }
     if (creditsEl) {
       creditsEl.replaceChildren();
       const labels = {lyricist:'作词',composer:'作曲',arranger:'编曲'};
@@ -569,7 +572,25 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
     if (playerArtist && track) renderArtistLinks(playerArtist, detail, track.artist, track.album || '');
     loadTrackDetail(track);
     syncFavorite();
-    const clear = document.getElementById('np-queue-clear'); if (clear) clear.disabled = !s.queue.length;
+    for (const id of ['np-queue-clear', 'np-save-queue']) {
+      const control = document.getElementById(id);
+      if (control) control.disabled = !s.queue.length;
+    }
+    const spec = document.getElementById('np-format');
+    if (spec) {
+      spec.textContent = track?.spec || track?.container?.toUpperCase() || '';
+      spec.hidden = !spec.textContent;
+    }
+    const cast = document.getElementById('np-cast-status');
+    if (cast) {
+      const device = castDevice();
+      cast.textContent = device ? `投放至 ${device.name}` : '';
+      cast.hidden = !device;
+    }
+    const diagnosis = document.getElementById('np-lyrics-diagnosis');
+    if (diagnosis) diagnosis.href = '/admin/online-lyrics/diagnose' + (track ? `?q=${encodeURIComponent(track.id)}` : '');
+    const fullscreen = document.getElementById('np-fullscreen');
+    if (fullscreen) fullscreen.disabled = !track;
     for (const id of ['np-more', 'player-btn-more']) { const button = document.getElementById(id); if (button) button.disabled = !track; }
     if (countEl) countEl.textContent = String(s.queue.length);
     const remainingEl = document.getElementById('np-queue-remaining');
@@ -577,7 +598,8 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
       // Time left from the current track to the end of the queue.
       const start = Math.max(0, s.currentIndex);
       const left = s.queue.slice(start).reduce((sum, t) => sum + (t.durationMs > 0 ? t.durationMs : 0), 0);
-      remainingEl.textContent = left > 0 ? ` · 剩余 ${formatTime(left / 1000)}` : '';
+      remainingEl.textContent = left > 0 ? `剩余 ${formatTime(left / 1000)}` : '';
+      remainingEl.hidden = !left;
     }
 
     if (cover) {
@@ -590,12 +612,12 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
         if (src) {
           const img = document.createElement('img');
           // The panel shows the cover at ~300px; ask for the 512px thumbnail.
-          img.src = src.replace(/([?&]size=)256\b/, '$1512');
+          img.src = artworkForSize(src, 512);
           img.alt = '';
           img.decoding = 'async';
           cover.appendChild(img);
         } else {
-          const empty = document.createElement('div');
+          const empty = document.createElement('span');
           empty.className = 'np-cover-empty';
           empty.textContent = '032';
           cover.appendChild(empty);
@@ -604,7 +626,6 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
     }
 
     renderQueueList();
-    syncPanelProgress();
   }
 
   // [P2-1] The list is rebuilt only when the queue contents actually
@@ -613,6 +634,18 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
   let lastQueueSignature = null;
   function queueSignature() {
     return s.queue.length + ':' + s.queue.map((t) => t.id).join(',');
+  }
+
+  function filterQueue() {
+    const query = (document.getElementById('np-queue-filter')?.value || '').trim().toLocaleLowerCase();
+    let matches = 0;
+    document.querySelectorAll('#np-queue-list li[data-qindex]').forEach(item => {
+      const track = s.queue[Number(item.dataset.qindex)];
+      item.hidden = !!query && ![track?.title, track?.artist, track?.album].some(value => value?.toLocaleLowerCase().includes(query));
+      if (!item.hidden) matches++;
+    });
+    const empty = document.getElementById('np-queue-no-match');
+    if (empty) empty.hidden = !query || !s.queue.length || matches > 0;
   }
 
   function renderQueueList() {
@@ -638,6 +671,7 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
       empty.className = 'np-queue-empty';
       empty.textContent = '队列为空，从歌曲列表开始播放。';
       list.appendChild(empty);
+      filterQueue();
       return;
     }
     s.queue.forEach((track, index) => {
@@ -670,6 +704,18 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
         indexCell.appendChild(bars);
       }
       rowBtn.appendChild(indexCell);
+      const cover = document.createElement(track.artwork ? 'img' : 'span');
+      cover.className = 'queue-cover';
+      if (track.artwork) {
+        cover.src = artworkForSize(track.artwork, 128);
+        cover.alt = '';
+        cover.loading = 'lazy';
+        cover.decoding = 'async';
+      } else {
+        cover.append(svgIcon('icon-tracks'));
+        cover.setAttribute('aria-hidden', 'true');
+      }
+      rowBtn.appendChild(cover);
 
       const meta = document.createElement('span');
       meta.className = 'q-meta';
@@ -706,9 +752,10 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
       list.appendChild(item);
     });
     syncPanelQueueCurrent();
+    filterQueue();
     if (refocusIndex !== null) {
-      const target = list.querySelector(`li[data-qindex="${refocusIndex}"] .q-row`)
-        || list.querySelector('.q-row');
+      const target = list.querySelector(`li[data-qindex="${refocusIndex}"]:not([hidden]) .q-row`)
+        || list.querySelector('li:not([hidden]) .q-row');
       if (target) target.focus({ preventScroll: true });
     }
   }
@@ -743,24 +790,3 @@ import { layoutArtistLinks, renderCompactArtists } from './artist-links.js';
       if (row && track) row.setAttribute('aria-label', queueRowLabel(track, index));
     });
   }
-
-  export function syncPanelProgress() {
-    if (!s.audio && !isCasting()) return;
-    const curTime = mediaTime();
-    const durTime = mediaDuration();
-    const curElem = document.getElementById('np-time-cur');
-    const totalElem = document.getElementById('np-time-total');
-    const fillElem = document.getElementById('np-progress-fill');
-    const bar = document.getElementById('np-progress-bar');
-    if (curElem) curElem.textContent = formatTime(curTime);
-    if (totalElem) totalElem.textContent = durTime > 0 ? formatTime(durTime) : '0:00';
-    if (bar) {
-      bar.setAttribute('aria-valuemax', String(Math.floor(durTime)));
-      bar.setAttribute('aria-valuenow', String(Math.floor(curTime)));
-    }
-    if (fillElem && !s.isDraggingProgress && durTime > 0) {
-      fillElem.style.width = `${Math.min(100, Math.max(0, (curTime / durTime) * 100))}%`;
-    }
-  }
-
-  // ------------------------------------------------------------------ lyrics

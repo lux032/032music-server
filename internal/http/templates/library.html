@@ -8,30 +8,32 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main">
-    <header class="browser-header">
+    <header class="browser-header library-header">
       <div>
         <h1>{{if eq .Section "artists"}}{{.ArtistRoleLabel}}{{else if eq .Section "albums"}}专辑{{else}}歌曲{{end}}</h1>
         <p class="result-count">共 {{.TotalLabel}} {{if eq .Section "albums"}}张专辑{{else if eq .Section "artists"}}{{if eq .ArtistRole "credits"}}位幕后人员{{else}}位歌手{{end}}{{else}}首歌曲{{end}}</p>
       </div>
-      <form class="instant-search" method="get">
-        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
-        <input name="q" value="{{.Query}}" placeholder="搜索专辑、歌手或歌曲…" aria-label="搜索专辑、歌手或歌曲">
-        {{range .SearchFields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
-      </form>
+      {{if and (eq .Section "albums") .Albums}}<button type="button" class="secondary-button" data-album-select-mode aria-pressed="false">批量选择 / 合并</button>{{end}}
     </header>
 
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
     {{if and (eq .Section "artists") (ne .ArtistRole "credits")}}
-    <nav class="artist-role-tabs" aria-label="歌手分类">
-      <a href="/admin/artists/album" class="{{if eq .ArtistRole "album"}}active{{end}}">专辑歌手</a>
-      <a href="/admin/artists/track" class="{{if eq .ArtistRole "track"}}active{{end}}">单曲歌手</a>
+    <nav class="admin-tabs" aria-label="歌手分类">
+      <a href="/admin/artists/album" class="admin-tab {{if eq .ArtistRole "album"}}active{{end}}">专辑歌手</a>
+      <a href="/admin/artists/track" class="admin-tab {{if eq .ArtistRole "track"}}active{{end}}">单曲歌手</a>
     </nav>
     {{end}}
 
-    {{if eq .ArtistRole "credits"}}<nav class="artist-role-tabs" aria-label="幕后角色">{{range .CreditTabs}}<a href="{{.URL}}" class="{{if .Current}}active{{end}}">{{.Value}}</a>{{end}}</nav>{{end}}
+    {{if eq .ArtistRole "credits"}}<nav class="admin-tabs" aria-label="幕后角色">{{range .CreditTabs}}<a href="{{.URL}}" class="admin-tab {{if .Current}}active{{end}}">{{.Value}}</a>{{end}}</nav>{{end}}
     {{if .CreditHintID}}<div class="zero-state">该人员没有演唱曲目。<a href="/admin/credits/{{.CreditHintID}}">查看幕后作品</a></div>{{end}}
-    <div class="browser-filters" aria-label="筛选">
+    <div class="library-toolbar browser-filters" aria-label="搜索与筛选">
+      <form class="instant-search" method="get">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+        <input name="q" value="{{.Query}}" placeholder="搜索专辑、歌手或歌曲…" aria-label="搜索专辑、歌手或歌曲">
+        {{range .SearchFields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+      </form>
+
       {{if ne .Section "artists"}}
       <div class="filter-control" data-filter="artist" data-options-url="/admin/options/artists?role={{if eq .Section "albums"}}album{{else}}performer{{end}}"><button type="button" class="filter-trigger {{if .ArtistID}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-artist">{{if .ArtistID}}{{range .FilterTags}}{{if eq .Name "artist"}}{{.Value}}{{end}}{{end}}{{else}}歌手{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" hidden><input type="search" role="combobox" aria-expanded="false" aria-controls="filter-list-artist" aria-label="搜索歌手" placeholder="搜索歌手"><div id="filter-list-artist" role="listbox" aria-label="歌手"></div></div></div>
       <div class="filter-control" data-filter="year"><button type="button" class="filter-trigger {{if .Year}}selected{{end}}" aria-haspopup="listbox" aria-expanded="false" aria-controls="filter-list-year">{{if .Year}}{{.Year}}{{else}}年份{{end}} <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-chevron-down"></use></svg></button><div class="filter-popover" id="filter-list-year" role="listbox" aria-label="年份" hidden><button type="button" role="option" aria-selected="false" data-value="">全部年份</button>{{if .YearFacets}}{{range .YearFacets}}<button type="button" role="option" aria-selected="false" data-value="{{.Year}}"{{if .Count}} data-count="{{.Count}}"{{end}}>{{.Year}}</button>{{end}}{{else}}{{range .Years}}<button type="button" role="option" aria-selected="false" data-value="{{.}}">{{.}}</button>{{end}}{{end}}</div></div>

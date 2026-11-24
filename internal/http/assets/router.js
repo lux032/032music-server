@@ -42,6 +42,14 @@ import { updateTrackRowsUI } from './player-bar.js';
       // controls), not DOM containment — a file input living inside another
       // form's markup must not mark that form as a file form.
       if (action.origin !== window.location.origin || !action.pathname.startsWith('/admin') || action.pathname === '/admin/logout' || Array.from(form.elements).some((el) => el.type === 'file')) return;
+      if (form.classList.contains('sidebar-search-form')) {
+        e.preventDefault();
+        if (pendingForms.size && !window.confirm('更改仍在保存中。现在离开可能无法确认保存结果。是否仍要离开？')) return;
+        const input = document.getElementById('library-search');
+        if (input) input.focus();
+        else pjaxNavigate(action.href, true).then(() => document.getElementById('library-search')?.focus());
+        return;
+      }
       const submitter = e.submitter;
       const data = new FormData(form);
       if (submitter && submitter.name) data.append(submitter.name, submitter.value);
@@ -164,7 +172,7 @@ import { updateTrackRowsUI } from './player-bar.js';
   function setFormPending(form, submitter, pending) {
     form.classList.toggle('is-pending', pending);
     form.setAttribute('aria-busy', String(pending));
-    form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]').forEach((button) => {
+    Array.from(form.elements).filter(element => element.type === 'submit').forEach((button) => {
       if (pending) { button.dataset.wasDisabled = button.disabled ? '1' : '0'; button.disabled = true; }
       else if (button.dataset.wasDisabled !== '1') button.disabled = false;
     });
@@ -177,6 +185,8 @@ import { updateTrackRowsUI } from './player-bar.js';
   }
 
   async function pjaxPost(url, params, form, submitter) {
+    const drawerSection = form.closest('[data-post-drawer][id]')?.id;
+    const syncSettings = !!form.closest('.metadata-sync-cards');
     setFormPending(form, submitter, true);
     pendingForms.set(form, true);
     try {
@@ -217,6 +227,12 @@ import { updateTrackRowsUI } from './player-bar.js';
       // the browser's back button cannot land on the removed page.
       const resultURL = new URL(res.url || window.location.href, window.location.href);
       const samePage = resultURL.pathname === window.location.pathname;
+      if (syncSettings && resultURL.pathname === '/admin/settings/metadata' && !resultURL.hash) {
+        resultURL.hash = 'playback-sync';
+      }
+      if (new URL(url, window.location.href).pathname.startsWith('/admin/playlists')) {
+        document.dispatchEvent(new Event('032:playlists-changed'));
+      }
       const replaceEntry = samePage || form.hasAttribute('data-replace-history');
       const applied = applyPage(html, resultURL.href, !replaceEntry, replaceEntry ? { ...(history.state || {}), app: '032', url: resultURL.href, scrollX: samePage ? window.scrollX : 0, scrollY: samePage ? window.scrollY : 0, focus: '' } : null);
       if (applied === 'reload') {
@@ -225,6 +241,9 @@ import { updateTrackRowsUI } from './player-bar.js';
         // failure (the form must not look retryable, it already committed).
         window.location.href = res.url || url;
         return;
+      }
+      if (applied && samePage && drawerSection && !resultURL.searchParams.has('identityConflict')) {
+        document.dispatchEvent(new CustomEvent('032:restore-drawer', { detail: drawerSection }));
       }
       if (!applied) showFormError(form, '服务器已响应，但页面无法更新。请刷新核对保存结果。');
     } catch (_) {
@@ -270,20 +289,14 @@ import { updateTrackRowsUI } from './player-bar.js';
     } catch (_) { sessionStorage.removeItem(draftStorageKey); }
   }
 
-  const ADMIN_NAV_KEYS = [
-    'console', 'missing', 'work-review', 'matches', 'artist-aliases',
-    'merges', 'series', 'enrichment', 'audio-analysis', 'ai-tagging',
-    'online-lyrics', 'lyrics-translations', 'daily-mixes', 'settings',
-    'acquisition-settings', 'ai-settings', 'backups', 'security'
-  ];
-
   // syncChrome copies just the per-page bits of the persistent shell from
   // the freshly fetched document: the navigation highlight, the admin
   // workspace mode and the logout form's CSRF field. The sidebar itself
   // is never rebuilt, so it does not flash on navigation.
   function syncChrome(doc) {
     const nav = (doc.body && doc.body.dataset && doc.body.dataset.nav) || '';
-    const isAdmin = ADMIN_NAV_KEYS.includes(nav);
+    const incomingSidebar = doc.getElementById('app-sidebar');
+    const isAdmin = !!incomingSidebar?.classList.contains('is-admin-workspace');
     const wasAdmin = document.body.classList.contains('admin-workspace');
     document.body.dataset.nav = nav;
     document.body.classList.toggle('admin-workspace', isAdmin);
@@ -291,31 +304,23 @@ import { updateTrackRowsUI } from './player-bar.js';
     if (sidebar) sidebar.classList.toggle('is-admin-workspace', isAdmin);
     const wordmark = document.getElementById('sidebar-wordmark');
     if (wordmark) wordmark.setAttribute('href', isAdmin ? '/admin' : '/admin/home');
-    document.querySelectorAll('.sidebar [data-nav]').forEach((link) => {
-      const active = link.getAttribute('data-nav') === nav;
-      link.classList.toggle('active', active);
-      if (active) link.setAttribute('aria-current', 'page');
-      else link.removeAttribute('aria-current');
-    });
-    const group = document.getElementById('sidebar-admin-group');
-    if (group) {
-      const toggle = document.getElementById('sidebar-group-toggle');
-      if (isAdmin) {
-        group.classList.add('open');
-        if (toggle) toggle.setAttribute('aria-expanded', 'true');
-      } else {
-        let stored = null;
-        try { stored = localStorage.getItem('032_admin_group'); } catch (_) {}
-        const open = stored === 'open';
-        group.classList.toggle('open', open);
-        if (toggle) toggle.setAttribute('aria-expanded', String(open));
+    if (sidebar && incomingSidebar) {
+      const links = sidebar.querySelectorAll('[data-nav]');
+      const nextLinks = incomingSidebar.querySelectorAll('[data-nav]');
+      links.forEach((link, index) => {
+        const current = nextLinks[index]?.getAttribute('aria-current');
+        link.classList.toggle('active', !!current);
+        if (current) link.setAttribute('aria-current', current);
+        else link.removeAttribute('aria-current');
+      });
+      if (wasAdmin !== isAdmin) {
+        const scroll = sidebar.querySelector('.sidebar-scroll');
+        if (scroll) scroll.scrollTop = 0;
       }
     }
-    // The logged-in username can change on the account & security page.
-    const incomingUser = doc.querySelector('.sidebar-user > span');
-    if (incomingUser) {
-      document.querySelectorAll('.sidebar-user > span, .sheet-user > span').forEach((el) => { el.textContent = incomingUser.textContent; });
-    }
+    const incomingUser = doc.querySelector('.sheet-user > span');
+    const user = document.querySelector('.sheet-user > span');
+    if (incomingUser && user) user.textContent = incomingUser.textContent;
     const incomingCsrfField = doc.querySelector('.sidebar input[name="csrfToken"]');
     if (incomingCsrfField) {
       document.querySelectorAll('.sidebar input[name="csrfToken"]').forEach((field) => { field.value = incomingCsrfField.value; });

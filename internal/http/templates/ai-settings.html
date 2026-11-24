@@ -7,23 +7,28 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main ai-tagging-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>AI 设置中心</h1>
         <p class="result-count">集中配置全局 OpenAI 兼容模型服务、限流配额、AI 自动审核策略与全库用量；曲目打标、歌词翻译、别名补全、每日推荐与审核助手共用此处连接配置。</p>
       </div>
-      <a class="secondary-button" href="/admin">返回控制台</a>
+      <div class="admin-header-actions">
+      <form class="ai-tagging-test" method="post" action="/admin/settings/ai/test">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button class="secondary-button"{{if not .Configured}} disabled{{end}}>测试连接与模型</button>
+
+      </form>
+        <button form="ai-settings-form" class="primary-button">保存全部 AI 设置</button>
+      </div>
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <section class="feature-card audio-analysis-settings">
-      <p class="kicker">全局模型与审核策略</p>
-      <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/settings/ai" autocomplete="off">
+    <form id="ai-settings-form" class="admin-grid-2 ai-settings-grid" method="post" action="/admin/settings/ai" autocomplete="off">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
 
-        <fieldset class="ai-tagging-fields">
-          <legend>模型服务（OpenAI 兼容接口）</legend>
+        <section class="card form-stack">
+          <header class="card-head"><h2 class="card-title">模型服务连接与限流</h2></header>
           <label>接口地址
             <input name="base_url" value="{{.BaseURL}}" list="ai-settings-base-urls" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" spellcheck="false">
           </label>
@@ -39,7 +44,7 @@
             <input type="password" name="api_key" value="" placeholder="{{if .KeySet}}已设置（留空保持不变）{{else}}未设置{{end}}" autocomplete="new-password" spellcheck="false">
           </label>
           {{if .KeySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_api_key"> 清除已保存的 API Key</label>{{end}}
-          <div class="inline">
+          <div class="form-grid">
             <label>日常主模型
               <input name="model" value="{{.Model}}" placeholder="例如 gemini-2.5-flash-lite" spellcheck="false">
               <small>用于全库 AI 打标、每日推荐等高频任务。</small>
@@ -53,12 +58,12 @@
               <small>用于打标复核；AI 审核助手默认优先使用此模型。</small>
             </label>
           </div>
-          <label class="ai-inline-check"><input type="checkbox" name="review_enabled" {{if .ReviewEnabled}}checked{{end}}> 启用 AI 打标低置信复核（把拿不准的曲目交给复核模型重标）</label>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="review_enabled" {{if .ReviewEnabled}}checked{{end}}><span>启用 AI 打标低置信复核（把拿不准的曲目交给复核模型重标）</span></label>
           <label>代理（可选）
             <input type="password" name="proxy_url" value="" placeholder="{{if .ProxySet}}已设置（留空保持不变）{{else}}例如 http://192.168.1.2:7890；留空使用容器 HTTP(S)_PROXY{{end}}" autocomplete="new-password" spellcheck="false">
           </label>
           {{if .ProxySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_proxy"> 清除已保存的代理</label>{{end}}
-          <div class="inline">
+          <div class="form-grid">
             <label>全局每分钟请求上限 (RPM)
               <input type="number" name="rpm" min="1" max="10000" value="{{.RPM}}">
             </label>
@@ -77,17 +82,17 @@
             </label>
           </div>
           <p class="result-count">AI 打标与 AI 审核共享上述 RPM 限流配额，避免并发请求触发服务商 429。</p>
-        </fieldset>
+        </section>
 
-        <fieldset class="ai-tagging-fields">
-          <legend>AI 初审与审核助手</legend>
-          <label class="ai-inline-check"><input type="checkbox" name="ai_review_enabled" {{if .Review.Enabled}}checked{{end}}> 开启 AI 初审（支持对新入库待审项自动预审，以及在审核页一键清理积压数据）</label>
-          <label class="ai-inline-check"><input type="checkbox" name="ai_review_inline" {{if .Review.InlineEnabled}}checked{{end}}> 自动增强 / 艺术家匹配进入人工审核前先交由 AI 初审（仅处理未确定项，不覆写已有人工意图与抑制记录）</label>
-          <label class="ai-inline-check"><input type="checkbox" name="ai_review_web" {{if .Review.WebSearchEnabled}}checked{{end}}> 第一轮信息不足且不确定时允许联网补证（复用 <a href="/admin/artist-aliases">中文别名补全</a> 的 DeepSeek 联网密钥{{if .DeepSeekWebReady}}，当前已就绪{{else}}，当前尚未配置联网密钥{{end}}）</label>
+        <section class="card form-stack">
+          <header class="card-head"><h2 class="card-title">AI 初审与分级自治</h2></header>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_enabled" {{if .Review.Enabled}}checked{{end}}><span>开启 AI 初审（支持对新入库待审项自动预审，以及在审核页一键清理积压数据）</span></label>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_inline" {{if .Review.InlineEnabled}}checked{{end}}><span>自动增强 / 艺术家匹配进入人工审核前先交由 AI 初审（仅处理未确定项，不覆写已有人工意图与抑制记录）</span></label>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_web" {{if .Review.WebSearchEnabled}}checked{{end}}><span>第一轮信息不足且不确定时允许联网补证（复用 <a href="/admin/artist-aliases">中文别名补全</a> 的 DeepSeek 联网密钥{{if .DeepSeekWebReady}}，当前已就绪{{else}}，当前尚未配置联网密钥{{end}}）</span></label>
           <label>审核专用模型覆盖（可选）
             <input name="ai_review_model" value="{{.Review.Model}}" placeholder="留空则优先使用上方的复核模型，再回退日常主模型" spellcheck="false">
           </label>
-          <div class="inline">
+          <div class="form-grid">
             <label>专辑作品关联
               <select name="album_mode">
                 <option value="off" {{if eq .Review.AlbumMode "off"}}selected{{end}}>关闭</option>
@@ -131,20 +136,11 @@
             </label>
           </div>
           <p class="result-count">安全铁律：AI 永远不会自动写入“永久拒绝/抑制记录”。任何 AI 自动落库的条目都可在审核页一键撤销退回待审。</p>
-        </fieldset>
+        </section>
+    </form>
 
-        <button class="primary-button">保存全部 AI 设置</button>
-      </form>
-
-      <form class="ai-tagging-test" method="post" action="/admin/settings/ai/test">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <button class="secondary-button"{{if not .Configured}} disabled{{end}}>测试连接与模型</button>
-        <span class="result-count">测试主模型、复核模型与审核模型是否正常响应结构化输出。</span>
-      </form>
-    </section>
-
-    <section class="feature-card">
-      <p class="kicker">各 AI 功能入口</p>
+    <section class="card feature-card">
+      <p class="card-kicker kicker">各 AI 功能入口</p>
       <div class="inline" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
         <a class="secondary-button" href="/admin/work-review">作品关联审核（含 AI 存量预审）→</a>
         <a class="secondary-button" href="/admin/matches">艺术家匹配审核（含署名拆分）→</a>
@@ -156,15 +152,15 @@
     </section>
 
     {{if .Usage}}
-    <section class="feature-card ai-tagging-usage">
-      <p class="kicker">全库 AI 用量统计</p>
+    <section class="card feature-card ai-tagging-usage">
+      <p class="card-kicker kicker">全库 AI 用量统计</p>
       {{if .UsageTotal}}<p class="audio-analysis-line audio-analysis-meta">{{.UsageTotal}}</p>{{end}}
-      <table class="ai-tagging-table">
+      <div class="data-table-wrap"><table class="data-table">
         <thead><tr><th>模型</th><th>用途</th><th>请求</th><th>输入</th><th>缓存命中</th><th>输出</th><th>思考</th></tr></thead>
         <tbody>
           {{range .Usage}}<tr><td><code>{{.Model}}</code></td><td>{{.Purpose}}</td><td>{{.Requests}}</td><td>{{.Prompt}}</td><td>{{.Cached}}</td><td>{{.Completion}}</td><td>{{.Thinking}}</td></tr>{{end}}
         </tbody>
-      </table>
+      </table></div>
     </section>
     {{end}}
   </main>

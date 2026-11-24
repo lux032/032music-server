@@ -7,23 +7,22 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main audio-analysis-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>声学分析</h1>
         <p class="result-count">用本地模型“听”一遍曲库：识别风格、情绪、乐器、人声与能量，并计算声学相似度，为每日推荐与相似歌曲提供依据。源文件只读，结果只保存在本服务器。</p>
       </div>
-      <a class="secondary-button" href="/admin">返回控制台</a>
     </header>
-    <nav class="admin-domain-tabs" aria-label="声学与打标视图">
-      <a href="/admin/audio-analysis" class="is-active" aria-current="page">声学分析</a>
-      <a href="/admin/ai-tagging">AI 曲库打标</a>
+    <nav class="admin-tabs" aria-label="声学与打标视图">
+      <a href="/admin/audio-analysis" class="admin-tab active" aria-current="page">声学分析</a>
+      <a href="/admin/ai-tagging" class="admin-tab">AI 曲库打标</a>
     </nav>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
     {{if not .Status.Configured}}
-    <section class="feature-card audio-analysis-setup">
-      <p class="kicker">尚未部署</p>
+    <section class="card feature-card audio-analysis-setup">
+      <p class="card-kicker kicker">尚未部署</p>
       <h2>需要先启动分析服务</h2>
       <p class="result-count">声学分析由独立容器 <code>music-analyzer</code> 完成（源码在仓库 <code>analyzer/</code>）。在 <code>compose.yaml</code> 所在目录：</p>
       <ol class="audio-analysis-steps">
@@ -34,10 +33,12 @@
     </section>
     {{end}}
 
-    <section class="feature-card audio-analysis-status" id="audio-analysis-status" data-tone="{{.View.Tone}}" aria-live="polite">
-      <div class="audio-analysis-head">
+    <div class="admin-split">
+      <div class="admin-stack">
+    <section class="card feature-card audio-analysis-status" id="audio-analysis-status" data-tone="{{.View.Tone}}" aria-live="polite">
+      <div class="card-head audio-analysis-head">
         <div>
-          <p class="kicker">状态</p>
+          <p class="card-kicker kicker">状态</p>
           <h2 id="aa-state">{{.View.StateLabel}}</h2>
           <p id="aa-state-detail" class="result-count"{{if not .View.StateDetail}} hidden{{end}}>{{.View.StateDetail}}</p>
         </div>
@@ -58,11 +59,43 @@
       <p id="aa-analyzer" class="audio-analysis-line audio-analysis-meta"{{if not .View.AnalyzerText}} hidden{{end}}>{{.View.AnalyzerText}}</p>
     </section>
 
-    <section class="feature-card audio-analysis-settings">
-      <p class="kicker">设置</p>
-      <form class="audio-analysis-form" method="post" action="/admin/audio-analysis/settings">
+
+
+    {{if .Failures}}
+    <section class="card feature-card audio-analysis-failures">
+      <div class="card-head audio-analysis-head">
+        <div>
+          <p class="card-kicker kicker">失败</p>
+          <h2>无法分析的曲目</h2>
+        </div>
+        <form method="post" action="/admin/audio-analysis/failures/retry">
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button class="secondary-button">全部重试</button>
+        </form>
+      </div>
+      <div class="data-table-wrap"><table class="data-table"><thead><tr><th>曲目</th><th>音频文件</th><th>失败状态</th></tr></thead><tbody>
+          {{range .Failures}}<tr>
+            <td><strong>{{.Title}}</strong></td><td><code>{{.RelativePath}}</code></td>
+            <td>{{if .Permanent}}文件变化前不再重试{{else}}第 {{.Attempts}} 次失败，{{formatAdminTime .NextRetryAt}} 自动重试{{end}}<small>{{.LastError}}</small></td>
+          </tr>{{end}}
+        </tbody></table></div>
+    </section>
+    {{end}}
+
+    <section class="card feature-card audio-analysis-about">
+      <p class="card-kicker kicker">说明</p>
+      <ul class="audio-analysis-steps">
+        <li>每首歌取 3 段 30 秒分析，保存 400 类风格、56 类情绪/主题、40 类乐器、人声/可舞性等指标，以及 1280 维声学向量（每首约 3.8KB，1.7 万首约 65MB）。</li>
+        <li>唤醒度/效价：先用完整模式分析约 300 首作为校准样本，在本服务器拟合回归模型，其余曲目据此计算，省去约 60% 的分析时间。</li>
+        <li>使用 MTG Essentia 预训练模型，许可为 CC BY-NC-SA 4.0，<strong>仅限非商业用途</strong>；模型由分析服务在首次启动时下载。</li>
+      </ul>
+    </section>
+      </div>
+    <section class="card feature-card audio-analysis-settings">
+      <header class="card-head"><h2 class="card-title">运行与调度设置</h2></header>
+      <form class="form-stack audio-analysis-form" method="post" action="/admin/audio-analysis/settings">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label class="switch"><input type="checkbox" name="enabled" {{if .Status.Enabled}}checked{{end}}{{if not .Status.Configured}} disabled{{end}}> 开启声学分析</label>
+        <label class="switch switch-row"><input type="checkbox" name="enabled" {{if .Status.Enabled}}checked{{end}}{{if not .Status.Configured}} disabled{{end}}><span>开启声学分析</span></label>
         <p class="result-count">默认关闭。{{if .Status.FirstEnabledAt}}首次开启于 {{formatAdminTime .Status.FirstEnabledAt}}；{{end}}开启后立即开始首次全量分析（1.7 万首在 4 核 NAS 上约需 12–14 小时），之后新入库或文件变化的歌曲会在扫描完成后自动分析。关闭只停止分析，已有结果会保留。</p>
         <fieldset class="audio-analysis-window">
           <legend>运行时间</legend>
@@ -75,39 +108,7 @@
         <button class="secondary-button"{{if not .Status.Configured}} disabled{{end}}>保存</button>
       </form>
     </section>
-
-    {{if .Failures}}
-    <section class="feature-card audio-analysis-failures">
-      <div class="audio-analysis-head">
-        <div>
-          <p class="kicker">失败</p>
-          <h2>无法分析的曲目</h2>
-        </div>
-        <form method="post" action="/admin/audio-analysis/failures/retry">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <button class="secondary-button">全部重试</button>
-        </form>
-      </div>
-      <ul class="audio-analysis-failure-list">
-        {{range .Failures}}
-        <li>
-          <strong>{{.Title}}</strong>
-          <code>{{.RelativePath}}</code>
-          <small>{{if .Permanent}}文件变化前不再重试{{else}}第 {{.Attempts}} 次失败，{{formatAdminTime .NextRetryAt}} 自动重试{{end}} · {{.LastError}}</small>
-        </li>
-        {{end}}
-      </ul>
-    </section>
-    {{end}}
-
-    <section class="feature-card audio-analysis-about">
-      <p class="kicker">说明</p>
-      <ul class="audio-analysis-steps">
-        <li>每首歌取 3 段 30 秒分析，保存 400 类风格、56 类情绪/主题、40 类乐器、人声/可舞性等指标，以及 1280 维声学向量（每首约 3.8KB，1.7 万首约 65MB）。</li>
-        <li>唤醒度/效价：先用完整模式分析约 300 首作为校准样本，在本服务器拟合回归模型，其余曲目据此计算，省去约 60% 的分析时间。</li>
-        <li>使用 MTG Essentia 预训练模型，许可为 CC BY-NC-SA 4.0，<strong>仅限非商业用途</strong>；模型由分析服务在首次启动时下载。</li>
-      </ul>
-    </section>
+    </div>
   </main>
 </body>
 </html>

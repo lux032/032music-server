@@ -8,7 +8,7 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main feature-main playlist-detail-main daily-mix-detail" data-daily-mix-id="{{.Mix.ID}}">
-    <nav class="detail-toolbar" aria-label="页面导航">
+    <nav class="detail-toolbar detail-top-bar" aria-label="页面导航">
       <a class="back-button" href="/admin" data-history-back>
         <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
         <span class="back-button-label">返回主页</span>
@@ -34,7 +34,7 @@
 
     <div class="playlist-layout">
       <section>
-        <div class="section-title"><h2>歌曲</h2><span>{{len .Tracks}} 首</span></div>
+        <div class="section-head"><h2>歌曲</h2><span class="section-rule" aria-hidden="true"></span><span>{{len .Tracks}} 首</span></div>
         <div class="playlist-track-list dm-track-list" data-track-list>
           {{range .Tracks}}
           <article data-track-id="{{.ID}}" data-context-type="dailyMix" data-context-id="{{$.Mix.ID}}" data-context-position="{{.Index}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .Track}}" data-track-duration-ms="{{.DurationMillis}}"{{if .Blocked}} class="dm-blocked"{{end}}>
@@ -61,7 +61,7 @@
         </div>
       </section>
       <aside class="playlist-tools">
-        <section class="feature-card dm-feedback">
+        <section class="card feature-card dm-feedback">
           <h2>这个歌单怎么样？</h2>
           <div class="dm-rate">
             <form method="post" action="/admin/daily-mixes/{{.Mix.ID}}/rating">
@@ -103,7 +103,7 @@
           <p class="result-count">“不再推荐”和评价从下一次生成开始生效。</p>
         </section>
         {{if .Others}}
-        <section class="feature-card">
+        <section class="card feature-card">
           <h2>今天的其他推荐</h2>
           <div class="h-rows dm-others">
             {{range .Others}}

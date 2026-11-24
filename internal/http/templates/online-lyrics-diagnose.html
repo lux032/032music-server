@@ -7,22 +7,22 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main online-lyrics-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main ai-tagging-main online-lyrics-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>歌词诊断</h1>
         <p class="result-count">查看一首歌的歌词从哪里来；“立即在线查找”会实时请求网易云、LRCLIB 并显示每个来源的返回和打分。</p>
       </div>
       <a class="secondary-button" href="/admin/online-lyrics">返回在线歌词</a>
     </header>
-    <nav class="admin-domain-tabs" aria-label="歌词与翻译视图">
-      <a href="/admin/online-lyrics">在线歌词缓存</a>
-      <a href="/admin/online-lyrics/diagnose" class="is-active" aria-current="page">歌词诊断</a>
-      <a href="/admin/lyrics-translations">歌词翻译</a>
+    <nav class="admin-tabs" aria-label="歌词与翻译视图">
+      <a href="/admin/online-lyrics" class="admin-tab">在线歌词缓存</a>
+      <a href="/admin/online-lyrics/diagnose" class="admin-tab active" aria-current="page">歌词诊断</a>
+      <a href="/admin/lyrics-translations" class="admin-tab">歌词翻译</a>
     </nav>
     {{if not .Enabled}}<div class="toast" role="status">在线歌词未启用，只使用本地歌词。</div>{{end}}
 
-    <section class="feature-card">
+    <section class="card feature-card">
       <form class="ai-tagging-sample-form" method="get" action="/admin/online-lyrics/diagnose">
         <label>曲目
           <input type="search" name="q" value="{{.Query}}" placeholder="曲名、艺人或曲目 ID" required>
@@ -30,7 +30,7 @@
         <button class="secondary-button">诊断</button>
       </form>
       {{if .Matches}}
-      <table class="ai-tagging-table">
+      <div class="data-table-wrap"><table class="data-table">
         <thead><tr><th>ID</th><th>曲目</th><th>专辑</th><th>时长</th></tr></thead>
         <tbody>
           {{range .Matches}}
@@ -42,17 +42,17 @@
           </tr>
           {{end}}
         </tbody>
-      </table>
+      </table></div>
       {{else if and .Query (not .Track)}}
       <p class="result-count">没有找到曲目。</p>
       {{end}}
     </section>
 
     {{with .Track}}
-    <section class="feature-card">
-      <p class="kicker">曲目 {{.TrackID}}</p>
+    <section class="card feature-card">
+      <p class="card-kicker kicker">曲目 {{.TrackID}}</p>
       <h2>{{.Title}}</h2>
-      <table class="ai-tagging-table">
+      <div class="data-table-wrap"><table class="data-table">
         <tbody>
           <tr><th>搜索用歌名</th><td>{{.Title}}</td></tr>
           <tr><th>艺人</th><td>{{.Artist}}<small>搜索时只用第一个艺人：{{$.SearchArtist}}</small></td></tr>
@@ -63,7 +63,7 @@
           <tr><th>在线歌词记录</th><td>{{with $.Row}}{{$.RowStatus}}{{if .Manual}}（手动）{{end}}{{if .Source}}<small>{{.Source}}:{{.RemoteID}} {{.RemoteTitle}} - {{.RemoteArtist}}</small>{{end}}{{if .RetryAfter}}<small>重试时间 {{formatAdminTime .RetryAfter}}</small>{{end}}<small>更新于 {{formatAdminTime .UpdatedAt}}</small>{{else}}没有{{end}}</td></tr>
           <tr><th>当前结果</th><td><strong>{{$.Decision}}</strong></td></tr>
         </tbody>
-      </table>
+      </table></div>
       {{if $.Enabled}}
       <form method="post" action="/admin/online-lyrics/diagnose">
         <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
@@ -75,19 +75,19 @@
     {{end}}
 
     {{if .Ran}}
-    <section class="feature-card">
-      <p class="kicker">查找结果</p>
+    <section class="card feature-card">
+      <p class="card-kicker kicker">查找结果</p>
       <h2>{{.Outcome}}</h2>
-      <table class="ai-tagging-table">
+      <div class="data-table-wrap"><table class="data-table">
         <thead><tr><th>来源</th><th>结果数</th><th>耗时</th><th>错误</th></tr></thead>
         <tbody>
           {{range .Providers}}
           <tr><td>{{.SourceName}}</td><td>{{.Results}}</td><td>{{.ElapsedMs}} ms</td><td>{{if .Err}}{{.Err}}{{else}}—{{end}}</td></tr>
           {{end}}
         </tbody>
-      </table>
+      </table></div>
       {{if .Candidates}}
-      <table class="ai-tagging-table">
+      <div class="data-table-wrap"><table class="data-table">
         <thead><tr><th>候选</th><th>来源</th><th>时长</th><th>时间轴</th><th>分数</th><th>可自动使用</th></tr></thead>
         <tbody>
           {{range .Candidates}}
@@ -101,7 +101,7 @@
           </tr>
           {{end}}
         </tbody>
-      </table>
+      </table></div>
       <p class="result-count">分数 0 最好。自动使用要求歌名相似度 ≥ 0.75 且艺人相似度 ≥ 0.5，或歌名相似度 ≥ 0.9 且时长相差 ≤ 2 秒。</p>
       {{else}}
       <p class="result-count">没有任何候选结果。</p>

@@ -2,7 +2,7 @@
 import { s } from './state.js';
 import { showToast, showActionToast, formatTime, artworkForSize, apiFetch, swapIcon } from './util.js';
 import { updatePlayButtonUI, updateTrackRowsUI, updatePlayerMetaUI, updateVolumeUI, setPlayerStatus } from './player-bar.js';
-import { syncPanelProgress, emitPlayerState } from './now-playing.js';
+import { emitPlayerState } from './now-playing.js';
 import { loadLyrics, updateActiveLyric } from './lyrics.js';
 import { createPlaybackReporter } from './playback-reporter.js';
 import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop, castPlayMode, castQueueChanged, mediaTime, mediaDuration, mediaSeek } from './cast.js';
@@ -137,7 +137,6 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
       const dur = s.audio.duration || 0;
       const totalElem = document.getElementById('player-time-total');
       if (totalElem && dur > 0) totalElem.textContent = formatTime(dur);
-      syncPanelProgress();
     });
 
     s.audio.addEventListener('durationchange', () => {
@@ -536,7 +535,6 @@ import { isCasting, castPlayIndex, castToggle, castNext, castPrevious, castStop,
       if (thumbElem) thumbElem.style.left = `${percent}%`;
     }
 
-    syncPanelProgress();
     updateActiveLyric(curTime * 1000);
   }
 

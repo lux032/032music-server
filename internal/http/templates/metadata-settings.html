@@ -7,29 +7,28 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main metadata-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>数据来源与同步</h1>
         <p class="result-count">身份、图片、简介、Scrobble 与红心同步分别选择最可靠的来源，并全部缓存到本地。</p>
       </div>
     </header>
-    <nav class="admin-domain-tabs" aria-label="数据来源与集成视图">
-      <a href="/admin/settings/metadata" class="is-active" aria-current="page">数据来源与同步</a>
-      <a href="/admin/settings/acquisition">获取设置</a>
-    </nav>
+    <span class="source-tab-target" id="metadata-sources"></span>
+    <span class="source-tab-target" id="playback-sync"></span>
+    {{template "source-tabs" .}}
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    <div class="settings-grid">
+    <div class="admin-grid-2 metadata-source-cards">
     {{range .Settings}}
       {{if eq .Source "musicbrainz"}}
       <form class="source-card-form" method="post" data-scope-form>
         <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
         <input type="hidden" name="scope" value="musicbrainz">
-        <section class="source-card">
-          <header>
-            <div><p class="kicker">身份来源</p><h2>MusicBrainz</h2></div>
-            <label class="switch"><input type="checkbox" name="musicbrainz_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+        <section class="card source-card">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">身份来源</p><h2>MusicBrainz</h2></div>
+            <label class="switch"><input class="toggle" type="checkbox" name="musicbrainz_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
           </header>
           <p>负责稳定 MBID、正式名称、别名、国家、类型和消歧，也是 Wikipedia 精确关联的入口。</p>
           <div class="form-grid thirds">
@@ -41,18 +40,18 @@
             <label>联系邮箱或项目地址<input name="musicbrainz_contact" value="{{.Contact}}" placeholder="启用时必填"></label>
           </div>
           <p class="field-hint">建议填写邮箱或主页地址，MusicBrainz/Wikimedia 要求 User-Agent 可联系到使用者；启用 MusicBrainz 时必须填写，其他来源留空时使用项目仓库地址。</p>
-          <label class="switch"><input type="checkbox" name="musicbrainz_auto" {{if .AutoMatch}}checked{{end}}> 参与自动匹配</label>
-          <div class="editor-actions"><button type="submit">保存 MusicBrainz 设置</button></div>
+          <label class="switch switch-row"><input type="checkbox" name="musicbrainz_auto" {{if .AutoMatch}}checked{{end}}><span>参与自动匹配</span></label>
+          <div class="card-foot editor-actions"><button type="submit">保存 MusicBrainz 设置</button></div>
         </section>
       </form>
       {{else if eq .Source "lastfm"}}
       <form class="source-card-form" method="post" data-scope-form>
         <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
         <input type="hidden" name="scope" value="lastfm">
-        <section class="source-card">
-          <header>
-            <div><p class="kicker">内容来源</p><h2>Last.fm</h2></div>
-            <label class="switch"><input type="checkbox" name="lastfm_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+        <section class="card source-card">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">内容来源</p><h2>Last.fm</h2></div>
+            <label class="switch"><input class="toggle" type="checkbox" name="lastfm_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
           </header>
           <p>用于多语言简介、标签和跨来源 MBID 验证；简介会保存原文链接并缓存到本地。</p>
           <div class="form-grid thirds">
@@ -64,16 +63,78 @@
             <input type="hidden" name="lastfm_application_version" value="dev">
             <input type="hidden" name="lastfm_contact" value="">
           </div>
-          <label class="switch"><input type="checkbox" name="lastfm_auto" {{if .AutoMatch}}checked{{end}}> 参与自动匹配</label>
-          <div class="editor-actions"><button type="submit">保存 Last.fm 设置</button></div>
+          <label class="switch switch-row"><input type="checkbox" name="lastfm_auto" {{if .AutoMatch}}checked{{end}}><span>参与自动匹配</span></label>
+          <div class="card-foot editor-actions"><button type="submit">保存 Last.fm 设置</button></div>
         </section>
       </form>
+      {{else if eq .Source "bangumi"}}
+      <form class="source-card-form" method="post" data-scope-form>
+        <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+        <input type="hidden" name="scope" value="bangumi">
+        <section class="card source-card">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">作品来源</p><h2>Bangumi</h2></div>
+            <label class="switch"><input class="toggle" type="checkbox" name="bangumi_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+          </header>
+          <p>对齐动画作品名称、播出年份和海报；高置信结果自动确认，其余进入增强审核。</p>
+          <div class="form-grid thirds">
+            <label>优先级<input type="number" name="bangumi_priority" value="{{.Priority}}"></label>
+            <label>缓存天数<input type="number" name="bangumi_cache_days" value="{{.CacheDays}}"></label>
+            <label>语言<input name="bangumi_language" value="{{.Language}}"></label>
+            <input type="hidden" name="bangumi_api_key" value="">
+            <input type="hidden" name="bangumi_application_name" value="032 Music Server">
+            <input type="hidden" name="bangumi_application_version" value="dev">
+            <input type="hidden" name="bangumi_contact" value="">
+          </div>
+          <label class="switch switch-row"><input type="checkbox" name="bangumi_auto" {{if .AutoMatch}}checked{{end}}><span>扫描后自动对齐</span></label>
+          <div class="card-foot editor-actions"><button type="submit">保存 Bangumi 设置</button></div>
+        </section>
+      </form>
+      {{end}}
+    {{end}}
+
+    <form class="source-card-form" method="post" data-scope-form>
+      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+      <input type="hidden" name="scope" value="biography">
+      <section class="card source-card">
+        <header class="card-head">
+          <div><h2>歌手简介策略</h2></div>
+          <label class="switch"><input class="toggle" type="checkbox" name="wikipedia_enabled" {{if .BiographySettings.WikipediaEnabled}}checked{{end}}> 启用 Wikipedia</label>
+        </header>
+        <p>通过已确认的 MusicBrainz MBID 查找 Wikidata 全语种词条，优先挑选信息最完整的版本，必要时由 AI 自动翻译为目标语言入库；Last.fm 仅作可选补充，未配置 API Key 时自动跳过。</p>
+        <div class="form-grid thirds">
+          <label>目标语言<select name="biography_target_language">
+            <option value="zh-Hans" {{if or (eq .BiographySettings.TargetLanguage "") (eq .BiographySettings.TargetLanguage "zh-Hans")}}selected{{end}}>简体中文 (zh-Hans)</option>
+            <option value="zh-Hant" {{if eq .BiographySettings.TargetLanguage "zh-Hant"}}selected{{end}}>繁體中文 (zh-Hant)</option>
+            <option value="en" {{if eq .BiographySettings.TargetLanguage "en"}}selected{{end}}>English (en)</option>
+            <option value="ja" {{if eq .BiographySettings.TargetLanguage "ja"}}selected{{end}}>日本語 (ja)</option>
+          </select><small>AI 翻译与联网概括的最终入库语言。</small></label>
+          <label>来源优先级<select name="biography_source_priority">
+            <option value="wikipedia,lastfm" {{if eq .BiographySettings.SourcePriority "wikipedia,lastfm"}}selected{{end}}>Wikipedia 优先，Last.fm 可选补充</option>
+            <option value="lastfm,wikipedia" {{if eq .BiographySettings.SourcePriority "lastfm,wikipedia"}}selected{{end}}>Last.fm 优先（需有效 Key），Wikipedia 其次</option>
+          </select></label>
+          <label>缓存天数<input type="number" min="1" name="biography_cache_days" value="{{.BiographySettings.CacheDays}}"></label>
+        </div>
+        <div class="form-grid thirds">
+          <label class="switch switch-row"><input type="checkbox" name="biography_ai_translate_enabled" {{if .BiographySettings.AITranslateEnabled}}checked{{end}}><span>启用 AI 自动翻译最完整源</span></label>
+          <label class="switch switch-row"><input type="checkbox" name="biography_ai_web_fallback_enabled" {{if .BiographySettings.AIWebFallbackEnabled}}checked{{end}}><span>无现成简介时允许批量 AI 联网概括</span></label>
+          <label>简介专用模型（可选）<input name="biography_ai_model" value="{{.BiographySettings.AIModel}}" placeholder="留空则复用全局 AI 主模型"></label>
+        </div>
+        <div class="form-grid thirds">
+          <label>原生语言优先级<input name="biography_languages" value="{{.BiographySettings.PreferredLanguages}}" placeholder="zh,ja,en"><small>关闭 AI 翻译或回退时按从左到右尝试。</small></label>
+          <label class="switch switch-row"><input type="checkbox" name="biography_english_fallback" {{if .BiographySettings.EnglishFallback}}checked{{end}}><span>首选语言均无结果时，自动以英文保底</span></label>
+        </div>
+        <div class="card-foot editor-actions"><button type="submit">保存简介策略设置</button></div>
+      </section>
+    </form>
+    </div>
+    <div class="admin-grid-2 metadata-sync-cards">
       {{with $.LastFMScrobble}}
       <div class="source-card-form">
-        <section class="source-card" id="lastfm-scrobble">
-          <header>
-            <div><p class="kicker">播放记录</p><h2>Last.fm Scrobble</h2></div>
-            <label class="switch"><input type="checkbox" form="lastfm-scrobble-form" name="scrobble_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+        <section class="card source-card" id="lastfm-scrobble">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">播放记录</p><h2>Last.fm Scrobble</h2></div>
+            <label class="switch"><input class="toggle" type="checkbox" form="lastfm-scrobble-form" name="scrobble_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
           </header>
           <p>歌曲播放超过一半时记录一次，并提交到你的 Last.fm 账号（30 秒及以下的歌曲不提交）。网页播放器、使用 API Token 或媒体 Token 上报的客户端都会记录；Last.fm 暂时不可用时会排队自动重试。</p>
           <p>{{if .Connected}}已连接账号：<strong>{{.Username}}</strong>{{else}}尚未连接 Last.fm 账号。{{end}}{{if not .HasAPIKey}}<br>需要先在上方 Last.fm 卡片填写 API Key。{{end}}{{if .PendingCount}}<br>待提交：{{.PendingCount}} 条（最早 {{.OldestPending}}）{{end}}{{if .LastSuccessAt}}<br>最近成功提交：{{.LastSuccessAt}}{{end}}{{if .LastError}}<br><span class="danger-action">最近错误（{{.LastErrorAt}}）：{{.LastError}}</span>{{end}}</p>
@@ -82,8 +143,8 @@
             <div class="form-grid thirds">
               <label>Shared Secret<input type="password" name="lastfm_api_secret" autocomplete="off" placeholder="{{if .HasSecret}}已配置；留空保持不变{{else}}与 API Key 一起在 Last.fm API 账号页获取{{end}}"></label>
             </div>
-            <label class="switch"><input type="checkbox" name="now_playing_enabled" {{if .NowPlaying}}checked{{end}}> 同步“正在播放”状态</label>
-            <div class="editor-actions"><button type="submit">保存播放记录设置</button></div>
+            <label class="switch switch-row"><input type="checkbox" name="now_playing_enabled" {{if .NowPlaying}}checked{{end}}><span>同步“正在播放”状态</span></label>
+            <div class="card-foot editor-actions"><button type="submit">保存播放记录设置</button></div>
           </form>
           {{if .PendingAuthURL}}
           <p data-lastfm-pending>授权进行中：① 点击“前往 Last.fm 授权”，在新打开的 Last.fm 页面登录并允许访问；② 回到本页点“完成连接”。授权链接 1 小时内有效。</p>
@@ -118,13 +179,13 @@
           </div>
           {{end}}
         </section>
-        <section class="source-card" id="lastfm-love" data-love-status="{{.LoveSync}}" data-love-running="{{.BackfillRunning}}" aria-live="polite">
-          <header>
-            <div><p class="kicker">收藏同步</p><h2>Last.fm 红心</h2></div>
+        <section class="card source-card" id="lastfm-love" data-love-status="{{.LoveSync}}" data-love-running="{{.BackfillRunning}}" aria-live="polite">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">收藏同步</p><h2>Last.fm 红心</h2></div>
             <form method="post" action="/admin/settings/lastfm-scrobble/love-sync">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="sync_loves" value="{{if .LoveSync}}0{{else}}1{{end}}">
-              <button class="secondary-button" {{if and (not .LoveSync) (not .Connected)}}disabled title="请先连接 Last.fm 账号"{{end}}>{{if .LoveSync}}关闭红心同步{{else}}开启红心同步{{end}}</button>
+              <button class="toggle-submit" type="submit" role="switch" aria-checked="{{.LoveSync}}" aria-label="Last.fm 红心同步" {{if and (not .LoveSync) (not .Connected)}}disabled title="请先连接 Last.fm 账号"{{end}}><span class="sr-only">{{if .LoveSync}}关闭红心同步{{else}}开启红心同步{{end}}</span></button>
             </form>
           </header>
           <p>开启后，收藏或取消收藏单曲时会同步点亮／取消 Last.fm 的红心。Last.fm 没有专辑和歌手收藏，只有单曲会同步。{{if not .Connected}}<br><strong>尚未连接 Last.fm 账号</strong>，需要先在上方完成授权。{{end}}</p>
@@ -164,10 +225,10 @@
       {{end}}
       {{with $.ListenBrainz}}
       <div class="source-card-form">
-        <section class="source-card" id="listenbrainz-scrobble">
-          <header>
-            <div><p class="kicker">播放记录</p><h2>ListenBrainz Scrobble</h2></div>
-            <label class="switch"><input type="checkbox" form="listenbrainz-scrobble-form" name="listenbrainz_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
+        <section class="card source-card" id="listenbrainz-scrobble">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">播放记录</p><h2>ListenBrainz Scrobble</h2></div>
+            <label class="switch"><input class="toggle" type="checkbox" form="listenbrainz-scrobble-form" name="listenbrainz_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
           </header>
           <p>歌曲播放超过一半时记录一次（30 秒及以下不提交），断网或重启不会丢失；支持官方 ListenBrainz 或自建兼容服务，会附带本地标签中的 MusicBrainz MBID。</p>
           <p>{{if .Connected}}已连接账号：<strong>{{.Username}}</strong>（{{.ServerURL}}）{{else}}尚未连接 ListenBrainz 账号。{{end}}{{if .PendingCount}}<br>待提交：{{.PendingCount}} 条（最早 {{.OldestPending}}）{{end}}{{if .LastSuccessAt}}<br>最近成功提交：{{.LastSuccessAt}}{{end}}{{if .LastError}}<br><span class="danger-action">最近错误（{{.LastErrorAt}}）：{{.LastError}}</span>{{end}}</p>
@@ -177,8 +238,8 @@
               <label>Server URL<input name="listenbrainz_server_url" value="{{.ServerURL}}" placeholder="https://api.listenbrainz.org"></label>
               <label>User Token<input type="password" name="listenbrainz_user_token" autocomplete="off" placeholder="{{if .HasToken}}已配置；留空保持不变{{else}}在 ListenBrainz 设置页获取 User Token{{end}}"></label>
             </div>
-            <label class="switch"><input type="checkbox" name="listenbrainz_now_playing" {{if .NowPlaying}}checked{{end}}> 同步“正在播放”状态（并缓存返回的 MSID）</label>
-            <div class="editor-actions"><button type="submit">{{if .Connected}}保存并验证{{else}}保存并连接{{end}}</button></div>
+            <label class="switch switch-row"><input type="checkbox" name="listenbrainz_now_playing" {{if .NowPlaying}}checked{{end}}><span>同步“正在播放”状态（并缓存返回的 MSID）</span></label>
+            <div class="card-foot editor-actions"><button type="submit">{{if .Connected}}保存并验证{{else}}保存并连接{{end}}</button></div>
           </form>
           {{if or .Connected .PendingCount}}
           <div class="source-card-actions">
@@ -197,13 +258,13 @@
           </div>
           {{end}}
         </section>
-        <section class="source-card" id="listenbrainz-love" data-love-status="{{.LoveSync}}" data-love-running="{{.BackfillRunning}}" aria-live="polite">
-          <header>
-            <div><p class="kicker">收藏同步</p><h2>ListenBrainz 红心</h2></div>
+        <section class="card source-card" id="listenbrainz-love" data-love-status="{{.LoveSync}}" data-love-running="{{.BackfillRunning}}" aria-live="polite">
+          <header class="card-head">
+            <div><p class="card-kicker kicker">收藏同步</p><h2>ListenBrainz 红心</h2></div>
             <form method="post" action="/admin/settings/listenbrainz/love-sync">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="sync_loves" value="{{if .LoveSync}}0{{else}}1{{end}}">
-              <button class="secondary-button" {{if and (not .LoveSync) (not .Connected)}}disabled title="请先连接 ListenBrainz 账号"{{end}}>{{if .LoveSync}}关闭红心同步{{else}}开启红心同步{{end}}</button>
+              <button class="toggle-submit" type="submit" role="switch" aria-checked="{{.LoveSync}}" aria-label="ListenBrainz 红心同步" {{if and (not .LoveSync) (not .Connected)}}disabled title="请先连接 ListenBrainz 账号"{{end}}><span class="sr-only">{{if .LoveSync}}关闭红心同步{{else}}开启红心同步{{end}}</span></button>
             </form>
           </header>
           <p>开启后，收藏或取消收藏单曲时会同步到 ListenBrainz 红心。优先使用文件内嵌的 Recording MBID，其次复用播放时缓存的 MSID 或在线反查；均未匹配到的冷门曲目会跳过（不会伪造播放记录）。{{if not .Connected}}<br><strong>尚未连接 ListenBrainz 账号</strong>，需要先在上方填写并保存 User Token。{{end}}{{if .FeedbackUnsupported}}<br><span class="danger-action">当前服务器不支持红心反馈接口，已暂停同步。</span>{{end}}</p>
@@ -241,66 +302,6 @@
         </section>
       </div>
       {{end}}
-      {{else if eq .Source "bangumi"}}
-      <form class="source-card-form" method="post" data-scope-form>
-        <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-        <input type="hidden" name="scope" value="bangumi">
-        <section class="source-card">
-          <header>
-            <div><p class="kicker">作品来源</p><h2>Bangumi</h2></div>
-            <label class="switch"><input type="checkbox" name="bangumi_enabled" {{if .Enabled}}checked{{end}}> 启用</label>
-          </header>
-          <p>对齐动画作品名称、播出年份和海报；高置信结果自动确认，其余进入增强审核。</p>
-          <div class="form-grid thirds">
-            <label>优先级<input type="number" name="bangumi_priority" value="{{.Priority}}"></label>
-            <label>缓存天数<input type="number" name="bangumi_cache_days" value="{{.CacheDays}}"></label>
-            <label>语言<input name="bangumi_language" value="{{.Language}}"></label>
-            <input type="hidden" name="bangumi_api_key" value="">
-            <input type="hidden" name="bangumi_application_name" value="032 Music Server">
-            <input type="hidden" name="bangumi_application_version" value="dev">
-            <input type="hidden" name="bangumi_contact" value="">
-          </div>
-          <label class="switch"><input type="checkbox" name="bangumi_auto" {{if .AutoMatch}}checked{{end}}> 扫描后自动对齐</label>
-          <div class="editor-actions"><button type="submit">保存 Bangumi 设置</button></div>
-        </section>
-      </form>
-      {{end}}
-    {{end}}
-
-    <form class="source-card-form" method="post" data-scope-form>
-      <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-      <input type="hidden" name="scope" value="biography">
-      <section class="source-card">
-        <header>
-          <div><h2>歌手简介策略</h2></div>
-          <label class="switch"><input type="checkbox" name="wikipedia_enabled" {{if .BiographySettings.WikipediaEnabled}}checked{{end}}> 启用 Wikipedia</label>
-        </header>
-        <p>通过已确认的 MusicBrainz MBID 查找 Wikidata 全语种词条，优先挑选信息最完整的版本，必要时由 AI 自动翻译为目标语言入库；Last.fm 仅作可选补充，未配置 API Key 时自动跳过。</p>
-        <div class="form-grid thirds">
-          <label>目标语言<select name="biography_target_language">
-            <option value="zh-Hans" {{if or (eq .BiographySettings.TargetLanguage "") (eq .BiographySettings.TargetLanguage "zh-Hans")}}selected{{end}}>简体中文 (zh-Hans)</option>
-            <option value="zh-Hant" {{if eq .BiographySettings.TargetLanguage "zh-Hant"}}selected{{end}}>繁體中文 (zh-Hant)</option>
-            <option value="en" {{if eq .BiographySettings.TargetLanguage "en"}}selected{{end}}>English (en)</option>
-            <option value="ja" {{if eq .BiographySettings.TargetLanguage "ja"}}selected{{end}}>日本語 (ja)</option>
-          </select><small>AI 翻译与联网概括的最终入库语言。</small></label>
-          <label>来源优先级<select name="biography_source_priority">
-            <option value="wikipedia,lastfm" {{if eq .BiographySettings.SourcePriority "wikipedia,lastfm"}}selected{{end}}>Wikipedia 优先，Last.fm 可选补充</option>
-            <option value="lastfm,wikipedia" {{if eq .BiographySettings.SourcePriority "lastfm,wikipedia"}}selected{{end}}>Last.fm 优先（需有效 Key），Wikipedia 其次</option>
-          </select></label>
-          <label>缓存天数<input type="number" min="1" name="biography_cache_days" value="{{.BiographySettings.CacheDays}}"></label>
-        </div>
-        <div class="form-grid thirds">
-          <label class="switch"><input type="checkbox" name="biography_ai_translate_enabled" {{if .BiographySettings.AITranslateEnabled}}checked{{end}}> 启用 AI 自动翻译最完整源</label>
-          <label class="switch"><input type="checkbox" name="biography_ai_web_fallback_enabled" {{if .BiographySettings.AIWebFallbackEnabled}}checked{{end}}> 无现成简介时允许批量 AI 联网概括</label>
-          <label>简介专用模型（可选）<input name="biography_ai_model" value="{{.BiographySettings.AIModel}}" placeholder="留空则复用全局 AI 主模型"></label>
-        </div>
-        <div class="form-grid thirds">
-          <label>原生语言优先级<input name="biography_languages" value="{{.BiographySettings.PreferredLanguages}}" placeholder="zh,ja,en"><small>关闭 AI 翻译或回退时按从左到右尝试。</small></label>
-          <label class="switch"><input type="checkbox" name="biography_english_fallback" {{if .BiographySettings.EnglishFallback}}checked{{end}}> 首选语言均无结果时，自动以英文保底</label>
-        </div>
-        <div class="editor-actions"><button type="submit">保存简介策略设置</button></div>
-      </section>
-    </form>
     </div>
   </main>
 </body>

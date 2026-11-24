@@ -8,24 +8,8 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main home-main">
-    <header class="h-head">
-      <div>
-        <h1>主页</h1>
-        <p class="h-date" data-local-today>{{.Today}}</p>
-      </div>
-      {{if not .Empty}}
-      <div class="h-head-tools">
-        <form class="h-search" method="get" action="/admin/search" role="search">
-          <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
-          <input type="search" name="q" placeholder="搜索歌手、专辑或歌曲" aria-label="搜索歌手、专辑或歌曲" maxlength="200">
-          <kbd>/</kbd>
-        </form>
-      </div>
-      {{end}}
-    </header>
-
     {{if .Empty}}
-    <section class="h-first-run">
+    <section class="h-first-run card">
       <div class="h-first-run-art" aria-hidden="true"><span></span><span></span><span></span></div>
       <h2>曲库还是空的</h2>
       <p>在控制台确认音乐目录并运行一次扫描。扫描只读取文件和标签，不会改写、移动或删除源文件；完成后，这里会出现最近添加、作品和你的播放进度。</p>
@@ -43,19 +27,20 @@
 
     {{if .Hero.Recent}}
     <div class="h-hero-stack">
-      <section class="h-hero" data-focus="recent" data-album-id="{{.Hero.Recent.Album.ID}}" aria-label="最新入库">{{template "home-hero-album" .Hero.Recent}}</section>
-      {{with .Hero.Listening}}<section class="h-hero" data-focus="listening" data-album-id="{{.Album.ID}}" aria-label="最近在听" hidden>{{template "home-hero-album" .}}</section>{{end}}
-      {{with .Hero.Series}}<section class="h-hero" data-focus="series" aria-label="作品聚焦" hidden>{{template "home-hero-series" .}}</section>{{end}}
-      {{with .Hero.Random}}<section class="h-hero" data-focus="random" data-album-id="{{.Album.ID}}" aria-label="随机重温" hidden>{{template "home-hero-album" .}}</section>{{end}}
+      <section class="spotlight h-hero" data-focus="recent" data-album-id="{{.Hero.Recent.Album.ID}}" aria-label="最新入库">{{template "home-hero-album" .Hero.Recent}}</section>
+      {{with .Hero.Listening}}<section class="spotlight h-hero" data-focus="listening" data-album-id="{{.Album.ID}}" aria-label="最近在听" hidden>{{template "home-hero-album" .}}</section>{{end}}
+      {{with .Hero.Series}}<section class="spotlight h-hero" data-focus="series" aria-label="作品聚焦" hidden>{{template "home-hero-series" .}}</section>{{end}}
+      {{with .Hero.Random}}<section class="spotlight h-hero" data-focus="random" data-album-id="{{.Album.ID}}" aria-label="随机重温" hidden>{{template "home-hero-album" .}}</section>{{end}}
     </div>
     {{end}}
 
-    <div class="h-duo h-section">
+    <div class="editorial-body">
+    <div class="home-duo h-duo">
       <div class="h-duo-main">
       {{if .DailyMixes}}
       <section class="h-section" aria-labelledby="s-mixes">
-        <div class="h-section-head">
-          <h2 id="s-mixes">今日推荐</h2>
+        <div class="section-head h-section-head">
+          <h2 id="s-mixes">今日推荐</h2><span class="section-rule" aria-hidden="true"></span>
         </div>
         <div class="h-rows">
           {{range .DailyMixes}}
@@ -75,13 +60,13 @@
       </section>
       {{else if eq .DailyMixesStatus "generating"}}
       <section class="h-section" aria-labelledby="s-mixes">
-        <div class="h-section-head"><h2 id="s-mixes">今日推荐</h2></div>
+        <div class="section-head h-section-head"><h2 id="s-mixes">今日推荐</h2><span class="section-rule" aria-hidden="true"></span></div>
         <div class="h-empty-inline"><strong>正在生成今天的推荐</strong><span>稍后刷新页面即可看到。</span></div>
       </section>
       {{end}}
       <section class="h-section" aria-labelledby="s-played">
-        <div class="h-section-head">
-          <h2 id="s-played">最近播放</h2>
+        <div class="section-head h-section-head">
+          <h2 id="s-played">最近播放</h2><span class="section-rule" aria-hidden="true"></span>
           <div class="h-tools"><a class="h-link" href="/admin/playback">播放记录 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
         </div>
         {{if .RecentPlayed}}
@@ -104,14 +89,26 @@
         <div class="h-empty-inline"><strong>还没有播放记录</strong><span>播放过的歌曲会出现在这里。</span></div>
         {{end}}
       </section>
-      {{if .ResumeShown}}
-      <section class="h-section" aria-labelledby="s-resume">
-        <div class="h-section-head">
-          <h2 id="s-resume">接着听</h2>
+      </div>
+      <section class="h-section" aria-labelledby="s-new">
+        <div class="section-head h-section-head">
+          <h2 id="s-new">最近添加</h2><span class="section-rule" aria-hidden="true"></span>
+          <div class="h-tools"><a class="h-link" href="/admin/albums?sort=added">查看全部 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
         </div>
-        <div class="h-rows" data-track-list>
+        <div class="h-grid cols-3">
+          {{range .RecentAlbums}}{{template "home-album-card" .}}{{end}}
+        </div>
+      </section>
+    </div>
+
+      {{if .ResumeShown}}
+      <section class="h-section resume-section" aria-labelledby="s-resume">
+        <div class="section-head h-section-head">
+          <h2 id="s-resume">接着听</h2><span class="section-rule" aria-hidden="true"></span>
+        </div>
+        <div class="resume-grid" data-track-list>
           {{range .ResumeShown}}
-          <article class="h-row" data-track-id="{{.Record.Track.ID}}" data-track-title="{{.Record.Track.Title}}" data-track-artist="{{.Record.Track.Artist}}" data-track-album="{{.Record.Track.Album}}" data-track-artwork="{{thumb .Record.Track.ArtworkURL 256}}"{{with .Record.Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Record.Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Record.Track.DurationMillis}}">
+          <article class="resume-card" data-track-id="{{.Record.Track.ID}}" data-track-title="{{.Record.Track.Title}}" data-track-artist="{{.Record.Track.Artist}}" data-track-album="{{.Record.Track.Album}}" data-track-artwork="{{thumb .Record.Track.ArtworkURL 256}}"{{with .Record.Track.Container}} data-track-container="{{.}}"{{end}}{{with audioSpec .Record.Track}} data-track-spec="{{.}}"{{end}} data-track-duration-ms="{{.Record.Track.DurationMillis}}">
             <button type="button" class="h-row-art row-play-btn" data-resume-ms="{{.Record.PositionMillis}}" aria-label="从 {{formatDurationMillis .Record.PositionMillis}} 继续播放 {{.Record.Track.Title}}">
               {{if .Record.Track.ArtworkURL}}<img class="fade-img" src="{{thumb .Record.Track.ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}
               <span class="h-row-play"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></span>
@@ -127,23 +124,12 @@
         </div>
       </section>
       {{end}}
-      </div>
-      <section class="h-section" aria-labelledby="s-new">
-        <div class="h-section-head">
-          <h2 id="s-new">最近添加</h2>
-          <div class="h-tools"><a class="h-link" href="/admin/albums?sort=added">查看全部 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
-        </div>
-        <div class="h-grid cols-3">
-          {{range .RecentAlbums}}{{template "home-album-card" .}}{{end}}
-        </div>
-      </section>
-    </div>
 
     {{if .WorksPanel.Count}}
     <section class="h-section" aria-labelledby="s-works" data-rotation="works">
-      <div class="h-section-head">
+      <div class="section-head h-section-head">
         <h2 id="s-works">按作品漫游</h2>
-        <span class="h-count" data-rotation-count>{{.WorksPanel.Count}} 部作品</span>
+        <span class="h-count" data-rotation-count>{{.WorksPanel.Count}} 部作品</span><span class="section-rule" aria-hidden="true"></span>
         <div class="h-tools">
           <div class="h-seg" role="group" aria-label="作品类型">
             <button type="button" data-work-filter="all" class="on" aria-pressed="true">全部</button>
@@ -163,9 +149,9 @@
 
     {{if .SongsPanel.Count}}
     <section class="h-section" aria-labelledby="s-songs" data-rotation="songs">
-      <div class="h-section-head">
+      <div class="section-head h-section-head">
         <h2 id="s-songs">主题曲与插曲</h2>
-        <span class="h-count">来自作品关联的歌曲角色 · 每日轮换</span>
+        <span class="h-count">来自作品关联的歌曲角色 · 每日轮换</span><span class="section-rule" aria-hidden="true"></span>
         <div class="h-tools">
           <button type="button" class="h-btn h-btn-ghost h-btn-sm" data-rotation-next="songs" aria-label="换一批歌曲"{{if le .SongsPanel.Pages 1}} hidden{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dice"></use></svg> 换一批</button>
           <a class="h-link" href="/admin/tracks">歌曲 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
@@ -178,9 +164,9 @@
 
     {{if .Years}}
     <section class="h-section" aria-labelledby="s-era">
-      <div class="h-section-head">
+      <div class="section-head h-section-head">
         <h2 id="s-era">编年</h2>
-        <span class="h-count">按发行年份 · 点击柱子查看那一年</span>
+        <span class="h-count">按发行年份 · 点击柱子查看那一年</span><span class="section-rule" aria-hidden="true"></span>
       </div>
       <div class="h-years" role="group" aria-label="按发行年份浏览" id="era-chart">
         {{range .Years}}<button type="button" class="h-year" data-year="{{.Year}}" aria-pressed="{{if .Selected}}true{{else}}false{{end}}" aria-label="{{.Year}} 年，{{.Count}} 张专辑" style="--h:{{.Height}}%"><b>{{.Count}}</b><i></i></button>{{end}}
@@ -192,9 +178,9 @@
 
     {{if .Playlists}}
     <section class="h-section" aria-labelledby="s-pl">
-      <div class="h-section-head">
+      <div class="section-head h-section-head">
         <h2 id="s-pl">歌单</h2>
-        <span class="h-count">{{len .Playlists}} 个</span>
+        <span class="h-count">{{len .Playlists}} 个</span><span class="section-rule" aria-hidden="true"></span>
         <div class="h-tools">
           <button type="button" class="h-icon-btn" data-shelf-nav="pl" data-dir="prev" aria-label="向左滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></button>
           <button type="button" class="h-icon-btn" data-shelf-nav="pl" data-dir="next" aria-label="向右滚动"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></button>
@@ -223,6 +209,7 @@
       {{if .LastScan}}<span>上次扫描 {{formatAdminTime .LastScan}}</span>{{end}}
       <a class="h-foot-review" href="/admin/work-review">作品关联待审核{{with .PendingReviewCount}} <span class="nav-badge">{{.}}</span>{{end}}</a>
     </footer>
+    </div>
     {{end}}
   </main>
 </body>
@@ -298,7 +285,7 @@
 {{end}}
 
 {{define "home-chronicle-result"}}
-<div class="h-section-head">
+<div class="section-head h-section-head">
   <h3>{{.Year}} 年</h3>
   <span class="h-count">{{.Total}} 张专辑</span>
   <div class="h-tools"><a class="h-link" href="/admin/albums?year={{.Year}}">在专辑页查看全部 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a></div>
@@ -311,10 +298,9 @@
 {{end}}
 
 {{define "home-hero-album"}}
-<div class="h-hero-bg">{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="" aria-hidden="true">{{end}}</div>
-<div class="h-hero-inner" data-track-scope>
+<div class="spotlight-grid h-hero-inner" data-track-scope>
   <div class="h-hero-art">{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="{{.Album.Title}} 封面">{{else}}<div class="cover-placeholder">032</div>{{end}}</div>
-  <div class="h-hero-info">
+  <div class="spotlight-copy h-hero-info">
     {{template "home-hero-tabs" .Tabs}}
     <h2 title="{{.Album.Title}}">{{.Album.Title}}</h2>
     <p class="h-hero-by">{{template "artist-links" (artistLinks "compact" .Album.AlbumArtists .Album.PerformedBy .Album.Artist)}}</p>
@@ -341,11 +327,12 @@
         <button type="submit" class="h-icon-btn filled album-fav{{if .Album.IsFavorite}} is-favorite{{end}}" aria-pressed="{{if .Album.IsFavorite}}true{{else}}false{{end}}" title="{{if .Album.IsFavorite}}取消收藏{{else}}加入收藏{{end}}" aria-label="{{if .Album.IsFavorite}}取消收藏{{else}}收藏{{end}} {{.Album.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#{{if .Album.IsFavorite}}icon-heart-fill{{else}}icon-heart{{end}}"></use></svg></button>
       </form>
       {{if eq .Focus "random"}}<button type="button" class="h-btn h-btn-ghost" data-reroll="{{.Album.ID}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dice"></use></svg> 换一张</button>{{end}}
+      <a class="h-btn h-btn-ghost h-btn-sm" href="/admin/albums/{{.Album.ID}}#edit"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-edit"></use></svg> 编辑</a>
       <a class="h-link h-hero-detail" href="/admin/albums/{{.Album.ID}}">专辑详情 <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></a>
     </div>
   </div>
   {{if .Tracks}}
-  <aside class="h-hero-side" aria-label="聚焦内容预览">
+  <aside class="spotlight-preview h-hero-side" aria-label="聚焦内容预览">
     <div class="h-hero-side-head"><h3>曲目</h3><span>共 {{.Album.TrackCount}} 首{{if gt .Album.DiscCount 1}} · {{.Album.DiscCount}} 碟{{end}}</span></div>
     <ol class="h-hero-tracks" data-track-list>
       {{range $index, $track := .Tracks}}
@@ -366,10 +353,9 @@
 {{end}}
 
 {{define "home-hero-series"}}
-<div class="h-hero-bg">{{with .Albums}}{{with index . 0}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="" aria-hidden="true">{{end}}{{end}}{{end}}</div>
-<div class="h-hero-inner">
+<div class="spotlight-grid h-hero-inner">
   <div class="h-hero-art is-fan"><div class="h-fan">{{range $index, $entry := .Albums}}{{if lt $index 3}}{{if .Album.ArtworkURL}}<img src="{{thumb .Album.ArtworkURL 512}}" alt="">{{end}}{{end}}{{end}}</div></div>
-  <div class="h-hero-info">
+  <div class="spotlight-copy h-hero-info">
     {{template "home-hero-tabs" .Tabs}}
     <h2 title="{{.Title}}">{{.Title}}</h2>
     <p class="h-hero-by">{{if .IsSeries}}系列{{else}}作品{{end}} · {{len .Works}} 部作品</p>
@@ -386,7 +372,7 @@
     </div>
   </div>
   {{if .Albums}}
-  <aside class="h-hero-side" aria-label="聚焦内容预览">
+  <aside class="spotlight-preview h-hero-side" aria-label="聚焦内容预览">
     <div class="h-hero-side-head"><h3>关联专辑</h3><span>{{.AlbumCount}} 张</span></div>
     <ol class="h-hero-tracks is-albums">
       {{range .Albums}}

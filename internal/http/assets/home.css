@@ -3,30 +3,10 @@
    基础样式把所有 button 染成紫色，这里对主页用到的按钮类逐一显式覆盖。
    响应式一律按 @container app-main（主内容宽度）判断。 */
 
-/* ------------------------------------------------------------ page frame */
-.home-main { --home-max: 2400px; }
-.home-main > * { max-width: var(--home-max); margin-inline: auto; }
-
-.h-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 26px;
-}
-.h-head h1 { margin: 0; font-size: var(--fs-title); font-weight: 800; letter-spacing: -0.025em; line-height: 1.1; }
-.h-head .h-date { margin: 6px 0 0; color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
-.h-head-tools { display: flex; align-items: center; gap: 10px; }
-
-.h-search { position: relative; width: min(360px, 34vw); }
-.h-search .icon { position: absolute; left: 13px; top: 50%; width: 17px; height: 17px; color: var(--muted); transform: translateY(-50%); pointer-events: none; }
-.h-search input { width: 100%; min-width: 0; height: 40px; border-radius: var(--radius-pill); padding: 0 14px 0 38px; font-size: var(--fs-sm); }
-.h-search kbd {
-  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-  border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 5px;
-  color: var(--muted); background: var(--surface); font: 600 0.68rem/1.5 var(--font-ui);
-}
-.h-search input:focus ~ kbd, .h-search input:not(:placeholder-shown) ~ kbd { display: none; }
+/* Spotlight is a full-width band within the player canvas. */
+#app-main.home-main { padding: 0 0 calc(var(--player-h) + 34px); }
+.editorial-body { padding: 30px var(--content-gutter) 0; }
+.home-main > .h-first-run { margin: 36px var(--content-gutter) 0; }
 
 /* ------------------------------------------------------------ buttons (override base accent button) */
 .h-btn {
@@ -75,47 +55,31 @@
 
 /* ------------------------------------------------------------ section */
 .h-section { margin-top: 48px; }
-.h-section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; min-width: 0; }
-.h-section-head h2 { margin: 0; font-size: 1.28rem; font-weight: 750; letter-spacing: -0.015em; white-space: nowrap; }
-.h-section-head .h-count { color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.h-section-head .h-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.h-section-head .h-seg { align-self: center; }
+.h-section-head .h-count { color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.h-section-head .h-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
 /* ------------------------------------------------------------ spotlight hero */
-.h-hero[hidden] { display: none; }
-.h-hero {
-  position: relative; overflow: hidden; isolation: isolate;
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+.spotlight {
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(90deg, var(--hero-from), var(--hero-to));
 }
-.h-hero-bg { position: absolute; inset: 0; z-index: -1; overflow: hidden; }
-.h-hero-bg img {
-  position: absolute; inset: -80px; width: calc(100% + 160px); height: calc(100% + 160px);
-  object-fit: cover; filter: blur(64px) saturate(1.3);
-  opacity: var(--backdrop-opacity);
-  transition: opacity var(--dur-slow) var(--ease);
+.spotlight-grid {
+  display: grid;
+  grid-template-columns: clamp(160px, 20vw, 280px) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(18px, 2.8vw, 38px);
+  padding: clamp(24px, 3vw, 40px) var(--content-gutter);
 }
-.h-hero-bg::after {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(100deg, var(--backdrop-fade) 0%, transparent 60%), linear-gradient(0deg, var(--backdrop-fade), transparent 45%);
-}
-.h-hero-inner {
-  display: grid; grid-template-columns: auto minmax(0, 1fr);
-  align-items: end; gap: clamp(24px, 3vw, 44px);
-  padding: clamp(24px, 3vw, 40px);
-}
-.h-hero-art { position: relative; width: clamp(180px, 17vw, 244px); aspect-ratio: 1; }
+.h-hero-art { position: relative; width: 100%; aspect-ratio: 1; }
 .h-hero-art > img, .h-fan img {
-  width: 100%; height: 100%; object-fit: cover; border-radius: 8px; box-shadow: var(--shadow-cover);
+  width: 100%; height: 100%; object-fit: cover; border-radius: var(--radius-cover); box-shadow: var(--shadow-cover);
 }
-.h-hero-art > .cover-placeholder { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 8px; color: var(--muted); background: var(--surface-sunken); font-size: 1.6rem; font-weight: 800; }
+.h-hero-art > .cover-placeholder { display: grid; place-items: center; width: 100%; height: 100%; border-radius: var(--radius-cover); color: var(--muted); background: var(--surface-sunken); font-size: 1.6rem; font-weight: 800; }
 .h-hero-tabs { margin-bottom: 18px; }
-.h-hero h2 {
+.spotlight h2 {
   margin: 0; max-width: 22ch;
-  font-size: clamp(1.7rem, 2.5vw, 2.45rem); font-weight: 800; line-height: 1.12; letter-spacing: -0.03em;
-  overflow-wrap: anywhere; text-wrap: balance;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: clamp(28px, 3.6vw, 58px); line-height: 1.15;
+  font-weight: 600; letter-spacing: 0; overflow-wrap: anywhere;
 }
 .h-hero-by { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--fs-lg); font-weight: 600; }
 .h-hero-by a { color: inherit; }
@@ -132,10 +96,13 @@
 
 /* hero side: tracklist / related albums — only when the hero is wide enough.
    min-height: 0 让曲目列表在卡片自然高度内滚动，而不是把卡片撑高。 */
-.h-hero-side { display: none; min-width: 0; min-height: 0; align-self: stretch; flex-direction: column; gap: 10px; border-radius: var(--radius-lg); padding: 16px 14px 14px; background: color-mix(in oklab, var(--surface) 62%, transparent); backdrop-filter: blur(6px); }
+.spotlight-preview {
+  display: none; min-width: 0; min-height: 0; align-self: stretch; flex-direction: column;
+  gap: 9px; padding: 0 0 0 clamp(16px, 2vw, 28px); border-left: 1px solid var(--line);
+}
 .h-hero-side > .h-link { margin: auto 6px 0; }
 .h-hero-side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 6px; }
-.h-hero-side-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 750; }
+.h-hero-side-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
 .h-hero-side-head span { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .h-hero-tracks { display: grid; align-content: start; gap: 2px; margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 0; flex: 1 1 0; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .h-hero-tracks > li > button {
@@ -159,7 +126,7 @@
 .h-hero-tracks small { color: var(--muted); font-size: var(--fs-xs); }
 .h-hero-tracks .d { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .h-hero-tracks.is-albums > li > button { grid-template-columns: 44px minmax(0, 1fr) auto; }
-.h-hero-tracks.is-albums img, .h-hero-tracks.is-albums .cover-placeholder { width: 44px; height: 44px; border-radius: var(--radius-sm); object-fit: cover; display: grid; place-items: center; color: var(--muted); background: var(--surface-sunken); font-size: 0.7rem; }
+.h-hero-tracks.is-albums img, .h-hero-tracks.is-albums .cover-placeholder { width: 44px; height: 44px; border-radius: var(--radius-cover); object-fit: cover; display: grid; place-items: center; color: var(--muted); background: var(--surface-sunken); font-size: 0.7rem; }
 .h-hero-tracks .now-playing-row b, .h-hero-tracks .now-playing-row .no { color: var(--accent-strong-text); }
 .h-hero-tracks .now-playing-row .no { font-weight: 700; }
 
@@ -171,7 +138,7 @@
 .h-fan img:nth-child(3) { z-index: 1; transform: translate(-20%, -4%) rotate(-7deg) scale(0.86); filter: brightness(0.86); }
 .h-hero:hover .h-fan img:nth-child(2) { transform: translate(30%, -7%) rotate(10deg) scale(0.9); }
 .h-hero:hover .h-fan img:nth-child(3) { transform: translate(-28%, -6%) rotate(-10deg) scale(0.86); }
-.h-hero-art.is-fan { margin-inline: 20px 34px; }
+.h-hero-art.is-fan { width: 78%; justify-self: center; }
 
 .h-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .h-chip {
@@ -279,7 +246,7 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 .h-empty-inline[hidden] { display: none; }
 
 /* ------------------------------------------------------------ duo layout */
-.h-duo { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: clamp(28px, 3.4vw, 52px); }
+.home-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(20px, 3vw, 40px); }
 .h-duo > .h-section { margin-top: 0; }
 /* left column: 最近播放 (5) above 接着听 (2) */
 .h-duo-main { min-width: 0; }
@@ -345,7 +312,7 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 }
 .h-year:hover { background: transparent; }
 .h-year i {
-  display: block; height: var(--h); min-height: 4px; border-radius: 4px 4px 0 0;
+  display: block; width: min(100%, 56px); margin-inline: auto; height: var(--h); min-height: 4px; border-radius: 4px 4px 0 0;
   background: var(--fill-hover); transition: background var(--dur-fast) var(--ease);
 }
 .h-year:hover i { background: var(--line-strong); }
@@ -395,12 +362,13 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 .home-main ::-webkit-scrollbar-track { background: transparent; }
 
 /* ------------------------------------------------------------ wide desktop */
+@container app-main (min-width: 1020px) {
+  .spotlight-grid:has(.spotlight-preview) { grid-template-columns: minmax(195px, 280px) minmax(0, 1fr) minmax(230px, .8fr); }
+  .spotlight-preview { display: flex; }
+  .spotlight-grid:has(.spotlight-preview) .h-hero-detail { display: none; }
+}
 @container app-main (min-width: 1440px) {
-  .h-hero-inner { grid-template-columns: auto minmax(0, 1fr) minmax(320px, 420px); align-items: stretch; }
-  .h-hero-inner > .h-hero-art, .h-hero-inner > .h-hero-info { align-self: end; }
-  .h-hero-side { display: flex; }
-  .h-hero-detail { display: none; }
-  .h-duo { grid-template-columns: minmax(520px, 720px) minmax(0, 1fr); }
+  .spotlight-grid:has(.spotlight-preview) { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr) minmax(310px, 440px); }
   .h-grid.cols-3 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .h-grid.cols-3 > :nth-child(-n+8) { display: grid; }
   .h-tlist { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; }
@@ -416,8 +384,8 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 }
 
 /* ------------------------------------------------------------ narrow desktop */
-@container app-main (max-width: 1040px) {
-  .h-duo { grid-template-columns: minmax(0, 1fr); }
+@container app-main (max-width: 725px) {
+  .home-duo { grid-template-columns: minmax(0, 1fr); }
   .h-duo > .h-section + .h-section, .h-duo > .h-duo-main + .h-section { margin-top: 44px; }
   .h-grid.cols-3 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
@@ -428,8 +396,6 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
   .h-trow .h-row-time { text-align: right; }
 }
 @container app-main (max-width: 760px) {
-  .h-head { flex-wrap: wrap; }
-  .h-search { width: 100%; }
   .h-row-when { display: none; }
   .h-section-head { flex-wrap: wrap; row-gap: 10px; }
   .h-section-head .h-tools { margin-left: 0; }
@@ -451,98 +417,28 @@ a.h-card-sub:hover { color: var(--accent-strong-text); }
 .h-mix-open .icon { width: 16px; height: 16px; }
 .h-mix-row.is-loading { opacity: 0.6; }
 
-/* ------------------------------------------------- editorial v3 alignment (2026-11) */
-/* Clean neutral Spotlight band (zero blurred cover bleed), sharp 0px covers,
-   extending hairline section rules, and crisp 600-weight CJK typography. */
-.h-head h1 { font-weight: 600; letter-spacing: 0; }
-.h-section-head {
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 18px;
-}
-.h-section-head h2 {
-  font-size: 1.18rem;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-.h-section-head::after {
-  content: "";
-  flex: 1 1 24px;
-  height: 1px;
-  background: var(--line);
-  order: 2;
-}
-.h-section-head h2,
-.h-section-head .h-count { order: 1; }
-.h-section-head .h-seg,
-.h-section-head .h-tools { order: 3; margin-left: 0; }
-.h-era-result .h-section-head h3 { font-weight: 600; letter-spacing: 0; }
 
-.h-hero {
-  border: 1px solid var(--hero-line);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--hero-from) 0%, var(--hero-to) 100%);
-  box-shadow: none;
+/* Listening progress uses the same four-column card rhythm as the prototype. */
+.resume-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.resume-card {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: start; gap: 8px 11px;
+  min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
 }
-.h-hero-bg { display: none; }
-.h-hero-art > img,
-.h-fan img,
-.h-hero-art > .cover-placeholder {
-  border-radius: var(--radius-cover);
-}
-.h-hero h2 {
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1.18;
-}
-.h-hero-by { font-weight: 500; }
-.h-hero-side {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: color-mix(in oklab, var(--surface) 78%, transparent);
-  backdrop-filter: none;
-}
-.h-hero-side-head h3 { font-weight: 600; }
-.h-spec-tag {
-  background: var(--fill);
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-.h-chip {
-  background: var(--fill);
-  color: var(--text-secondary);
-}
-.h-chip:hover { background: var(--fill-hover); color: var(--text); }
-
-.h-cover,
-.h-row-art,
-.h-trow-art,
-.h-work-art {
-  border-radius: var(--radius-cover);
-}
-.h-card-title { font-weight: 600; }
-.h-work {
-  border-radius: var(--radius-md);
-  box-shadow: none;
-}
-.h-work:hover {
-  box-shadow: none;
-  outline-color: var(--line-strong);
-  background: var(--surface-hover);
-}
-.h-work-title { font-weight: 600; }
-.h-first-run h2 { font-weight: 600; letter-spacing: 0; }
+.resume-card .h-row-art { width: 48px; height: 48px; }
+.resume-card .h-row-when { grid-column: 2; justify-self: start; font-size: 11px; }
+.resume-card .h-row-progress { display: grid; gap: 3px; grid-template-columns: minmax(0, 1fr); }
+.resume-card .h-meter { width: 100%; min-width: 0; }
+.h-cover, .h-row-art, .h-trow-art, .h-work-art { border-radius: var(--radius-cover); }
+.h-spec-tag, .h-chip { background: var(--fill); }
 @container app-main (max-width: 760px) {
-  .h-section-head::after { display: none; }
+  .resume-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@container app-main (max-width: 640px) {
-  .h-hero-inner {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 18px;
-    padding: 18px;
-  }
-  .h-hero-art { width: min(220px, 64vw); }
-  .h-seg button { white-space: nowrap; }
+@container app-main (max-width: 480px) {
+  .editorial-body { padding-inline: 16px; }
+  .spotlight-grid { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 18px; }
+  .spotlight-grid .h-hero-art { width: min(220px, 66vw); }
+  .spotlight-grid .h-hero-art.is-fan { justify-self: start; margin-left: 17px; }
+  .h-seg { max-width: 100%; flex-wrap: wrap; }
+  .resume-card { grid-template-columns: 38px minmax(0, 1fr); padding: 8px; gap: 6px; }
+  .resume-card .h-row-art { width: 38px; height: 38px; }
 }
-

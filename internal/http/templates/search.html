@@ -4,7 +4,7 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
 {{template "sidebar" .}}{{template "nowplaying" .}}
 <main id="app-main" class="browser-main search-main">
-  <header class="search-header">
+  <header class="search-header collection-header">
     <h1>{{if .Result.Query}}“{{.Result.Query}}”的搜索结果{{else}}搜索音乐库{{end}}</h1>
     <form class="search-form" method="get" action="/admin/search" role="search">
       <label class="sr-only" for="library-search">搜索歌手、专辑或歌曲</label>
@@ -14,12 +14,12 @@
     </form>
   </header>
   {{if .Result.Query}}
-  <nav class="search-tabs" aria-label="搜索结果类别">
-    <a href="{{.AllURL}}"{{if not .Result.Category}} aria-current="page"{{end}}>全部</a>
-    <a href="{{index .More "artists"}}"{{if eq .Result.Category "artists"}} aria-current="page"{{end}}>歌手</a>
-    <a href="{{index .More "albums"}}"{{if eq .Result.Category "albums"}} aria-current="page"{{end}}>专辑</a>
-    <a href="{{index .More "tracks"}}"{{if eq .Result.Category "tracks"}} aria-current="page"{{end}}>歌曲</a>
-    <a href="{{index .More "composers"}}"{{if eq .Result.Category "composers"}} aria-current="page"{{end}}>作曲家</a>
+  <nav class="admin-tabs" aria-label="搜索结果类别">
+    <a class="admin-tab" href="{{.AllURL}}"{{if not .Result.Category}} aria-current="page"{{end}}>全部</a>
+    <a class="admin-tab" href="{{index .More "artists"}}"{{if eq .Result.Category "artists"}} aria-current="page"{{end}}>歌手</a>
+    <a class="admin-tab" href="{{index .More "albums"}}"{{if eq .Result.Category "albums"}} aria-current="page"{{end}}>专辑</a>
+    <a class="admin-tab" href="{{index .More "tracks"}}"{{if eq .Result.Category "tracks"}} aria-current="page"{{end}}>歌曲</a>
+    <a class="admin-tab" href="{{index .More "composers"}}"{{if eq .Result.Category "composers"}} aria-current="page"{{end}}>作曲家</a>
   </nav>
   {{with .Result.BestMatch}}
   <section class="search-best" aria-labelledby="search-best-heading">
@@ -29,19 +29,19 @@
   {{end}}
   {{if .Result.Artists.Total}}
   <section class="search-section" aria-labelledby="search-artists-heading">
-    <div class="search-section-head"><h2 id="search-artists-heading">歌手 <span>{{.Result.Artists.Total}}</span></h2>{{if and (not .Result.Category) (gt .Result.Artists.Total .Result.Artists.Limit)}}<a class="secondary-button" href="{{index .More "artists"}}" aria-label="更多歌手结果">更多</a>{{end}}</div>
+    <div class="section-head search-section-head"><h2 id="search-artists-heading">歌手 <span>{{.Result.Artists.Total}}</span></h2><span class="section-rule" aria-hidden="true"></span>{{if and (not .Result.Category) (gt .Result.Artists.Total .Result.Artists.Limit)}}<a class="secondary-button" href="{{index .More "artists"}}" aria-label="更多歌手结果">更多</a>{{end}}</div>
     <div class="search-grid">{{range .Result.Artists.Items}}<a class="search-item" href="/admin/artists/{{.ID}}"><span class="search-item-art search-avatar">{{if .ImageURL}}<img src="{{thumb .ImageURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<span>{{initial .Name}}</span>{{end}}</span><span class="search-item-copy"><strong>{{.Name}}</strong><small>{{.AlbumCount}} 张专辑 · {{.TrackCount}} 首演唱</small></span></a>{{end}}</div>
   </section>
   {{end}}
   {{if .Result.Albums.Total}}
   <section class="search-section" aria-labelledby="search-albums-heading">
-    <div class="search-section-head"><h2 id="search-albums-heading">专辑 <span>{{.Result.Albums.Total}}</span></h2>{{if and (not .Result.Category) (gt .Result.Albums.Total .Result.Albums.Limit)}}<a class="secondary-button" href="{{index .More "albums"}}" aria-label="更多专辑结果">更多</a>{{end}}</div>
+    <div class="section-head search-section-head"><h2 id="search-albums-heading">专辑 <span>{{.Result.Albums.Total}}</span></h2><span class="section-rule" aria-hidden="true"></span>{{if and (not .Result.Category) (gt .Result.Albums.Total .Result.Albums.Limit)}}<a class="secondary-button" href="{{index .More "albums"}}" aria-label="更多专辑结果">更多</a>{{end}}</div>
     <div class="search-grid">{{range .Result.Albums.Items}}<div class="search-item"><a class="search-item-art" href="/admin/albums/{{.ID}}" aria-label="查看专辑：{{.Title}}">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a><span class="search-item-copy"><a href="/admin/albums/{{.ID}}"><strong>{{.Title}}</strong></a>{{template "artist-links" (artistLinks "compact" .AlbumArtists .PerformedBy .Artist)}}<small>{{if .Year}}{{.Year}} · {{end}}{{.TrackCount}} 首</small></span></div>{{end}}</div>
   </section>
   {{end}}
   {{if .Result.Tracks.Total}}
   <section class="search-section" aria-labelledby="search-tracks-heading">
-    <div class="search-section-head"><h2 id="search-tracks-heading">歌曲 <span>{{.Result.Tracks.Total}}</span></h2>{{if and (not .Result.Category) (gt .Result.Tracks.Total .Result.Tracks.Limit)}}<a class="secondary-button" href="{{index .More "tracks"}}" aria-label="更多歌曲结果">更多</a>{{end}}</div>
+    <div class="section-head search-section-head"><h2 id="search-tracks-heading">歌曲 <span>{{.Result.Tracks.Total}}</span></h2><span class="section-rule" aria-hidden="true"></span>{{if and (not .Result.Category) (gt .Result.Tracks.Total .Result.Tracks.Limit)}}<a class="secondary-button" href="{{index .More "tracks"}}" aria-label="更多歌曲结果">更多</a>{{end}}</div>
     <div class="search-tracks" data-track-list>{{range .Result.Tracks.Items}}
       <article class="search-track" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{.Album}}" data-track-artwork="{{thumb .ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
         <a class="search-item-art" href="/admin/albums/{{.AlbumID}}#track-{{.ID}}" aria-label="查看歌曲：{{.Title}}">{{if .ArtworkURL}}<img src="{{thumb .ArtworkURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<span class="cover-placeholder">032</span>{{end}}</a>
@@ -54,7 +54,7 @@
   {{end}}
   {{if .Result.Composers.Total}}
   <section class="search-section" aria-labelledby="search-composers-heading">
-    <div class="search-section-head"><h2 id="search-composers-heading">作曲家 <span>{{.Result.Composers.Total}}</span></h2>{{if and (not .Result.Category) (gt .Result.Composers.Total .Result.Composers.Limit)}}<a class="secondary-button" href="{{index .More "composers"}}" aria-label="更多作曲家结果">更多</a>{{end}}</div>
+    <div class="section-head search-section-head"><h2 id="search-composers-heading">作曲家 <span>{{.Result.Composers.Total}}</span></h2><span class="section-rule" aria-hidden="true"></span>{{if and (not .Result.Category) (gt .Result.Composers.Total .Result.Composers.Limit)}}<a class="secondary-button" href="{{index .More "composers"}}" aria-label="更多作曲家结果">更多</a>{{end}}</div>
     <div class="search-grid">{{range .Result.Composers.Items}}<a class="search-item" href="/admin/credits/{{.ID}}?role=composer"><span class="search-item-art search-avatar">{{if .ImageURL}}<img src="{{thumb .ImageURL 128}}" alt="" loading="lazy" decoding="async">{{else}}<span>{{initial .Name}}</span>{{end}}</span><span class="search-item-copy"><strong>{{.Name}}</strong><small>作曲 {{.TrackCount}} 首</small></span></a>{{end}}</div>
   </section>
   {{end}}

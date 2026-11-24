@@ -324,13 +324,4 @@
     if (playPl) { playPlaylist(playPl.dataset.playPlaylist); return; }
   });
 
-  // "/" focuses the home search box (mirrors the hint kbd).
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== '/' || e.isComposing) return;
-    if (!main()) return;
-    const active = document.activeElement;
-    if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
-    const input = document.querySelector('.h-search input');
-    if (input) { e.preventDefault(); input.focus(); }
-  });
 })();

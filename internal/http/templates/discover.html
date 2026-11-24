@@ -5,33 +5,34 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
 {{template "sidebar" .}}{{template "nowplaying" .}}
 <main id="app-main" class="browser-main discovery-main">
-<header class="browser-header discovery-header"><div><h1>发现新音乐</h1><p class="result-count">从你喜欢的艺人与作品出发，寻找曲库之外值得拥有的发行。</p></div><a class="secondary-button discovery-settings-link" href="/admin/settings/acquisition">获取设置</a></header>
+<header class="browser-header collection-header discovery-header"><div><h1>发现新音乐</h1><p class="result-count">从你喜欢的艺人与作品出发，寻找曲库之外值得拥有的发行。</p></div><a class="secondary-button discovery-settings-link" href="/admin/settings/acquisition">获取设置</a></header>
 {{if .Blocked}}
-<section class="discovery-blocked"><h2>发现功能尚未就绪</h2><p>{{.Blocked}}</p>{{if .Rebuild.Status}}<p>身份重建状态：{{.Rebuild.Status}} · {{.Rebuild.Processed}} / {{.Rebuild.Discovered}}</p>{{if .Rebuild.Error}}<p>{{.Rebuild.Error}}</p>{{end}}<a href="/admin">前往控制台重建</a>{{end}}</section>
+<section class="card discovery-blocked"><h2>发现功能尚未就绪</h2><p>{{.Blocked}}</p>{{if .Rebuild.Status}}<p>身份重建状态：{{.Rebuild.Status}} · {{.Rebuild.Processed}} / {{.Rebuild.Discovered}}</p>{{if .Rebuild.Error}}<p>{{.Rebuild.Error}}</p>{{end}}<a href="/admin">前往控制台重建</a>{{end}}</section>
 {{else}}
 <section data-discovery data-icons="{{assetIconsSVG}}">
-<div class="discovery-status"><p class="discovery-status-text"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><span class="discovery-status-note" data-discovery-schedule-text></span></p><div class="discovery-status-actions"><button type="button" class="secondary" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button><button type="button" class="secondary" data-action="schedule" aria-expanded="false" aria-controls="discovery-schedule">定时与缓存</button><button type="button" data-action="refresh" title="复用缓存期内已抓取的数据，只补过期和新增的艺人与作品，并重新计算排名">刷新目录</button></div>
+<div class="card discovery-status"><p class="discovery-status-text"><span data-discovery-status>目录更新时间：{{if .Status.FinishedAt}}{{formatTime .Status.FinishedAt}}{{else}}尚未刷新{{end}}</span><span class="discovery-status-note" data-discovery-schedule-text></span></p><div class="discovery-status-actions"><button type="button" class="secondary" data-action="cancel" {{if ne .Status.Status "running"}}hidden{{end}}>取消刷新</button><button type="button" class="secondary" data-action="schedule" aria-expanded="false" aria-controls="discovery-schedule">定时与缓存</button><button type="button" data-action="refresh" title="复用缓存期内已抓取的数据，只补过期和新增的艺人与作品，并重新计算排名">刷新目录</button></div>
 <form class="discovery-schedule" id="discovery-schedule" data-discovery-schedule hidden>
-<label class="discovery-switch"><input type="checkbox" name="enabled"> 定时自动刷新</label>
+<label class="switch discovery-switch"><input type="checkbox" name="enabled"> 定时自动刷新</label>
 <label>间隔<select name="intervalDays"><option value="1">每天</option><option value="3">每 3 天</option><option value="7">每周</option><option value="14">每 2 周</option><option value="30">每月</option></select></label>
 <label>时间<select name="hour" data-hour-select></select></label>
 <label>数据复用<select name="cacheDays"><option value="1">1 天</option><option value="3">3 天</option><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option></select></label>
 <div class="discovery-schedule-actions"><button type="submit">保存</button><button type="button" class="secondary" data-action="refresh-full">全部重新抓取</button></div>
 <p class="discovery-schedule-help">“刷新目录”和定时刷新都会复用“数据复用”期内已抓取的艺人与作品，只联网补过期和新增的部分，排名每次都会重新计算。“全部重新抓取”会重新请求所有艺人（约每 2 秒一个，艺人多时需要较长时间）。时间按本机时区显示。</p>
 </form></div>
-<nav class="discovery-tabs" aria-label="发现内容状态">
-<button type="button" data-tab="recommended" aria-pressed="true">为你发现 <span data-count="recommended">{{.Counts.Recommended}}</span></button>
-<button type="button" data-tab="acquiring" aria-pressed="false">获取中 <span data-count="acquiring">{{.Counts.Acquiring}}</span></button>
-<button type="button" data-tab="ignored" aria-pressed="false">已忽略 <span data-count="ignored">{{.Counts.Ignored}}</span></button>
+<nav class="admin-tabs discovery-tabs" aria-label="发现内容状态">
+<button type="button" class="admin-tab" data-tab="recommended" aria-pressed="true">为你发现 <span data-count="recommended">{{.Counts.Recommended}}</span></button>
+<button type="button" class="admin-tab" data-tab="acquiring" aria-pressed="false">获取中 <span data-count="acquiring">{{.Counts.Acquiring}}</span></button>
+<button type="button" class="admin-tab" data-tab="ignored" aria-pressed="false">已忽略 <span data-count="ignored">{{.Counts.Ignored}}</span></button>
 </nav>
-<div class="discovery-chips" role="group" aria-label="按推荐来源筛选">
-<button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="artist" aria-pressed="false">来自艺人</button><button type="button" data-filter="work" aria-pressed="false">来自作品</button><button type="button" data-filter="mapping" aria-pressed="false">待确认对应 <span data-count="mapping">{{.Counts.Mapping}}</span></button><button type="button" data-filter="possible" aria-pressed="false">可能已有 <span data-count="possible">{{.Counts.Possible}}</span></button>
+<div class="chip-row discovery-chips" role="group" aria-label="按推荐来源筛选">
+<button type="button" class="chip" data-filter="all" aria-pressed="true">全部</button><button type="button" class="chip" data-filter="artist" aria-pressed="false">来自艺人</button><button type="button" class="chip" data-filter="work" aria-pressed="false">来自作品</button><button type="button" class="chip" data-filter="mapping" aria-pressed="false">待确认对应 <span data-count="mapping">{{.Counts.Mapping}}</span></button><button type="button" class="chip" data-filter="possible" aria-pressed="false">可能已有 <span data-count="possible">{{.Counts.Possible}}</span></button>
 </div>
 <div class="discovery-grid" data-discovery-grid>{{template "discovery-cards" .Items}}</div>
 <button type="button" class="secondary discovery-more" data-action="more" {{if lt (len .Items) 60}}hidden{{end}}>加载更多</button>
 <p class="discovery-announcement" aria-live="polite" data-discovery-live></p>
 <dialog class="discovery-dialog" aria-labelledby="discovery-dialog-title">
-<div class="discovery-dialog-header"><h2 id="discovery-dialog-title">关联本地专辑</h2><button type="button" data-action="close" aria-label="关闭">关闭</button></div>
+<div class="drawer-head discovery-dialog-header"><h2 id="discovery-dialog-title">关联本地专辑</h2><button type="button" data-action="close" aria-label="关闭">关闭</button></div>
+<div class="discovery-dialog-body">
 <p data-discovery-target></p>
 <div data-discovery-compare></div>
 <form data-discovery-search><label for="discovery-album-query">搜索本地专辑</label><p>优先选择尚无发行组身份的专辑；关联前请核对标题与版本。</p><div class="discovery-search"><input id="discovery-album-query" name="q" autocomplete="off" placeholder="输入专辑名"><button type="submit">搜索</button></div></form>
@@ -40,6 +41,7 @@
 <div data-task-cancel hidden><p>仅取消本地追踪，不会删除 qBittorrent 任务。</p><button type="button" data-action="confirm-task-cancel">确认取消获取</button></div>
 <div data-discovery-confirm hidden><p data-discovery-replace></p><button type="button" data-action="confirm-replace">确认替换发行组</button></div>
 <p role="status" data-discovery-dialog-message></p>
+</div>
 </dialog>
 </section>
 {{end}}
@@ -47,14 +49,14 @@
 {{define "discovery-cards"}}
 {{range .}}
 {{if .Mapping}}{{if or (eq .Mapping.Status "suggested") (eq .Mapping.Status "rejected")}}
-<article class="discovery-mapping" data-subject-id="{{.Mapping.SubjectID}}" data-mapping-status="{{.Mapping.Status}}">
+<article class="card discovery-mapping" data-subject-id="{{.Mapping.SubjectID}}" data-mapping-status="{{.Mapping.Status}}">
 <header class="discovery-mapping-head">
 <div>{{if eq .Mapping.Status "rejected"}}<p class="discovery-flag is-muted">已拒绝的对应</p>{{else}}<p class="discovery-flag">待确认对应</p>{{end}}
 <h2>{{.Mapping.SubjectName}}</h2>{{if .Mapping.SubjectNameCN}}<p class="discovery-mapping-cn">{{.Mapping.SubjectNameCN}}</p>{{end}}
 <p class="discovery-meta">《{{.Work}}》 · {{.Mapping.Relation}} · <a href="{{.Mapping.BangumiURL}}" target="_blank" rel="noopener noreferrer">Bangumi 条目</a></p></div>
 </header>
-<ul class="discovery-mapping-options" role="list">
-{{range .Mapping.Options}}<li class="discovery-mapping-option" data-option-rgid="{{.RGID}}"><div class="discovery-cover discovery-thumb"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</div>
+<ul class="cand-list discovery-mapping-options" role="list">
+{{range .Mapping.Options}}<li class="cand-item discovery-mapping-option" data-option-rgid="{{.RGID}}"><div class="discovery-cover discovery-thumb"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</div>
 <div class="discovery-mapping-body"><h3><a href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" title="在 MusicBrainz 查看：{{.Title}}">{{.Title}}</a></h3><p class="discovery-meta">{{.Artist}}{{if .Year}} · {{.Year}}{{end}} · {{.Kind}}</p>{{if .Evidence}}<ul class="discovery-evidence">{{range .Evidence}}<li>{{.}}</li>{{end}}</ul>{{end}}</div>
 <button type="button" data-action="mapping-confirm" aria-label="是这张：{{.Title}}">是这张</button><button type="button" class="secondary" data-action="mapping-restore" aria-label="恢复：{{.Title}}">恢复</button></li>{{end}}
 </ul>
@@ -63,9 +65,9 @@
 {{else}}<div class="discovery-empty"><h2>暂无推荐</h2><p>手动刷新目录，或尝试其他筛选。</p></div>{{end}}
 {{end}}
 {{define "discovery-card"}}
-<article class="discovery-card" data-rgid="{{.RGID}}" data-title="{{.Title}}" data-artist="{{.Artist}}">
-<a class="discovery-cover" href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}<span class="discovery-kind">{{.Kind}}</span></a>
-<h2><a href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" title="在 MusicBrainz 查看：{{.Title}}">{{.Title}}</a></h2><p class="discovery-artist" title="{{.Artist}}">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}}{{else}}年份未知{{end}}{{if eq .Source "work"}} · {{if .Work}}《{{.Work}}》{{else}}来自作品{{end}}{{end}}{{if .Mapping}}{{if .Mapping.BangumiURL}} · <a href="{{.Mapping.BangumiURL}}" target="_blank" rel="noopener noreferrer">Bangumi</a>{{end}}{{end}}</p>
+<article class="card discovery-card" data-rgid="{{.RGID}}" data-title="{{.Title}}" data-artist="{{.Artist}}">
+<div class="discovery-card-head"><a class="discovery-cover" href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-albums"></use></svg>{{if .CoverAvailable}}<img src="/admin/discover/covers/{{.RGID}}" alt="" loading="lazy">{{end}}</a><div class="discovery-card-copy"><span class="discovery-kind">{{.Kind}}</span><h2><a href="https://musicbrainz.org/release-group/{{.RGID}}" target="_blank" rel="noopener noreferrer" title="在 MusicBrainz 查看：{{.Title}}">{{.Title}}</a></h2><p class="discovery-artist" title="{{.Artist}}">{{.Artist}}</p><p class="discovery-meta">{{if .Year}}{{.Year}}{{else}}年份未知{{end}}{{if eq .Source "work"}} · {{if .Work}}《{{.Work}}》{{else}}来自作品{{end}}{{end}}{{if .Mapping}}{{if .Mapping.BangumiURL}} · <a href="{{.Mapping.BangumiURL}}" target="_blank" rel="noopener noreferrer">Bangumi</a>{{end}}{{end}}</p>
+</div></div>
 {{if .Mapping}}{{if eq .Mapping.Status "auto"}}<div class="discovery-auto"><span class="discovery-flag">Bangumi 自动对应</span><button type="button" class="discovery-text-button" data-action="mapping-reject" aria-label="不是这张：{{.Title}}" data-subject-id="{{.Mapping.SubjectID}}">不是这张</button></div>{{end}}{{end}}
 {{if .Reasons}}<ul class="discovery-reasons" role="list" title="{{range .Reasons}}{{.}}&#10;{{end}}">{{range .Reasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if .Ignored}}<div class="discovery-card-actions"><button type="button" class="secondary" data-action="restore">恢复推荐</button></div>

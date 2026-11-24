@@ -7,22 +7,17 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main matches-main" data-match-workbench data-active-tab="{{.MatchTab}}">
-    <header class="browser-header matches-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main matches-main" data-match-workbench data-active-tab="{{.MatchTab}}">
+    <header class="admin-header browser-header matches-header">
       <div class="matches-title-block">
-        <h1>艺术家匹配与审核</h1>
+        <h1>艺术家与身份审核</h1>
         <p class="result-count">以 MusicBrainz / Last.fm 为来源扫描艺术家身份；低于自动确认阈值的候选在这里人工审核。</p>
-        <nav class="admin-domain-tabs" aria-label="艺术家治理视图">
-          <a href="/admin/matches" class="is-active" aria-current="page">身份 / 署名 / 头像审核</a>
-          <a href="/admin/artist-aliases">中文别名补全</a>
-          <a href="/admin/merges">合并历史与回退</a>
-        </nav>
-        <details class="match-help">
+        <details class="match-help disclosure">
           <summary>扫描规则说明</summary>
           <p>“扫描未检查的艺术家”及服务启动自动扫描仅检查从未初次扫描过的艺术家（已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家均保持不动）；“全局补全扫描”会对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
         </details>
       </div>
-      <div class="header-actions matches-header-actions">
+      <div class="admin-header-actions header-actions matches-header-actions">
         <form method="post" action="/admin/matches/run">
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
@@ -206,20 +201,21 @@
     </section>
     {{end}}
 
-    <nav class="match-tabs" role="tablist" aria-label="艺术家匹配工作区">
-      <button type="button" class="match-tab{{if eq .MatchTab "identity"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "identity"}}true{{else}}false{{end}}" aria-controls="match-panel-identity" data-match-tab="identity">
+    <nav class="admin-tabs match-tabs" role="tablist" aria-label="艺术家匹配工作区">
+      <button type="button" class="admin-tab match-tab{{if eq .MatchTab "identity"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "identity"}}true{{else}}false{{end}}" aria-controls="match-panel-identity" data-match-tab="identity">
         <span>待审身份</span>
         <span class="match-tab-count">{{.ReviewTotal}}</span>
       </button>
-      <button type="button" class="match-tab{{if eq .MatchTab "credits"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "credits"}}true{{else}}false{{end}}" aria-controls="match-panel-credits" data-match-tab="credits">
+      <button type="button" class="admin-tab match-tab{{if eq .MatchTab "credits"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "credits"}}true{{else}}false{{end}}" aria-controls="match-panel-credits" data-match-tab="credits">
         <span>复合署名</span>
         <span class="match-tab-count">{{.CreditReviewTotal}}</span>
       </button>
-      <button type="button" class="match-tab{{if eq .MatchTab "avatars"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "avatars"}}true{{else}}false{{end}}" aria-controls="match-panel-avatars" data-match-tab="avatars">
+      <button type="button" class="admin-tab match-tab{{if eq .MatchTab "avatars"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "avatars"}}true{{else}}false{{end}}" aria-controls="match-panel-avatars" data-match-tab="avatars">
         <span>待审头像</span>
         <span class="match-tab-count">{{.ImageBackfill.PendingCount}}</span>
       </button>
-      <button type="button" class="match-tab{{if eq .MatchTab "tasks"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "tasks"}}true{{else}}false{{end}}" aria-controls="match-panel-tasks" data-match-tab="tasks">
+      {{template "artist-review-cross-tabs" .}}
+      <button type="button" class="admin-tab match-tab{{if eq .MatchTab "tasks"}} active{{end}}" role="tab" aria-selected="{{if eq .MatchTab "tasks"}}true{{else}}false{{end}}" aria-controls="match-panel-tasks" data-match-tab="tasks">
         <span>任务与补全</span>
         {{if .HasAnyActiveRun}}<span class="match-tab-dot" aria-label="有任务进行中"></span>{{end}}
       </button>
@@ -256,8 +252,8 @@
 
       <div class="match-review-stack">
         {{range $item := .Review}}
-        <article class="match-review-card" data-match-card data-ai-bucket="{{$item.AIFilterBucket}}" data-has-conflict="{{if $item.HasConflict}}1{{else}}0{{end}}">
-          <header class="match-review-card-head">
+        <article class="review-card match-review-card" data-match-card data-ai-bucket="{{$item.AIFilterBucket}}" data-has-conflict="{{if $item.HasConflict}}1{{else}}0{{end}}">
+          <header class="review-head match-review-card-head">
             <div class="review-card-title">
               <a class="match-artist-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
               <span class="match-artist-stats">{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
@@ -377,8 +373,8 @@
       </div>
       <div class="match-review-stack">
         {{range $item := .CreditCorrectionReview}}
-        <article class="match-review-card">
-          <header class="match-review-card-head">
+        <article class="review-card match-review-card">
+          <header class="review-head match-review-card-head">
             <div class="review-card-title">
               <a class="match-artist-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
               <span class="match-artist-stats">{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
@@ -496,8 +492,8 @@
     <section class="match-panel" id="match-panel-tasks" role="tabpanel" data-match-panel="tasks"{{if ne .MatchTab "tasks"}} hidden{{end}}>
       <div class="match-pipeline-grid">
         <!-- Card 1: 艺术家身份匹配扫描 -->
-        <article class="match-pipeline-card" data-pipeline-kind="artist"{{if not .ActiveArtistRun}} data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist"{{end}}>
-          <header class="match-pipeline-head">
+        <article class="card match-pipeline-card" data-pipeline-kind="artist"{{if not .ActiveArtistRun}} data-run-tasks data-active-url="/admin/matches/runs/active.json" data-run-kind="artist"{{end}}>
+          <header class="card-head match-pipeline-head">
             <div>
               <h2>艺术家身份匹配扫描</h2>
               <p class="muted">以 MusicBrainz / Last.fm 匹配外部身份，低置信候选送入待审。</p>
@@ -525,7 +521,7 @@
           {{with .LastArtistRun}}
           <p class="muted run-last match-last-run">最近任务：#{{.ID}} · {{artistScanModeLabel .ScanMode}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
           {{end}}
-          <details class="run-history match-details">
+          <details class="run-history disclosure match-details">
             <summary>任务记录（共 {{$.ArtistRunsTotal}} 条）</summary>
             <div class="match-history-list">
               {{range .ArtistRunHistory}}
@@ -553,8 +549,8 @@
         </article>
 
         <!-- Card 2: AI 艺术家预审与复合署名分析 -->
-        <article class="match-pipeline-card" data-pipeline-kind="aiReview"{{if not .ActiveAIRun}} data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview"{{end}}>
-          <header class="match-pipeline-head">
+        <article class="card match-pipeline-card" data-pipeline-kind="aiReview"{{if not .ActiveAIRun}} data-run-tasks data-active-url="/admin/ai-review/runs/active.json?group=artists" data-run-type="aiReview"{{end}}>
+          <header class="card-head match-pipeline-head">
             <div>
               <h2>AI 艺术家预审与复合署名分析</h2>
               <p class="muted">
@@ -586,7 +582,7 @@
           <p class="muted run-last match-last-run">最近一次 AI 预审：#{{.ID}}（{{aiReviewScopeLabel .Scope}}）· {{runStatusLabel .Status}} · 处理 {{.Processed}}/{{.Total}} · 自动绑定 {{.AutoApplied}} · 建议 {{.Recommended}} · 不确定 {{.Uncertain}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
           {{end}}
           {{if .AIApplied}}
-          <details class="run-history match-details">
+          <details class="run-history disclosure match-details">
             <summary>AI 最近自动绑定记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
             <ul class="ai-applied-list">
               {{range .AIApplied}}
@@ -607,8 +603,8 @@
         </article>
 
         <!-- Card 3: 艺术家头像补全 -->
-        <article class="match-pipeline-card" data-pipeline-kind="artistImage"{{if not .ImageBackfill.Active}} data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage"{{end}}>
-          <header class="match-pipeline-head">
+        <article class="card match-pipeline-card" data-pipeline-kind="artistImage"{{if not .ImageBackfill.Active}} data-run-tasks data-active-url="/admin/matches/images/runs/active.json" data-run-kind="artistImage"{{end}}>
+          <header class="card-head match-pipeline-head">
             <div>
               <h2>艺术家头像补全</h2>
               <p class="muted">默认仅补全已确认身份的艺人。所有模式均保留自定义头像。</p>
@@ -649,8 +645,8 @@
         </article>
 
         <!-- Card 4: 歌手简介补全 -->
-        <article class="match-pipeline-card" data-pipeline-kind="artistBio"{{if not .BioBackfill.Active}} data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio"{{end}}>
-          <header class="match-pipeline-head">
+        <article class="card match-pipeline-card" data-pipeline-kind="artistBio"{{if not .BioBackfill.Active}} data-run-tasks data-active-url="/admin/matches/biographies/runs/active.json" data-run-kind="artistBio"{{end}}>
+          <header class="card-head match-pipeline-head">
             <div>
               <h2>歌手简介补全</h2>
               <p class="muted">按已确认身份抓取 Wikipedia / Last.fm 简介，不覆盖人工填写版本，可在歌手页固定版本。</p>
@@ -694,7 +690,7 @@
         </header>
         <div class="match-dialog-body">
           <div class="match-dialog-group">
-            <span class="kicker">结构化图源</span>
+            <span class="card-kicker kicker">结构化图源</span>
             <div class="match-check-grid">
               <label class="match-check-card"><input type="checkbox" name="bangumi_enabled" value="1"{{if .ImageBackfill.Settings.BangumiEnabled}} checked{{end}}> <span><strong>Bangumi Persons</strong><small>ACG 声优与作曲家优先</small></span></label>
               <label class="match-check-card"><input type="checkbox" name="deezer_enabled" value="1"{{if .ImageBackfill.Settings.DeezerEnabled}} checked{{end}}> <span><strong>Deezer Public API</strong><small>流行音乐高分辨率艺人照</small></span></label>
@@ -703,7 +699,7 @@
             </div>
           </div>
           <div class="match-dialog-group">
-            <span class="kicker">联网 AI 兜底与质量把关</span>
+            <span class="card-kicker kicker">联网 AI 兜底与质量把关</span>
             <div class="match-check-grid">
               <label class="match-check-card"><input type="checkbox" name="web_fallback_enabled" value="1"{{if .ImageBackfill.Settings.WebFallbackEnabled}} checked{{end}}> <span><strong>联网搜索 + AI 选图兜底</strong><small>结构化图源缺失时检索候选</small></span></label>
               <label class="match-check-card"><input type="checkbox" name="web_auto_apply_high" value="1"{{if .ImageBackfill.Settings.WebAutoApplyHigh}} checked{{end}}> <span><strong>高置信度结果自动入库</strong><small>中低置信度进入「待审头像」</small></span></label>
@@ -711,7 +707,7 @@
             </div>
           </div>
           <div class="match-dialog-group">
-            <span class="kicker">模型、密钥与限流配额</span>
+            <span class="card-kicker kicker">模型、密钥与限流配额</span>
             <div class="match-input-grid">
               <label>Fanart.tv API Key<input type="password" name="fanart_api_key" placeholder="{{if .ImageBackfill.Settings.FanartAPIKey}}已配置（留空保持不变）{{else}}可选{{end}}"></label>
               <label>选图文本模型<input type="text" name="ai_model" value="{{.ImageBackfill.Settings.AIModel}}" placeholder="留空沿用全局主模型"></label>

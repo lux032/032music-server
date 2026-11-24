@@ -8,7 +8,7 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main feature-main">
-    <header class="browser-header">
+    <header class="browser-header collection-header">
       <div>
         <h1>歌单</h1>
         <p class="result-count">{{.Total}} 个歌单</p>
@@ -16,7 +16,7 @@
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <section class="feature-card create-playlist">
+    <section class="card create-playlist" id="create-playlist">
       <div>
         <h2>创建歌单</h2>
         <p class="result-count">先创建名称，再进入详情搜索并添加歌曲。</p>
@@ -31,7 +31,7 @@
 
     <section class="playlist-grid">
       {{range .Playlists}}
-      <a class="playlist-card" href="/admin/playlists/{{.ID}}">
+      <a class="card playlist-card" href="/admin/playlists/{{.ID}}">
         <div class="playlist-cover">{{if .ArtworkURL}}<img class="fade-img" src="{{thumb .ArtworkURL 256}}" alt="" loading="lazy" decoding="async">{{else}}<svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-playlists"></use></svg>{{end}}</div>
         <div>
           <h2>{{.Name}}</h2>

@@ -7,20 +7,19 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main daily-mix-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main ai-tagging-main daily-mix-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>每日推荐</h1>
-        <p class="result-count">每天按情绪与风格生成几个歌单：服务端根据标签、声学特征和播放记录选主题与曲目，模型只负责从候选主题中挑选并起标题，不选曲。这里是预览与调试页，网页主页和 App 的展示在后续版本加入。</p>
+        <p class="result-count">每天按情绪与风格生成几个歌单：服务端根据标签、声学特征和播放记录选主题与曲目，模型只负责从候选主题中挑选并起标题，不选曲。这里可预览推荐并查看曲目入选原因。</p>
       </div>
-      <a class="secondary-button" href="/admin">返回控制台</a>
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <section class="feature-card audio-analysis-status" data-tone="{{if .Mixes}}ok{{else if .RunError}}warn{{else}}off{{end}}">
-      <div class="audio-analysis-head">
+    <section class="card feature-card audio-analysis-status" data-tone="{{if .Mixes}}ok{{else if .RunError}}warn{{else}}off{{end}}">
+      <div class="card-head audio-analysis-head">
         <div>
-          <p class="kicker">状态 · 推荐日 {{.Day}}</p>
+          <p class="card-kicker kicker">状态 · 推荐日 {{.Day}}</p>
           <h2>{{.Status}}</h2>
           <p class="result-count">今天还可以换一个 {{.ReplacementsLeft}} 次（App/网页）；不再推荐的曲目 {{.Blocked}} 首。</p>
         </div>
@@ -35,19 +34,21 @@
       {{if .RunSkipped}}<p class="audio-analysis-line">凑不够曲目而跳过的主题：{{.RunSkipped}}</p>{{end}}
       {{if .RunError}}<p class="audio-analysis-line audio-analysis-error">{{.RunError}}</p>{{end}}
       {{if .RunShortlist}}
-      <details class="ai-tagging-compare">
+      <details class="ai-tagging-compare disclosure">
         <summary>候选主题（按 Thompson 抽样得分）</summary>
         <ol class="daily-mix-shortlist">{{range .RunShortlist}}<li>{{.}}</li>{{end}}</ol>
       </details>
       {{end}}
     </section>
 
+    <div class="admin-split">
+      <div class="admin-stack">
     {{range .Mixes}}{{$mix := .}}
-    <section class="feature-card daily-mix-card" id="mix-{{.Mix.ID}}">
+    <section class="card feature-card daily-mix-card" id="mix-{{.Mix.ID}}">
       <div class="daily-mix-head">
         <div class="daily-mix-covers" aria-hidden="true">{{range .JSON.CoverURLs}}<img src="{{.}}" alt="" loading="lazy">{{end}}</div>
         <div class="daily-mix-title">
-          <p class="kicker">{{.TypeLabel}}{{if .Plan.Cold}} · 冷门主题{{end}} · {{if eq .Mix.TitleSource "llm"}}模型起名{{else}}模板标题{{end}}{{if .Mix.Generation}} · 第 {{.Mix.Generation}} 次替换{{end}}</p>
+          <p class="card-kicker kicker">{{.TypeLabel}}{{if .Plan.Cold}} · 冷门主题{{end}} · {{if eq .Mix.TitleSource "llm"}}模型起名{{else}}模板标题{{end}}{{if .Mix.Generation}} · 第 {{.Mix.Generation}} 次替换{{end}}</p>
           <h2><a href="/admin/daily-mixes/{{.Mix.ID}}">{{.Mix.Title}}</a></h2>
           <p class="result-count">{{.Mix.Description}}</p>
           <p class="audio-analysis-line">{{.Mix.TrackCount}} 首 · {{.Duration}} · 熟悉 {{.Familiar}} / 探索 {{.Explore}}{{if .ByVia}} · {{.ByVia}}{{end}}</p>
@@ -59,10 +60,10 @@
           <button class="secondary-button">换一个</button>
         </form>
       </div>
-      <details class="daily-mix-tracks">
+      <details class="daily-mix-tracks disclosure">
         <summary>曲目与入选原因</summary>
         <div class="ai-tagging-usage">
-        <table class="ai-tagging-table">
+        <div class="data-table-wrap"><table class="data-table">
           <thead><tr><th>#</th><th>曲目</th><th>分组</th><th title="1–9：有声学分析时为唤醒度，否则由模型给的能量换算；歌单按它先升后落排序">起伏</th><th>入选</th><th>相关 × 偏好 × 新鲜（× 反馈）</th><th>标签</th><th></th></tr></thead>
           <tbody>
           {{range .Tracks}}
@@ -85,19 +86,36 @@
           </tr>
           {{end}}
           </tbody>
-        </table>
+        </table></div>
         </div>
       </details>
     </section>
     {{end}}
 
-    <section class="feature-card audio-analysis-settings">
-      <p class="kicker">设置</p>
-      <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/daily-mixes/settings">
+    {{if not .Mixes}}
+    <section class="card feature-card">
+      <p class="card-kicker kicker">今日歌单</p>
+      <h2>暂无今日推荐歌单</h2>
+      <p class="result-count">{{if .Settings.Enabled}}点击上方「重新生成今天的歌单」即可按当前声学分析与 AI 标签生成今日推荐。{{else}}在右侧开启「开启每日推荐」并保存后，服务端将每天按声学特征、标签与播放偏好自动预生成推荐歌单。{{end}}</p>
+    </section>
+    {{end}}
+
+    {{if .History}}
+    <section class="card feature-card">
+      <p class="card-kicker kicker">最近 7 天</p>
+      <ul class="ai-tagging-recent-list">
+        {{range .History}}<li><strong>{{.Day}}</strong><small>{{range $i, $t := .Titles}}{{if $i}} · {{end}}{{$t}}{{end}}</small></li>{{end}}
+      </ul>
+    </section>
+    {{end}}
+      </div>
+    <section class="card feature-card audio-analysis-settings">
+      <header class="card-head"><h2 class="card-title">每日推荐参数</h2></header>
+      <form class="form-stack audio-analysis-form ai-tagging-form" method="post" action="/admin/daily-mixes/settings">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label class="switch"><input type="checkbox" name="enabled" {{if .Settings.Enabled}}checked{{end}}> 开启每日推荐</label>
+        <label class="switch switch-row"><input type="checkbox" name="enabled" {{if .Settings.Enabled}}checked{{end}}><span>开启每日推荐</span></label>
         <fieldset class="ai-tagging-fields">
-          <div class="inline">
+          <div class="form-grid">
             <label>歌单数量
               <select name="mix_count">{{range .MixCountOptions}}<option value="{{.}}"{{if eq . $.Settings.MixCount}} selected{{end}}>{{.}} 个</option>{{end}}</select>
             </label>
@@ -114,22 +132,14 @@
               <input type="number" name="regenerate_limit" min="0" max="10" value="{{.Settings.RegenerateLimit}}">
             </label>
           </div>
-          <label class="ai-inline-check"><input type="checkbox" name="llm_titles" {{if .Settings.LLMTitles}}checked{{end}}> 让模型挑选主题并起标题{{if not .AIConfigured}}（需要先在 <a href="/admin/settings/ai">AI 设置</a> 中配置模型服务；未配置时使用模板标题）{{end}}</label>
-          <label class="ai-inline-check"><input type="checkbox" name="allow_sad" {{if .Settings.AllowSad}}checked{{end}}> 允许伤感类曲目进入歌单（默认不允许）</label>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="llm_titles" {{if .Settings.LLMTitles}}checked{{end}}><span>让模型挑选主题并起标题{{if not .AIConfigured}}（需要先在 <a href="/admin/settings/ai">AI 设置</a> 中配置模型服务；未配置时使用模板标题）{{end}}</span></label>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="allow_sad" {{if .Settings.AllowSad}}checked{{end}}><span>允许伤感类曲目进入歌单（默认不允许）</span></label>
         </fieldset>
         <p class="result-count">推荐日在每天的预生成时刻切换：之前打开看到的仍是前一天的歌单。情绪/风格类主题约占三分之二，其余为作品、创作者、歌手电台和“好久不见”。每个歌单至少 12 首、60–120 分钟；同一歌手最多 3 首、同一专辑最多 2 首，当天各歌单之间不重复。</p>
         <button class="secondary-button">保存</button>
       </form>
     </section>
-
-    {{if .History}}
-    <section class="feature-card">
-      <p class="kicker">最近 7 天</p>
-      <ul class="ai-tagging-recent-list">
-        {{range .History}}<li><strong>{{.Day}}</strong><small>{{range $i, $t := .Titles}}{{if $i}} · {{end}}{{$t}}{{end}}</small></li>{{end}}
-      </ul>
-    </section>
-    {{end}}
+    </div>
   </main>
 </body>
 </html>

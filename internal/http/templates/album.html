@@ -8,19 +8,28 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main album-main">
-    <nav class="detail-toolbar" aria-label="页面导航">
+    <nav class="detail-toolbar detail-top-bar" aria-label="页面导航">
       <a class="back-button" href="/admin/albums" data-history-back>
         <span class="back-button-icon" aria-hidden="true"><svg class="icon"><use href="{{assetIconsSVG}}#icon-arrow-left"></use></svg></span>
         <span class="back-button-label">返回专辑列表</span>
       </a>
+      <div class="detail-mgmt-tools">
       <a href="#edit" class="toolbar-action" data-drawer-open="edit" aria-haspopup="dialog">编辑专辑</a>
+      {{if .CanSearchBangumi}}
+      <form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
+        <button class="secondary-button">从 Bangumi 查找</button>
+      </form>
+      {{end}}
+      <a class="secondary-button" href="/admin/work-review?tab={{if .PendingReviewTab}}{{.PendingReviewTab}}{{else}}albums{{end}}&amp;albumId={{.AlbumDetail.ID}}">作品审核队列</a>
+      </div>
     </nav>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    {{if .AlbumDetail.ArtworkURL}}<div class="album-backdrop" aria-hidden="true"><img src="{{thumb .AlbumDetail.ArtworkURL 256}}" alt="" decoding="async"></div>{{end}}
-    <section class="album-hero">
-      {{if .AlbumDetail.ArtworkURL}}<img class="hero-cover fade-img" src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async">{{else}}<div class="hero-cover cover-placeholder">032</div>{{end}}
-      <div class="album-heading">
+    <section class="detail-hero album-hero">
+      {{if .AlbumDetail.ArtworkURL}}<img class="detail-cover hero-cover fade-img" src="{{thumb .AlbumDetail.ArtworkURL 768}}" alt="" decoding="async">{{else}}<div class="detail-cover hero-cover cover-placeholder">032</div>{{end}}
+      <div class="detail-heading album-heading">
         <h1>{{.AlbumDetail.Title}}</h1>
         {{if .AlbumDetail.Version}}<p class="album-version">{{.AlbumDetail.Version}}</p>{{end}}
         <h2 class="album-artist-links">{{template "artist-links" (artistLinks "detail" .AlbumDetail.Artists .AlbumDetail.PerformedBy .AlbumDetail.Artist)}}</h2>
@@ -66,18 +75,32 @@
           </form>
         </div>
       </div>
+      <aside class="detail-facts" aria-label="发行信息">
+          <h2 class="card-title">发行信息</h2>
+          <dl class="facts-list">
+            {{if .AlbumDetail.ReleaseKind}}<div class="fact-row"><dt>类型</dt><dd>{{albumTypeLabel .AlbumDetail.ReleaseKind}}</dd></div>{{end}}
+            <div class="fact-row"><dt>演出者</dt><dd class="album-artist-links">{{template "artist-links" (artistLinks "detail" .AlbumDetail.Artists .AlbumDetail.PerformedBy .AlbumDetail.Artist)}}</dd></div>
+            {{if .AlbumDetail.ReleaseDate}}<div class="fact-row"><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}
+            {{if .AlbumDetail.OriginalReleaseDate}}<div class="fact-row"><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}
+            {{if .AlbumDetail.Label}}<div class="fact-row"><dt>厂牌</dt><dd>{{.AlbumDetail.Label}}</dd></div>{{end}}
+            {{if .AlbumDetail.CatalogNumber}}<div class="fact-row"><dt>目录号</dt><dd>{{.AlbumDetail.CatalogNumber}}</dd></div>{{end}}
+            {{if .AlbumDetail.Country}}<div class="fact-row"><dt>国家/地区</dt><dd>{{.AlbumDetail.Country}}</dd></div>{{end}}
+            {{if .AlbumDetail.Genres}}<div class="fact-row"><dt>流派</dt><dd>{{.AlbumDetail.Genres}}</dd></div>{{end}}
+          </dl>
+        </aside>
     </section>
 
-    <div class="album-columns">
+    <div class="detail-columns album-columns">
       <section class="album-content">
-        <div class="section-title"><h2>曲目列表</h2><span data-track-total>{{.AlbumDetail.TrackCount}} 首</span></div>
+        <div class="section-head"><h2>曲目列表</h2><span class="section-rule" aria-hidden="true"></span><span data-track-total>{{.AlbumDetail.TrackCount}} 首</span></div>
         <div class="playlist-selection"><button type="button" data-select-tracks>全选歌曲</button><button type="button" data-playlist-selected>所选加入歌单</button><span data-selected-count role="status">0 首已选</span></div>
-        <div class="detail-tracks has-tieup-col" data-track-list data-track-select>
+        <div class="detail-tracks has-tieup-col album-track-table" data-track-list data-track-select>
+          <div class="track-table-head" aria-hidden="true"><span>#</span><span>标题 · 幕后署名</span><span>关联作品</span><span>歌手</span><span>音质</span><span>时长</span><span>操作</span></div>
           {{$disc := -1}}{{$multiDisc := gt .AlbumDetail.DiscCount 1}}
           {{range .Tracks}}
           {{$tieups := index $.TrackTieups .ID}}
           {{if and $multiDisc (ne .DiscNumber $disc)}}{{$disc = .DiscNumber}}<div class="disc-head"><strong>Disc {{.DiscNumber}}</strong><span>{{discSummary $.Tracks .DiscNumber}}</span></div>{{end}}
-          <article id="track-{{.ID}}" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
+          <article class="track-row" id="track-{{.ID}}" data-track-id="{{.ID}}" data-track-title="{{.Title}}" data-track-artist="{{.Artist}}" data-track-album="{{$.AlbumDetail.Title}}" data-track-artwork="{{thumb $.AlbumDetail.ArtworkURL 256}}" data-track-container="{{.Container}}" data-track-spec="{{audioSpec .}}" data-track-duration-ms="{{.DurationMillis}}">
             <span class="playable-number">
               <span class="num-text" data-disc="{{.DiscNumber}}" data-track-no="{{.TrackNumber}}">{{if $multiDisc}}{{.TrackNumber}}{{else}}{{.DiscNumber}}.{{.TrackNumber}}{{end}}</span>
               <button type="button" class="row-play-btn" title="播放 {{.Title}}" aria-label="播放 {{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-play"></use></svg></button>
@@ -86,7 +109,7 @@
               <div class="track-title-line">
                 <strong>{{.Title}}</strong>
               </div>
-              <small class="album-artist-links">{{template "track-artists-detail" .}}{{template "track-credits" .}} · <a href="/admin/tracks/{{.ID}}/artists">修正演唱者</a></small>
+              <small class="track-credits">{{template "track-credits" .}}</small>
             </div>
             <div class="track-tieup-cell">
               {{if $tieups}}
@@ -115,9 +138,12 @@
               </div>
               {{end}}
             </div>
+            <div class="track-singer"><small class="album-artist-links">{{template "track-artists-detail" .}}</small></div>
             {{with audioSpec .}}<span class="format-pill">{{.}}</span>{{else}}<span></span>{{end}}
             <span class="track-duration">{{if .DurationMillis}}{{formatDurationMillis .DurationMillis}}{{end}}</span>
             <div class="track-row-actions">
+              <a href="/admin/tracks/{{.ID}}/artists" class="icon-action" title="修正演唱者" aria-label="修正演唱者：{{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-edit"></use></svg></a>
+              <a href="/admin/tracks/{{.ID}}/tags" class="icon-action" title="AI 标签" aria-label="AI 标签：{{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-ai"></use></svg></a>
               <details class="queue-menu track-queue-menu">
                 <summary class="icon-action" title="加入队列：{{.Title}}" aria-label="加入队列：{{.Title}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-dots"></use></svg></summary>
                 <div class="album-menu-items">
@@ -140,7 +166,7 @@
         {{if .AlbumDetail.Review}}<div class="editorial"><p class="kicker">专辑介绍</p><p>{{.AlbumDetail.Review}}</p></div>{{end}}
       </section>
 
-      <aside class="album-inspector">
+      <aside class="album-inspector inspector-box">
         {{if .InspectorWorks}}
         <section id="inspector-works">
           <p class="kicker">关联作品 ({{len .InspectorWorks}})</p>
@@ -162,13 +188,7 @@
             <a href="/admin/work-review?tab={{.PendingReviewTab}}&albumId={{.AlbumDetail.ID}}">去审核 →</a>
           </div>
           {{end}}
-          {{if .CanSearchBangumi}}
-          <form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search" style="margin-top:8px;">
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
-            <button class="secondary-button" style="width:100%;">从 Bangumi 查找</button>
-          </form>
-          {{else if eq .BangumiSearchBlockReason "unlinked"}}
+          {{if eq .BangumiSearchBlockReason "unlinked"}}
           <p class="field-hint" style="margin-top:8px;">已解除 Bangumi 关联，请在作品页手动关联。</p>
           {{else if eq .BangumiSearchBlockReason "rejected"}}
           <p class="field-hint" style="margin-top:8px;">已拒绝 Bangumi 候选，请在作品页手动关联。</p>
@@ -182,13 +202,7 @@
             <a href="/admin/work-review?tab={{.PendingReviewTab}}&albumId={{.AlbumDetail.ID}}">去审核 →</a>
           </div>
           {{end}}
-          {{if .CanSearchBangumi}}
-          <form method="post" action="/admin/enrichment/albums/{{.AlbumDetail.ID}}/subjects/search" style="margin-top:8px;">
-            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-            <input type="hidden" name="returnTo" value="/admin/albums/{{.AlbumDetail.ID}}">
-            <button class="secondary-button" style="width:100%;">从 Bangumi 查找</button>
-          </form>
-          {{else if eq .BangumiSearchBlockReason "unlinked"}}
+          {{if eq .BangumiSearchBlockReason "unlinked"}}
           <p class="field-hint" style="margin-top:8px;">已解除 Bangumi 关联，请在作品页手动关联。</p>
           {{else if eq .BangumiSearchBlockReason "rejected"}}
           <p class="field-hint" style="margin-top:8px;">已拒绝 Bangumi 候选，请在作品页手动关联。</p>
@@ -196,19 +210,6 @@
         </section>
         {{end}}
 
-        <section>
-          <p class="kicker">发行信息</p>
-          <dl>
-            {{if .AlbumDetail.ReleaseKind}}<div><dt>类型</dt><dd>{{albumTypeLabel .AlbumDetail.ReleaseKind}}</dd></div>{{end}}
-            <div><dt>演出者</dt><dd class="album-artist-links">{{template "artist-links" (artistLinks "detail" .AlbumDetail.Artists .AlbumDetail.PerformedBy .AlbumDetail.Artist)}}</dd></div>
-            {{if .AlbumDetail.ReleaseDate}}<div><dt>发行日期</dt><dd>{{.AlbumDetail.ReleaseDate}}</dd></div>{{end}}
-            {{if .AlbumDetail.OriginalReleaseDate}}<div><dt>原始发行</dt><dd>{{.AlbumDetail.OriginalReleaseDate}}</dd></div>{{end}}
-            {{if .AlbumDetail.Label}}<div><dt>厂牌</dt><dd>{{.AlbumDetail.Label}}</dd></div>{{end}}
-            {{if .AlbumDetail.CatalogNumber}}<div><dt>目录号</dt><dd>{{.AlbumDetail.CatalogNumber}}</dd></div>{{end}}
-            {{if .AlbumDetail.Country}}<div><dt>国家/地区</dt><dd>{{.AlbumDetail.Country}}</dd></div>{{end}}
-            {{if .AlbumDetail.Genres}}<div><dt>流派</dt><dd>{{.AlbumDetail.Genres}}</dd></div>{{end}}
-          </dl>
-        </section>
         {{with albumPeople .Tracks}}
         <section class="album-people">
           <p class="kicker">参与者 ({{len .}})</p>

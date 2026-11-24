@@ -8,7 +8,7 @@
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
   <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main track-tags-main">
-    <header class="browser-header">
+    <header class="browser-header collection-header">
       <div>
         <p class="kicker">AI 标签</p>
         <h1>{{.Info.Title}}</h1>
@@ -18,7 +18,7 @@
     </header>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <section class="feature-card">
+    <section class="card feature-card">
       <p class="kicker">当前生效</p>
       {{if .Effective}}
       <span class="ai-chips ai-chips-large">{{range .Effective}}<span class="ai-chip{{if eq .Kind "style"}} ai-chip-style{{end}}{{if .Negative}} ai-chip-negative{{end}}" title="来源：{{if eq .Source "user"}}人工修正{{else if eq .Source "llm"}}AI{{else}}声学{{end}}">{{.Label}}{{if eq .Source "user"}} ✎{{end}}</span>{{end}}</span>
@@ -29,7 +29,7 @@
     </section>
 
     {{with .Meta}}
-    <section class="feature-card">
+    <section class="card feature-card">
       <p class="kicker">AI 结果</p>
       <span class="ai-chips">{{range $.LLM}}<span class="ai-chip{{if eq .Kind "style"}} ai-chip-style{{end}}{{if .Negative}} ai-chip-negative{{end}}">{{.Label}} <small>{{if eq .Kind "mood"}}{{.WeightPct}}% · {{end}}把握 {{.ConfPct}}%</small></span>{{end}}</span>
       <p class="audio-analysis-line">
@@ -41,7 +41,7 @@
     {{end}}
 
     {{with .Evidence}}
-    <section class="feature-card">
+    <section class="card feature-card">
       <p class="kicker">声学证据</p>
       <dl class="ai-tagging-evidence">
         <div><dt>风格（词表）</dt><dd>{{range .StyleHints}}<span class="ai-chip ai-chip-style">{{tagLabel "style" .Label}} {{printf "%.2f" .P}}</span>{{end}}{{if .Locked}}<small>锁定：{{range $i, $l := .Locked}}{{if $i}}、{{end}}{{tagLabel "style" $l}}{{end}}</small>{{end}}</dd></div>
@@ -54,7 +54,7 @@
     </section>
     {{end}}
 
-    <section class="feature-card">
+    <section class="card feature-card">
       <p class="kicker">人工修正</p>
       <form class="track-tags-form" method="post" action="/admin/tracks/{{.Info.TrackID}}/tags">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">

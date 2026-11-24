@@ -7,8 +7,8 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main enrichment-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main enrichment-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>元数据自动增强</h1>
         <p class="result-count">以 Bangumi 为来源，将作品对齐到日本动画、游戏条目。</p>
@@ -24,7 +24,7 @@
           <option value="work">单个作品</option>
         </select>
         <input type="number" min="1" name="targetId" aria-label="目标 ID" placeholder="目标 ID">
-        <label class="switch"><input type="checkbox" name="force"> 强制刷新</label>
+        <label class="inline-check"><input type="checkbox" name="force"> 强制刷新</label>
         <button>启动增强</button>
       </form>
     </header>
@@ -34,9 +34,10 @@
       <p class="muted" style="margin:0;font-size:var(--fs-sm);">首轮曲目阶段会逐首查询 Bangumi，曲目多时需要数小时；之后有缓存会快很多。</p>
     </section>
 
+    <div class="admin-grid-2 enrichment-entries">
     {{if ge .PosterTotal 0}}
-    <section class="feature-section">
-      <div class="pending-review-banner enrichment-review-entry">
+    <section class="card">
+      <div class="card-head enrichment-review-entry">
         <span>作品海报：已缓存 {{.PosterCached}} / 应有 {{.PosterTotal}} · 缺失 {{subtract .PosterTotal .PosterCached}}{{if .PosterLast}} · 上次补全：{{if .PosterLast.RateLimited}}因限流停止（{{end}}成功 {{.PosterLast.Cached}} · 失败 {{.PosterLast.Failed}}{{if .PosterLast.RateLimited}}）{{end}}{{end}}</span>
         {{if .PosterBackfillRunning}}
         <span class="muted">正在补全…</span>
@@ -50,14 +51,16 @@
     </section>
     {{end}}
 
-    <section class="feature-section">
-      <div class="pending-review-banner enrichment-review-entry">
+    <section class="card">
+      <div class="card-head enrichment-review-entry">
         <span>作品关联待审 {{.TotalPendingCount}} 条（专辑 {{.AlbumCount}} · 曲目 {{.TrackCount}} · 作品 {{.WorkCount}}）</span>
         <a href="/admin/work-review">去审核 →</a>
       </div>
     </section>
 
-    <section class="feature-section run-tasks" data-run-tasks data-active-url="/admin/enrichment/runs/active.json" data-run-kind="enrichment">
+    </div>
+
+    <section class="card feature-section run-tasks" data-run-tasks data-active-url="/admin/enrichment/runs/active.json" data-run-kind="enrichment">
       <div class="section-title"><div><h2>当前任务</h2></div></div>
       {{with .ActiveRun}}
       <article class="run-card" data-run-card data-run-id="{{.ID}}" data-run-status="{{.Status}}">
@@ -92,23 +95,16 @@
       {{with .LastRun}}
       <p class="muted run-last">最近任务：#{{.ID}} · {{enrichmentScopeLabel .}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 失败 {{.Failed}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
       {{end}}
-      <details class="run-history">
+      <details class="run-history disclosure">
         <summary>任务记录（共 {{$.HistoryTotal}} 条）</summary>
-        <div class="enrichment-runs">
-          {{range .History}}
-          <article>
-            <header>
-              <strong>#{{.ID}} · {{enrichmentScopeLabel .}}{{if .Force}} · 强制刷新{{end}}</strong>
-              <span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span>
-            </header>
-            <div class="progress"><span style="width:{{percentDone .Processed .Total}}%"></span></div>
-            <p>处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}</p>
-            {{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}
-          </article>
-          {{else}}
-          <div class="zero-state"><strong>还没有增强任务</strong><span>选择范围并启动第一次任务。</span></div>
-          {{end}}
-        </div>
+        <div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>任务</th><th>状态</th><th>处理结果</th></tr></thead>
+          <tbody>{{range .History}}
+            <tr><td><strong>#{{.ID}} · {{enrichmentScopeLabel .}}</strong>{{if .Force}}<small>强制刷新</small>{{end}}</td>
+            <td><span class="run-status status-{{.Status}}">{{runStatusLabel .Status}}</span></td>
+            <td>处理 {{.Processed}} / {{.Total}} · 成功 {{.Succeeded}} · 跳过 {{.Skipped}} · 审核 {{.Review}} · 失败 {{.Failed}}{{if .ErrorMessage}}<small class="run-error">{{.ErrorMessage}}</small>{{end}}</td></tr>
+          {{else}}<tr><td colspan="3">还没有增强任务</td></tr>{{end}}</tbody>
+        </table></div>
         {{if gt $.HistoryTotal $.HistoryLimit}}
         <nav class="page-nav run-history-pages" aria-label="任务记录分页">
           {{if gt $.HistoryPage 1}}<a href="/admin/enrichment?runsPage={{subtract $.HistoryPage 1}}">上一页</a>{{end}}
@@ -120,8 +116,8 @@
     </section>
 
     {{if .Artists}}
-    <section class="feature-section">
-      <div class="section-title"><div><h2>艺术家关系候选</h2></div></div>
+    <section class="card feature-section">
+      <div class="card-head"><div><h2>艺术家关系候选</h2></div></div>
       <p>共 {{.PendingArtistCount}} 个待审核艺术家{{if gt .PendingArtistCount 200}}，仅显示前 200{{end}}</p>
       <div class="review-list">
         {{range $item := .Artists}}

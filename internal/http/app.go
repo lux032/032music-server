@@ -226,6 +226,10 @@ func indexLettersWhere(kana bool) []string {
 type dashboardPageData struct {
 	Identity         storage.ReleaseGroupRebuild
 	IdentityFailures []storage.ScanFailure
+	BackupStatus     *storage.BackupStatus
+	TOTPEnabled      bool
+	BannedCount      int
+	AllowlistCount   int
 	Chrome
 	Version        string
 	Uptime         string
@@ -304,6 +308,13 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"mul":                    func(a, b int) int { return a * b },
 		"subtract":               func(a, b int) int { return a - b },
 		"scanStatusLabel":        scanStatusLabel,
+		"scanProgress": func(scan storage.ScanJob) int {
+			if scan.DiscoveredFiles == 0 {
+				return 0
+			}
+			processed := scan.ProcessedFiles + scan.SkippedFiles + scan.FailedFiles
+			return int(min(100, processed*100/scan.DiscoveredFiles))
+		},
 		// indexValues and kanaIndexValues split indexLetters the same way the
 		// library index bar does: "#" stays with the always-visible Latin
 		// letters, only kana go behind the かな toggle.
@@ -975,7 +986,18 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			a.logger.Warn("query identity rebuild failures", "error", identityErr)
 		}
 	}
+	var backupStatus *storage.BackupStatus
+	if a.backups != nil {
+		status := a.backups.Status()
+		backupStatus = &status
+	}
+	bans := a.loginLimiter.activeBans(time.Now())
+	envAllow, pageAllow := a.loginLimiter.allowlists()
 	a.render(w, http.StatusOK, "dashboard.html", dashboardPageData{
+		BackupStatus:     backupStatus,
+		TOTPEnabled:      a.currentCredentials().totpEnabled(),
+		BannedCount:      len(bans),
+		AllowlistCount:   len(envAllow) + len(pageAllow),
 		Identity:         identity,
 		IdentityFailures: identityFailures,
 		Chrome:           a.chromeFor(r.Context(), session, "console"),

@@ -7,40 +7,39 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main identity-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main identity-main">
+    <header class="admin-header browser-header">
       <div>
-        <h1>合并历史</h1>
+        <h1>艺术家与身份审核</h1>
         <p class="result-count">回退只撤销对应操作创建的关系，不覆盖合并之后新增的数据。</p>
       </div>
     </header>
-    <nav class="admin-domain-tabs" aria-label="艺术家治理视图">
-      <a href="/admin/matches">身份 / 署名 / 头像审核</a>
-      <a href="/admin/artist-aliases">中文别名补全</a>
-      <a href="/admin/merges" class="is-active" aria-current="page">合并历史与回退</a>
-    </nav>
+    {{template "artist-review-route-tabs" .}}
+    {{template "artist-task-overview" .}}
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
 
-    <section class="merge-list">
-      {{range .Merges}}
-      <article>
-        <div>
-          <span class="operation-status {{.Status}}">{{if eq .Status "merged"}}已合并{{else if eq .Status "rolled_back"}}已回退{{else}}{{.Status}}{{end}}</span>
-          <strong>{{.SourceName}} <i><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-arrow-right"></use></svg></i> {{.TargetName}}</strong>
-          <small>#{{.ID}} · {{formatTime .CreatedAt}}</small>
-        </div>
-        {{if eq .Status "merged"}}
-        <form method="post" action="/admin/merges/{{.ID}}/rollback">
-          <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
-          <button class="secondary-round">回退合并</button>
-        </form>
-        {{else}}
-        <span class="result-count">已于 {{formatTime .RolledBackAt}} 回退</span>
-        {{end}}
-      </article>
-      {{else}}
-      <div class="zero-state"><strong>还没有合并操作</strong></div>
-      {{end}}
+    <section class="card">
+      <header class="card-head"><h2 class="card-title">合并历史与回退</h2></header>
+      {{if .Merges}}
+      <div class="data-table-wrap"><table class="data-table">
+        <thead><tr><th scope="col">记录</th><th scope="col">源歌手</th><th scope="col">目标歌手</th><th scope="col">状态</th><th scope="col">时间</th><th scope="col">操作</th></tr></thead>
+        <tbody>{{range .Merges}}
+          <tr>
+            <td>#{{.ID}}</td><td>{{.SourceName}}</td><td>{{.TargetName}}</td>
+            <td><span class="status-badge{{if eq .Status "merged"}} success{{end}}">{{if eq .Status "merged"}}已合并{{else if eq .Status "rolled_back"}}已回退{{else}}{{.Status}}{{end}}</span></td>
+            <td>{{formatTime .CreatedAt}}</td>
+            <td>
+              {{if eq .Status "merged"}}
+              <form method="post" action="/admin/merges/{{.ID}}/rollback">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <button class="secondary-button">回退合并</button>
+              </form>
+              {{else}}已于 {{formatTime .RolledBackAt}} 回退{{end}}
+            </td>
+          </tr>
+        {{end}}</tbody>
+      </table></div>
+      {{else}}<div class="zero-state"><strong>还没有合并操作</strong></div>{{end}}
     </section>
   </main>
 </body>

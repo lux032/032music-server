@@ -354,6 +354,7 @@
   // album that every later pick is merged into. State lives only for the
   // current page; any PJAX swap (including the POST result) resets it.
   let albumSelection = [];
+  let explicitAlbumSelection = false;
   function albumCards() { return [...document.querySelectorAll('.album-browser .library-album-card[data-album-id]')]; }
   function renderAlbumSelection() {
     const bar = document.querySelector('.album-selection-bar');
@@ -374,7 +375,12 @@
     });
     // Detail pages have several grids (release groups / collapsed "more");
     // every grid must show the selecting state, not just the first one.
-    document.querySelectorAll('.album-browser').forEach(g => g.classList.toggle('is-selecting', albumSelection.length > 0));
+    const selecting = explicitAlbumSelection || albumSelection.length > 0;
+    document.querySelectorAll('.album-browser').forEach(grid => grid.classList.toggle('is-selecting', selecting));
+    for (const button of document.querySelectorAll('[data-album-select-mode]')) {
+      button.setAttribute('aria-pressed', String(selecting));
+      button.textContent = selecting ? '退出批量选择' : '批量选择 / 合并';
+    }
     if (!bar) return;
     bar.hidden = albumSelection.length === 0;
     bar.querySelector('[data-selection-count]').textContent = `已选择 ${albumSelection.length} 张专辑`;
@@ -390,6 +396,7 @@
     renderAlbumSelection();
   }
   function clearAlbumSelection() {
+    explicitAlbumSelection = false;
     albumSelection = [];
     renderAlbumSelection();
   }
@@ -416,6 +423,12 @@
   // reaching the PJAX link handler.
   document.addEventListener('click', e => {
     if (!(e.target instanceof Element)) return;
+    const mode = e.target.closest('[data-album-select-mode]');
+    if (mode) {
+      if (explicitAlbumSelection || albumSelection.length) clearAlbumSelection();
+      else { explicitAlbumSelection = true; renderAlbumSelection(); }
+      return;
+    }
     const toggle = e.target.closest('.album-select');
     const card = e.target.closest('.album-browser .library-album-card[data-album-id]');
     if (toggle && card) {
@@ -424,7 +437,7 @@
       toggleAlbum(card);
       return;
     }
-    if (card && albumSelection.length && e.target.closest('.album-tile-cover') && !e.metaKey && !e.ctrlKey) {
+    if (card && (explicitAlbumSelection || albumSelection.length) && e.target.closest('.album-tile-cover') && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
       e.stopPropagation();
       toggleAlbum(card);
@@ -438,7 +451,7 @@
     }
   }, true);
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !albumSelection.length || activeDrawer || e.target.closest?.('.album-card-menu[open], .queue-menu[open], .filter-control')) return;
+    if (e.key !== 'Escape' || (!explicitAlbumSelection && !albumSelection.length) || activeDrawer || e.target.closest?.('.album-card-menu[open], .queue-menu[open], .filter-control')) return;
     e.preventDefault();
     clearAlbumSelection();
   });
@@ -559,13 +572,23 @@
     drawer.classList.add('is-open');
     activateDrawer(drawer, trigger, fromHistory);
   }
+  function showDrawerSection(id) {
+    const target = document.getElementById(id);
+    const drawer = target?.closest('.edit-drawer[data-drawer]');
+    if (!drawer) return;
+    openPageDrawer(drawer, document.querySelector(`[data-drawer-open="${CSS.escape(drawer.id)}"]`));
+    if (target !== drawer) {
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ block: 'start' });
+        target.querySelector(drawerFirstField)?.focus({ preventScroll: true });
+      });
+    }
+  }
   function openDrawerFromHash() {
     if (!location.hash) return;
-    let id;
-    try { id = decodeURIComponent(location.hash.slice(1)); } catch (_) { return; }
-    const drawer = document.getElementById(id);
-    if (drawer?.matches('.edit-drawer[data-drawer]')) openPageDrawer(drawer, document.querySelector(`[data-drawer-open="${CSS.escape(id)}"]`));
+    try { showDrawerSection(decodeURIComponent(location.hash.slice(1))); } catch (_) {}
   }
+  document.addEventListener('032:restore-drawer', event => showDrawerSection(event.detail));
   document.addEventListener('toggle', e => {
     const drawer = e.target;
     if (!(drawer instanceof HTMLDetailsElement) || !drawer.matches('.edit-drawer')) return;
@@ -585,7 +608,7 @@
     if (closer && activeDrawer?.contains(closer)) { e.preventDefault(); closeDrawer(activeDrawer); }
   }, true);
   document.addEventListener('keydown', e => {
-    if (!activeDrawer || e.isComposing || e.keyCode === 229) return;
+    if (!activeDrawer || e.target.closest?.('dialog[open]') || e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDrawer(activeDrawer); return; }
     if (e.key !== 'Tab') return;
     const panel = drawerPanel(activeDrawer);

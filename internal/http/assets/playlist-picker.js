@@ -1,6 +1,5 @@
 // Shared playlist selection; candidates never use data-track-id.
-import { showToast, svgIcon } from './util.js';
-import { s } from './state.js';
+import { artworkForSize, showToast, svgIcon } from './util.js';
 let dialog, controller, origin, previewURL, undoTimer, undoBar, dragging;
 const pending = new WeakSet();
 let pageController = new AbortController();
@@ -12,6 +11,7 @@ export async function playlistRequest(url, method = 'GET', body, signal) {
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) { const error = new Error(payload.error?.message || '请求失败，请重试'); error.status = response.status; error.payload = payload; throw error; }
+  if (method !== 'GET') document.dispatchEvent(new Event('032:playlists-changed'));
   return payload;
 }
 function statsText(result) { return `已加入 ${result.added || 0} 首 · 重复 ${result.skippedDuplicate || 0} 首 · 无效 ${result.skippedInvalid || 0} 首 · 共 ${result.total || 0} 首`; }
@@ -71,7 +71,7 @@ function enhance() {
     }
     if (!row.querySelector('[data-playlist-track]')) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'playlist-add-track'; button.dataset.playlistTrack = row.dataset.trackId; button.appendChild(svgIcon('icon-plus')); button.setAttribute('aria-label', `加入歌单 ${row.dataset.trackTitle}`);
-      const cell = row.querySelector('.track-actions') || [...row.children].find(child => child.querySelector('strong'));
+      const cell = row.querySelector('.track-row-actions, .track-actions') || [...row.children].find(child => child.querySelector('strong'));
       if (cell) { cell.classList.add('playlist-action-cell'); cell.append(button); }
     }
   }); updateSelection();
@@ -121,7 +121,61 @@ async function artwork(root, form, reset) {
   } catch (error) { if (!signal.aborted) status.textContent = error.message; }
   finally { pending.delete(form); form.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
 }
+function setupSidebarPlaylists() {
+  const host = document.getElementById('sidebar-playlists');
+  if (!host) return;
+  let request;
+  let loaded = false;
+  async function refresh() {
+    if (loaded || request || host.closest('.is-admin-workspace')) return;
+    request = new AbortController();
+    try {
+      const { items } = await playlistRequest('/api/v1/playlists?limit=5', 'GET', undefined, request.signal);
+      const links = items.map(playlist => {
+        const link = document.createElement('a');
+        link.className = 'side-playlist';
+        link.href = `/admin/playlists/${playlist.id}`;
+        const cover = document.createElement(playlist.artworkUrl ? 'img' : 'span');
+        if (playlist.artworkUrl) {
+          cover.src = artworkForSize(playlist.artworkUrl, 128);
+          cover.alt = '';
+          cover.loading = 'lazy';
+          cover.decoding = 'async';
+        } else {
+          cover.className = 'side-playlist-emblem';
+          cover.setAttribute('aria-hidden', 'true');
+          cover.append(svgIcon('icon-playlists'));
+        }
+        const copy = document.createElement('span');
+        const name = document.createElement('strong');
+        name.textContent = playlist.name;
+        const count = document.createElement('small');
+        count.textContent = `${playlist.itemCount} 首`;
+        copy.append(name, count);
+        link.append(cover, copy);
+        return link;
+      });
+      host.replaceChildren(...links);
+      loaded = true;
+    } catch (_) {
+      // The sidebar still links to the full playlist directory.
+    } finally {
+      const retry = request.signal.aborted;
+      request = null;
+      if (retry) refresh();
+    }
+  }
+  document.addEventListener('032:pjax-applied', refresh);
+  document.addEventListener('032:playlists-changed', () => {
+    loaded = false;
+    if (request) request.abort();
+    else refresh();
+  });
+  refresh();
+}
+
 export function setupPlaylists() {
+  setupSidebarPlaylists();
   enhance();
   document.addEventListener('032:pjax-before-swap', () => { pageController.abort(); pageController = new AbortController(); closePicker(); clearUndo(); if (previewURL) URL.revokeObjectURL(previewURL); dragging = null; });
   document.addEventListener('032:pjax-applied', enhance);
@@ -166,5 +220,4 @@ export function setupPlaylists() {
   });
   function endDrag(e) { if (!dragging || e.pointerId !== dragging.pointer) return; const drag = dragging; dragging = null; drag.row.classList.remove('dragging'); if (e.type === 'pointercancel') { for (const id of drag.old) drag.list.append([...drag.list.children].find(row => Number(row.dataset.trackId) === id)); return; } const ids = rows().map(row => Number(row.dataset.trackId)); if (ids.join() !== drag.old.join()) mutate(drag.root, 'order', { trackIds: ids }, undefined, drag.old); }
   document.addEventListener('pointerup', endDrag); document.addEventListener('pointercancel', endDrag); document.addEventListener('lostpointercapture', e => { if (dragging) endDrag({ pointerId: e.pointerId, type: 'pointercancel' }); });
-  const queue = document.getElementById('np-queue-list'); if (queue) { const save = document.createElement('button'); save.type = 'button'; save.className = 'playlist-save-queue'; save.textContent = '保存队列到歌单'; save.onclick = () => { const ids = s.queue.map(track => Number(track.id)); if (ids.length) openPlaylistPicker({ trackIds: ids }); else showToast('播放队列为空'); }; queue.before(save); }
 }

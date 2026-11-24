@@ -61,7 +61,8 @@ import { mediaTime } from './cast.js';
       const pageQueue = e.target.closest('.album-page-queue');
       if (pageQueue) {
         e.preventDefault();
-        const pageTracks = extractAllTracksFromPage();
+        const list = document.getElementById(albumPlayBtn.dataset.playList || '');
+        const pageTracks = list ? extractTracksFrom(list) : extractAllTracksFromPage();
         if (pageTracks.length) queueTracks(pageTracks, pageQueue.dataset.mode === 'next' ? 'next' : 'append', albumLabel(pageTracks[0].album));
         const menu = pageQueue.closest('details');
         if (menu) { menu.removeAttribute('open'); menu.querySelector('summary')?.focus(); }
@@ -80,7 +81,7 @@ import { mediaTime } from './cast.js';
         playAlbumsPage(pageAlbumsBtn.hasAttribute('data-shuffle-albums-page'));
         return;
       }
-      const albumPlayBtn = e.target.closest('.album-hero .primary-round, [data-play-all], [data-play-shuffle], [data-queue-all]');
+      const albumPlayBtn = e.target.closest('.album-hero .primary-round, [data-play-list], [data-play-all], [data-play-shuffle], [data-queue-all]');
       if (albumPlayBtn) {
         e.preventDefault();
         const pageTracks = extractAllTracksFromPage();

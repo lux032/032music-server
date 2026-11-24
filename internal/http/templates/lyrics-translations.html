@@ -7,49 +7,28 @@
 <body class="roon-shell" data-nav="{{.Nav}}">
   {{template "sidebar" .}}
   {{template "nowplaying" .}}
-  <main id="app-main" class="browser-main feature-main audio-analysis-main ai-tagging-main lyrics-translation-main">
-    <header class="browser-header">
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main ai-tagging-main lyrics-translation-main">
+    <header class="admin-header browser-header">
       <div>
         <h1>歌词翻译</h1>
         <p class="result-count">客户端请求翻译时，由服务端调用大模型逐行翻译歌词并缓存；同一首歌、同一语言、同样的歌词再次请求时直接返回缓存，不再调用模型。</p>
       </div>
-      <a class="secondary-button" href="/admin">返回控制台</a>
     </header>
-    <nav class="admin-domain-tabs" aria-label="歌词与翻译视图">
-      <a href="/admin/online-lyrics">在线歌词缓存</a>
-      <a href="/admin/online-lyrics/diagnose">歌词诊断</a>
-      <a href="/admin/lyrics-translations" class="is-active" aria-current="page">歌词翻译</a>
+    <nav class="admin-tabs" aria-label="歌词与翻译视图">
+      <a href="/admin/online-lyrics" class="admin-tab">在线歌词缓存</a>
+      <a href="/admin/online-lyrics/diagnose" class="admin-tab">歌词诊断</a>
+      <a href="/admin/lyrics-translations" class="admin-tab active" aria-current="page">歌词翻译</a>
     </nav>
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 
-    <section class="feature-card audio-analysis-settings">
-      <p class="kicker">设置</p>
-      <form class="audio-analysis-form ai-tagging-form" method="post" action="/admin/lyrics-translations/settings" autocomplete="off">
-        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-        <label class="switch"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 开启歌词翻译</label>
-        <p class="result-count">开启后客户端才会显示翻译开关。关闭只停止新的翻译请求，已缓存的翻译会保留。</p>
-        <fieldset class="ai-tagging-fields">
-          <legend>模型</legend>
-          <label>翻译模型
-            <input name="model" value="{{.Model}}" placeholder="{{if .TaggingModel}}留空使用打标主模型 {{.TaggingModel}}{{else}}例如 gemini-2.5-flash、deepseek-chat{{end}}" spellcheck="false">
-          </label>
-          <label>后备模型（可选）
-            <input name="fallback_model" value="{{.FallbackModel}}" placeholder="留空不回退，复用同一接口" spellcheck="false">
-          </label>
-          <p class="result-count">翻译模型连接失败、超时、限流、配额耗尽或不可用时自动回退。不继承打标后备模型；配置后主模型最多使用一半请求时限，为后备模型预留时间。</p>
-          <p class="result-count">
-            接口地址、API Key、代理和思考强度请在 <a href="/admin/settings/ai">AI 设置中心</a> 统一配置{{if not .Configured}}，<strong>目前尚未填写</strong>{{end}}。
-            {{if .Effective}}当前使用：<code>{{.Effective}}</code>。{{end}}歌词会发送给模型服务；用量计入 AI 设置中心与 AI 打标页的“歌词翻译”。
-          </p>
-        </fieldset>
-        <button class="secondary-button">保存</button>
-      </form>
-    </section>
 
-    <section class="feature-card">
-      <div class="audio-analysis-head">
+
+    <div class="admin-split">
+      <div class="admin-stack">
+    <section class="card feature-card">
+      <div class="card-head audio-analysis-head">
         <div>
-          <p class="kicker">已缓存</p>
+          <p class="card-kicker kicker">已缓存</p>
           <h2>{{.Total}} 条翻译</h2>
         </div>
       </div>
@@ -72,7 +51,7 @@
       <form method="post" action="/admin/lyrics-translations/delete" id="lyrics-translation-bulk">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <input type="hidden" name="return" value="{{.ReturnURL}}">
-        <table class="ai-tagging-table">
+        <div class="data-table-wrap"><table class="data-table">
           <thead><tr><th><input type="checkbox" aria-label="全选" data-check-all></th><th>曲目</th><th>语言</th><th>行数</th><th>模型</th><th>更新时间</th></tr></thead>
           <tbody>
             {{range .Items}}
@@ -86,7 +65,7 @@
             </tr>
             {{end}}
           </tbody>
-        </table>
+        </table></div>
         <p><button class="secondary-button danger-button">删除选中</button> <span class="result-count">删除后客户端下次请求时会重新翻译。</span></p>
       </form>
       {{else}}
@@ -101,6 +80,31 @@
       </nav>
       {{end}}
     </section>
+      </div>
+    <section class="card feature-card audio-analysis-settings">
+      <header class="card-head"><h2 class="card-title">翻译策略与模型</h2></header>
+      <form class="form-stack audio-analysis-form ai-tagging-form" method="post" action="/admin/lyrics-translations/settings" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <label class="switch switch-row"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}><span>开启歌词翻译</span></label>
+        <p class="result-count">开启后客户端才会显示翻译开关。关闭只停止新的翻译请求，已缓存的翻译会保留。</p>
+        <fieldset class="ai-tagging-fields">
+          <legend>模型</legend>
+          <label>翻译模型
+            <input name="model" value="{{.Model}}" placeholder="{{if .TaggingModel}}留空使用打标主模型 {{.TaggingModel}}{{else}}例如 gemini-2.5-flash、deepseek-chat{{end}}" spellcheck="false">
+          </label>
+          <label>后备模型（可选）
+            <input name="fallback_model" value="{{.FallbackModel}}" placeholder="留空不回退，复用同一接口" spellcheck="false">
+          </label>
+          <p class="result-count">翻译模型连接失败、超时、限流、配额耗尽或不可用时自动回退。不继承打标后备模型；配置后主模型最多使用一半请求时限，为后备模型预留时间。</p>
+          <p class="result-count">
+            接口地址、API Key、代理和思考强度请在 <a href="/admin/settings/ai">AI 设置中心</a> 统一配置{{if not .Configured}}，<strong>目前尚未填写</strong>{{end}}。
+            {{if .Effective}}当前使用：<code>{{.Effective}}</code>。{{end}}歌词会发送给模型服务；用量计入 AI 设置中心与 AI 打标页的“歌词翻译”。
+          </p>
+        </fieldset>
+        <button class="secondary-button">保存</button>
+      </form>
+    </section>
+    </div>
   </main>
 </body>
 </html>
