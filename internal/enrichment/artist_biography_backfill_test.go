@@ -756,10 +756,10 @@ func bioImportArtist(t *testing.T, store *storage.Store, name string) int64 {
 	return bioArtistID(t, store, name)
 }
 
-// P1-1：自动匹配绑定成功后，纯幕后（仅作曲）人员绝不触发任何简介请求、
-// 不落简介行；歌手（同一 run 内）照常补全。绑定走已保存的双来源快照
-// （同一 MBID 互证 score 98），匹配本身零网络；简介补全走假源。
-func TestArtistAutoMatchBiographySkipsCreditOnlyArtist(t *testing.T) {
+// 自动匹配绑定成功后，歌手与纯幕后（仅作曲）人员都会自动抓取简介并落库。
+// 绑定走已保存的双来源快照（同一 MBID 互证 score 98），匹配本身零网络；
+// 简介补全走假源。
+func TestArtistAutoMatchBiographyIncludesCreditOnlyArtist(t *testing.T) {
 	const pfMBID = "11111111-1111-4111-8111-111111111111"
 	const bkMBID = "22222222-2222-4222-8222-222222222222"
 	var mbReqs, wikidataReqs, wikiReqs, lastfmReqs atomic.Int32
@@ -768,15 +768,22 @@ func TestArtistAutoMatchBiographySkipsCreditOnlyArtist(t *testing.T) {
 		switch {
 		case strings.Contains(host, "musicbrainz.org"):
 			mbReqs.Add(1)
+			if strings.Contains(r.URL.Path, bkMBID) {
+				return cannedResponse(http.StatusOK, http.Header{}, `{"id":"`+bkMBID+`","name":"Backstage Person","sort-name":"Backstage Person","aliases":[],"tags":[],"relations":[{"type":"wikidata","url":{"resource":"https://www.wikidata.org/wiki/Q1"}}]}`), nil
+			}
 			return cannedResponse(http.StatusOK, http.Header{}, `{"id":"`+pfMBID+`","name":"Stage Artist","sort-name":"Stage Artist","aliases":[],"tags":[],"relations":[{"type":"wikidata","url":{"resource":"https://www.wikidata.org/wiki/Q1"}}]}`), nil
 		case strings.Contains(host, "wikidata.org"):
 			wikidataReqs.Add(1)
 			return cannedResponse(http.StatusOK, http.Header{}, bioWikidataBody), nil
 		case strings.Contains(host, "wikipedia.org"):
 			wikiReqs.Add(1)
-			return cannedResponse(http.StatusOK, http.Header{}, `{"extract":"舞台歌手简介","content_urls":{"desktop":{"page":""}}}`), nil
+			return cannedResponse(http.StatusOK, http.Header{}, `{"extract":"艺人简介内容","content_urls":{"desktop":{"page":""}}}`), nil
 		case strings.Contains(host, "audioscrobbler.com"):
 			lastfmReqs.Add(1)
+			mbid := r.URL.Query().Get("mbid")
+			if mbid == bkMBID {
+				return cannedResponse(http.StatusOK, http.Header{}, `{"artist":{"name":"Backstage Person","mbid":"`+bkMBID+`","url":"https://www.last.fm/music/backstage","bio":{"content":"LastFM 幕后简介"},"image":[],"tags":{"tag":[]}}}`), nil
+			}
 			return cannedResponse(http.StatusOK, http.Header{}, `{"artist":{"name":"Stage Artist","mbid":"`+pfMBID+`","url":"https://www.last.fm/music/stage","bio":{"content":"LastFM 舞台简介"},"image":[],"tags":{"tag":[]}}}`), nil
 		default:
 			return nil, fmt.Errorf("unexpected host %s", host)
@@ -871,12 +878,12 @@ func TestArtistAutoMatchBiographySkipsCreditOnlyArtist(t *testing.T) {
 			t.Fatalf("artist %d identity: %q %v", id, externalID, e)
 		}
 	}
-	// 纯幕后：零简介网络请求、零简介行；歌手：3 语言 × (wikipedia+lastfm)。
-	if wikiReqs.Load() != 3 || lastfmReqs.Load() != 3 || wikidataReqs.Load() != 1 || mbReqs.Load() != 1 {
-		t.Fatalf("wiki=%d lastfm=%d wikidata=%d mb=%d (want 3/3/1/1, performer only)", wikiReqs.Load(), lastfmReqs.Load(), wikidataReqs.Load(), mbReqs.Load())
+	// 歌手与纯幕后均触发简介抓取：每人 3 语言 × (wikipedia+lastfm) + 1 次 MB + 1 次 Wikidata。
+	if wikiReqs.Load() != 6 || lastfmReqs.Load() != 6 || wikidataReqs.Load() != 2 || mbReqs.Load() != 2 {
+		t.Fatalf("wiki=%d lastfm=%d wikidata=%d mb=%d (want 6/6/2/2, performer + credit-only)", wikiReqs.Load(), lastfmReqs.Load(), wikidataReqs.Load(), mbReqs.Load())
 	}
-	if got := bioRowCount(t, restarted, backstage); got != 0 {
-		t.Fatalf("credit-only artist must not receive bio rows, got %d", got)
+	if got := bioRowCount(t, restarted, backstage); got != 6 {
+		t.Fatalf("credit-only artist bio rows=%d, want 6", got)
 	}
 	if got := bioRowCount(t, restarted, performer); got != 6 {
 		t.Fatalf("performer bio rows=%d, want 6", got)

@@ -60,4 +60,5 @@
   <symbol id="icon-download" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11.5"/><path d="m7.5 10.8 4.5 4.5 4.5-4.5"/><path d="M4 17.5v1.5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5"/></g></symbol>
   <symbol id="icon-credits" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h3l4-4v12l-4-4H3zM14 9a4 4 0 0 1 0 6m3-9a8 8 0 0 1 0 12"/></g></symbol>
   <symbol id="icon-edit" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 16 11-11a2.1 2.1 0 0 1 3 3L7 19l-4 1zM13.5 6.5l4 4"/></g></symbol>
+  <symbol id="icon-alert-circle" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.8v5.2"/></g><circle cx="12" cy="16.4" r="1.15" fill="currentColor"/></symbol>
 </svg>

@@ -212,3 +212,90 @@ func TestMatchReviewSplitCountsUncertainBadgeAndJSONAuth(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchReviewTooltipsCompositeFlaggedPageClampAndModeLabels(t *testing.T) {
+	_, s, handler, _, cookie, csrf := rateLimitTestApp(t)
+	ctx := context.Background()
+	lib, err := s.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Enable AI so all 3 scan buttons + tooltips render.
+	aiCfg := storage.DefaultAISettings()
+	aiCfg.BaseURL = "https://api.example.test/v1"
+	aiCfg.APIKey = "sk-test"
+	aiCfg.Model = "m1"
+	if err := s.SaveAISettings(ctx, aiCfg); err != nil {
+		t.Fatal(err)
+	}
+	rev := storage.DefaultAIReviewSettings()
+	rev.Enabled = true
+	if err := s.SaveAIReviewSettings(ctx, rev); err != nil {
+		t.Fatal(err)
+	}
+
+	// Import a solo artist with pending candidate + a composite artist flagged as skipped_composite (no candidates).
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "solo/01.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "SoloSong", Album: "SoloAlb", Artists: []string{"SoloArtist"}, AlbumArtists: []string{"SoloArtist"}, DiscNumber: 1, TrackNumber: 1},
+	})
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "comp/01.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "CollabSong", Album: "CollabAlb", Artists: []string{"Singer A & Singer B"}, AlbumArtists: []string{"Singer A"}, DiscNumber: 1, TrackNumber: 1},
+	})
+	artists, _ := s.ArtistsForMatching(ctx)
+	var soloID, compID int64
+	var compInput storage.ArtistMatchInput
+	for _, a := range artists {
+		switch a.Name {
+		case "SoloArtist":
+			soloID = a.ID
+		case "Singer A & Singer B":
+			compID = a.ID
+			compInput = a
+		}
+	}
+	_ = s.ReplaceArtistCandidatesForSources(ctx, soloID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-solo", DisplayName: "SoloArtist", Score: 82},
+	}, []string{"musicbrainz"})
+	if err := s.SaveArtistCompositeSkip(ctx, compInput, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Create an active image backfill run with mode=rescan_all to check localized Chinese mode label.
+	if _, err := s.CreateArtistImageBackfillRunWithMode(ctx, "rescan_all", []storage.ArtistImageBackfillCandidate{{ID: soloID, Name: "SoloArtist"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Out-of-range page=99 must clamp back to page 1 and still show SoloArtist, plus all 3 scan tooltips and composite credit.
+	body := adminGetBody(t, handler, cookie, "/admin/matches?page=99&creditsPage=99")
+	for _, want := range []string{
+		`id="tip-scan-incremental"`,
+		`id="tip-scan-full"`,
+		`id="tip-scan-ai"`,
+		`#icon-alert-circle`,
+		`data-pending-text="启动中…"`,
+		`SoloArtist`,
+		`Singer A &amp; Singer B`,
+		`全库强制重扫`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in /admin/matches body", want)
+		}
+	}
+	if strings.Contains(body, `（模式：rescan_all）`) {
+		t.Fatal("raw english backfill mode leaked in active card")
+	}
+
+	// Applying credit split cleans up the resolved composite artist from Tab 2.
+	rec := postAdminForm(t, handler, cookie, csrf, fmt.Sprintf("/admin/artists/%d/apply-credit-split", compID), map[string][]string{
+		"part":     {"Singer A", "Singer B"},
+		"returnTo": {"/admin/matches?tab=credits"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("apply-credit-split status=%d", rec.Code)
+	}
+	afterBody := adminGetBody(t, handler, cookie, "/admin/matches?tab=credits")
+	if strings.Contains(afterBody, `Singer A &amp; Singer B`) {
+		t.Fatal("resolved composite credit artist should leave Tab 2 after split")
+	}
+}

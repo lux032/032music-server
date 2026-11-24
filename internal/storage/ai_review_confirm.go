@@ -560,7 +560,12 @@ func restoreCandidateStatusTx(ctx context.Context, tx *sql.Tx, table string, ids
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET status='candidate',updated_at=strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now') WHERE id IN (SELECT value FROM json_each(?))`, table), string(encoded))
+	// artist_match_candidates has no updated_at column.
+	query := fmt.Sprintf(`UPDATE %s SET status='candidate',updated_at=strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now') WHERE id IN (SELECT value FROM json_each(?))`, table)
+	if table == "artist_match_candidates" {
+		query = `UPDATE artist_match_candidates SET status='candidate' WHERE id IN (SELECT value FROM json_each(?))`
+	}
+	_, err = tx.ExecContext(ctx, query, string(encoded))
 	return err
 }
 
@@ -635,6 +640,13 @@ func (s *Store) ApplyCompositeCreditSplit(ctx context.Context, compositeArtistID
 			return updated, err
 		}
 		updated++
+	}
+	if updated > 0 {
+		var remaining int
+		if qErr := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM track_artists WHERE artist_id=?)+(SELECT count(*) FROM album_artists WHERE artist_id=?)`, compositeArtistID, compositeArtistID).Scan(&remaining); qErr == nil && remaining == 0 {
+			_, _ = s.db.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate'`, compositeArtistID)
+			_, _ = s.db.ExecContext(ctx, `UPDATE artist_source_match_state SET outcome='rejected' WHERE artist_id=? AND source='_composite'`, compositeArtistID)
+		}
 	}
 	return updated, nil
 }

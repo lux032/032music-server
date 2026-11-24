@@ -305,7 +305,16 @@
 
   const RUN_PAUSE_REASONS = { manual: '手动暂停', server_restart: '服务重启中断', shutdown: '服务关闭', rate_limit_count: '同一对象连续限流', rate_limit_wait_budget: '限流等待超出 30 分钟预算', rate_limit_exhausted: '自动重试已用尽', storage_or_runtime_error: '存储或运行错误' };
   let runPollTimer = null;
+  let runPollController = null;
   let runCountdownTimer = null;
+
+  function refreshCurrentPage() {
+    if (typeof window.__032BrowseNavigate === 'function') {
+      window.__032BrowseNavigate(window.location.href, true);
+    } else {
+      location.reload();
+    }
+  }
 
   function runWaitTotalText(ms) {
     const seconds = Math.floor((ms || 0) / 1000);
@@ -337,17 +346,31 @@
     el.textContent = '';
   }
 
-  function runCountdownTick() {
-    const lines = document.querySelectorAll('[data-run-field="wait"]');
-    lines.forEach(runWaitLine);
-    if (!document.querySelector('[data-run-card]') && runCountdownTimer) {
+  function hasActiveWaitCountdown() {
+    for (const el of document.querySelectorAll('[data-run-field="wait"]')) {
+      const until = Date.parse(el.dataset.waitingUntil || '');
+      if (el.dataset.waitSource && Number.isFinite(until) && until > Date.now()) return true;
+    }
+    return false;
+  }
+
+  function stopRunCountdown() {
+    if (runCountdownTimer) {
       clearInterval(runCountdownTimer);
       runCountdownTimer = null;
     }
   }
 
+  function runCountdownTick() {
+    if (document.hidden) { stopRunCountdown(); return; }
+    const lines = document.querySelectorAll('[data-run-field="wait"]');
+    lines.forEach(runWaitLine);
+    if (!hasActiveWaitCountdown()) stopRunCountdown();
+  }
+
   function ensureRunCountdown() {
-    if (!runCountdownTimer && document.querySelector('[data-run-card]')) {
+    if (document.hidden || !hasActiveWaitCountdown()) { stopRunCountdown(); return; }
+    if (!runCountdownTimer) {
       runCountdownTimer = setInterval(runCountdownTick, 1000);
     }
   }
@@ -410,10 +433,18 @@
     if (!run) {
       if (card) {
         // 任务已结束：不宣称具体结果，避免把未知结局误报为“完成”。
-        const done = document.createElement('p');
-        done.className = 'muted run-empty';
+        const done = document.createElement('div');
+        done.className = 'match-run-done-row';
         done.setAttribute('data-run-empty', '');
-        done.textContent = '任务已结束，刷新页面查看最新结果。';
+        const msg = document.createElement('p');
+        msg.className = 'muted';
+        msg.textContent = '任务已结束，可刷新页面查看最新结果。';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'secondary-button compact-button';
+        btn.textContent = '刷新查看结果';
+        btn.addEventListener('click', refreshCurrentPage);
+        done.append(msg, btn);
         card.replaceWith(done);
         syncPipelineCard(kind, null);
       }
@@ -454,23 +485,40 @@
     return true;
   }
 
+  function desiredRunPollDelay() {
+    const anyActive = document.querySelector('[data-run-card]:not([data-run-status="paused"])');
+    return anyActive ? 2000 : 30000;
+  }
+
   async function pollRunTasks() {
+    runPollController?.abort();
     const containers = Array.from(document.querySelectorAll('[data-run-tasks]'));
+    if (!containers.length) return 'ok';
+    const controller = new AbortController();
+    runPollController = controller;
     let failed = false;
-    for (const container of containers) {
+    let needsReload = false;
+    await Promise.all(containers.map(async (container) => {
       try {
-        const response = await fetch(container.getAttribute('data-active-url'), { credentials: 'same-origin' });
+        const response = await fetch(container.getAttribute('data-active-url'), {
+          credentials: 'same-origin',
+          signal: controller.signal
+        });
         if (!response.ok) throw new Error('fetch failed');
         const payload = await response.json();
+        if (controller.signal.aborted || !container.isConnected) return;
         clearRunHint(container);
         const result = updateRunCard(container, payload.run, container.getAttribute('data-run-type') || container.getAttribute('data-run-kind'));
-        if (result === 'reload') { location.reload(); return 'reload'; }
-      } catch (_) {
+        if (result === 'reload') needsReload = true;
+      } catch (err) {
+        if (controller.signal.aborted || (err && err.name === 'AbortError')) return;
         failed = true;
         // 失败时保留现有卡片，绝不能把未知状态误报为完成。
         showRunHint(container, '状态更新中断，重试连接中…');
       }
-    }
+    }));
+    if (controller.signal.aborted) return 'aborted';
+    if (needsReload) { refreshCurrentPage(); return 'reload'; }
     if (!document.querySelector('[data-run-card]')) {
       document.querySelectorAll('.match-tab-dot').forEach((dot) => { dot.hidden = true; });
     }
@@ -480,31 +528,42 @@
 
   function scheduleRunPoll(delay) {
     if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
-    if (document.hidden || !document.querySelector('[data-run-tasks]')) return;
+    if (document.hidden || !document.querySelector('[data-run-tasks]')) {
+      runPollController?.abort();
+      stopRunCountdown();
+      return;
+    }
+    ensureRunCountdown();
     runPollTimer = setTimeout(runPollTick, delay);
   }
 
   async function runPollTick() {
+    runPollTimer = null;
     const result = await pollRunTasks();
-    if (result === 'reload' || document.hidden || !document.querySelector('[data-run-tasks]')) return;
+    if (result === 'reload' || result === 'aborted' || document.hidden || !document.querySelector('[data-run-tasks]')) return;
     if (result === 'failed') { scheduleRunPoll(8000); return; }
     // 任一卡片 running/waiting 即 2s 高频（页面可能同时有匹配与头像补全两张
     // 卡，不能只看第一张）；全部 paused 或没有卡片时 30s 低频；没有容器不轮询。
     // paused→running 的变化最迟 30s 被发现，随后回到 2s（reload 仅发生在 run id 变化时）。
-    const anyActive = document.querySelector('[data-run-card]:not([data-run-status="paused"])');
-    scheduleRunPoll(anyActive ? 2000 : 30000);
+    scheduleRunPoll(desiredRunPollDelay());
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
+      runPollController?.abort();
+      stopRunCountdown();
     } else {
       scheduleRunPoll(0);
     }
   });
-  // PJAX 换页后容器可能新增/消失：重新评估并重查一次，不重复计时器。
-  document.addEventListener('032:pjax-applied', () => scheduleRunPoll(0));
-  scheduleRunPoll(0);
+  // 页面刚完成 SSR 或 PJAX 渲染时服务端已给出最新任务状态，按常规节奏排期即可，
+  // 避免每次进入页面立刻并发轰炸 4 个 active.json。
+  document.addEventListener('032:pjax-applied', () => {
+    runPollController?.abort();
+    scheduleRunPoll(desiredRunPollDelay());
+  });
+  scheduleRunPoll(desiredRunPollDelay());
 
   // Password input masks custom tokens even when CSS masking is unsupported.
   document.addEventListener('click', (e) => {

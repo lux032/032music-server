@@ -35,26 +35,19 @@ func (m *Manager) SetArtistBiographyBackfillTestHook(hook func(artistID int64)) 
 	m.testBioBackfillHook = hook
 }
 
-// refreshAutoMatchedArtistBiographies 在批量自动匹配成功绑定身份后尽力补
-// 简介（分叉 1A）。相关来源冷却期内直接短路；所有错误只记日志——绝不传播
+// refreshAutoMatchedArtistBiographies 在自动匹配或 AI 自动确认成功绑定身份后尽力补
+// 简介（包含歌手与纯幕后人员）。相关来源冷却期内直接短路；所有错误只记日志——绝不传播
 // 进身份匹配 run 的限流/失败通道（H3），绝不撤销已提交的身份。瞬时失败留
-// 下的缺口由 /admin/matches 的歌手简介补全持久化任务兜底。
+// 下的缺口由 /admin/matches 的简介补全持久化任务兜底。
 func (m *Manager) refreshAutoMatchedArtistBiographies(ctx context.Context, artistID int64) {
-	// P1-1：范围仅歌手——纯幕后（仅作曲/作词/编曲/制作）绝不发简介请求。
-	performer, err := m.store.ArtistIsPerformer(ctx, artistID)
-	if err != nil {
-		m.logger.Warn("check performer for biography refresh after automatic match", "artistId", artistID, "error", err)
-		return
-	}
-	if !performer {
-		return
-	}
 	for _, source := range []string{"musicbrainz", "wikidata", "wikipedia", "lastfm"} {
 		if m.checkSourceCooldown(source) != nil {
 			return
 		}
 	}
-	if err := m.RefreshArtistBiographies(ctx, artistID, false); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrNoBiographyLanguages) {
+	bioCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if err := m.RefreshArtistBiographies(bioCtx, artistID, false); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrNoBiographyLanguages) {
 		m.logger.Warn("refresh biographies after automatic match", "artistId", artistID, "error", RedactSourceError(err))
 	}
 }
@@ -62,15 +55,7 @@ func (m *Manager) refreshAutoMatchedArtistBiographies(ctx context.Context, artis
 // ArtistBiographyBackfillStats 统计未合并歌手总数与其中缺简介（候选口径）
 // 的数量。只读 DB，不访问网络。
 func (m *Manager) ArtistBiographyBackfillStats(ctx context.Context) (missing, total int, err error) {
-	total, err = m.store.ArtistBiographyPerformerCount(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-	candidates, err := m.store.ArtistBiographyBackfillCandidates(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-	return len(candidates), total, nil
+	return m.store.ArtistBiographyBackfillCounts(ctx)
 }
 
 // StartArtistBiographyBackfill 启动一轮持久化歌手简介补全：候选为未合并、

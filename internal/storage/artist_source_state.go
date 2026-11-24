@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type ArtistScanMode string
@@ -170,6 +172,175 @@ func (s *Store) ArtistCompositeCheckNeeded(ctx context.Context, input ArtistMatc
 		return true, nil
 	}
 	return false, nil
+}
+
+// FilterArtistsForScan evaluates incremental/full scan eligibility across all
+// candidate artists in 3 bulk queries instead of O(N) per-artist queries and
+// snapshot_json unmarshaling. Results match ArtistCompositeCheckNeeded and
+// ArtistSourceCheckNeededForMode.
+func (s *Store) FilterArtistsForScan(ctx context.Context, artists []ArtistMatchInput, settings []MetadataSourceSetting, mode ArtistScanMode) (eligible, composites []ArtistMatchInput, err error) {
+	if len(artists) == 0 {
+		return nil, nil, nil
+	}
+	rescanSettled := mode == ArtistScanFull
+	var activeSettings []MetadataSourceSetting
+	for _, setting := range settings {
+		if (setting.Source == "musicbrainz" || setting.Source == "lastfm") && setting.Enabled && setting.AutoMatch {
+			activeSettings = append(activeSettings, setting)
+		}
+	}
+
+	// 1. Effective confirmed external IDs for every unmerged artist (own first,
+	// then recursively inherited by smallest source artist ID).
+	confirmed := map[int64]map[string]string{}
+	confRows, err := s.db.QueryContext(ctx, `WITH RECURSIVE
+		merge_chain(root_id, src_id) AS (
+			SELECT id, id FROM artists WHERE merged_into_artist_id IS NULL
+			UNION ALL
+			SELECT mc.root_id, a.id FROM merge_chain mc JOIN artists a ON a.merged_into_artist_id = mc.src_id
+		)
+		SELECT mc.root_id, p.source, p.external_id
+		FROM merge_chain mc
+		JOIN artist_external_profiles p ON p.artist_id = mc.src_id
+		ORDER BY mc.root_id, p.source, (p.artist_id = mc.root_id) DESC, p.artist_id ASC`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for confRows.Next() {
+		var rootID int64
+		var src, extID string
+		if err = confRows.Scan(&rootID, &src, &extID); err != nil {
+			confRows.Close()
+			return nil, nil, err
+		}
+		m := confirmed[rootID]
+		if m == nil {
+			m = map[string]string{}
+			confirmed[rootID] = m
+		}
+		if _, exists := m[src]; !exists {
+			m[src] = extID
+		}
+	}
+	if err = confRows.Err(); err != nil {
+		confRows.Close()
+		return nil, nil, err
+	}
+	confRows.Close()
+
+	// 2. Stored scan state metadata (excluding snapshot_json).
+	type stateMeta struct {
+		inputKey, configKey, outcome string
+	}
+	type artistSourceKey struct {
+		artistID int64
+		source   string
+	}
+	states := map[artistSourceKey]stateMeta{}
+	stRows, err := s.db.QueryContext(ctx, `SELECT artist_id,source,input_key,config_key,outcome FROM artist_source_match_state`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for stRows.Next() {
+		var k artistSourceKey
+		var v stateMeta
+		if err = stRows.Scan(&k.artistID, &k.source, &v.inputKey, &v.configKey, &v.outcome); err != nil {
+			stRows.Close()
+			return nil, nil, err
+		}
+		states[k] = v
+	}
+	if err = stRows.Err(); err != nil {
+		stRows.Close()
+		return nil, nil, err
+	}
+	stRows.Close()
+
+	// 3. Candidate pending / non-manual rejected flags per (artist, source) and per artist.
+	type candFlags struct {
+		hasPending, hasNonManualRejected bool
+	}
+	candBySource := map[artistSourceKey]candFlags{}
+	candByArtist := map[int64]candFlags{}
+	candRows, err := s.db.QueryContext(ctx, `SELECT artist_id,source,MAX(CASE WHEN status='candidate' THEN 1 ELSE 0 END),MAX(CASE WHEN status='rejected' AND evidence_json<>'["已手动解除为错误身份"]' THEN 1 ELSE 0 END) FROM artist_match_candidates GROUP BY artist_id,source`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for candRows.Next() {
+		var k artistSourceKey
+		var pend, rej int
+		if err = candRows.Scan(&k.artistID, &k.source, &pend, &rej); err != nil {
+			candRows.Close()
+			return nil, nil, err
+		}
+		f := candFlags{hasPending: pend != 0, hasNonManualRejected: rej != 0}
+		candBySource[k] = f
+		agg := candByArtist[k.artistID]
+		agg.hasPending = agg.hasPending || f.hasPending
+		agg.hasNonManualRejected = agg.hasNonManualRejected || f.hasNonManualRejected
+		candByArtist[k.artistID] = agg
+	}
+	if err = candRows.Err(); err != nil {
+		candRows.Close()
+		return nil, nil, err
+	}
+	candRows.Close()
+
+	for _, artist := range artists {
+		if m := confirmed[artist.ID]; m != nil {
+			artist.LastFMQueryMBID = m["musicbrainz"]
+		}
+		artist.LastFMQueryCaptured = true
+
+		if metadata.CompositeArtistCredit(artist.Name) {
+			if rescanSettled {
+				composites = append(composites, artist)
+				continue
+			}
+			ik, _ := ArtistMatchKeys(artist, MetadataSourceSetting{Source: compositeStateSource})
+			st, hasState := states[artistSourceKey{artistID: artist.ID, source: compositeStateSource}]
+			if !hasState {
+				agg := candByArtist[artist.ID]
+				if !(!agg.hasPending && agg.hasNonManualRejected) {
+					composites = append(composites, artist)
+				}
+			} else if st.inputKey != ik || st.outcome == "error" {
+				composites = append(composites, artist)
+			}
+			continue
+		}
+
+		for _, setting := range activeSettings {
+			if m := confirmed[artist.ID]; m != nil {
+				if _, ok := m[setting.Source]; ok {
+					continue
+				}
+			}
+			ik, ck := ArtistMatchKeys(artist, setting)
+			key := artistSourceKey{artistID: artist.ID, source: setting.Source}
+			st, hasState := states[key]
+			cf := candBySource[key]
+			var isEligible bool
+			if !hasState {
+				if !rescanSettled && !cf.hasPending && cf.hasNonManualRejected {
+					isEligible = false
+				} else {
+					isEligible = true
+				}
+			} else if st.inputKey != ik || st.configKey != ck || st.outcome == "error" {
+				isEligible = true
+			} else if cf.hasPending {
+				isEligible = false
+			} else if rescanSettled {
+				isEligible = true
+			}
+			if isEligible {
+				eligible = append(eligible, artist)
+				break
+			}
+		}
+	}
+	return eligible, composites, nil
 }
 
 // SaveArtistCompositeSkip records that a composite-credit artist was skipped so

@@ -394,6 +394,30 @@ func artistScanModeLabel(mode string) string {
 	return "初次增量"
 }
 
+func artistImageModeLabel(mode string) string {
+	switch storage.NormalizeArtistImageBackfillMode(mode) {
+	case "all":
+		return "全库补全"
+	case "web_fallback":
+		return "联网 AI 兜底"
+	case "rescan_all":
+		return "全库强制重扫"
+	default:
+		return "仅已匹配身份"
+	}
+}
+
+func artistBioModeLabel(mode string) string {
+	switch storage.NormalizeArtistBiographyBackfillMode(mode) {
+	case "retranslate":
+		return "重译已有简介"
+	case "rescan_all":
+		return "全量重扫"
+	default:
+		return "补全缺失简介"
+	}
+}
+
 func (a *App) handleRunArtistMatching(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", 403)
@@ -877,7 +901,6 @@ func (a *App) handleRollbackMerge(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	data := a.identityBase(r, "matches")
-	data.MatchRuns, _ = a.store.ListArtistMatchRuns(r.Context(), 30)
 	// 活动任务置顶：直接查未完成的 durable run，不受历史分页影响。
 	if active, err := a.store.UnfinishedDurableArtistRun(r.Context()); err == nil {
 		view := artistRunDTO(active)
@@ -913,7 +936,7 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			view := artistRunDTO(run)
-			// “最近任务”只在第一页从页内取；其余页走独立最新查询（见下）。
+			// “最近任务”只在第一页从页内取；其余页走单条最新终态查询（见下）。
 			if data.ArtistRunsPage == 1 && data.LastArtistRun == nil && run.Status != "running" && run.Status != "paused" && run.Status != "queued" {
 				copy := view
 				data.LastArtistRun = &copy
@@ -922,15 +945,9 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if data.LastArtistRun == nil {
-		if latest, _, err := a.store.ListDurableArtistRuns(r.Context(), 5, 0); err == nil {
-			for _, run := range latest {
-				if run.Status == "running" || run.Status == "paused" || run.Status == "queued" {
-					continue
-				}
-				view := artistRunDTO(run)
-				data.LastArtistRun = &view
-				break
-			}
+		if latest, err := a.store.LatestFinishedDurableArtistRun(r.Context()); err == nil {
+			view := artistRunDTO(latest)
+			data.LastArtistRun = &view
 		}
 	}
 
@@ -946,10 +963,30 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid source", 400)
 		return
 	}
-	identityPage, creditsPageData, err := a.store.PendingArtistReviewSplitPages(r.Context(), storage.ArtistReviewFilter{Query: r.URL.Query().Get("q"), Source: source, Limit: 50, Offset: (pageNumber - 1) * 50}, 50, (creditsPage-1)*50)
+	const reviewPageSize = 50
+	reviewQuery := r.URL.Query().Get("q")
+	identityPage, creditsPageData, err := a.store.PendingArtistReviewSplitPages(r.Context(), storage.ArtistReviewFilter{Query: reviewQuery, Source: source, Limit: reviewPageSize, Offset: (pageNumber - 1) * reviewPageSize}, reviewPageSize, (creditsPage-1)*reviewPageSize)
 	if err != nil {
 		http.Error(w, "加载艺术家审核失败", 500)
 		return
+	}
+	// If confirming/rejecting the last item on page N > 1 emptied that page,
+	// clamp to the last non-empty page instead of showing a misleading empty state.
+	needRefetch := false
+	if identityPage.Total > 0 && identityPage.Offset >= identityPage.Total {
+		pageNumber = (identityPage.Total-1)/reviewPageSize + 1
+		needRefetch = true
+	}
+	if creditsPageData.Total > 0 && creditsPageData.Offset >= creditsPageData.Total {
+		creditsPage = (creditsPageData.Total-1)/reviewPageSize + 1
+		needRefetch = true
+	}
+	if needRefetch {
+		identityPage, creditsPageData, err = a.store.PendingArtistReviewSplitPages(r.Context(), storage.ArtistReviewFilter{Query: reviewQuery, Source: source, Limit: reviewPageSize, Offset: (pageNumber - 1) * reviewPageSize}, reviewPageSize, (creditsPage-1)*reviewPageSize)
+		if err != nil {
+			http.Error(w, "加载艺术家审核失败", 500)
+			return
+		}
 	}
 	data.ReviewTotal, data.ReviewLimit, data.ReviewOffset = identityPage.Total, identityPage.Limit, identityPage.Offset
 	data.ReviewPage = pageNumber

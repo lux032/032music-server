@@ -126,12 +126,17 @@ func (s *Store) CreateDurableArtistRunWithMode(ctx context.Context, items []Arti
 	if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_run_modes(run_id,scan_mode) VALUES(?,?)`, id, string(mode)); err != nil {
 		return 0, err
 	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO artist_match_run_items(run_id,object_id,input_json) VALUES(?,?,?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
 	for _, item := range items {
 		encoded, e := json.Marshal(item)
 		if e != nil {
 			return 0, e
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_match_run_items(run_id,object_id,input_json) VALUES(?,?,?)`, id, item.Artist.ID, string(encoded)); err != nil {
+		if _, err = stmt.ExecContext(ctx, id, item.Artist.ID, string(encoded)); err != nil {
 			return 0, err
 		}
 	}
@@ -453,6 +458,14 @@ func (s *Store) ArtistRunItemSource(ctx context.Context, itemID int64, source, i
 	return snapshot, err
 }
 
+const durableArtistRunSelect = `SELECT r.id,r.status,COALESCE(m.scan_mode,'incremental'),r.total_artists,r.processed_artists,r.matched_artists,r.review_artists,r.failed_artists,r.skipped_artists,r.no_result_artists,COALESCE(r.current_artist,''),COALESCE(r.error_message,''),r.durable_version,r.pause_reason,r.wait_source,COALESCE(r.waiting_until,''),r.wait_total_ms,r.budget_baseline_ms,r.auto_resume_count FROM artist_match_runs r LEFT JOIN artist_match_run_modes m ON m.run_id=r.id`
+
+func scanDurableArtistRun(row interface{ Scan(...any) error }) (DurableArtistRun, error) {
+	var r DurableArtistRun
+	err := row.Scan(&r.ID, &r.Status, &r.ScanMode, &r.Total, &r.Processed, &r.Matched, &r.Review, &r.Failed, &r.Skipped, &r.NoResult, &r.Current, &r.ErrorMessage, &r.DurableVersion, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
+	return r, err
+}
+
 func (s *Store) ListDurableArtistRuns(ctx context.Context, limit, offset int) ([]DurableArtistRun, int, error) {
 	if limit < 1 || limit > 200 || offset < 0 {
 		return nil, 0, ErrArtistRunState
@@ -461,33 +474,27 @@ func (s *Store) ListDurableArtistRuns(ctx context.Context, limit, offset int) ([
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artist_match_runs`).Scan(&count); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM artist_match_runs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
+	rows, err := s.db.QueryContext(ctx, durableArtistRunSelect+` ORDER BY r.id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	var ids []int64
+	defer rows.Close()
+	runs := make([]DurableArtistRun, 0, limit)
 	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+		r, err := scanDurableArtistRun(rows)
+		if err != nil {
 			return nil, 0, err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, 0, err
-	}
-	var runs []DurableArtistRun
-	for _, id := range ids {
-		r, e := s.DurableArtistRun(ctx, id)
-		if e != nil {
-			return nil, 0, e
 		}
 		runs = append(runs, r)
 	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return runs, count, nil
+}
+
+func (s *Store) LatestFinishedDurableArtistRun(ctx context.Context) (DurableArtistRun, error) {
+	return scanDurableArtistRun(s.db.QueryRowContext(ctx, durableArtistRunSelect+` WHERE r.status NOT IN ('running','paused','queued') ORDER BY r.id DESC LIMIT 1`))
 }
 func (s *Store) UnfinishedDurableArtistRun(ctx context.Context) (DurableArtistRun, error) {
 	var id int64

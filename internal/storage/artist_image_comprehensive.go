@@ -141,8 +141,13 @@ func (s *Store) CreateArtistImageBackfillRunWithMode(ctx context.Context, mode s
 	if err != nil {
 		return 0, err
 	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO artist_image_backfill_items(run_id,artist_id,artist_name) VALUES(?,?,?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
 	for _, item := range items {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_image_backfill_items(run_id,artist_id,artist_name) VALUES(?,?,?)`, id, item.ID, item.Name); err != nil {
+		if _, err = stmt.ExecContext(ctx, id, item.ID, item.Name); err != nil {
 			return 0, err
 		}
 	}
@@ -234,7 +239,7 @@ func (s *Store) ArtistImageBackfillCacheScanForMode(ctx context.Context, mode st
 		}
 		cooldownClause += ")"
 	}
-	query := `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id OR c.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id) ORDER BY (c.artist_id=a.id) DESC,c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)` + extraFilter + cooldownClause + ` ORDER BY a.id`
+	query := `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id LIMIT 1),(SELECT c.cache_path FROM artists ma JOIN artist_image_cache c ON c.artist_id=ma.id WHERE ma.merged_into_artist_id=a.id ORDER BY c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)` + extraFilter + cooldownClause + ` ORDER BY a.id`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err

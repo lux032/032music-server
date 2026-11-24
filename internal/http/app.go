@@ -298,6 +298,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"enrichmentStageLine":    enrichmentStageLine,
 		"runStatusLabel":         runStatusLabel,
 		"artistScanModeLabel":    artistScanModeLabel,
+		"artistImageModeLabel":   artistImageModeLabel,
+		"artistBioModeLabel":     artistBioModeLabel,
 		"pauseReasonLabel":       pauseReasonLabel,
 		"enrichmentScopeLabel":   enrichmentScopeLabel,
 		"percentDone":            percentDone,

@@ -221,3 +221,109 @@ func TestMergedArtistInheritedIdentitySkippedInAllScanModes(t *testing.T) {
 		t.Fatalf("expected 0 requests, got %d", requests.Load())
 	}
 }
+
+func TestArtistScanSurfacesCompositeCreditsAndEnrichAutoConfirmedRules(t *testing.T) {
+	pngBytes := makeValidAvatarPNG(t)
+	var bgmCalls, bioCalls atomic.Int32
+	manager := transportManager(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(r.URL.Host, "api.bgm.tv") && strings.Contains(r.URL.Path, "/v0/search/persons"):
+			bgmCalls.Add(1)
+			return cannedResponse(http.StatusOK, http.Header{}, `{"data":[{"id":8888,"name":"Backstage Composer","career":["producer"],"images":{"large":"http://93.184.216.34/composer.png"}}]}`), nil
+		case r.URL.Host == "93.184.216.34":
+			return cannedResponse(http.StatusOK, http.Header{}, pngBytes), nil
+		case strings.Contains(r.URL.Host, "musicbrainz.org") && strings.Contains(r.URL.Path, "/ws/2/artist/mb-comp-1"):
+			return cannedResponse(http.StatusOK, http.Header{}, `{"id":"mb-comp-1","name":"Backstage Composer","sort-name":"Backstage Composer","aliases":[],"tags":[],"relations":[{"type":"wikidata","url":{"resource":"https://www.wikidata.org/wiki/Q1"}}]}`), nil
+		case strings.Contains(r.URL.Host, "musicbrainz.org"):
+			return cannedResponse(http.StatusOK, http.Header{}, `{"artists":[]}`), nil
+		case strings.Contains(r.URL.Host, "wikidata.org"):
+			bioCalls.Add(1)
+			return cannedResponse(http.StatusOK, http.Header{}, bioWikidataBody), nil
+		case strings.Contains(r.URL.Host, "wikipedia.org"):
+			bioCalls.Add(1)
+			return cannedResponse(http.StatusOK, http.Header{}, `{"extract":"幕后作曲家简介","content_urls":{"desktop":{"page":""}}}`), nil
+		default:
+			return cannedResponse(http.StatusNotFound, http.Header{}, `{}`), nil
+		}
+	}))
+	ctx := context.Background()
+	s := manager.store
+	if err := s.EnsureLibrary(ctx, "Test", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+	// 1. After an incremental scan, a skipped_composite artist (with 0 match candidates)
+	// must surface in PendingArtistReviewSplitPages Tab 2 (复合署名).
+	for _, item := range []struct{ path, artist string }{
+		{"solo/01.flac", "Solo Check"},
+		{"comp/01.flac", "Alpha & Beta"},
+	} {
+		if err := s.ImportTrack(ctx, storage.ImportInput{
+			LibraryID: lib.ID, RelativePath: item.path, FileSize: 1, ModifiedAtNS: 1,
+			Metadata: metadata.AudioMetadata{Title: "Song", Album: "Alb", Artists: []string{item.artist}, AlbumArtists: []string{item.artist}, DiscNumber: 1, TrackNumber: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mb, _ := s.MetadataSourceSetting(ctx, "musicbrainz")
+	mb.Enabled = true
+	mb.AutoMatch = true
+	_ = s.SaveMetadataSourceSetting(ctx, mb)
+	bgm, _ := s.MetadataSourceSetting(ctx, "bangumi")
+	bgm.Enabled = true
+	_ = s.SaveMetadataSourceSetting(ctx, bgm)
+
+	runID, err := manager.StartAll(ctx)
+	if err != nil {
+		t.Fatalf("incremental scan failed: %v", err)
+	}
+	manager.Wait()
+	r, err := s.DurableArtistRun(ctx, runID)
+	if err != nil || r.Status != "completed" || r.Total != 2 || r.Skipped != 1 {
+		t.Fatalf("unexpected run: %+v err=%v", r, err)
+	}
+	// Composite artist now shows up in PendingArtistReviewSplitPages Tab 2 even without candidates.
+	_, creditsPage, err := s.PendingArtistReviewSplitPages(ctx, storage.ArtistReviewFilter{Limit: 20}, 20, 0)
+	if err != nil || creditsPage.Total != 1 || len(creditsPage.Items) != 1 || creditsPage.Items[0].Artist.Name != "Alpha & Beta" {
+		t.Fatalf("expected scanned composite artist on credits tab, got %+v err=%v", creditsPage, err)
+	}
+
+	// 2. EnrichAutoConfirmedArtist fetches both Tier 2 Bangumi avatar and biography
+	// for pure behind-the-scenes credit artists after identity confirmation.
+	if err := s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "credit/01.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "Track", Album: "Album", Artists: []string{"Lead Singer"}, AlbumArtists: []string{"Lead Singer"}, Composer: "Backstage Composer", DiscNumber: 1, TrackNumber: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	allArtists, _ := s.ArtistsForMatching(ctx)
+	var composerID int64
+	for _, a := range allArtists {
+		if a.Name == "Backstage Composer" {
+			composerID = a.ID
+		}
+	}
+	if err := s.UpsertExternalArtistProfile(ctx, composerID, storage.ExternalArtistProfile{
+		Source: "musicbrainz", ExternalID: "mb-comp-1", DisplayName: "Backstage Composer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	imgSt, _ := s.ArtistImageSettings(ctx)
+	imgSt.DeezerEnabled = false
+	imgSt.BangumiEnabled = true
+	_ = s.SaveArtistImageSettings(ctx, imgSt)
+
+	manager.EnrichAutoConfirmedArtist(ctx, composerID)
+	if bgmCalls.Load() != 1 {
+		t.Fatalf("expected Tier 2 Bangumi avatar lookup for AI-confirmed credit artist, calls=%d", bgmCalls.Load())
+	}
+	if bioCalls.Load() == 0 {
+		t.Fatalf("expected biography lookups for credit-only artist, got 0")
+	}
+	if detail, dErr := s.ArtistDetail(ctx, composerID); dErr != nil || detail.Biography == "" {
+		t.Fatalf("expected biography for credit artist, bio=%q err=%v", detail.Biography, dErr)
+	}
+	if path, _, _, imgErr := s.ArtistImagePath(ctx, composerID); imgErr != nil || path == "" {
+		t.Fatalf("expected cached avatar for credit artist, path=%q err=%v", path, imgErr)
+	}
+}

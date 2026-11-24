@@ -12,30 +12,53 @@
       <div class="matches-title-block">
         <h1>艺术家与身份审核</h1>
         <p class="result-count">以 MusicBrainz / Last.fm 为来源扫描艺术家身份；低于自动确认阈值的候选在这里人工审核。</p>
-        <details class="match-help disclosure">
-          <summary>扫描规则说明</summary>
-          <p>“扫描未检查的艺术家”及服务启动自动扫描仅检查从未初次扫描过的艺术家（已匹配、已全部拒绝、无结果、复合署名跳过及合并继承身份的艺术家均保持不动）；“全局补全扫描”会对之前无结果、已全部拒绝或复合署名跳过的艺术家重新核查，仍不覆盖已确认身份；这里的“扫描”是元数据匹配，不是文件扫描。</p>
-        </details>
       </div>
       <div class="admin-header-actions header-actions matches-header-actions">
-        <form method="post" action="/admin/matches/run">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
-          <button>扫描未检查的艺术家</button>
-        </form>
-        <form method="post" action="/admin/matches/run">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="mode" value="full">
-          <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
-          <button class="secondary-button">全局补全扫描</button>
-        </form>
+        <div class="match-action-item">
+          <form method="post" action="/admin/matches/run">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
+            <button data-pending-text="启动中…">扫描未检查的艺术家</button>
+          </form>
+          <span class="match-hint-tip" tabindex="0" role="note" aria-label="扫描未检查的艺术家说明" aria-describedby="tip-scan-incremental">
+            <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg>
+            <span class="match-hint-popover" id="tip-scan-incremental" role="tooltip">
+              <strong>初次增量匹配</strong>
+              <span>这里的“扫描”是元数据匹配，不是文件扫描。仅检查从未初次扫描过的艺术家（自动跳过已确认、已全部拒绝、无结果、复合署名跳过及合并继承身份）；自动匹配成功后同步补全头像与简介（含纯幕后人员）。</span>
+            </span>
+          </span>
+        </div>
+        <div class="match-action-item">
+          <form method="post" action="/admin/matches/run">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="mode" value="full">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
+            <button class="secondary-button" data-pending-text="启动中…">全局补全扫描</button>
+          </form>
+          <span class="match-hint-tip" tabindex="0" role="note" aria-label="全局补全扫描说明" aria-describedby="tip-scan-full">
+            <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg>
+            <span class="match-hint-popover" id="tip-scan-full" role="tooltip">
+              <strong>重新核查未确认艺人</strong>
+              <span>对之前无结果、已全部拒绝或复合署名跳过的艺术家重新查询 MusicBrainz / Last.fm；绝不覆盖已确认身份，也不会复活已手动拒绝的旧候选。</span>
+            </span>
+          </span>
+        </div>
         {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
-        <form method="post" action="/admin/ai-review/run">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="scope" value="artists_all">
-          <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
-          <button type="submit" class="secondary-button">AI 预审</button>
-        </form>
+        <div class="match-action-item">
+          <form method="post" action="/admin/ai-review/run">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="scope" value="artists_all">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
+            <button type="submit" class="secondary-button" data-pending-text="启动中…">AI 预审</button>
+          </form>
+          <span class="match-hint-tip" tabindex="0" role="note" aria-label="AI 预审说明" aria-describedby="tip-scan-ai">
+            <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg>
+            <span class="match-hint-popover" id="tip-scan-ai" role="tooltip">
+              <strong>AI 批量消歧与署名分析</strong>
+              <span>调用 AI 批量评估待审身份与复合署名：高置信且无冲突的身份将自动绑定并补全头像/简介（支持在「任务与补全」一键撤销），复合署名仅生成拆分建议供人工应用。</span>
+            </span>
+          </span>
+        </div>
         {{end}}
       </div>
     </header>
@@ -58,17 +81,17 @@
               <form method="post" action="/admin/matches/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">暂停</button>
+                <button class="secondary-button compact-button" data-pending-text="暂停中…">暂停</button>
               </form>
               <form method="post" action="/admin/matches/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="compact-button">继续</button>
+                <button class="compact-button" data-pending-text="继续中…">继续</button>
               </form>
               <form method="post" action="/admin/matches/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">停止</button>
+                <button class="secondary-button compact-button" data-pending-text="停止中…">停止</button>
               </form>
             </div>
           </header>
@@ -77,7 +100,7 @@
             <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 匹配 {{.Matched}} · 审核 {{.Review}} · 无结果 {{.NoResult}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
             <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
           </div>
-          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}" data-run-status="{{.Status}}" data-pause-reason="{{.PauseReason}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
           <small class="muted match-active-note" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
           <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
         </article>
@@ -97,17 +120,17 @@
               <form method="post" action="/admin/ai-review/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">暂停</button>
+                <button class="secondary-button compact-button" data-pending-text="暂停中…">暂停</button>
               </form>
               <form method="post" action="/admin/ai-review/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="compact-button">继续</button>
+                <button class="compact-button" data-pending-text="继续中…">继续</button>
               </form>
               <form method="post" action="/admin/ai-review/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">停止</button>
+                <button class="secondary-button compact-button" data-pending-text="停止中…">停止</button>
               </form>
             </div>
           </header>
@@ -127,24 +150,24 @@
           <header class="match-active-head">
             <div class="match-active-title">
               <span class="match-pulse-dot" aria-hidden="true"></span>
-              <strong>头像补全任务 #{{.ID}}{{if .Mode}}（模式：{{.Mode}}）{{end}}</strong>
+              <strong>头像补全任务 #{{.ID}}{{if .Mode}} · {{artistImageModeLabel .Mode}}{{end}}</strong>
               <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
             </div>
             <div class="run-actions match-active-actions">
               <form method="post" action="/admin/matches/images/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">暂停</button>
+                <button class="secondary-button compact-button" data-pending-text="暂停中…">暂停</button>
               </form>
               <form method="post" action="/admin/matches/images/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="compact-button">继续</button>
+                <button class="compact-button" data-pending-text="继续中…">继续</button>
               </form>
               <form method="post" action="/admin/matches/images/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">停止</button>
+                <button class="secondary-button compact-button" data-pending-text="停止中…">停止</button>
               </form>
             </div>
           </header>
@@ -153,7 +176,7 @@
             <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}</p>
             <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
           </div>
-          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}" data-run-status="{{.Status}}" data-pause-reason="{{.PauseReason}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
           <small class="muted match-active-note" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
           <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
         </article>
@@ -166,24 +189,24 @@
           <header class="match-active-head">
             <div class="match-active-title">
               <span class="match-pulse-dot" aria-hidden="true"></span>
-              <strong>简介补全任务 #{{.ID}}</strong>
+              <strong>简介补全任务 #{{.ID}}{{if .Mode}} · {{artistBioModeLabel .Mode}}{{end}}</strong>
               <span class="run-status status-{{.Status}}" data-run-field="status" aria-live="polite">{{runStatusLabel .Status}}</span>
             </div>
             <div class="run-actions match-active-actions">
               <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/pause" data-run-action="pause"{{if ne .Status "running"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">暂停</button>
+                <button class="secondary-button compact-button" data-pending-text="暂停中…">暂停</button>
               </form>
               <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/resume" data-run-action="resume"{{if ne .Status "paused"}} hidden{{end}}>
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="compact-button">继续</button>
+                <button class="compact-button" data-pending-text="继续中…">继续</button>
               </form>
               <form method="post" action="/admin/matches/biographies/runs/{{.ID}}/cancel" data-run-action="cancel">
                 <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                 <input type="hidden" name="returnTo" value="{{$.TabReturnTo $.MatchTab}}" data-match-return-to>
-                <button class="secondary-button compact-button">停止</button>
+                <button class="secondary-button compact-button" data-pending-text="停止中…">停止</button>
               </form>
             </div>
           </header>
@@ -192,7 +215,7 @@
             <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已补全 {{.Filled}} · 无简介 {{.Missing}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}</p>
             <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
           </div>
-          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
+          <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}" data-run-status="{{.Status}}" data-pause-reason="{{.PauseReason}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
           <small class="muted match-active-note" data-run-field="pauseReason">{{if and (eq .Status "paused") .PauseReason}}暂停原因：{{pauseReasonLabel .PauseReason}}{{end}}</small>
           <small class="run-error match-active-note" data-run-field="error">{{.ErrorMessage}}</small>
         </article>
@@ -233,7 +256,6 @@
             <option value="lastfm"{{if eq .ReviewSource "lastfm"}} selected{{end}}>Last.fm</option>
           </select>
           <input type="hidden" name="tab" value="identity">
-          <input type="hidden" name="creditsPage" value="{{.CreditReviewPage}}">
           <input type="hidden" name="runsPage" value="{{.ArtistRunsPage}}">
           <button class="secondary-button">筛选</button>
           <span class="match-filter-summary muted" data-match-filter-summary>共 {{.ReviewTotal}} 位待审核艺术家</span>
@@ -263,7 +285,7 @@
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="source" value="{{$.ReviewSource}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
-              <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝">全部拒绝</button>
+              <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝" data-pending-text="处理中…">全部拒绝</button>
             </form>
             {{end}}
           </header>
@@ -302,13 +324,13 @@
                 <form method="post" action="/admin/artists/{{$item.Artist.ID}}/confirm/{{.ID}}">
                   <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                   <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
-                  <button class="{{if $isRec}}primary-button{{else}}secondary-button match-confirm-btn{{end}} compact-button">{{if $isRec}}确认（AI 推荐）{{else}}确认{{end}}</button>
+                  <button class="{{if $isRec}}primary-button{{else}}secondary-button match-confirm-btn{{end}} compact-button" data-pending-text="确认中…">{{if $isRec}}确认（AI 推荐）{{else}}确认{{end}}</button>
                 </form>
                 {{end}}
                 <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject/{{.ID}}">
                   <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                   <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
-                  <button class="match-ghost-btn compact-button">拒绝</button>
+                  <button class="match-ghost-btn compact-button" data-pending-text="处理中…">拒绝</button>
                 </form>
               </div>
               {{with $conflict}}
@@ -321,7 +343,7 @@
                     <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
                     <input type="hidden" name="confirm" value="1">
                     <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
-                    <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认并入对方">将 {{$item.Artist.Name}} 并入对方</button>
+                    <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认并入对方" data-pending-text="合并中…">将 {{$item.Artist.Name}} 并入对方</button>
                   </form>
                   <a class="conflict-detail-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">去歌手页核对</a>
                 </div>
@@ -367,7 +389,7 @@
           <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
           <input type="hidden" name="scope" value="credit_splits">
           <input type="hidden" name="returnTo" value="{{.TabReturnTo "credits"}}" data-match-return-to="credits">
-          <button type="submit" class="secondary-button compact-button">AI 分析复合署名</button>
+          <button type="submit" class="secondary-button compact-button" data-pending-text="启动中…">AI 分析复合署名</button>
         </form>
         {{end}}
       </div>
@@ -384,7 +406,7 @@
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="source" value="{{$.ReviewSource}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
-              <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝">全部拒绝</button>
+              <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认全部拒绝" data-pending-text="处理中…">全部拒绝</button>
             </form>
             {{end}}
           </header>
@@ -406,7 +428,7 @@
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
               {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
-              <button type="submit" class="primary-button compact-button">一键应用拆分到关联曲目</button>
+              <button type="submit" class="primary-button compact-button" data-pending-text="拆分中…">一键应用拆分到关联曲目</button>
             </form>
             {{else}}
             <a class="button-link secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
@@ -469,12 +491,12 @@
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/approve">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
-              <button class="primary-button compact-button">采纳并缓存</button>
+              <button class="primary-button compact-button" data-pending-text="采纳中…">采纳并缓存</button>
             </form>
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
-              <button class="secondary-button compact-button">忽略</button>
+              <button class="secondary-button compact-button" data-pending-text="处理中…">忽略</button>
             </form>
           </div>
         </article>
@@ -508,13 +530,13 @@
             <form method="post" action="/admin/matches/run">
               <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
-              <button class="secondary-button compact-button">扫描未检查的艺术家</button>
+              <button class="secondary-button compact-button" data-pending-text="启动中…">扫描未检查的艺术家</button>
             </form>
             <form method="post" action="/admin/matches/run">
               <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
               <input type="hidden" name="mode" value="full">
               <input type="hidden" name="returnTo" value="{{.TabReturnTo "tasks"}}" data-match-return-to="tasks">
-              <button class="secondary-button compact-button">全局补全扫描</button>
+              <button class="secondary-button compact-button" data-pending-text="启动中…">全局补全扫描</button>
             </form>
           </div>
           {{end}}
@@ -575,7 +597,7 @@
               <option value="credit_splits">仅复合署名拆分建议</option>
             </select>
             <label class="ai-inline-check"><input type="checkbox" name="force"> 强制重评</label>
-            <button type="submit" class="secondary-button compact-button">AI 处理待审艺术家</button>
+            <button type="submit" class="secondary-button compact-button" data-pending-text="启动中…">AI 处理待审艺术家</button>
           </form>
           {{end}}
           {{with .LastAIRun}}
@@ -593,7 +615,7 @@
                 <form method="post" action="/admin/ai-review/decisions/{{.Decision.ID}}/revert" class="match-revert-form">
                   <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
                   <input type="hidden" name="returnTo" value="{{$.TabReturnTo "tasks"}}" data-match-return-to="tasks">
-                  <button type="submit" class="secondary-button compact-button">撤销</button>
+                  <button type="submit" class="secondary-button compact-button" data-pending-text="撤销中…">撤销</button>
                 </form>
               </li>
               {{end}}
@@ -607,7 +629,7 @@
           <header class="card-head match-pipeline-head">
             <div>
               <h2>艺术家头像补全</h2>
-              <p class="muted">默认仅补全已确认身份的艺人。所有模式均保留自定义头像。</p>
+              <p class="muted">支持仅补全已确认身份或全库多源补全；所有模式均保留自定义头像。</p>
             </div>
             <span class="run-status {{if .ImageBackfill.Active}}status-{{.ImageBackfill.Active.Status}}{{else}}match-status-idle{{end}}" data-pipeline-status data-idle-label="{{.ImageCoveragePercent}}%">{{if .ImageBackfill.Active}}{{runStatusLabel .ImageBackfill.Active.Status}}{{else}}{{.ImageCoveragePercent}}%{{end}}</span>
           </header>
@@ -628,7 +650,7 @@
               <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
               <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
             </select>
-            <button class="secondary-button compact-button">启动艺术家头像补全</button>
+            <button class="secondary-button compact-button" data-pending-text="启动中…">启动艺术家头像补全</button>
           </form>
           {{end}}
           {{with .ImageBackfill.Last}}
@@ -669,7 +691,7 @@
               <option value="retranslate">重译已有简介（复用缓存）</option>
               <option value="rescan_all">按新策略全量重扫</option>
             </select>
-            <button class="secondary-button compact-button">启动简介补全</button>
+            <button class="secondary-button compact-button" data-pending-text="启动中…">启动简介补全</button>
           </form>
           {{end}}
           {{with .BioBackfill.Last}}

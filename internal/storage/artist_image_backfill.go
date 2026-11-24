@@ -514,7 +514,7 @@ type ArtistImageBackfillCacheRow struct {
 // ArtistImageBackfillCacheScan 一次查询返回全部 D50 候选与其有效缓存路径，
 // 供统计与启动枚举避免逐艺术家的 N+1 查询。
 func (s *Store) ArtistImageBackfillCacheScan(ctx context.Context) ([]ArtistImageBackfillCacheRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id OR c.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id) ORDER BY (c.artist_id=a.id) DESC,c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id) ORDER BY a.id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id LIMIT 1),(SELECT c.cache_path FROM artists ma JOIN artist_image_cache c ON c.artist_id=ma.id WHERE ma.merged_into_artist_id=a.id ORDER BY c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id) ORDER BY a.id`)
 	if err != nil {
 		return nil, err
 	}

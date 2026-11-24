@@ -13,6 +13,7 @@ import (
 var (
 	ErrRunAlreadyActive = errors.New("已有 AI 预审任务正在运行或暂停中")
 	ErrRunNotFound      = errors.New("未找到指定的 AI 预审任务")
+	ErrNoPendingItems   = errors.New("当前没有需要 AI 预审的待处理项")
 )
 
 var allRunScopes = []string{
@@ -62,6 +63,9 @@ func (s *Service) StartRun(ctx context.Context, scope string, force bool) (stora
 	tasks, err := s.collectTasks(ctx, scope, rev)
 	if err != nil {
 		return storage.AIReviewRun{}, err
+	}
+	if len(tasks) == 0 {
+		return storage.AIReviewRun{}, ErrNoPendingItems
 	}
 	run, err := s.store.CreateAIReviewRun(ctx, scope, force, len(tasks))
 	if err != nil {

@@ -149,7 +149,7 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) bool {
 			// 都不可能撤销身份；所有错误就地吞掉（Warn），绝不进入 run 的限
 			// 流等待/失败通道（H3），绝不中止匹配。瞬时缺口由 /admin/matches
 			// 的持久化补全任务兜底。
-			if result.AutoMatched {
+			if result.AutoMatched && !result.InlineAIConfirmed {
 				m.cacheAutoMatchedArtistImage(ctx, item.ObjectID)
 				m.refreshAutoMatchedArtistBiographies(ctx, item.ObjectID)
 			}

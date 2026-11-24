@@ -129,10 +129,11 @@ func (e *ArtistMatchPartialError) Notice() string {
 }
 
 type MatchResult struct {
-	Outcome        string
-	SkipReason     string
-	AutoMatched    bool
-	CandidateCount int
+	Outcome           string
+	SkipReason        string
+	AutoMatched       bool
+	InlineAIConfirmed bool
+	CandidateCount    int
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
@@ -330,7 +331,7 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	}
 	hasAutomaticSource := false
 	for _, setting := range settings {
-		if setting.Enabled && setting.AutoMatch {
+		if (setting.Source == "musicbrainz" || setting.Source == "lastfm") && setting.Enabled && setting.AutoMatch {
 			hasAutomaticSource = true
 			break
 		}
@@ -342,37 +343,14 @@ func (m *Manager) startAllWithMode(ctx context.Context, mode storage.ArtistScanM
 	if err != nil {
 		return 0, "", err
 	}
-	var eligible, composites []storage.ArtistMatchInput
-	for _, artist := range artists {
-		if metadata.CompositeArtistCredit(artist.Name) {
-			needed, e := m.store.ArtistCompositeCheckNeeded(ctx, artist, mode)
-			if e != nil {
-				return 0, "", e
-			}
-			if needed {
-				composites = append(composites, artist)
-			}
-			continue
-		}
-		for _, setting := range settings {
-			if setting.Source != "musicbrainz" && setting.Source != "lastfm" {
-				continue
-			}
-			check, e := m.store.ArtistSourceCheckNeededForMode(ctx, artist, setting, mode)
-			if e != nil {
-				return 0, "", e
-			}
-			if check.Eligible {
-				eligible = append(eligible, artist)
-				break
-			}
-		}
+	eligible, composites, err := m.store.FilterArtistsForScan(ctx, artists, settings, mode)
+	if err != nil {
+		return 0, "", err
 	}
-	artists = eligible
-	if len(artists) == 0 {
+	if len(eligible) == 0 {
 		return 0, "", ErrNoEligibleArtists
 	}
-	artists = append(artists, composites...)
+	artists = append(eligible, composites...)
 	var snapshots []storage.ArtistRunItemInput
 	for _, artist := range artists {
 		snapshot := storage.ArtistRunItemInput{Artist: artist}
@@ -797,12 +775,14 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 	if err != nil {
 		return MatchResult{AutoMatched: auto}, err
 	}
+	inlineConfirmed := false
 	if !auto && pendingCount > 0 && m.inlineAI != nil && automatic {
 		if m.inlineAI(ctx, storage.AITargetArtistMatch, artistID) {
 			auto = true
+			inlineConfirmed = true
 		}
 	}
-	return MatchResult{AutoMatched: auto, CandidateCount: pendingCount}, nil
+	return MatchResult{AutoMatched: auto, InlineAIConfirmed: inlineConfirmed, CandidateCount: pendingCount}, nil
 }
 
 type mbSearchResponse struct {

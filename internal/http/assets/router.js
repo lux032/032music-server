@@ -179,7 +179,7 @@ import { updateTrackRowsUI } from './player-bar.js';
     // Icon-only buttons keep their icon; replacing textContent would destroy the
     // <svg> for good (the label restore only puts back text).
     if (submitter instanceof HTMLButtonElement && !submitter.querySelector('svg')) {
-      if (pending) { submitter.dataset.originalText = submitter.textContent; submitter.textContent = '保存中…'; }
+      if (pending) { submitter.dataset.originalText = submitter.textContent; submitter.textContent = submitter.dataset.pendingText || '保存中…'; }
       else if (submitter.dataset.originalText) { submitter.textContent = submitter.dataset.originalText; delete submitter.dataset.originalText; }
     }
   }

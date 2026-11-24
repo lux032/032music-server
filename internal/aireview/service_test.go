@@ -500,6 +500,93 @@ func TestArtistMatchBlocksAutoConfirmOnRequiresManualReview(t *testing.T) {
 	}
 }
 
+func TestArtistAutoConfirmRevertEmptyRunAndCompositeTargetFiltering(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	_ = s.EnsureLibrary(ctx, "Music", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "a.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "Song", Album: "Album", Artists: []string{"Kenshi Yonezu"}, AlbumArtists: []string{"Kenshi Yonezu"}, DiscNumber: 1, TrackNumber: 1},
+	})
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "b.flac", FileSize: 1, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "Duet", Album: "Collab", Artists: []string{"Alpha feat. Beta"}, AlbumArtists: []string{"Alpha"}, DiscNumber: 1, TrackNumber: 1},
+	})
+
+	svcEmpty := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{Limiter: aiclient.NewLimiter(6000)})
+	if _, err := svcEmpty.StartRun(ctx, "artist_matches", false); err != ErrNoPendingItems {
+		t.Fatalf("expected ErrNoPendingItems on empty backlog, got %v", err)
+	}
+
+	artists, _ := s.ListArtists(ctx, storage.Filters{})
+	var soloID, compID int64
+	for _, a := range artists {
+		switch a.Name {
+		case "Kenshi Yonezu":
+			soloID = a.ID
+		case "Alpha feat. Beta":
+			compID = a.ID
+		}
+	}
+	_ = s.ReplaceArtistCandidatesForSources(ctx, soloID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-ky-1", DisplayName: "米津玄師", Score: 85},
+		{Source: "musicbrainz", ExternalID: "mb-ky-2", DisplayName: "Other", Score: 60},
+	}, []string{"musicbrainz"})
+	_ = s.ReplaceArtistCandidatesForSources(ctx, compID, []storage.ArtistCandidate{
+		{Source: "musicbrainz", ExternalID: "mb-comp", DisplayName: "Alpha", Score: 70},
+	}, []string{"musicbrainz"})
+
+	// PendingArtistReviewTargetIDs must exclude composite credits so AI doesn't waste tokens on them.
+	targetIDs, err := s.PendingArtistReviewTargetIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targetIDs) != 1 || targetIDs[0] != soloID {
+		t.Fatalf("PendingArtistReviewTargetIDs=%v want [%d]", targetIDs, soloID)
+	}
+
+	cands, _ := s.ArtistCandidates(ctx, soloID)
+	var pickID int64
+	for _, c := range cands {
+		if c.ExternalID == "mb-ky-1" {
+			pickID = c.ID
+		}
+	}
+	svc := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		Limiter: aiclient.NewLimiter(6000),
+		NewChat: func(storage.AISettings) (tagging.Chat, error) {
+			return fakeChat{fn: func(req tagging.ChatRequest) (tagging.ChatResult, error) {
+				return tagging.ChatResult{
+					Content: `{"decision":"select","candidateId":` + itoa(pickID) + `,"confidence":96,"needWebSearch":false,"searchQuery":"","quote":"","reason":"代表作一致","evidence":[]}`,
+					Usage:   storage.AIUsage{Requests: 1},
+				}, nil
+			}}, nil
+		},
+	})
+	res, err := svc.EvaluateTarget(ctx, storage.AITargetArtistMatch, soloID, false)
+	if err != nil || !res.Applied {
+		t.Fatalf("expected auto confirm, res=%+v err=%v", res, err)
+	}
+	dec, ok, err := s.AIReviewDecisionByTarget(ctx, storage.AITargetArtistMatch, soloID)
+	if err != nil || !ok || !dec.Applied {
+		t.Fatalf("missing applied artist decision: ok=%v err=%v dec=%+v", ok, err, dec)
+	}
+	// Regression: artist_match_candidates has no updated_at column; revert must succeed cleanly.
+	if err := s.RevertAIReviewDecision(ctx, dec.ID); err != nil {
+		t.Fatalf("RevertAIReviewDecision(artist) failed: %v", err)
+	}
+	if _, err := s.ArtistExternalID(ctx, soloID, "musicbrainz"); err == nil {
+		t.Fatal("expected external profile removed after revert")
+	}
+	restored, _ := s.ArtistCandidates(ctx, soloID)
+	for _, c := range restored {
+		if c.Status != "candidate" {
+			t.Fatalf("expected candidate status restored after revert, got %+v", restored)
+		}
+	}
+}
+
 func itoa(v int64) string {
 	return string(func() []byte {
 		if v == 0 {

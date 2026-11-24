@@ -152,6 +152,8 @@ func (s *Store) biographySettingsOrDefault(ctx context.Context) BiographySetting
 
 // artistBiographyDisplayableSQL matches selectBiography's exact visibility rules
 // so untranslated foreign sitelink rows never mask a blank artist page.
+// Splitting own vs merged-source lookups into separate EXISTS avoids OR-induced
+// full scans of artist_biographies.
 func artistBiographyDisplayableSQL(alias string, settings BiographySettings) (string, []any) {
 	targetTag := normalizeTargetLanguage(settings.TargetLanguage)
 	langs := splitCSV(settings.PreferredLanguages)
@@ -172,13 +174,16 @@ func artistBiographyDisplayableSQL(alias string, settings BiographySettings) (st
 		}
 	}
 	langJSON, _ := json.Marshal(langs)
-	cond := `EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=` + alias + `.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id)) AND b.status='found' AND b.biography<>'' AND (` +
+	bioMatch := `b.status='found' AND b.biography<>'' AND (` +
 		`(COALESCE(` + alias + `.preferred_biography_source,'')<>'' AND b.source=` + alias + `.preferred_biography_source AND b.language=COALESCE(` + alias + `.preferred_biography_language,''))` +
 		` OR (?=1 AND b.source='ai_translated' AND b.language=?)` +
 		` OR (b.source='ai_web' AND b.language=?)` +
 		` OR (b.source IN ('wikipedia','lastfm') AND b.language IN (SELECT value FROM json_each(?)))` +
-		`))`
-	return cond, []any{boolInt(settings.AITranslateEnabled), targetTag, targetTag, string(langJSON)}
+		`)`
+	cond := `(EXISTS(SELECT 1 FROM artist_biographies b WHERE b.artist_id=` + alias + `.id AND ` + bioMatch + `) OR EXISTS(SELECT 1 FROM artists ma JOIN artist_biographies b ON b.artist_id=ma.id WHERE ma.merged_into_artist_id=` + alias + `.id AND ` + bioMatch + `))`
+	aiEnabled := boolInt(settings.AITranslateEnabled)
+	langStr := string(langJSON)
+	return cond, []any{aiEnabled, targetTag, targetTag, langStr, aiEnabled, targetTag, targetTag, langStr}
 }
 
 // ArtistBiographyBackfillCandidatesForMode 按模式返回待处理歌手列表，始终跳过已合并与有人工简介的歌手。
@@ -303,6 +308,13 @@ func (s *Store) ArtistBiographyPerformerCount(ctx context.Context) (int, error) 
 	var total int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artists a WHERE a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate).Scan(&total)
 	return total, err
+}
+
+// ArtistBiographyBackfillCounts 在单次 SQL 扫描中同时统计未合并歌手总数与缺简介数。
+func (s *Store) ArtistBiographyBackfillCounts(ctx context.Context) (missing, total int, err error) {
+	cond, args := artistBiographyDisplayableSQL("a", s.biographySettingsOrDefault(ctx))
+	err = s.db.QueryRowContext(ctx, `SELECT count(*),COALESCE(SUM(CASE WHEN COALESCE(a.user_biography,'')='' AND NOT `+cond+` THEN 1 ELSE 0 END),0) FROM artists a WHERE a.merged_into_artist_id IS NULL AND `+artistBiographyPerformerPredicate, args...).Scan(&total, &missing)
+	return missing, total, err
 }
 
 // ArtistBiographyIdentity 是简介抓取的身份快照（分叉 C1）：沿合并链（含
@@ -523,8 +535,13 @@ func (s *Store) CreateArtistBiographyBackfillRunWithMode(ctx context.Context, mo
 	if err != nil {
 		return 0, err
 	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO artist_biography_backfill_items(run_id,artist_id,artist_name) VALUES(?,?,?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
 	for _, item := range items {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_biography_backfill_items(run_id,artist_id,artist_name) VALUES(?,?,?)`, id, item.ID, item.Name); err != nil {
+		if _, err = stmt.ExecContext(ctx, id, item.ID, item.Name); err != nil {
 			return 0, err
 		}
 	}

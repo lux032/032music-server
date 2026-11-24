@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/lux032/032music-server/internal/netfetch"
@@ -61,12 +62,28 @@ func (m *Manager) scanArtistImageBackfillForMode(ctx context.Context, mode strin
 	if err != nil {
 		return 0, 0, nil, err
 	}
+	var cachedFiles map[string]struct{}
+	cleanImgDir := ""
+	if m.imageDirectory != "" {
+		cleanImgDir = filepath.Clean(m.imageDirectory)
+		if entries, readErr := os.ReadDir(cleanImgDir); readErr == nil {
+			cachedFiles = make(map[string]struct{}, len(entries))
+			for _, e := range entries {
+				if !e.IsDir() {
+					cachedFiles[e.Name()] = struct{}{}
+				}
+			}
+		}
+	}
 	for _, row := range rows {
 		total++
 		if row.CachePath != "" {
-			// cache_path 可能为相对路径（数据目录相对配置时）：按现状 as-is
-			// 解析，与 handleArtistImage 的读盘行为保持一致。
-			if _, statErr := os.Stat(row.CachePath); statErr == nil {
+			if cachedFiles != nil && filepath.Clean(filepath.Dir(row.CachePath)) == cleanImgDir {
+				if _, ok := cachedFiles[filepath.Base(row.CachePath)]; ok {
+					cached++
+					continue
+				}
+			} else if _, statErr := os.Stat(row.CachePath); statErr == nil {
 				cached++
 				continue
 			}
@@ -81,6 +98,24 @@ func (m *Manager) scanArtistImageBackfillForMode(ctx context.Context, mode strin
 func (m *Manager) ArtistImageBackfillStats(ctx context.Context) (cached, total int, err error) {
 	total, cached, _, err = m.scanArtistImageBackfill(ctx)
 	return cached, total, err
+}
+
+// EnrichAutoConfirmedArtist fetches a missing avatar (refreshing MusicBrainz/Last.fm
+// relations first, then falling back to enabled Tier 2 structured sources) and
+// refreshes missing biographies for both performers and behind-the-scenes credits.
+// Used after AI auto-confirmation so its behavior matches automatic matching.
+func (m *Manager) EnrichAutoConfirmedArtist(ctx context.Context, artistID int64) {
+	valid, err := m.hasValidArtistImage(ctx, artistID)
+	if err == nil && !valid {
+		imgCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		if imgErr := m.RefreshConfirmedArtistImage(imgCtx, artistID); imgErr != nil && !errors.Is(imgErr, sql.ErrNoRows) {
+			m.logger.Warn("ai artist image refresh failed", "artistId", artistID, "error", RedactSourceError(imgErr))
+		}
+		cancel()
+		// If MB/Last.fm had no usable portrait, fall back to enabled structured sources (Fanart/Deezer/Bangumi).
+		m.cacheAutoMatchedArtistImage(ctx, artistID)
+	}
+	m.refreshAutoMatchedArtistBiographies(ctx, artistID)
 }
 
 // cacheAutoMatchedArtistImage fills a missing avatar after the identity commits.

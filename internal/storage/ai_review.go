@@ -279,50 +279,153 @@ func (s *Store) RecentAIAppliedDecisions(ctx context.Context, kinds []string, li
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
+	rows.Close()
+	if len(decisions) == 0 {
+		return nil, nil
+	}
+	summaries := s.batchAIDecisionTargetSummaries(ctx, decisions)
 	items := make([]AIReviewAppliedItem, 0, len(decisions))
 	for _, d := range decisions {
-		title, href := s.aiDecisionTargetSummary(ctx, d.TargetKind, d.TargetID)
-		items = append(items, AIReviewAppliedItem{Decision: d, TargetTitle: title, TargetURL: href})
+		s := summaries[aiDecisionTargetKey{kind: d.TargetKind, id: d.TargetID}]
+		items = append(items, AIReviewAppliedItem{Decision: d, TargetTitle: s.title, TargetURL: s.href})
 	}
 	return items, nil
 }
 
-func (s *Store) aiDecisionTargetSummary(ctx context.Context, kind string, targetID int64) (string, string) {
-	var title string
-	switch kind {
-	case AITargetAlbumSubject:
-		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(user_title,title) FROM albums WHERE id=?`, targetID).Scan(&title)
-		if title == "" {
-			title = fmt.Sprintf("专辑 #%d", targetID)
+type aiDecisionTargetKey struct {
+	kind string
+	id   int64
+}
+
+type aiDecisionTargetInfo struct {
+	title, href string
+}
+
+func (s *Store) batchAIDecisionTargetSummaries(ctx context.Context, decisions []AIReviewDecision) map[aiDecisionTargetKey]aiDecisionTargetInfo {
+	out := make(map[aiDecisionTargetKey]aiDecisionTargetInfo, len(decisions))
+	var albumIDs, trackIDs, workIDs, artistIDs []int64
+	for _, d := range decisions {
+		switch d.TargetKind {
+		case AITargetAlbumSubject:
+			albumIDs = append(albumIDs, d.TargetID)
+		case AITargetTrackSubject:
+			trackIDs = append(trackIDs, d.TargetID)
+		case AITargetWorkMatch:
+			workIDs = append(workIDs, d.TargetID)
+		case AITargetArtistMatch, AITargetCreditSplit:
+			artistIDs = append(artistIDs, d.TargetID)
+		case AITargetSeriesSuggestion:
+			out[aiDecisionTargetKey{kind: d.TargetKind, id: d.TargetID}] = aiDecisionTargetInfo{
+				title: fmt.Sprintf("系列建议 #%d", d.TargetID),
+				href:  "/admin/work-review?tab=series",
+			}
+		default:
+			out[aiDecisionTargetKey{kind: d.TargetKind, id: d.TargetID}] = aiDecisionTargetInfo{
+				title: fmt.Sprintf("#%d", d.TargetID),
+				href:  "/admin",
+			}
 		}
-		return title, fmt.Sprintf("/admin/albums/%d", targetID)
-	case AITargetTrackSubject:
-		var albumID int64
-		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(user_title,title),album_id FROM tracks WHERE id=?`, targetID).Scan(&title, &albumID)
-		if title == "" {
-			title = fmt.Sprintf("曲目 #%d", targetID)
-		}
-		if albumID > 0 {
-			return title, fmt.Sprintf("/admin/albums/%d", albumID)
-		}
-		return title, "/admin/work-review?tab=tracks"
-	case AITargetWorkMatch:
-		_ = s.db.QueryRowContext(ctx, `SELECT title FROM works WHERE id=?`, targetID).Scan(&title)
-		if title == "" {
-			title = fmt.Sprintf("作品 #%d", targetID)
-		}
-		return title, fmt.Sprintf("/admin/works/%d", targetID)
-	case AITargetArtistMatch, AITargetCreditSplit:
-		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, targetID).Scan(&title)
-		if title == "" {
-			title = fmt.Sprintf("艺术家 #%d", targetID)
-		}
-		return title, fmt.Sprintf("/admin/artists/%d?view=profile", targetID)
-	case AITargetSeriesSuggestion:
-		return fmt.Sprintf("系列建议 #%d", targetID), "/admin/work-review?tab=series"
-	default:
-		return fmt.Sprintf("#%d", targetID), "/admin"
 	}
+	if len(albumIDs) > 0 {
+		titles := map[int64]string{}
+		if enc, err := json.Marshal(albumIDs); err == nil {
+			if rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(user_title,title) FROM albums WHERE id IN (SELECT value FROM json_each(?))`, string(enc)); err == nil {
+				for rows.Next() {
+					var id int64
+					var t string
+					if rows.Scan(&id, &t) == nil {
+						titles[id] = t
+					}
+				}
+				rows.Close()
+			}
+		}
+		for _, id := range albumIDs {
+			t := titles[id]
+			if t == "" {
+				t = fmt.Sprintf("专辑 #%d", id)
+			}
+			out[aiDecisionTargetKey{kind: AITargetAlbumSubject, id: id}] = aiDecisionTargetInfo{title: t, href: fmt.Sprintf("/admin/albums/%d", id)}
+		}
+	}
+	if len(trackIDs) > 0 {
+		type trInfo struct {
+			title   string
+			albumID int64
+		}
+		found := map[int64]trInfo{}
+		if enc, err := json.Marshal(trackIDs); err == nil {
+			if rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(user_title,title),album_id FROM tracks WHERE id IN (SELECT value FROM json_each(?))`, string(enc)); err == nil {
+				for rows.Next() {
+					var id int64
+					var v trInfo
+					if rows.Scan(&id, &v.title, &v.albumID) == nil {
+						found[id] = v
+					}
+				}
+				rows.Close()
+			}
+		}
+		for _, id := range trackIDs {
+			v := found[id]
+			if v.title == "" {
+				v.title = fmt.Sprintf("曲目 #%d", id)
+			}
+			href := "/admin/work-review?tab=tracks"
+			if v.albumID > 0 {
+				href = fmt.Sprintf("/admin/albums/%d", v.albumID)
+			}
+			out[aiDecisionTargetKey{kind: AITargetTrackSubject, id: id}] = aiDecisionTargetInfo{title: v.title, href: href}
+		}
+	}
+	if len(workIDs) > 0 {
+		titles := map[int64]string{}
+		if enc, err := json.Marshal(workIDs); err == nil {
+			if rows, err := s.db.QueryContext(ctx, `SELECT id,title FROM works WHERE id IN (SELECT value FROM json_each(?))`, string(enc)); err == nil {
+				for rows.Next() {
+					var id int64
+					var t string
+					if rows.Scan(&id, &t) == nil {
+						titles[id] = t
+					}
+				}
+				rows.Close()
+			}
+		}
+		for _, id := range workIDs {
+			t := titles[id]
+			if t == "" {
+				t = fmt.Sprintf("作品 #%d", id)
+			}
+			out[aiDecisionTargetKey{kind: AITargetWorkMatch, id: id}] = aiDecisionTargetInfo{title: t, href: fmt.Sprintf("/admin/works/%d", id)}
+		}
+	}
+	if len(artistIDs) > 0 {
+		names := map[int64]string{}
+		if enc, err := json.Marshal(artistIDs); err == nil {
+			if rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(user_display_name,display_name) FROM artists WHERE id IN (SELECT value FROM json_each(?))`, string(enc)); err == nil {
+				for rows.Next() {
+					var id int64
+					var t string
+					if rows.Scan(&id, &t) == nil {
+						names[id] = t
+					}
+				}
+				rows.Close()
+			}
+		}
+		for _, d := range decisions {
+			if d.TargetKind != AITargetArtistMatch && d.TargetKind != AITargetCreditSplit {
+				continue
+			}
+			t := names[d.TargetID]
+			if t == "" {
+				t = fmt.Sprintf("艺术家 #%d", d.TargetID)
+			}
+			out[aiDecisionTargetKey{kind: d.TargetKind, id: d.TargetID}] = aiDecisionTargetInfo{title: t, href: fmt.Sprintf("/admin/artists/%d?view=profile", d.TargetID)}
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------- runs
@@ -866,11 +969,28 @@ func (s *Store) PendingWorkReviewTargetIDs(ctx context.Context) ([]int64, error)
 }
 
 func (s *Store) PendingArtistReviewTargetIDs(ctx context.Context) ([]int64, error) {
-	return s.queryInt64List(ctx, artistInheritedProfilesCTE+`SELECT DISTINCT c.artist_id FROM artist_match_candidates c JOIN artists ar ON ar.id=c.artist_id WHERE c.status='candidate' AND ar.merged_into_artist_id IS NULL AND `+artistCandidateUnmatchedSQL+` ORDER BY c.artist_id`)
+	rows, err := s.db.QueryContext(ctx, artistInheritedProfilesCTE+`SELECT DISTINCT c.artist_id,COALESCE(ar.user_display_name,ar.display_name) FROM artist_match_candidates c JOIN artists ar ON ar.id=c.artist_id WHERE c.status='candidate' AND ar.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM ai_review_decisions d WHERE d.target_kind='artist_match' AND d.target_id=ar.id AND d.applied=1 AND d.reverted=0) AND `+artistCandidateUnmatchedSQL+` ORDER BY c.artist_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var name string
+		if err = rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		if metadata.CompositeArtistCredit(name) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *Store) PendingCreditSplitArtistIDs(ctx context.Context) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate') OR NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=ar.id)) ORDER BY ar.id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate') OR (NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=ar.id) AND (EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id) OR EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)))) ORDER BY ar.id`)
 	if err != nil {
 		return nil, err
 	}
