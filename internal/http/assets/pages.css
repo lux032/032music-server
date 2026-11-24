@@ -4597,9 +4597,17 @@ h1, h2, h3, .browser-header h1, .admin-header h1, .library-header h1,
 .library-album-card .cover-wrap { overflow: visible; border-radius: var(--radius-cover); }
 .library-album-card .album-tile-cover { overflow: hidden; border-radius: var(--radius-cover); }
 .library-album-card .album-select { top: 8px; left: 8px; bottom: auto; right: auto; border-radius: 6px; }
-.library-album-card .album-fav-form { top: 8px; right: 44px; bottom: auto; }
+.library-album-card .album-fav-form { top: 8px; right: 42px; left: auto; bottom: auto; z-index: 4; }
+.library-album-card .album-fav {
+  width: 28px; height: 28px; border-radius: 6px;
+  color: var(--text); background: var(--surface);
+  box-shadow: 0 2px 8px rgb(0 0 0 / .28);
+}
+.library-album-card .album-fav:hover { color: var(--danger); background: var(--surface-hover); transform: none; }
+.library-album-card .album-fav.is-favorite { color: var(--danger); opacity: 1; }
 .library-album-card .album-card-menu { position: absolute; top: 8px; right: 8px; z-index: 4; min-width: 0; }
-.library-album-card .album-card-menu summary { color: var(--text); background: var(--surface); opacity: 0; }
+.library-album-card .album-card-menu summary { color: var(--text); background: var(--surface); box-shadow: 0 2px 8px rgb(0 0 0 / .28); opacity: 0; }
+.library-album-card .album-card-menu summary:hover { color: var(--text); background: var(--surface-hover); }
 .library-album-card:is(:hover, :focus-within) .album-card-menu summary, .library-album-card .album-card-menu[open] summary { opacity: 1; }
 .library-album-card .album-card-menu[open] { z-index: 10; }
 .library-album-card .album-card-title > a { min-width: 0; }

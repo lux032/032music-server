@@ -40,6 +40,7 @@ type libraryPageData struct {
 	// years present in the current result set (plus their album counts).
 	YearFacets                []storage.YearCount
 	AlbumDetail               *storage.Album
+	AlbumPeople               []albumPerson
 	AlbumCapsules             []AlbumWorkCapsule
 	HiddenCapsuleCount        int
 	TrackTieups               map[int64][]TrackTieupView
@@ -890,6 +891,25 @@ func (a *App) handleAlbumPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		data.Tracks, err = a.store.ListTracks(r.Context(), storage.Filters{AlbumID: data.AlbumDetail.ID, Limit: 500})
+	}
+	if err == nil {
+		people := albumPeople(data.Tracks)
+		if len(people) > 0 {
+			ids := make([]int64, len(people))
+			for i, p := range people {
+				ids[i] = p.ID
+			}
+			var imageURLs map[int64]string
+			imageURLs, err = a.store.ArtistImageURLs(r.Context(), ids)
+			if err == nil {
+				for i := range people {
+					if url := imageURLs[people[i].ID]; url != "" {
+						people[i].ImageURL = url
+					}
+				}
+			}
+		}
+		data.AlbumPeople = people
 	}
 	if err == nil {
 		albums := []storage.Album{*data.AlbumDetail}

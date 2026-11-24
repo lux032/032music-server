@@ -38,6 +38,53 @@ func artistImageURLSQL(alias string) string {
 	return `COALESCE((SELECT '/api/v1/artists/'||` + alias + `.id||'/image?v='||substr(ci.content_hash,1,12) FROM artist_custom_images ci WHERE ci.artist_id=` + alias + `.id OR ci.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id) ORDER BY (ci.artist_id=` + alias + `.id) DESC,ci.artist_id ASC LIMIT 1),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=` + alias + `.id OR ai.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id)) THEN '/api/v1/artists/'||` + alias + `.id||'/image' ELSE '' END)`
 }
 
+// ArtistImageURLs resolves display image URLs for the given artist IDs in a
+// single query per chunk, reusing the canonical custom/cache image rule.
+func (s *Store) ArtistImageURLs(ctx context.Context, artistIDs []int64) (map[int64]string, error) {
+	result := make(map[int64]string, len(artistIDs))
+	if len(artistIDs) == 0 {
+		return result, nil
+	}
+	seen := make(map[int64]struct{}, len(artistIDs))
+	unique := make([]int64, 0, len(artistIDs))
+	for _, id := range artistIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	for start := 0; start < len(unique); start += 500 {
+		end := min(start+500, len(unique))
+		placeholders, args := inClause(unique[start:end])
+		rows, err := s.db.QueryContext(ctx, `SELECT ar.id,`+artistImageURLSQL("ar")+` FROM artists ar WHERE ar.id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			var url string
+			if err = rows.Scan(&id, &url); err != nil {
+				break
+			}
+			if url != "" {
+				result[id] = url
+			}
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 type extraTrack interface {
 	trackID() int64
 	extras() *TrackExtras
