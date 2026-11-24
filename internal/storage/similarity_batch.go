@@ -300,11 +300,24 @@ func (s *Store) rankedCandidatesWithOptions(ctx context.Context, seed similarity
 	return ranked, nil
 }
 
-// SimilarTracksOptions controls optional filtering and diversity when fetching similar tracks.
+// SimilarTracksOptions controls optional filtering, diversity, and seeded jitter when
+// fetching similar tracks.
 type SimilarTracksOptions struct {
 	Exclude          map[int64]bool
 	MaxPerArtist     int
 	HideInstrumental bool
+	Seed             int64
+}
+
+// similarityJitterFactor returns a deterministic pseudo-random value in [-1, 1)
+// derived from (seed, trackID) via SplitMix64 mixing.
+func similarityJitterFactor(seed, trackID int64) float64 {
+	x := uint64(seed) ^ (uint64(trackID) * 0x9e3779b97f4a7c15)
+	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
+	x = (x ^ (x >> 27)) * 0x94d049bb133111eb
+	x ^= x >> 31
+	unit := float64(x>>11) / float64(uint64(1)<<53)
+	return unit*2 - 1
 }
 
 func dedupeCandidates(seed similarityMeta, ranked []scoredCandidate, limit int) []scoredCandidate {
@@ -325,6 +338,30 @@ func dedupeCandidatesWithOptions(seed similarityMeta, ranked []scoredCandidate, 
 		seen[key] = true
 		unique = append(unique, r)
 	}
+	if opts.Seed != 0 && len(unique) > 1 {
+		// Bounded proportional score jitter (+/-25%): varies selection and order
+		// within the top similarity tier without promoting low-relevance tracks.
+		type jitteredCandidate struct {
+			cand      scoredCandidate
+			rankScore float64
+		}
+		jittered := make([]jitteredCandidate, len(unique))
+		for i, r := range unique {
+			jittered[i] = jitteredCandidate{
+				cand:      r,
+				rankScore: r.score * (1 + 0.25*similarityJitterFactor(opts.Seed, r.id)),
+			}
+		}
+		sort.Slice(jittered, func(i, j int) bool {
+			if jittered[i].rankScore == jittered[j].rankScore {
+				return jittered[i].cand.id < jittered[j].cand.id
+			}
+			return jittered[i].rankScore > jittered[j].rankScore
+		})
+		for i, j := range jittered {
+			unique[i] = j.cand
+		}
+	}
 	if opts.MaxPerArtist <= 0 || len(unique) == 0 {
 		if len(unique) > limit {
 			return unique[:limit]
@@ -334,7 +371,13 @@ func dedupeCandidatesWithOptions(seed similarityMeta, ranked []scoredCandidate, 
 	// Two-pass artist & signal diversity: enforce artist cap and avoid long runs of
 	// purely acoustic-only matches when strong structural links (sameWork / sharedCredit /
 	// coPlaylist / sameArtist) are available, then backfill if the library is small.
-	minStructuralScore := math.Max(0.18, unique[0].score*0.50)
+	topScore := 0.0
+	for _, r := range unique {
+		if r.score > topScore {
+			topScore = r.score
+		}
+	}
+	minStructuralScore := math.Max(0.18, topScore*0.50)
 	picked := make([]bool, len(unique))
 	artistCounts := map[string]int{}
 	out := make([]scoredCandidate, 0, min(limit, len(unique)))

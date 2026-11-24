@@ -73,6 +73,13 @@ func parseSimilarOptions(r *http.Request) (storage.SimilarTracksOptions, bool) {
 			return opts, false
 		}
 	}
+	if rawSeed := strings.TrimSpace(r.URL.Query().Get("seed")); rawSeed != "" {
+		n, err := strconv.ParseInt(rawSeed, 10, 64)
+		if err != nil {
+			return opts, false
+		}
+		opts.Seed = n
+	}
 	return opts, true
 }
 func (a *App) handleSimilarTracks(w http.ResponseWriter, r *http.Request) {

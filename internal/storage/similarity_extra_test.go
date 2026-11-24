@@ -254,3 +254,54 @@ func TestDedupeCandidatesInterleavesStructuralWithAcousticOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestDedupeCandidatesSeededJitterVariesOrderAndPreservesRelevance(t *testing.T) {
+	seed := similarityMeta{track: Track{ID: 1, Title: "Seed"}, primary: map[int64]bool{1: true}}
+	cand := func(id int64, score float64, reasons ...string) scoredCandidate {
+		return scoredCandidate{
+			id:      id,
+			score:   score,
+			reasons: reasons,
+			meta:    &similarityMeta{track: Track{ID: id, Title: string(rune('A' + id))}, primary: map[int64]bool{id: true}},
+		}
+	}
+	ranked := []scoredCandidate{
+		cand(2, 0.44, "sameWork"),
+		cand(3, 0.43, "soundsSimilar"),
+		cand(4, 0.42, "sharedCredit"),
+		cand(5, 0.41, "soundsSimilar"),
+		cand(6, 0.40, "coPlaylist"),
+		cand(7, 0.39, "soundsSimilar"),
+		cand(8, 0.38, "sameArtist"),
+		cand(9, 0.08, "era"), // low relevance: must never enter top 5 even with max jitter
+	}
+	a := dedupeCandidatesWithOptions(seed, ranked, 5, SimilarTracksOptions{MaxPerArtist: 2, Seed: 12345})
+	b := dedupeCandidatesWithOptions(seed, ranked, 5, SimilarTracksOptions{MaxPerArtist: 2, Seed: 12345})
+	if len(a) != 5 || len(b) != 5 {
+		t.Fatalf("expected 5 items, got %d / %d", len(a), len(b))
+	}
+	for i := range a {
+		if a[i].id != b[i].id || a[i].score != b[i].score {
+			t.Fatalf("same seed must be reproducible: a=%v b=%v", a, b)
+		}
+		if a[i].id == 9 {
+			t.Fatalf("low-relevance candidate 9 leaked into top 5: %v", a)
+		}
+	}
+	// Across several distinct seeds, at least one must differ in selection or order.
+	differed := false
+	for _, s := range []int64{22222, 33333, 44444, 55555, 66666} {
+		other := dedupeCandidatesWithOptions(seed, ranked, 5, SimilarTracksOptions{MaxPerArtist: 2, Seed: s})
+		for i := range other {
+			if other[i].id == 9 {
+				t.Fatalf("low-relevance candidate 9 leaked for seed %d", s)
+			}
+			if other[i].id != a[i].id {
+				differed = true
+			}
+		}
+	}
+	if !differed {
+		t.Fatal("expected distinct seeds to vary candidate selection or order")
+	}
+}

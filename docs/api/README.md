@@ -45,7 +45,7 @@
 | `PUT` / `DELETE` | `/api/v1/tracks/{id}/lyrics/source` | `PUT {source, id}`：手动选择这首歌的在线歌词（优先于本地歌词，对所有客户端生效）；`DELETE`：清除在线歌词并停止自动搜索（本地歌词不受影响），返回 204。 |
 | `GET` | `/api/v1/artwork/{id}`、`/api/v1/artists/{id}/image` | 图片，可传 `size` 获取缩略图。 |
 | `GET` | `/api/v1/tracks/{id}/transcode.{mp3\|ogg\|flac}` | 转码媒体。 |
-| `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 相似曲目（元数据 + 声学混合，支持 `limit`/`exclude`/`diverse`/`maxPerArtist`/`hideInstrumental`）与渐变路径（JSON 凭据）。 |
+| `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 相似曲目（元数据 + 声学混合，支持 `limit`/`exclude`/`diverse`/`maxPerArtist`/`hideInstrumental`/`seed`）与渐变路径（JSON 凭据）。 |
 | `POST` | `/api/v1/enrichment/run` | 启动增强；`/api/v1/enrichment/jobs` 和 `/{id}` 查状态，POST `/{id}/cancel` 取消。 |
 | `GET` | `/api/v1/audio-analysis` | 声学分析状态：开关、进度、校准、分析服务信息（`capabilities.features.audioAnalysis` 表示已部署且已开启）。 |
 | `GET` | `/api/v1/ai/tagging` | AI 打标状态：进度、用量、复核与抽样对比（`capabilities.features.trackTags` 表示已配置且已开启）。 |
