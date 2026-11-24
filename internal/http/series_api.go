@@ -168,12 +168,7 @@ func (a *App) handleAPISeriesDetail(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "query_failed", err.Error())
 		return
 	}
-	albums, err := a.seriesAlbums(ctx, members)
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "query_failed", err.Error())
-		return
-	}
-	tracks, err := a.seriesMemberTracks(ctx, members)
+	albumCount, trackCount, err := a.store.SeriesAlbumAndTrackCounts(ctx, series.ID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "query_failed", err.Error())
 		return
@@ -182,7 +177,7 @@ func (a *App) handleAPISeriesDetail(w http.ResponseWriter, r *http.Request) {
 	var representative *storage.Work
 	out := apiSeriesDetail{
 		Members: make([]apiSeriesMember, 0, len(members)),
-		Stats:   apiSeriesStats{MemberCount: len(members), AlbumCount: len(albums), TrackCount: len(tracks)},
+		Stats:   apiSeriesStats{MemberCount: len(members), AlbumCount: albumCount, TrackCount: trackCount},
 		Play:    homeAPIPlayRef{Type: "series", ID: series.ID},
 	}
 	for i := range members {

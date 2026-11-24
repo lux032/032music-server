@@ -435,7 +435,7 @@ func (s *Store) effectivePlaybackStates(ctx context.Context, trackIDs []int64) (
 		return nil, err
 	}
 
-	endedRows, err := s.db.QueryContext(ctx, `SELECT track_id,ended_at,COALESCE(end_reason,'') FROM playback_sessions latest WHERE latest.track_id IN (`+placeholders+`) AND latest.ended_at IS NOT NULL AND latest.rowid=(SELECT rowid FROM playback_sessions WHERE track_id=latest.track_id AND ended_at IS NOT NULL ORDER BY ended_at DESC, rowid DESC LIMIT 1)`, args...)
+	endedRows, err := s.db.QueryContext(ctx, `SELECT track_id,ended_at,COALESCE(end_reason,'') FROM (SELECT track_id,ended_at,end_reason,ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY ended_at DESC, rowid DESC) AS rn FROM playback_sessions WHERE track_id IN (`+placeholders+`) AND ended_at IS NOT NULL) WHERE rn=1`, args...)
 	if err != nil {
 		return nil, err
 	}

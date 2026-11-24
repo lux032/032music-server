@@ -211,8 +211,16 @@ func CompleteEnrichmentItemTx(ctx context.Context, tx *sql.Tx, c EnrichmentCheck
 	if err := enrichmentWriteLock(ctx, tx); err != nil {
 		return err
 	}
+	var outcomeCol string
 	switch outcome {
-	case "matched", "skipped", "review", "failed":
+	case "matched":
+		outcomeCol = "succeeded"
+	case "skipped":
+		outcomeCol = "skipped"
+	case "review":
+		outcomeCol = "review"
+	case "failed":
+		outcomeCol = "failed"
 	default:
 		return ErrEnrichmentRunState
 	}
@@ -226,15 +234,16 @@ func CompleteEnrichmentItemTx(ctx context.Context, tx *sql.Tx, c EnrichmentCheck
 	if err := requireEnrichmentCheckpoint(ctx, tx, c); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE enrichment_run_items SET status='completed',outcome=? WHERE id=?`, outcome, c.ItemID); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE enrichment_run_items SET status='completed',outcome=? WHERE id=? AND status<>'completed'`, outcome, c.ItemID)
+	if err != nil {
 		return err
 	}
-	for _, field := range []struct{ column, outcome string }{{"succeeded", "matched"}, {"skipped", "skipped"}, {"review", "review"}, {"failed", "failed"}} {
-		if _, err := tx.ExecContext(ctx, "UPDATE enrichment_runs SET "+field.column+"=(SELECT count(*) FROM enrichment_run_items WHERE run_id=? AND outcome=?) WHERE id=?", c.RunID, field.outcome, c.RunID); err != nil {
-			return err
-		}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE enrichment_runs SET processed=(SELECT count(*) FROM enrichment_run_items WHERE run_id=? AND status='completed'),current=NULL,waiting_until=NULL,wait_source='',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, c.RunID, c.RunID)
+	_, err = tx.ExecContext(ctx, `UPDATE enrichment_runs SET processed=processed+1,`+outcomeCol+`=`+outcomeCol+`+1,current=NULL,waiting_until=NULL,wait_source='',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, c.RunID)
 	return err
 }
 func (s *Store) CompleteEnrichmentItem(ctx context.Context, c EnrichmentCheckpoint, outcome string) error {

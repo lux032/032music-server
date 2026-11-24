@@ -857,6 +857,17 @@ func (s *Store) SeriesMembers(ctx context.Context, seriesID int64) ([]WorkSeries
 	return values, rows.Err()
 }
 
+// SeriesAlbumAndTrackCounts returns the distinct visible album count and
+// distinct visible track count across all member works of seriesID in a single
+// aggregated query (matching AlbumsForWork and TracksForWork visibility and
+// deduplication rules without hydrating per-member lists).
+func (s *Store) SeriesAlbumAndTrackCounts(ctx context.Context, seriesID int64) (albumCount int, trackCount int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(DISTINCT aw.album_id) FROM work_series_members m JOIN album_works aw ON aw.work_id=m.work_id JOIN albums a ON a.id=aw.album_id WHERE m.series_id=? AND `+albumVisibleSQL("a.id")+`),
+		(SELECT COUNT(*) FROM (SELECT wt.track_id AS track_id FROM work_series_members m JOIN work_tracks wt ON wt.work_id=m.work_id WHERE m.series_id=? UNION SELECT t.id AS track_id FROM work_series_members m JOIN album_works aw ON aw.work_id=m.work_id JOIN tracks t ON t.album_id=aw.album_id WHERE m.series_id=?) st JOIN tracks t ON t.id=st.track_id WHERE `+trackVisibleSQL("t.id")+`)`, seriesID, seriesID, seriesID).Scan(&albumCount, &trackCount)
+	return albumCount, trackCount, err
+}
+
 // BangumiSeriesSeed pairs a work with its bound Bangumi subject. SubjectType
 // is 0 when the cached profile does not record the subject type yet.
 type BangumiSeriesSeed struct {

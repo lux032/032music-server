@@ -61,6 +61,10 @@ type Manager struct {
 	posterBackfilling      bool
 	posterBackfillPending  bool
 	posterLastResult       *PosterBackfillResult
+	posterCacheMu          sync.RWMutex
+	posterCacheLoaded      bool
+	posterCacheDirMod      time.Time
+	posterCache            map[string]posterCacheEntry
 	// 头像补全 durable run（B+2）与身份匹配 run 使用同一把 m.mu 但独立字段：
 	// 两类任务可以并行，带宽共享由现有各来源限流原语（sourcegate 请求间隔、
 	// blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。

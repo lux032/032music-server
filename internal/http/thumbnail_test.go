@@ -136,15 +136,17 @@ func (a *App) serveImageForTest(w http.ResponseWriter, r *http.Request, path, mi
 	}
 	defer f.Close()
 	info, _ := f.Stat()
-	if size != 0 && a.serveThumbnail(w, r, f, info, "artwork", 1, size, "public, max-age=31536000, immutable") {
-		return
+	cacheControl := "public, max-age=31536000, immutable"
+	if size != 0 {
+		switch a.serveThumbnail(w, r, f, info, "artwork", 1, size, cacheControl) {
+		case thumbnailServed:
+			return
+		case thumbnailFallbackNoCache:
+			cacheControl = "no-cache"
+		}
 	}
 	w.Header().Set("Content-Type", mime)
-	if size != 0 {
-		w.Header().Set("Cache-Control", "no-cache")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	}
+	w.Header().Set("Cache-Control", cacheControl)
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
@@ -341,12 +343,25 @@ func TestThumbnailNegativeAndHead(t *testing.T) {
 	f.Close()
 	var calls atomic.Int32
 	app.thumbnails.decodeConfig = func(f *os.File) (image.Config, string, error) { calls.Add(1); return image.DecodeConfig(f) }
+	var firstETag string
 	for range 2 {
 		w := httptest.NewRecorder()
 		app.serveImageForTest(w, httptest.NewRequest("GET", "/api/v1/artwork/1?size=256", nil), path, "image/png", 256)
-		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-cache" {
-			t.Fatal("fallback headers")
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" || w.Header().Get("ETag") == "" {
+			t.Fatalf("small fallback headers: code=%d cache=%q etag=%q", w.Code, w.Header().Get("Cache-Control"), w.Header().Get("ETag"))
 		}
+		if firstETag == "" {
+			firstETag = w.Header().Get("ETag")
+		} else if w.Header().Get("ETag") != firstETag {
+			t.Fatalf("small fallback ETag changed: %q vs %q", firstETag, w.Header().Get("ETag"))
+		}
+	}
+	condReq := httptest.NewRequest("GET", "/api/v1/artwork/1?size=256", nil)
+	condReq.Header.Set("If-None-Match", firstETag)
+	condRec := httptest.NewRecorder()
+	app.serveImageForTest(condRec, condReq, path, "image/png", 256)
+	if condRec.Code != http.StatusNotModified {
+		t.Fatalf("small fallback conditional ETag: %d", condRec.Code)
 	}
 	if calls.Load() != 1 || len(app.thumbnails.slots) != 0 {
 		t.Fatalf("negative cache: %d", calls.Load())
@@ -686,5 +701,177 @@ func TestThumbnailGIFCanvasBudget(t *testing.T) {
 	pixels := int64(24_000_000)
 	if pixels*(thumbnailBytesPerPixel(color.Palette{color.Black}))+thumbnailCanvasBytes("gif", pixels) != pixels*5 || thumbnailCanvasBytes("jpeg", pixels) != 0 {
 		t.Fatal("GIF canvas not accounted")
+	}
+}
+
+func TestThumbnailSmallFallbackCacheHeadersAndTransientError(t *testing.T) {
+	app, store, token := setupTestApp(t)
+	root := t.TempDir()
+	smallCoverPath := filepath.Join(root, "small-cover.png")
+	f, err := os.Create(smallCoverPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, 500, 500))); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	smallCoverBytes, err := os.ReadFile(smallCoverPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	smallPortraitPath := filepath.Join(root, "small-portrait.png")
+	f, err = os.Create(smallPortraitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, 200, 200))); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	smallPortraitBytes, err := os.ReadFile(smallPortraitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	largeCoverPath := filepath.Join(root, "large-cover.png")
+	f, err = os.Create(largeCoverPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, 800, 800))); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	largeCoverBytes, err := os.ReadFile(largeCoverPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := store.EnsureLibrary(ctx, "ThumbSmall", root); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := store.LibraryByRoot(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID:    lib.ID,
+		RelativePath: "small.flac",
+		FileSize:     1,
+		ModifiedAtNS: 1,
+		Metadata:     metadata.AudioMetadata{Title: "Small Song", Album: "Small Album", Artists: []string{"Small Artist"}, AlbumArtists: []string{"Small Artist"}, DiscNumber: 1, TrackNumber: 1},
+		Artwork:      &storage.ArtworkInput{Hash: "small-cover-hash", MIMEType: "image/png", CachePath: smallCoverPath, SourceType: "embedded", ByteSize: int64(len(smallCoverBytes))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID:    lib.ID,
+		RelativePath: "large.flac",
+		FileSize:     1,
+		ModifiedAtNS: 2,
+		Metadata:     metadata.AudioMetadata{Title: "Large Song", Album: "Large Album", Artists: []string{"Small Artist"}, AlbumArtists: []string{"Small Artist"}, DiscNumber: 1, TrackNumber: 1},
+		Artwork:      &storage.ArtworkInput{Hash: "large-cover-hash", MIMEType: "image/png", CachePath: largeCoverPath, SourceType: "embedded", ByteSize: int64(len(largeCoverBytes))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	albums, err := store.ListAlbums(ctx, storage.Filters{})
+	if err != nil || len(albums) != 2 {
+		t.Fatalf("albums: %v %v", albums, err)
+	}
+	var smallAlbum, largeAlbum storage.Album
+	for _, album := range albums {
+		if album.Title == "Small Album" {
+			smallAlbum = album
+		} else {
+			largeAlbum = album
+		}
+	}
+	artists, err := store.ListArtists(ctx, storage.Filters{})
+	if err != nil || len(artists) == 0 {
+		t.Fatalf("artists: %v %v", artists, err)
+	}
+	if err := store.SaveArtistImage(ctx, storage.ArtistImageInput{
+		ArtistID:  artists[0].ID,
+		ByteSize:  int64(len(smallPortraitBytes)),
+		Source:    "test",
+		RemoteURL: "https://example.invalid/small-portrait",
+		Hash:      "small-portrait-hash",
+		MIMEType:  "image/png",
+		CachePath: smallPortraitPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := app.Handler()
+	send := func(target, ifNoneMatch string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 1. Small album cover (500x500 requested at size=360 -> 512 bucket) preserves immutable Cache-Control and ETag.
+	artRec := send(smallAlbum.ArtworkURL+"?size=360&mediaToken="+token, "")
+	if artRec.Code != http.StatusOK || !bytes.Equal(artRec.Body.Bytes(), smallCoverBytes) {
+		t.Fatalf("small artwork: code=%d len=%d", artRec.Code, artRec.Body.Len())
+	}
+	if got := artRec.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("small artwork Cache-Control = %q", got)
+	}
+	artETag := artRec.Header().Get("ETag")
+	if artETag == "" {
+		t.Fatal("small artwork missing ETag")
+	}
+	if cond := send(smallAlbum.ArtworkURL+"?size=360&mediaToken="+token, artETag); cond.Code != http.StatusNotModified {
+		t.Fatalf("small artwork conditional ETag = %d, want 304", cond.Code)
+	}
+
+	// 2. Small artist portrait (200x200 requested at size=240 -> 256 bucket) preserves 86400 Cache-Control and ETag.
+	artistEndpoint := "/api/v1/artists/" + strconv.FormatInt(artists[0].ID, 10) + "/image?size=240&mediaToken=" + token
+	artistRec := send(artistEndpoint, "")
+	if artistRec.Code != http.StatusOK || !bytes.Equal(artistRec.Body.Bytes(), smallPortraitBytes) {
+		t.Fatalf("small portrait: code=%d len=%d", artistRec.Code, artistRec.Body.Len())
+	}
+	if got := artistRec.Header().Get("Cache-Control"); got != "public, max-age=86400" {
+		t.Fatalf("small portrait Cache-Control = %q", got)
+	}
+	artistETag := artistRec.Header().Get("ETag")
+	if artistETag == "" {
+		t.Fatal("small portrait missing ETag")
+	}
+	if cond := send(artistEndpoint, artistETag); cond.Code != http.StatusNotModified {
+		t.Fatalf("small portrait conditional ETag = %d, want 304", cond.Code)
+	}
+
+	// 3. Transient decode/IO failure on a large image falls back to original with Cache-Control: no-cache and retries later.
+	var failOnce atomic.Bool
+	failOnce.Store(true)
+	app.thumbnails.decodeConfig = func(f *os.File) (image.Config, string, error) {
+		if failOnce.CompareAndSwap(true, false) {
+			return image.Config{}, "", os.ErrPermission
+		}
+		return image.DecodeConfig(f)
+	}
+	largeEndpoint := largeAlbum.ArtworkURL + "?size=256&mediaToken=" + token
+	failRec := send(largeEndpoint, "")
+	if failRec.Code != http.StatusOK || !bytes.Equal(failRec.Body.Bytes(), largeCoverBytes) {
+		t.Fatalf("transient fallback: code=%d", failRec.Code)
+	}
+	if got := failRec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("transient fallback Cache-Control = %q, want no-cache", got)
+	}
+	if got := failRec.Header().Get("ETag"); got != "" {
+		t.Fatalf("transient fallback should not set ETag, got %q", got)
+	}
+	retryRec := send(largeEndpoint, "")
+	if retryRec.Code != http.StatusOK || retryRec.Header().Get("Content-Type") != "image/jpeg" || retryRec.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("retry after transient error: code=%d ct=%q cc=%q", retryRec.Code, retryRec.Header().Get("Content-Type"), retryRec.Header().Get("Cache-Control"))
 	}
 }

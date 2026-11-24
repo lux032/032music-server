@@ -51,15 +51,22 @@ func albumWhere(f Filters) (string, []any) {
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
-	trackRole := ""
-	if f.PerformerOnly {
-		trackRole = " AND tax.role='primary'"
+	if f.ArtistID > 0 {
+		trackRole := ""
+		if f.PerformerOnly {
+			trackRole = " AND tax.role='primary'"
+		}
+		clauses = append(clauses, "a.id IN (SELECT ax.album_id FROM album_artists ax WHERE ax.artist_id=? UNION SELECT tx.album_id FROM track_artists tax JOIN tracks tx ON tx.id=tax.track_id WHERE tax.artist_id=?"+trackRole+")")
+		args = append(args, f.ArtistID, f.ArtistID)
 	}
-	clauses = append(clauses,
-		"(?=0 OR a.id IN (SELECT ax.album_id FROM album_artists ax WHERE ax.artist_id=? UNION SELECT tx.album_id FROM track_artists tax JOIN tracks tx ON tx.id=tax.track_id WHERE tax.artist_id=?"+trackRole+"))",
-		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
-		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+albumHasEffectiveGenre+"))")
-	args = append(args, f.ArtistID, f.ArtistID, f.ArtistID, f.Year, f.Year, f.Genre, f.Genre)
+	if f.Year > 0 {
+		clauses = append(clauses, "COALESCE(a.user_release_year,a.release_year)=?")
+		args = append(args, f.Year)
+	}
+	if f.Genre != "" {
+		clauses = append(clauses, "EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+albumHasEffectiveGenre+")")
+		args = append(args, f.Genre)
+	}
 	// Release-year range (browse API and web album list); undated albums never match a bound.
 	if f.YearFrom > 0 {
 		clauses = append(clauses, "COALESCE(a.user_release_year,a.release_year)>=?")
@@ -104,19 +111,30 @@ func trackWhere(f Filters) (string, []any) {
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
-	if f.PerformerOnly {
-		clauses = append(clauses, "(?=0 OR t.id IN (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=?) OR t.album_id IN (SELECT album_id FROM album_artists WHERE artist_id=?))")
-		args = append(args, f.ArtistID, f.ArtistID, f.ArtistID)
-	} else {
-		clauses = append(clauses, "(?=0 OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?))")
-		args = append(args, f.ArtistID, f.ArtistID)
+	if f.ArtistID > 0 {
+		if f.PerformerOnly {
+			clauses = append(clauses, "(t.id IN (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=?) OR t.album_id IN (SELECT album_id FROM album_artists WHERE artist_id=?))")
+			args = append(args, f.ArtistID, f.ArtistID)
+		} else {
+			clauses = append(clauses, "EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.artist_id=?)")
+			args = append(args, f.ArtistID)
+		}
 	}
-	clauses = append(clauses,
-		"(?=0 OR a.id=?)",
-		"(?=0 OR COALESCE(a.user_release_year,a.release_year)=?)",
-		"(?='' OR EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+trackHasEffectiveGenreT+"))",
-		"(?=0 OR "+effectiveTrackTypeSQL+" NOT IN ('instrumental','off_vocal'))")
-	args = append(args, f.AlbumID, f.AlbumID, f.Year, f.Year, f.Genre, f.Genre, boolInt(f.HideInstrumental))
+	if f.AlbumID > 0 {
+		clauses = append(clauses, "a.id=?")
+		args = append(args, f.AlbumID)
+	}
+	if f.Year > 0 {
+		clauses = append(clauses, "COALESCE(a.user_release_year,a.release_year)=?")
+		args = append(args, f.Year)
+	}
+	if f.Genre != "" {
+		clauses = append(clauses, "EXISTS(SELECT 1 FROM genres gx WHERE gx.name=? COLLATE NOCASE AND "+trackHasEffectiveGenreT+")")
+		args = append(args, f.Genre)
+	}
+	if f.HideInstrumental {
+		clauses = append(clauses, effectiveTrackTypeSQL+" NOT IN ('instrumental','off_vocal')")
+	}
 	appendTrackFocus(&clauses, &args, f.Focus)
 	return strings.Join(clauses, " AND "), args
 }

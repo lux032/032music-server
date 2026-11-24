@@ -97,15 +97,30 @@ func TestMigration051AcceptsDesktopAndPreservesSessions(t *testing.T) {
 	columnsBefore := playbackSessionColumns(t, ctx, s)
 	indexesBefore := playbackSessionIndexes(t, ctx, s)
 
-	if err = s.Migrate(ctx); err != nil {
+	if err = s.MigrateUpTo(ctx, 51); err != nil {
 		t.Fatal(err)
 	}
 
 	if got := playbackSessionColumns(t, ctx, s); !reflect.DeepEqual(got, columnsBefore) {
-		t.Fatalf("columns changed:\nbefore %v\nafter  %v", columnsBefore, got)
+		t.Fatalf("columns changed after 051:\nbefore %v\nafter  %v", columnsBefore, got)
 	}
 	if got := playbackSessionIndexes(t, ctx, s); !reflect.DeepEqual(got, indexesBefore) {
-		t.Fatalf("indexes changed:\nbefore %v\nafter  %v", indexesBefore, got)
+		t.Fatalf("indexes changed after 051:\nbefore %v\nafter  %v", indexesBefore, got)
+	}
+	if err = s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := playbackSessionColumns(t, ctx, s); !reflect.DeepEqual(got, columnsBefore) {
+		t.Fatalf("columns changed after full migrate:\nbefore %v\nafter  %v", columnsBefore, got)
+	}
+	afterSet := map[string]bool{}
+	for _, idx := range playbackSessionIndexes(t, ctx, s) {
+		afterSet[idx] = true
+	}
+	for _, idx := range indexesBefore {
+		if !afterSet[idx] {
+			t.Fatalf("index dropped during full migrate: %s", idx)
+		}
 	}
 	var kind, chain, ctxType string
 	var ctxID, ctxPosition, processed, seq int64

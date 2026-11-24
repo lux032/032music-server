@@ -166,3 +166,15 @@ func artistOrder(f Filters) string {
 	}
 	return artistSorts["name"].sql(f.Order) + ",ar.id"
 }
+
+// artistStage1Order returns the ORDER BY for Stage 1 ID pagination when no
+// count projection is needed (name, favorite order, or random).
+func artistStage1Order(f Filters) string {
+	if f.Sort == "random" {
+		return randomOrderSQL("ar.id", f.Seed)
+	}
+	if f.favoriteOrder && f.Order == "" {
+		return "ar.favorited_at DESC, ar.id DESC"
+	}
+	return fmt.Sprintf("COALESCE(ar.user_display_name,ar.display_name) COLLATE NOCASE %s,ar.id", browseDirection(f.Order, false))
+}

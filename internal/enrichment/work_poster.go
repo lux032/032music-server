@@ -16,6 +16,26 @@ import (
 
 var posterExtensions = map[string]string{"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
+var posterMIMETypesByExt = map[string]string{
+	".jpg":  "image/jpeg",
+	".png":  "image/png",
+	".webp": "image/webp",
+	".gif":  "image/gif",
+}
+
+type posterCacheEntry struct {
+	ext      string
+	mimeType string
+}
+
+func posterCacheKey(remoteURL string) (string, bool) {
+	remoteURL = strings.TrimSpace(remoteURL)
+	if remoteURL == "" {
+		return "", false
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(remoteURL))), true
+}
+
 // downloadPublicImage fetches an untrusted remote image URL, refusing
 // private/loopback/link-local targets (including across redirects) to prevent
 // SSRF, and returns the body with its detected MIME type and file extension.
@@ -46,19 +66,118 @@ func (m *Manager) workPosterDirectory() string {
 	return filepath.Join(filepath.Dir(m.imageDirectory), "work-posters")
 }
 
+func (m *Manager) refreshPosterCacheIfChanged() {
+	dir := m.workPosterDirectory()
+	info, statErr := os.Stat(dir)
+	m.posterCacheMu.RLock()
+	if m.posterCacheLoaded {
+		if statErr != nil && os.IsNotExist(statErr) && m.posterCacheDirMod.IsZero() && len(m.posterCache) == 0 {
+			m.posterCacheMu.RUnlock()
+			return
+		}
+		if statErr == nil && info.ModTime().Equal(m.posterCacheDirMod) {
+			m.posterCacheMu.RUnlock()
+			return
+		}
+	}
+	m.posterCacheMu.RUnlock()
+
+	m.posterCacheMu.Lock()
+	defer m.posterCacheMu.Unlock()
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			m.posterCache = map[string]posterCacheEntry{}
+			m.posterCacheDirMod = time.Time{}
+			m.posterCacheLoaded = true
+		}
+		return
+	}
+	if m.posterCacheLoaded && dirInfo.ModTime().Equal(m.posterCacheDirMod) {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	next := make(map[string]posterCacheEntry, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		rawExt := filepath.Ext(name)
+		ext := strings.ToLower(rawExt)
+		mimeType, ok := posterMIMETypesByExt[ext]
+		if !ok {
+			continue
+		}
+		stem := strings.TrimSuffix(name, rawExt)
+		if stem == "" {
+			continue
+		}
+		next[stem] = posterCacheEntry{ext: rawExt, mimeType: mimeType}
+	}
+	m.posterCache = next
+	m.posterCacheDirMod = dirInfo.ModTime()
+	m.posterCacheLoaded = true
+}
+
+func (m *Manager) recordCachedWorkPoster(key, extension, mimeType string) {
+	ext := strings.ToLower(extension)
+	if mimeType == "" {
+		mimeType = posterMIMETypesByExt[ext]
+	}
+	if mimeType == "" {
+		return
+	}
+	dir := m.workPosterDirectory()
+	dirInfo, statErr := os.Stat(dir)
+	m.posterCacheMu.Lock()
+	if m.posterCache == nil {
+		m.posterCache = map[string]posterCacheEntry{}
+	}
+	m.posterCache[key] = posterCacheEntry{ext: extension, mimeType: mimeType}
+	if m.posterCacheLoaded && statErr == nil {
+		m.posterCacheDirMod = dirInfo.ModTime()
+	}
+	m.posterCacheMu.Unlock()
+}
+
+// InvalidateWorkPoster removes a stale in-memory cache entry (for example when
+// opening the cached file returns os.ErrNotExist after external removal).
+func (m *Manager) InvalidateWorkPoster(remoteURL string) {
+	key, ok := posterCacheKey(remoteURL)
+	if !ok {
+		return
+	}
+	m.posterCacheMu.Lock()
+	delete(m.posterCache, key)
+	m.posterCacheMu.Unlock()
+}
+
 // CachedWorkPoster returns the local cached file for a poster URL without any
 // network access. It reports os.ErrNotExist when the poster is not cached yet.
 func (m *Manager) CachedWorkPoster(remoteURL string) (string, string, error) {
-	remoteURL = strings.TrimSpace(remoteURL)
-	if remoteURL == "" {
+	key, ok := posterCacheKey(remoteURL)
+	if !ok {
 		return "", "", os.ErrNotExist
 	}
-	key := fmt.Sprintf("%x", sha256.Sum256([]byte(remoteURL)))
-	for mimeType, extension := range posterExtensions {
-		path := filepath.Join(m.workPosterDirectory(), key+extension)
-		if _, err := os.Stat(path); err == nil {
-			return path, mimeType, nil
-		}
+	dir := m.workPosterDirectory()
+	m.posterCacheMu.RLock()
+	entry, hit := m.posterCache[key]
+	m.posterCacheMu.RUnlock()
+	if hit {
+		return filepath.Join(dir, key+entry.ext), entry.mimeType, nil
+	}
+	// First load or cache miss: validate directory mtime once to pick up
+	// externally written poster files without probing every extension.
+	m.refreshPosterCacheIfChanged()
+	m.posterCacheMu.RLock()
+	entry, hit = m.posterCache[key]
+	m.posterCacheMu.RUnlock()
+	if hit {
+		return filepath.Join(dir, key+entry.ext), entry.mimeType, nil
 	}
 	return "", "", os.ErrNotExist
 }
@@ -78,12 +197,15 @@ func (m *Manager) CacheWorkPoster(ctx context.Context, workID int64) error {
 	if _, _, err = m.CachedWorkPoster(remoteURL); err == nil {
 		return nil
 	}
-	data, _, extension, err := m.downloadPublicImage(ctx, remoteURL, "work poster")
+	data, mimeType, extension, err := m.downloadPublicImage(ctx, remoteURL, "work poster")
 	if err != nil {
 		return err
 	}
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(remoteURL)))
 	_, err = writeCacheFile(m.workPosterDirectory(), key+extension, data)
+	if err == nil {
+		m.recordCachedWorkPoster(key, extension, mimeType)
+	}
 	return err
 }
 
@@ -114,11 +236,19 @@ func (m *Manager) WorkPosterCacheStats(ctx context.Context) (cached, total int, 
 		return 0, 0, err
 	}
 	total = len(posters)
+	if total == 0 {
+		return 0, 0, nil
+	}
+	m.refreshPosterCacheIfChanged()
+	m.posterCacheMu.RLock()
 	for _, item := range posters {
-		if _, _, statErr := m.CachedWorkPoster(item.URL); statErr == nil {
-			cached++
+		if key, ok := posterCacheKey(item.URL); ok {
+			if _, exists := m.posterCache[key]; exists {
+				cached++
+			}
 		}
 	}
+	m.posterCacheMu.RUnlock()
 	return cached, total, nil
 }
 

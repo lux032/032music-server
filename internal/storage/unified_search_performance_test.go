@@ -51,16 +51,29 @@ func largeSearchTestStore(t testing.TB) *Store {
 
 func TestUnifiedSearchLargeLibrary(t *testing.T) {
 	s := largeSearchTestStore(t)
-	for _, query := range []string{"ナナヲアカリ", "no-such-artist", "Artist"} {
+	cases := []struct {
+		query  string
+		budget time.Duration
+	}{
+		{"ナナヲアカリ", largeSearchExactBudget},
+		{"no-such-artist", largeSearchNoMatchBudget},
+		{"Artist", largeSearchBroadBudget},
+	}
+	for _, tc := range cases {
+		query := tc.query
 		t.Run(query, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), largeSearchQueryTimeout)
 			defer cancel()
 			start := time.Now()
 			result, err := s.Search(ctx, SearchOptions{Query: query})
+			elapsed := time.Since(start)
 			if err != nil {
-				t.Fatalf("search of 18,000 tracks took %s: %v", time.Since(start), err)
+				t.Fatalf("search of 18,000 tracks took %s: %v", elapsed, err)
 			}
-			t.Logf("18,000 tracks search %q: %s", query, time.Since(start))
+			t.Logf("18,000 tracks search %q: %s (budget %s)", query, elapsed, tc.budget)
+			if elapsed > tc.budget {
+				t.Fatalf("search %q took %s, exceeds budget %s", query, elapsed, tc.budget)
+			}
 			if query == "ナナヲアカリ" && (result.Artists.Total != 1 || result.Albums.Total != 1 || result.Tracks.Total != 10) {
 				t.Fatalf("unexpected result: %+v", result)
 			}

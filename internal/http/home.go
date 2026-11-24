@@ -236,19 +236,18 @@ func homeSeriesViewFrom(spot *storage.HomeSpotlight) *homeSeriesView {
 }
 
 // homeHero assembles every focus pane in one pass so tab switching is pure
-// front-end (no refetch).
-func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
+// front-end (no refetch). recentAlbums and unfinished are pre-fetched once by
+// homeData and reused here to avoid duplicate queries.
+func (a *App) homeHero(ctx context.Context, csrfToken string, recentAlbums []storage.Album, unfinished []storage.PlaybackRecord) homeHeroView {
 	hero := homeHeroView{}
-	if albums, err := a.store.ListAlbums(ctx, storage.Filters{Sort: "added", Limit: 1}); err == nil && len(albums) > 0 {
-		album := albums[0]
+	if len(recentAlbums) > 0 {
+		album := recentAlbums[0]
 		hero.Recent = a.homeAlbumSpotlight(ctx, album, "入库于 "+formatAdminTime(album.AddedAt))
 		hero.Recent.NotePrefix = "入库于 "
 		hero.Recent.NoteTime = album.AddedAt
 		hero.Recent.Focus = "recent"
-	} else if err != nil {
-		a.logger.Warn("home recent album", "error", err)
 	}
-	if unfinished, err := a.store.UnfinishedPlayback(ctx, 1); err == nil && len(unfinished) > 0 {
+	if len(unfinished) > 0 {
 		record := unfinished[0]
 		if album, err := a.store.AlbumByID(ctx, record.Track.AlbumID); err == nil {
 			view := a.homeAlbumSpotlight(ctx, album, fmt.Sprintf("上次播放 %s · 听到 %s %s", formatAdminTime(record.LastPlayedAt), record.Track.Title, formatDurationMillis(record.PositionMillis)))
@@ -263,8 +262,6 @@ func (a *App) homeHero(ctx context.Context, csrfToken string) homeHeroView {
 			view.Resume = &record
 			hero.Listening = view
 		}
-	} else if err != nil {
-		a.logger.Warn("home listening spotlight", "error", err)
 	}
 	if spot, err := a.homeSpotlight(ctx); err == nil && spot != nil {
 		hero.Series = homeSeriesViewFrom(spot)
@@ -296,6 +293,13 @@ func homeAlbumCard(album storage.Album, meta string) homeAlbumView {
 
 // homeChronicle loads one year of the chronicle chart result.
 func (a *App) homeChronicle(ctx context.Context, year int) (homeChronicleView, error) {
+	return a.homeChronicleWithTotal(ctx, year, -1)
+}
+
+// homeChronicleWithTotal loads one year of the chronicle chart result. When
+// knownTotal >= 0 (for example from AlbumYearFacets), it skips the redundant
+// CountAlbums query.
+func (a *App) homeChronicleWithTotal(ctx context.Context, year int, knownTotal int64) (homeChronicleView, error) {
 	view := homeChronicleView{Year: year}
 	albums, err := a.store.ListAlbums(ctx, storage.Filters{Year: year, Sort: "added", Limit: 12})
 	if err != nil {
@@ -313,6 +317,10 @@ func (a *App) homeChronicle(ctx context.Context, year int) (homeChronicleView, e
 			meta += strconv.FormatInt(album.TrackCount, 10) + " 首"
 		}
 		view.Albums = append(view.Albums, homeAlbumCard(album, meta))
+	}
+	if knownTotal >= 0 {
+		view.Total = knownTotal
+		return view, nil
 	}
 	view.Total, err = a.store.CountAlbums(ctx, storage.Filters{Year: year})
 	return view, err
@@ -403,22 +411,26 @@ func (a *App) homeData(ctx context.Context, r *http.Request, csrfToken string) (
 		return data, nil
 	}
 
-	data.Hero = a.homeHero(ctx, csrfToken)
-
-	if unfinished, err := a.store.UnfinishedPlayback(ctx, 5); err == nil {
-		for _, record := range unfinished {
-			data.Resume = append(data.Resume, homeResumeRow{Record: record, Percent: percentDone(int(record.PositionMillis), int(record.DurationMillis))})
-		}
-	} else {
-		a.logger.Warn("home resume rows", "error", err)
-	}
+	var recentAlbums []storage.Album
 	if albums, err := a.store.ListAlbums(ctx, storage.Filters{Sort: "added", Limit: 12}); err == nil {
+		recentAlbums = albums
 		for _, album := range albums {
 			data.RecentAlbums = append(data.RecentAlbums, homeAlbumView{Album: album, AddedTime: album.AddedAt})
 		}
 	} else {
 		a.logger.Warn("home recent albums", "error", err)
 	}
+	var unfinished []storage.PlaybackRecord
+	if records, err := a.store.UnfinishedPlayback(ctx, 5); err == nil {
+		unfinished = records
+		for _, record := range records {
+			data.Resume = append(data.Resume, homeResumeRow{Record: record, Percent: percentDone(int(record.PositionMillis), int(record.DurationMillis))})
+		}
+	} else {
+		a.logger.Warn("home resume rows", "error", err)
+	}
+
+	data.Hero = a.homeHero(ctx, csrfToken, recentAlbums, unfinished)
 	if panel, _, err := a.homeWorksPanel(ctx, "all", 0, ""); err == nil {
 		data.WorksPanel = panel
 	} else {
@@ -435,7 +447,7 @@ func (a *App) homeData(ctx context.Context, r *http.Request, csrfToken string) (
 	if years, err := a.store.AlbumYearFacets(ctx, storage.Filters{}); err == nil && len(years) > 0 {
 		var selectedYear int
 		data.Years, selectedYear = homeYearBars(years)
-		if chronicle, err := a.homeChronicle(ctx, selectedYear); err == nil {
+		if chronicle, err := a.homeChronicleWithTotal(ctx, selectedYear, years[0].Count); err == nil {
 			data.Chronicle = chronicle
 		} else {
 			a.logger.Warn("home chronicle", "error", err)

@@ -37,10 +37,15 @@ type AcousticSnapshot struct {
 }
 
 type acousticCache struct {
-	mu        sync.Mutex
-	snap      *AcousticSnapshot
-	checkedAt time.Time
-	builtAt   time.Time
+	mu            sync.Mutex
+	snap          *AcousticSnapshot
+	checkedAt     time.Time
+	builtAt       time.Time
+	hasEmpty      bool
+	rebuilding    bool
+	buildDone     chan struct{}
+	buildErr      error
+	testBuildHook func()
 }
 
 // Len returns the number of indexed tracks.
@@ -164,19 +169,24 @@ func (a *AcousticSnapshot) nearest(q []int8, k int, keep func(int64) bool) []Nei
 }
 
 func quantize(v []float64) []int8 {
+	out := make([]int8, len(v))
+	quantizeInto(out, v)
+	return out
+}
+
+func quantizeInto(out []int8, v []float64) {
 	var norm float64
 	for _, x := range v {
 		norm += x * x
 	}
-	out := make([]int8, len(v))
 	if norm == 0 {
-		return out
+		clear(out)
+		return
 	}
 	norm = math.Sqrt(norm)
 	for i, x := range v {
 		out[i] = int8(math.Round(x / norm * 127))
 	}
-	return out
 }
 
 func f16(h uint16) float32 {
@@ -200,6 +210,19 @@ func f16(h uint16) float32 {
 	return math.Float32frombits(sign | (exp+127-15)<<23 | frac<<13)
 }
 
+// invalidateAcousticEmpty clears the negative empty-library cache once an
+// embedding is saved so HasAcousticFeatures and AcousticIndex immediately see
+// the first analysed track without waiting for acousticCheckInterval.
+func (s *Store) invalidateAcousticEmpty() {
+	c := &s.acoustic
+	c.mu.Lock()
+	if c.hasEmpty {
+		c.hasEmpty = false
+		c.checkedAt = time.Time{}
+	}
+	c.mu.Unlock()
+}
+
 // HasAcousticFeatures cheaply checks whether any analysed acoustic embeddings exist,
 // without triggering an index build.
 func (s *Store) HasAcousticFeatures(ctx context.Context) bool {
@@ -209,53 +232,131 @@ func (s *Store) HasAcousticFeatures(ctx context.Context) bool {
 		c.mu.Unlock()
 		return true
 	}
+	if c.hasEmpty && !c.checkedAt.IsZero() && time.Since(c.checkedAt) < acousticCheckInterval {
+		c.mu.Unlock()
+		return false
+	}
 	c.mu.Unlock()
 	var one int
 	return s.db.QueryRowContext(ctx, `SELECT 1 FROM track_audio_features WHERE length(embedding) >= 4 LIMIT 1`).Scan(&one) == nil
 }
 
 // AcousticIndex returns the current snapshot (nil when no track has been analysed).
+// Transient errors or caller timeouts never discard a valid cached snapshot, empty
+// library state is negatively cached for acousticCheckInterval, and rebuild I/O
+// runs outside the cache mutex so concurrent readers serving an existing snapshot
+// never stall.
 func (s *Store) AcousticIndex(ctx context.Context) (*AcousticSnapshot, error) {
 	c := &s.acoustic
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.snap != nil && time.Since(c.checkedAt) < acousticCheckInterval {
-		return c.snap, nil
+	for {
+		c.mu.Lock()
+		if !c.checkedAt.IsZero() && time.Since(c.checkedAt) < acousticCheckInterval && (c.snap != nil || c.hasEmpty) {
+			snap := c.snap
+			c.mu.Unlock()
+			return snap, nil
+		}
+		if c.rebuilding {
+			if c.snap != nil {
+				snap := c.snap
+				c.mu.Unlock()
+				return snap, nil
+			}
+			done := c.buildDone
+			c.mu.Unlock()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			c.mu.Lock()
+			if c.snap != nil || (c.hasEmpty && !c.checkedAt.IsZero() && time.Since(c.checkedAt) < acousticCheckInterval) {
+				snap := c.snap
+				c.mu.Unlock()
+				return snap, nil
+			}
+			if c.buildErr != nil {
+				err := c.buildErr
+				c.mu.Unlock()
+				return nil, err
+			}
+			c.mu.Unlock()
+			continue
+		}
+		c.rebuilding = true
+		done := make(chan struct{})
+		c.buildDone = done
+		c.buildErr = nil
+		prevSnap := c.snap
+		prevBuiltAt := c.builtAt
+		buildHook := c.testBuildHook
+		c.mu.Unlock()
+
+		finished := false
+		finish := func(snap *AcousticSnapshot, empty, updateChecked, updateBuilt bool, err error) (*AcousticSnapshot, error) {
+			c.mu.Lock()
+			if err == nil {
+				c.snap = snap
+				c.hasEmpty = empty
+				if updateChecked {
+					c.checkedAt = time.Now()
+				}
+				if updateBuilt {
+					c.builtAt = time.Now()
+				}
+			}
+			c.buildErr = err
+			c.rebuilding = false
+			close(done)
+			finished = true
+			c.mu.Unlock()
+			return snap, err
+		}
+		defer func() {
+			if !finished {
+				c.mu.Lock()
+				c.rebuilding = false
+				close(done)
+				c.mu.Unlock()
+			}
+		}()
+
+		version, err := s.LatestAudioAnalysisVersion(ctx)
+		if err != nil {
+			return finish(nil, false, false, false, err)
+		}
+		if version == "" {
+			return finish(nil, true, true, false, nil)
+		}
+		var count int64
+		var latest string
+		if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(analyzed_at), '') FROM track_audio_features WHERE analysis_version = ?`, version).Scan(&count, &latest); err != nil {
+			return finish(nil, false, false, false, err)
+		}
+		if count == 0 {
+			return finish(nil, true, true, false, nil)
+		}
+		stamp := version + "|" + latest + "|" + strconv.FormatInt(count, 10)
+		if prevSnap != nil && (prevSnap.stamp == stamp || time.Since(prevBuiltAt) < acousticRebuildInterval) {
+			return finish(prevSnap, false, true, false, nil)
+		}
+		resultSnap, resultErr := s.buildAcoustic(ctx, version, stamp, int(count), buildHook)
+		if resultErr != nil {
+			return finish(nil, false, false, false, resultErr)
+		}
+		return finish(resultSnap, resultSnap == nil, true, resultSnap != nil, nil)
 	}
-	version, err := s.LatestAudioAnalysisVersion(ctx)
-	if err != nil || version == "" {
-		c.snap, c.checkedAt = nil, time.Now()
-		return nil, err
-	}
-	var count int64
-	var latest string
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(analyzed_at), '') FROM track_audio_features WHERE analysis_version = ?`, version).Scan(&count, &latest); err != nil {
-		return nil, err
-	}
-	stamp := version + "|" + latest + "|" + strconv.FormatInt(count, 10)
-	c.checkedAt = time.Now()
-	if c.snap != nil && (c.snap.stamp == stamp || time.Since(c.builtAt) < acousticRebuildInterval) {
-		return c.snap, nil
-	}
-	if count == 0 {
-		c.snap = nil
-		return nil, nil
-	}
-	snap, err := s.buildAcoustic(ctx, version, stamp)
-	if err != nil {
-		return nil, err
-	}
-	c.snap, c.builtAt = snap, time.Now()
-	return snap, nil
 }
 
-func (s *Store) buildAcoustic(ctx context.Context, version, stamp string) (*AcousticSnapshot, error) {
+func (s *Store) buildAcoustic(ctx context.Context, version, stamp string, countHint int, hook func()) (*AcousticSnapshot, error) {
+	if hook != nil {
+		hook()
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT track_id, embedding FROM track_audio_features WHERE analysis_version = ? ORDER BY track_id`, version)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []int64
+	ids := make([]int64, 0, max(0, countHint))
 	var raw []float32
 	dims := 0
 	for rows.Next() {
@@ -269,6 +370,9 @@ func (s *Store) buildAcoustic(ctx context.Context, version, stamp string) (*Acou
 		}
 		if dims == 0 {
 			dims = len(blob) / 2
+			if countHint > 0 {
+				raw = make([]float32, 0, countHint*dims)
+			}
 		}
 		for i := 0; i < dims; i++ {
 			raw = append(raw, f16(binary.LittleEndian.Uint16(blob[2*i:])))
@@ -283,20 +387,23 @@ func (s *Store) buildAcoustic(ctx context.Context, version, stamp string) (*Acou
 	}
 	mean := make([]float64, dims)
 	for i := range ids {
+		base := i * dims
 		for d := 0; d < dims; d++ {
-			mean[d] += float64(raw[i*dims+d])
+			mean[d] += float64(raw[base+d])
 		}
 	}
+	invN := 1.0 / float64(len(ids))
 	for d := range mean {
-		mean[d] /= float64(len(ids))
+		mean[d] *= invN
 	}
 	snap := &AcousticSnapshot{Version: version, dims: dims, ids: ids, pos: make(map[int64]int, len(ids)), vecs: make([]int8, len(ids)*dims), stamp: stamp}
 	tmp := make([]float64, dims)
 	for i, id := range ids {
+		base := i * dims
 		for d := 0; d < dims; d++ {
-			tmp[d] = float64(raw[i*dims+d]) - mean[d]
+			tmp[d] = float64(raw[base+d]) - mean[d]
 		}
-		copy(snap.vecs[i*dims:], quantize(tmp))
+		quantizeInto(snap.vecs[base:base+dims], tmp)
 		snap.pos[id] = i
 	}
 	return snap, nil

@@ -63,12 +63,17 @@ func browsePerfFixture(t *testing.T) *Store {
 		for n := 1; n <= perfTracksPerAlbum; n++ {
 			track++
 			name := fmt.Sprintf("song %06d", track)
-			exec(`INSERT INTO tracks(id,album_id,title,sort_title,disc_number,track_number) VALUES(?,?,?,?,1,?)`, track, a, name, name, n)
+			if n == 1 && a%20 == 0 {
+				// Seed recurring normalized titles across 15 albums each so
+				// hydrateTrackVersionCounts exercises idx_tracks_norm_title on duplicates.
+				name = fmt.Sprintf("shared theme %02d", (a/20)%10)
+			}
+			exec(`INSERT INTO tracks(id,album_id,title,sort_title,disc_number,track_number,duration_ms) VALUES(?,?,?,?,1,?,210000)`, track, a, name, name, n)
 			exec(`INSERT INTO track_artists(track_id,artist_id) VALUES(?,?)`, track, owner)
 			if owner != perfProlific && a%5 == 1 && n == 3 {
 				exec(`INSERT INTO track_artists(track_id,artist_id,position) VALUES(?,?,1)`, track, perfProlific)
 			}
-			exec(`INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(1,?,?,1,1)`, track, name)
+			exec(`INSERT INTO audio_files(library_id,track_id,relative_path,file_size,modified_at_ns) VALUES(1,?,?,1,1)`, track, fmt.Sprintf("track-%06d.flac", track))
 		}
 	}
 	if e = tx.Commit(); e != nil {
@@ -149,5 +154,46 @@ func TestBrowseSyntheticPerformance(t *testing.T) {
 	t.Logf("tracks first page p50=%s last page p50=%s", first, last)
 	if last > 3*first+100*time.Millisecond {
 		t.Fatalf("last track page p50=%s vs first %s: deep pages grow with the offset", last, first)
+	}
+
+	// Single-album track list (index-driven AlbumID filter + duplicate-title version hydration).
+	wantDupVersions := perfAlbums / 20 / 10 // 15 albums per shared theme
+	albumTracks := medianOf(t, 10, func() error {
+		tracks, err := s.ListTracks(ctx, Filters{AlbumID: 20, Limit: 50})
+		if err != nil {
+			return err
+		}
+		if len(tracks) != perfTracksPerAlbum {
+			return fmt.Errorf("album 20 tracks=%d want %d", len(tracks), perfTracksPerAlbum)
+		}
+		if tracks[0].VersionCount != wantDupVersions {
+			return fmt.Errorf("shared title versionCount=%d want %d", tracks[0].VersionCount, wantDupVersions)
+		}
+		return nil
+	})
+	// Two-stage artist list pagination (default sort + track-count sort).
+	artistsDefault := medianOf(t, 5, func() error {
+		artists, err := s.ListArtists(ctx, Filters{Limit: 100})
+		if err == nil && len(artists) != 100 {
+			return fmt.Errorf("artists default=%d want 100", len(artists))
+		}
+		return err
+	})
+	artistsByTracks := medianOf(t, 5, func() error {
+		artists, err := s.ListArtists(ctx, Filters{Sort: "tracks", Limit: 100})
+		if err == nil && len(artists) != 100 {
+			return fmt.Errorf("artists tracks=%d want 100", len(artists))
+		}
+		return err
+	})
+	t.Logf("single album tracks p50=%s artists(default) p50=%s artists(tracks) p50=%s", albumTracks, artistsDefault, artistsByTracks)
+	if albumTracks > 200*time.Millisecond {
+		t.Fatalf("single album tracks p50=%s (>200ms)", albumTracks)
+	}
+	if artistsDefault > 500*time.Millisecond {
+		t.Fatalf("artists default p50=%s (>500ms)", artistsDefault)
+	}
+	if artistsByTracks > 1*time.Second {
+		t.Fatalf("artists by tracks p50=%s (>1s)", artistsByTracks)
 	}
 }

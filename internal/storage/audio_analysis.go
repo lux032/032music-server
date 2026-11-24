@@ -239,7 +239,13 @@ func (s *Store) SaveTrackAudioFeatures(ctx context.Context, f TrackAudioFeatures
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_analysis_failures WHERE track_id = ?`, f.TrackID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if len(f.Embedding) >= 4 {
+		s.invalidateAcousticEmpty()
+	}
+	return nil
 }
 
 // TrackAudioFeaturesByID 读取一首曲目的分析结果。

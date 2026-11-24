@@ -209,15 +209,31 @@ func (s *Store) CompleteArtistRunItem(ctx context.Context, c ArtistRunCheckpoint
 	if matched {
 		outcome = "matched"
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_run_items SET status='completed',outcome=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, outcome, c.ItemID); err != nil {
+	var outcomeCol string
+	switch outcome {
+	case "matched":
+		outcomeCol = "matched_artists"
+	case "review":
+		outcomeCol = "review_artists"
+	case "no_result":
+		outcomeCol = "no_result_artists"
+	case "skipped":
+		outcomeCol = "skipped_artists"
+	case "failed":
+		outcomeCol = "failed_artists"
+	default:
+		return ErrArtistRunState
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE artist_match_run_items SET status='completed',outcome=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status<>'completed'`, outcome, c.ItemID)
+	if err != nil {
 		return err
 	}
-	for _, field := range []struct{ column, outcome string }{{"matched_artists", "matched"}, {"review_artists", "review"}, {"no_result_artists", "no_result"}, {"skipped_artists", "skipped"}, {"failed_artists", "failed"}} {
-		if _, err = tx.ExecContext(ctx, "UPDATE artist_match_runs SET "+field.column+"=(SELECT count(*) FROM artist_match_run_items WHERE run_id=? AND outcome=?) WHERE id=?", c.RunID, field.outcome, c.RunID); err != nil {
-			return err
-		}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return tx.Commit()
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_runs SET processed_artists=(SELECT count(*) FROM artist_match_run_items WHERE run_id=? AND status='completed'),wait_source='',waiting_until=NULL WHERE id=?`, c.RunID, c.RunID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_runs SET processed_artists=processed_artists+1,`+outcomeCol+`=`+outcomeCol+`+1,wait_source='',waiting_until=NULL WHERE id=?`, c.RunID); err != nil {
 		return err
 	}
 	return tx.Commit()

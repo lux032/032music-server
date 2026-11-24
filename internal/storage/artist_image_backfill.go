@@ -198,8 +198,18 @@ func (s *Store) ClaimArtistImageBackfillItem(ctx context.Context, runID int64) (
 // CompleteArtistImageBackfillItem 幂等完成一个补全项并刷新 run 计数；
 // 已完成的项目直接返回 nil（断点重放安全），checkpoint 失配拒绝旧 worker。
 func (s *Store) CompleteArtistImageBackfillItem(ctx context.Context, c ArtistImageBackfillCheckpoint, outcome, errText string) error {
+	var outcomeCol string
 	switch outcome {
-	case "cached", "candidate", "no_url", "skipped", "failed":
+	case "cached":
+		outcomeCol = "cached_items"
+	case "candidate":
+		outcomeCol = "candidate_items"
+	case "no_url":
+		outcomeCol = "no_url_items"
+	case "skipped":
+		outcomeCol = "skipped_items"
+	case "failed":
+		outcomeCol = "failed_items"
 	default:
 		return ErrArtistImageBackfillState
 	}
@@ -225,15 +235,16 @@ func (s *Store) CompleteArtistImageBackfillItem(ctx context.Context, c ArtistIma
 	if len(errText) > 500 {
 		errText = errText[:500]
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_items SET status='completed',outcome=?,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, outcome, errText, c.ItemID); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE artist_image_backfill_items SET status='completed',outcome=?,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status<>'completed'`, outcome, errText, c.ItemID)
+	if err != nil {
 		return err
 	}
-	for _, field := range []struct{ column, outcome string }{{"cached_items", "cached"}, {"candidate_items", "candidate"}, {"no_url_items", "no_url"}, {"skipped_items", "skipped"}, {"failed_items", "failed"}} {
-		if _, err = tx.ExecContext(ctx, "UPDATE artist_image_backfill_runs SET "+field.column+"=(SELECT count(*) FROM artist_image_backfill_items WHERE run_id=? AND outcome=?) WHERE id=?", c.RunID, field.outcome, c.RunID); err != nil {
-			return err
-		}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return tx.Commit()
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET processed_items=(SELECT count(*) FROM artist_image_backfill_items WHERE run_id=? AND status='completed'),wait_source='',waiting_until=NULL WHERE id=?`, c.RunID, c.RunID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET processed_items=processed_items+1,`+outcomeCol+`=`+outcomeCol+`+1,wait_source='',waiting_until=NULL WHERE id=?`, c.RunID); err != nil {
 		return err
 	}
 	return tx.Commit()

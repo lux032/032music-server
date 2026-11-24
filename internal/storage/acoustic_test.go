@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"testing"
 	"time"
 )
@@ -87,5 +89,99 @@ func TestAcousticIndexAndHybridSimilarity(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("hybrid similar = %+v", items)
+	}
+}
+
+func TestAcousticCacheResilienceNegativeCacheAndNonBlockingRebuild(t *testing.T) {
+	s, ctx, ids := audioAnalysisFixture(t, 2)
+
+	// 1. Negative caching: once empty state is observed, a cancelled context still
+	// hits the in-memory empty cache within acousticCheckInterval (no DB query).
+	if snap, err := s.AcousticIndex(ctx); err != nil || snap != nil {
+		t.Fatalf("initial empty = %v %v", snap, err)
+	}
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if snap, err := s.AcousticIndex(canceledCtx); err != nil || snap != nil {
+		t.Fatalf("expected negative cache hit without DB query, got snap=%v err=%v", snap, err)
+	}
+
+	// Insert one analyzed track and force a check.
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	c1, ok, _ := s.NextAudioAnalysisCandidate(ctx, testAnalysisVersion, now)
+	if !ok {
+		t.Fatal("expected first candidate")
+	}
+	f1 := testFeatures(c1, "fast")
+	f1.Embedding = embedding(0, 1, 2)
+	if err := s.SaveTrackAudioFeatures(ctx, f1); err != nil {
+		t.Fatal(err)
+	}
+	s.acoustic.mu.Lock()
+	s.acoustic.checkedAt = time.Time{}
+	s.acoustic.mu.Unlock()
+
+	snap1, err := s.AcousticIndex(ctx)
+	if err != nil || snap1 == nil || snap1.Len() != 1 {
+		t.Fatalf("snap1 = %v err=%v", snap1, err)
+	}
+
+	// 2. Transient error / cancelled caller after check interval MUST NOT clear snap1.
+	s.acoustic.mu.Lock()
+	s.acoustic.checkedAt = time.Time{}
+	s.acoustic.mu.Unlock()
+	if _, err := s.AcousticIndex(canceledCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	s.acoustic.mu.Lock()
+	preserved := s.acoustic.snap
+	s.acoustic.mu.Unlock()
+	if preserved != snap1 {
+		t.Fatal("transient cancellation cleared valid cached snapshot")
+	}
+
+	// 3. Rebuild runs outside the mutex so concurrent readers immediately receive snap1.
+	c2, ok, _ := s.NextAudioAnalysisCandidate(ctx, testAnalysisVersion, now.Add(time.Minute))
+	if !ok {
+		t.Fatal("expected second candidate")
+	}
+	f2 := testFeatures(c2, "fast")
+	f2.Embedding = embedding(3, 4, 5)
+	if err := s.SaveTrackAudioFeatures(ctx, f2); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	s.acoustic.mu.Lock()
+	s.acoustic.checkedAt = time.Time{}
+	s.acoustic.builtAt = time.Now().Add(-acousticRebuildInterval - time.Second)
+	s.acoustic.testBuildHook = func() {
+		close(entered)
+		<-release
+	}
+	s.acoustic.mu.Unlock()
+
+	rebuildDone := make(chan *AcousticSnapshot, 1)
+	go func() {
+		sn, e := s.AcousticIndex(ctx)
+		if e != nil {
+			t.Errorf("rebuild err: %v", e)
+		}
+		rebuildDone <- sn
+	}()
+
+	<-entered
+	// Concurrent reader must NOT block waiting for release and must get snap1 immediately.
+	concurrentSnap, err := s.AcousticIndex(ctx)
+	if err != nil || concurrentSnap != snap1 {
+		t.Fatalf("concurrent read during rebuild got %v err=%v, want snap1", concurrentSnap, err)
+	}
+	if !s.HasAcousticFeatures(ctx) {
+		t.Fatal("HasAcousticFeatures should return true immediately during rebuild")
+	}
+	close(release)
+	snap2 := <-rebuildDone
+	if snap2 == nil || snap2.Len() != len(ids) {
+		t.Fatalf("rebuilt snap = %v, want len %d", snap2, len(ids))
 	}
 }

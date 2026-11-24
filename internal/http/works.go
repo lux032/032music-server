@@ -673,6 +673,10 @@ func (a *App) handleWorkPoster(w http.ResponseWriter, r *http.Request) {
 	}
 	file, err := os.Open(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			a.enrichment.InvalidateWorkPoster(value.PosterURL)
+			a.enrichment.QueueWorkPoster(value.ID)
+		}
 		http.NotFound(w, r)
 		return
 	}
@@ -682,13 +686,17 @@ func (a *App) handleWorkPoster(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	cacheControl := "private, max-age=86400"
 	if size != 0 {
-		if a.serveThumbnail(w, r, file, info, "work-poster", value.ID, size, "private, max-age=86400") {
+		switch a.serveThumbnail(w, r, file, info, "work-poster", value.ID, size, cacheControl) {
+		case thumbnailServed:
 			return
+		case thumbnailFallbackNoCache:
+			cacheControl = "no-cache"
 		}
 	}
 	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", cacheControl)
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 

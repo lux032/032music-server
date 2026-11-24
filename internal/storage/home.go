@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"time"
@@ -347,13 +348,24 @@ func (s *Store) UnfinishedPlayback(ctx context.Context, limit int) ([]PlaybackRe
 func (s *Store) RandomAlbum(ctx context.Context, exclude int64) (Album, error) {
 	for _, withExclude := range []bool{true, false} {
 		where := albumVisibleSQL("a.id")
-		args := []any{}
+		var args []any
 		if withExclude && exclude > 0 {
 			where += " AND a.id<>?"
 			args = append(args, exclude)
 		}
+		var total int64
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums a WHERE `+where, args...).Scan(&total); err != nil {
+			return Album{}, err
+		}
+		if total <= 0 {
+			continue
+		}
+		offset := rand.Int64N(total)
 		var id int64
-		err := s.db.QueryRowContext(ctx, `SELECT a.id FROM albums a WHERE `+where+` ORDER BY RANDOM() LIMIT 1`, args...).Scan(&id)
+		err := s.db.QueryRowContext(ctx, `SELECT a.id FROM albums a WHERE `+where+` ORDER BY a.id LIMIT 1 OFFSET ?`, append(append([]any(nil), args...), offset)...).Scan(&id)
+		if err == sql.ErrNoRows && offset > 0 {
+			err = s.db.QueryRowContext(ctx, `SELECT a.id FROM albums a WHERE `+where+` ORDER BY a.id LIMIT 1`, args...).Scan(&id)
+		}
 		if err == sql.ErrNoRows {
 			continue
 		}

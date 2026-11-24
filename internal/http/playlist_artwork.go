@@ -135,8 +135,13 @@ func (a *App) handlePlaylistArtwork(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if size != 0 && a.serveThumbnail(w, r, file, info, "playlist", id, size, cache) {
-		return
+	if size != 0 {
+		switch a.serveThumbnail(w, r, file, info, "playlist", id, size, cache) {
+		case thumbnailServed:
+			return
+		case thumbnailFallbackNoCache:
+			cache = "no-cache"
+		}
 	}
 	w.Header().Set("Content-Type", img.MIMEType)
 	w.Header().Set("Cache-Control", cache)

@@ -16,13 +16,16 @@ const artistMergeChainSQL = `WITH RECURSIVE chain(id,root) AS (SELECT id,id FROM
 
 var creditArtistChain = artistMergeChainSQL + `, credits AS (SELECT c.root,COUNT(DISTINCT ta.track_id) track_count FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND (?='all' OR ta.role=?) AND ` + trackVisibleSQL("ta.track_id") + ` GROUP BY c.root) `
 
-func creditArtistWhere(f CreditArtistFilters) (string, []any) {
-	role := f.Role
-	if !IsCreditRole(role) {
-		role = "all"
+func creditArtistChainForRole(role string) (string, []any) {
+	if IsCreditRole(role) {
+		return artistMergeChainSQL + `, credits AS (SELECT c.root,COUNT(DISTINCT ta.track_id) track_count FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE ta.role=? AND ` + trackVisibleSQL("ta.track_id") + ` GROUP BY c.root) `, []any{role}
 	}
+	return artistMergeChainSQL + `, credits AS (SELECT c.root,COUNT(DISTINCT ta.track_id) track_count FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE ta.role IN ('composer','lyricist','arranger','producer') AND ` + trackVisibleSQL("ta.track_id") + ` GROUP BY c.root) `, nil
+}
+
+func creditArtistWhere(f CreditArtistFilters) (string, []any) {
 	clauses := []string{"ar.merged_into_artist_id IS NULL"}
-	args := []any{role, role}
+	var args []any
 	if strings.TrimSpace(f.Query) != "" {
 		condition, queryArgs := artistSearchCondition("ar.id", f.Query)
 		clauses = append(clauses, condition)
@@ -36,14 +39,18 @@ func creditArtistWhere(f CreditArtistFilters) (string, []any) {
 }
 
 func (s *Store) ListCreditArtists(ctx context.Context, f CreditArtistFilters) ([]Artist, error) {
-	where, args := creditArtistWhere(f)
+	chainSQL, chainArgs := creditArtistChainForRole(f.Role)
+	where, whereArgs := creditArtistWhere(f)
 	order := "name COLLATE NOCASE,ar.id"
 	if f.Sort == "tracks" {
 		order = "credits.track_count DESC," + order
 	}
 	limit, offset := page(Filters{Limit: f.Limit, Offset: f.Offset})
+	args := make([]any, 0, len(chainArgs)+len(whereArgs)+2)
+	args = append(args, chainArgs...)
+	args = append(args, whereArgs...)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, creditArtistChain+`SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,credits.track_count,ar.is_favorite FROM credits JOIN artists ar ON ar.id=credits.root WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, chainSQL+`SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,credits.track_count,ar.is_favorite FROM credits JOIN artists ar ON ar.id=credits.root WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +69,12 @@ func (s *Store) ListCreditArtists(ctx context.Context, f CreditArtistFilters) ([
 }
 
 func (s *Store) CountCreditArtists(ctx context.Context, f CreditArtistFilters) (int64, error) {
-	where, args := creditArtistWhere(f)
+	chainSQL, chainArgs := creditArtistChainForRole(f.Role)
+	where, whereArgs := creditArtistWhere(f)
+	args := make([]any, 0, len(chainArgs)+len(whereArgs))
+	args = append(args, chainArgs...)
+	args = append(args, whereArgs...)
 	var n int64
-	err := s.db.QueryRowContext(ctx, creditArtistChain+`SELECT COUNT(*) FROM credits JOIN artists ar ON ar.id=credits.root WHERE `+where, args...).Scan(&n)
+	err := s.db.QueryRowContext(ctx, chainSQL+`SELECT COUNT(*) FROM credits JOIN artists ar ON ar.id=credits.root WHERE `+where, args...).Scan(&n)
 	return n, err
 }

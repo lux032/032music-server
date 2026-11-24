@@ -1399,16 +1399,17 @@ func (a *App) handleArtwork(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	cacheControl := "public, max-age=31536000, immutable"
 	if size != 0 {
-		if a.serveThumbnail(w, r, file, info, "artwork", id, size, "public, max-age=31536000, immutable") {
+		switch a.serveThumbnail(w, r, file, info, "artwork", id, size, cacheControl) {
+		case thumbnailServed:
 			return
+		case thumbnailFallbackNoCache:
+			cacheControl = "no-cache"
 		}
-		w.Header().Set("Cache-Control", "no-cache")
 	}
 	w.Header().Set("Content-Type", mimeType)
-	if size == 0 {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	}
+	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
@@ -1441,19 +1442,20 @@ func (a *App) handleArtistImage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	cacheControl := "public, max-age=86400"
 	if size != 0 {
-		if a.serveThumbnail(w, r, file, info, "artist", id, size, "public, max-age=86400") {
+		switch a.serveThumbnail(w, r, file, info, "artist", id, size, cacheControl) {
+		case thumbnailServed:
 			return
+		case thumbnailFallbackNoCache:
+			cacheControl = "no-cache"
 		}
-		w.Header().Set("Cache-Control", "no-cache")
 	}
 	if mimeType == "" {
 		mimeType = "image/jpeg"
 	}
 	w.Header().Set("Content-Type", mimeType)
-	if size == 0 {
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-	}
+	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }

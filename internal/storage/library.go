@@ -733,19 +733,57 @@ func (s *Store) CleanupOrphans(ctx context.Context) error {
 func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 	limit, offset := page(f)
 	role := normalizeArtistRole(f.ArtistRole)
-	order := artistOrder(f)
 	where, args := artistWhere(f, role)
 	args = append(args, limit, offset)
+	var idQuery string
+	switch f.Sort {
+	case "albums":
+		idQuery = `SELECT ar.id FROM (SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id AND ` + albumVisibleSQL("aa.album_id") + `) album_count FROM artists ar WHERE ` + where + `) ar ORDER BY ` + artistOrder(f) + ` LIMIT ? OFFSET ?`
+	case "tracks":
+		trackCount := "(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id AND " + trackVisibleSQL("ta.track_id") + ")"
+		if f.PerformerOnly {
+			trackCount = "(SELECT COUNT(*) FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id) pt WHERE " + trackVisibleSQL("pt.track_id") + ")"
+		}
+		idQuery = `SELECT ar.id FROM (SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,` + trackCount + ` track_count FROM artists ar WHERE ` + where + `) ar ORDER BY ` + artistOrder(f) + ` LIMIT ? OFFSET ?`
+	default:
+		idQuery = `SELECT ar.id FROM artists ar WHERE ` + where + ` ORDER BY ` + artistStage1Order(f) + ` LIMIT ? OFFSET ?`
+	}
+	idRows, err := s.db.QueryContext(ctx, idQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, limit)
+	for idRows.Next() {
+		var id int64
+		if err = idRows.Scan(&id); err != nil {
+			idRows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = idRows.Err(); err != nil {
+		idRows.Close()
+		return nil, err
+	}
+	idRows.Close()
+	if len(ids) == 0 {
+		return []Artist{}, nil
+	}
+	return s.hydrateArtists(ctx, ids, f.PerformerOnly)
+}
+
+func (s *Store) hydrateArtists(ctx context.Context, ids []int64, performerOnly bool) ([]Artist, error) {
+	placeholders, args := inClause(ids)
 	trackCount := "(SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta WHERE ta.artist_id=ar.id AND " + trackVisibleSQL("ta.track_id") + ")"
-	if f.PerformerOnly {
+	if performerOnly {
 		trackCount = "(SELECT COUNT(*) FROM (SELECT track_id FROM track_artists WHERE role='primary' AND artist_id=ar.id UNION SELECT t.id FROM album_artists aa JOIN tracks t ON t.album_id=aa.album_id WHERE aa.artist_id=ar.id) pt WHERE " + trackVisibleSQL("pt.track_id") + ")"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) name,`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id AND `+albumVisibleSQL("aa.album_id")+`) album_count,`+trackCount+` track_count,ar.is_favorite FROM artists ar WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,(SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa WHERE aa.artist_id=ar.id AND `+albumVisibleSQL("aa.album_id")+`),`+trackCount+`,ar.is_favorite FROM artists ar WHERE ar.id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	list := make([]Artist, 0)
+	byID := make(map[int64]Artist, len(ids))
 	for rows.Next() {
 		var v Artist
 		var favorite int
@@ -753,9 +791,18 @@ func (s *Store) ListArtists(ctx context.Context, f Filters) ([]Artist, error) {
 			return nil, err
 		}
 		v.IsFavorite = favorite != 0
-		list = append(list, v)
+		byID[v.ID] = v
 	}
-	return list, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	list := make([]Artist, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := byID[id]; ok {
+			list = append(list, v)
+		}
+	}
+	return list, nil
 }
 
 // ListAlbums runs a two-stage paginated browse: stage one resolves the page
@@ -767,7 +814,14 @@ func (s *Store) ListAlbums(ctx context.Context, f Filters) ([]Album, error) {
 	limit, offset := page(f)
 	where, args := albumWhere(f)
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM albums a WHERE `+where+` ORDER BY `+albumOrder(f)+` LIMIT ? OFFSET ?`, args...)
+	var query string
+	if f.Sort == "recentlyPlayed" {
+		dir := browseDirection(f.Order, true)
+		query = `WITH album_lp AS MATERIALIZED (SELECT pt.album_id,MAX(pp.last_played_at) AS lp FROM playback_progress pp JOIN tracks pt ON pt.id=pp.track_id WHERE pp.last_played_at IS NOT NULL GROUP BY pt.album_id) SELECT a.id FROM albums a LEFT JOIN album_lp al ON al.album_id=a.id WHERE ` + where + ` ORDER BY COALESCE(al.lp,'')='' ASC,COALESCE(al.lp,'') ` + dir + `,a.sort_title,a.id LIMIT ? OFFSET ?`
+	} else {
+		query = `SELECT a.id FROM albums a WHERE ` + where + ` ORDER BY ` + albumOrder(f) + ` LIMIT ? OFFSET ?`
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -801,10 +855,19 @@ func (s *Store) CountArtists(ctx context.Context, f Filters) (int64, error) {
 
 func artistWhere(f Filters, role string) (string, []any) {
 	// 已无可用文件的歌手不出现在任何浏览结果中；按角色筛选时也只看可见专辑/歌曲。
-	clauses := []string{"ar.merged_into_artist_id IS NULL", "(?='all' OR (?='album' AND EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id AND " + albumVisibleSQL("aa.album_id") + ")) OR (?='track' AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id AND " + trackVisibleSQL("ta.track_id") + ")))", artistVisibleSQL("ar.id")}
-	args := []any{role, role, role}
-	if f.PerformerOnly {
-		clauses[1] = strings.ReplaceAll(clauses[1], "ta.artist_id=ar.id", "ta.artist_id=ar.id AND ta.role='primary'")
+	clauses := []string{"ar.merged_into_artist_id IS NULL"}
+	var args []any
+	switch role {
+	case "album":
+		clauses = append(clauses, "EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id AND "+albumVisibleSQL("aa.album_id")+")")
+	case "track":
+		roleCond := ""
+		if f.PerformerOnly {
+			roleCond = " AND ta.role='primary'"
+		}
+		clauses = append(clauses, "EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id"+roleCond+" AND "+trackVisibleSQL("ta.track_id")+")")
+	default:
+		clauses = append(clauses, artistVisibleSQL("ar.id"))
 	}
 	if f.Favorite {
 		clauses = append(clauses, "ar.is_favorite=1")

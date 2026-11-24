@@ -313,8 +313,16 @@ func workWhere(filter WorkFilters) (string, []any) {
 // (when non-empty) is OR-ed into the keyword match so folded rows also match
 // the series title.
 func workWherePrefix(filter WorkFilters, prefix, indexExpr, extraQueryExpr string) (string, []any) {
-	clauses := []string{"(?='' OR " + prefix + "type=?)", "(?=0 OR " + prefix + "year=?)"}
-	args := []any{filter.Type, filter.Type, filter.Year, filter.Year}
+	clauses := make([]string, 0, 4)
+	args := make([]any, 0, 8)
+	if filter.Type != "" {
+		clauses = append(clauses, prefix+"type=?")
+		args = append(args, filter.Type)
+	}
+	if filter.Year > 0 {
+		clauses = append(clauses, prefix+"year=?")
+		args = append(args, filter.Year)
+	}
 	variants := SearchVariants(filter.Query)
 	if len(variants) > 0 {
 		parts := make([]string, 0, len(variants)*4)
@@ -331,6 +339,9 @@ func workWherePrefix(filter WorkFilters, prefix, indexExpr, extraQueryExpr strin
 	if condition, indexArgs := IndexCondition(indexExpr, filter.Index); condition != "" {
 		clauses = append(clauses, condition)
 		args = append(args, indexArgs...)
+	}
+	if len(clauses) == 0 {
+		return "1=1", args
 	}
 	return strings.Join(clauses, " AND "), args
 }

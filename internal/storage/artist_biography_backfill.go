@@ -588,8 +588,16 @@ func (s *Store) ClaimArtistBiographyBackfillItem(ctx context.Context, runID int6
 // CompleteArtistBiographyBackfillItem 幂等完成一个补全项并刷新 run 计数；
 // 已完成的项目直接返回 nil（断点重放安全），checkpoint 失配拒绝旧 worker。
 func (s *Store) CompleteArtistBiographyBackfillItem(ctx context.Context, c ArtistBiographyBackfillCheckpoint, outcome, errText string) error {
+	var outcomeCol string
 	switch outcome {
-	case "filled", "missing", "skipped_no_mbid", "skipped_state", "skipped_fresh", "skipped_source_disabled", "failed":
+	case "filled":
+		outcomeCol = "filled_items"
+	case "missing":
+		outcomeCol = "missing_items"
+	case "skipped_no_mbid", "skipped_state", "skipped_fresh", "skipped_source_disabled":
+		outcomeCol = "skipped_items"
+	case "failed":
+		outcomeCol = "failed_items"
 	default:
 		return ErrArtistBiographyBackfillState
 	}
@@ -615,13 +623,16 @@ func (s *Store) CompleteArtistBiographyBackfillItem(ctx context.Context, c Artis
 	if len(errText) > 500 {
 		errText = errText[:500]
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_biography_backfill_items SET status='completed',outcome=?,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, outcome, errText, c.ItemID); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE artist_biography_backfill_items SET status='completed',outcome=?,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status<>'completed'`, outcome, errText, c.ItemID)
+	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_biography_backfill_runs SET filled_items=(SELECT count(*) FROM artist_biography_backfill_items WHERE run_id=? AND outcome='filled'),missing_items=(SELECT count(*) FROM artist_biography_backfill_items WHERE run_id=? AND outcome='missing'),skipped_items=(SELECT count(*) FROM artist_biography_backfill_items WHERE run_id=? AND outcome LIKE 'skipped%'),failed_items=(SELECT count(*) FROM artist_biography_backfill_items WHERE run_id=? AND outcome='failed') WHERE id=?`, c.RunID, c.RunID, c.RunID, c.RunID, c.RunID); err != nil {
+	if n, err := res.RowsAffected(); err != nil {
 		return err
+	} else if n == 0 {
+		return tx.Commit()
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE artist_biography_backfill_runs SET processed_items=(SELECT count(*) FROM artist_biography_backfill_items WHERE run_id=? AND status='completed'),wait_source='',waiting_until=NULL WHERE id=?`, c.RunID, c.RunID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_biography_backfill_runs SET processed_items=processed_items+1,`+outcomeCol+`=`+outcomeCol+`+1,wait_source='',waiting_until=NULL WHERE id=?`, c.RunID); err != nil {
 		return err
 	}
 	return tx.Commit()

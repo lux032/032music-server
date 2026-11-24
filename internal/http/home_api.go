@@ -179,6 +179,38 @@ func (a *App) homeAPIAlbums(ctx context.Context, albums []storage.Album) []stora
 	return out
 }
 
+// homeAPIAlbumArtistMap batches AttachAlbumArtistRefs once for a combined set
+// of albums across home sections.
+func (a *App) homeAPIAlbumArtistMap(ctx context.Context, albums []storage.Album) map[int64][]storage.ArtistRef {
+	if len(albums) == 0 {
+		return nil
+	}
+	unique := make([]storage.Album, 0, len(albums))
+	seen := make(map[int64]bool, len(albums))
+	for _, album := range albums {
+		if !seen[album.ID] {
+			seen[album.ID] = true
+			unique = append(unique, album)
+		}
+	}
+	if err := a.store.AttachAlbumArtistRefs(ctx, unique); err != nil {
+		a.logger.Warn("home api album artists", "error", err)
+		return nil
+	}
+	byID := make(map[int64][]storage.ArtistRef, len(unique))
+	for _, album := range unique {
+		byID[album.ID] = album.Artists
+	}
+	return byID
+}
+
+func applyHomeAPIAlbumArtists(album storage.Album, byID map[int64][]storage.ArtistRef) storage.Album {
+	if refs, ok := byID[album.ID]; ok {
+		album.Artists = refs
+	}
+	return album
+}
+
 func homeAPIRoleCounts(counts []storage.HomeRoleCount) []homeAPIRoleCount {
 	out := make([]homeAPIRoleCount, 0, len(counts))
 	for _, c := range counts {
@@ -187,7 +219,7 @@ func homeAPIRoleCounts(counts []storage.HomeRoleCount) []homeAPIRoleCount {
 	return out
 }
 
-func (a *App) homeAPIAlbumPaneFrom(ctx context.Context, view *homeHeroAlbumView) *homeAPIAlbumPane {
+func homeAPIAlbumPaneWithArtists(view *homeHeroAlbumView, byID map[int64][]storage.ArtistRef) *homeAPIAlbumPane {
 	if view == nil {
 		return nil
 	}
@@ -198,12 +230,19 @@ func (a *App) homeAPIAlbumPaneFrom(ctx context.Context, view *homeHeroAlbumView)
 	return &homeAPIAlbumPane{
 		Focus:                 view.Focus,
 		Play:                  homeAPIPlayRef{Type: "album", ID: view.Album.ID},
-		Album:                 a.homeAPIAlbums(ctx, []storage.Album{view.Album})[0],
+		Album:                 applyHomeAPIAlbumArtists(view.Album, byID),
 		Tracks:                tracks,
 		PreviewDurationMillis: tracksDuration(tracks),
 		NoteTime:              view.NoteTime,
 		Resume:                view.Resume,
 	}
+}
+
+func (a *App) homeAPIAlbumPaneFrom(ctx context.Context, view *homeHeroAlbumView) *homeAPIAlbumPane {
+	if view == nil {
+		return nil
+	}
+	return homeAPIAlbumPaneWithArtists(view, a.homeAPIAlbumArtistMap(ctx, []storage.Album{view.Album}))
 }
 
 func homeAPISeriesPaneFrom(view *homeSeriesView) *homeAPISeriesPane {
@@ -298,15 +337,37 @@ func (a *App) homeAPIFrom(ctx context.Context, data homePageData) homeAPIRespons
 	if data.Empty {
 		return out
 	}
+	// Collect every album displayed in the response so AttachAlbumArtistRefs
+	// runs once in a single batch instead of up to 5 separate queries.
+	allAlbums := make([]storage.Album, 0, len(data.RecentAlbums)+len(data.Chronicle.Albums)+3)
+	if hero := data.Hero; hero.Recent != nil {
+		allAlbums = append(allAlbums, hero.Recent.Album)
+		if hero.Listening != nil {
+			allAlbums = append(allAlbums, hero.Listening.Album)
+		}
+		if hero.Random != nil {
+			allAlbums = append(allAlbums, hero.Random.Album)
+		}
+	}
+	for _, card := range data.RecentAlbums {
+		allAlbums = append(allAlbums, card.Album)
+	}
+	if len(data.Years) > 0 {
+		for _, card := range data.Chronicle.Albums {
+			allAlbums = append(allAlbums, card.Album)
+		}
+	}
+	artistsByID := a.homeAPIAlbumArtistMap(ctx, allAlbums)
+
 	if hero := data.Hero; hero.Recent != nil {
 		spot := &homeAPISpotlight{Tabs: make([]string, 0, len(hero.Tabs)), DefaultTab: "recent"}
 		for _, tab := range hero.Tabs {
 			spot.Tabs = append(spot.Tabs, tab.Key)
 		}
-		spot.Recent = a.homeAPIAlbumPaneFrom(ctx, hero.Recent)
-		spot.Listening = a.homeAPIAlbumPaneFrom(ctx, hero.Listening)
+		spot.Recent = homeAPIAlbumPaneWithArtists(hero.Recent, artistsByID)
+		spot.Listening = homeAPIAlbumPaneWithArtists(hero.Listening, artistsByID)
 		spot.Series = homeAPISeriesPaneFrom(hero.Series)
-		spot.Random = a.homeAPIAlbumPaneFrom(ctx, hero.Random)
+		spot.Random = homeAPIAlbumPaneWithArtists(hero.Random, artistsByID)
 		out.Spotlight = spot
 	}
 	for _, row := range data.Resume {
@@ -314,9 +375,9 @@ func (a *App) homeAPIFrom(ctx context.Context, data homePageData) homeAPIRespons
 	}
 	recent := make([]storage.Album, 0, len(data.RecentAlbums))
 	for _, card := range data.RecentAlbums {
-		recent = append(recent, card.Album)
+		recent = append(recent, applyHomeAPIAlbumArtists(card.Album, artistsByID))
 	}
-	out.RecentAlbums = a.homeAPIAlbums(ctx, recent)
+	out.RecentAlbums = recent
 	out.Works = a.homeAPIWorksPage(data.WorksPanel, false)
 	out.Songs = homeAPISongsPage(data.SongsPanel, false)
 	if len(data.Years) > 0 {
@@ -324,7 +385,11 @@ func (a *App) homeAPIFrom(ctx context.Context, data homePageData) homeAPIRespons
 		for _, bar := range data.Years {
 			chronicle.Years = append(chronicle.Years, homeAPIYear{Year: bar.Year, Count: bar.Count})
 		}
-		chronicle.Result = a.homeAPIChronicleResult(ctx, data.Chronicle)
+		chronicleAlbums := make([]storage.Album, 0, len(data.Chronicle.Albums))
+		for _, card := range data.Chronicle.Albums {
+			chronicleAlbums = append(chronicleAlbums, applyHomeAPIAlbumArtists(card.Album, artistsByID))
+		}
+		chronicle.Result = homeAPIChronicleResult{Year: data.Chronicle.Year, Total: data.Chronicle.Total, Albums: chronicleAlbums}
 		out.Chronicle = chronicle
 	}
 	if data.Playlists != nil {

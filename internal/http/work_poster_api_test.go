@@ -90,4 +90,29 @@ func TestAPIWorkPosterMediaAccess(t *testing.T) {
 	if got := workPosterURL(app.enrichment, work, 360); got[:len("/admin/works/")] != "/admin/works/" {
 		t.Fatalf("web poster url must stay on /admin: %q", got)
 	}
+
+	// External removal of a cached poster invalidates the in-memory index on open ENOENT.
+	// Use 127.0.0.1 so the background QueueWorkPoster re-fetch is rejected immediately by SSRF without network access.
+	removedURL := "http://127.0.0.1/poster-removed.jpg"
+	removedWork, err := store.CreateWork(context.Background(), storage.WorkInput{Title: "poster-removed", Type: "anime", PosterURL: removedURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removedFile := filepath.Join(posterDir, fmt.Sprintf("%x", sha256.Sum256([]byte(removedURL)))+".jpg")
+	if err := os.WriteFile(removedFile, []byte("jpeg"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := app.enrichment.CachedWorkPoster(removedURL); err != nil {
+		t.Fatalf("expected cached poster before removal: %v", err)
+	}
+	if err := os.Remove(removedFile); err != nil {
+		t.Fatal(err)
+	}
+	removedPath := "/api/v1/works/" + strconv.FormatInt(removedWork.ID, 10) + "/poster"
+	if rec := get(removedPath+"?mediaToken="+testEnvMediaToken, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted poster must return 404, got %d", rec.Code)
+	}
+	if _, _, err := app.enrichment.CachedWorkPoster(removedURL); err == nil {
+		t.Fatal("stale poster cache entry was not invalidated on ENOENT")
+	}
 }

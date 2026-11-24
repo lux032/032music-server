@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -45,6 +46,58 @@ func ValidSearchCategory(category string) bool {
 	return category == "" || category == "artists" || category == "albums" || category == "tracks" || category == "composers"
 }
 
+type resolvedSearchArtists struct {
+	hasMatches  bool
+	rootsJSON   string
+	membersJSON string
+}
+
+// resolveSearchArtists evaluates artist name/alias/external-profile matching
+// once per Search call and expands only matched canonical roots to their merged
+// member IDs.
+func (s *Store) resolveSearchArtists(ctx context.Context, variants []searchQueryVariant) (resolvedSearchArtists, error) {
+	cte, args := matchedArtistRootsCTE(variants)
+	rows, err := s.db.QueryContext(ctx, cte+`, matched_members(id,root) AS (SELECT root,root FROM search_matches UNION SELECT a.id,m.root FROM artists a JOIN matched_members m ON a.merged_into_artist_id=m.id) SELECT m.id,m.root,sm.score FROM matched_members m JOIN search_matches sm ON sm.root=m.root`, args...)
+	if err != nil {
+		return resolvedSearchArtists{}, err
+	}
+	defer rows.Close()
+
+	rootsSeen := map[int64]bool{}
+	var roots [][2]int64
+	var members [][2]int64
+	for rows.Next() {
+		var memberID, rootID, score int64
+		if err = rows.Scan(&memberID, &rootID, &score); err != nil {
+			return resolvedSearchArtists{}, err
+		}
+		if !rootsSeen[rootID] {
+			rootsSeen[rootID] = true
+			roots = append(roots, [2]int64{rootID, score})
+		}
+		members = append(members, [2]int64{memberID, rootID})
+	}
+	if err = rows.Err(); err != nil {
+		return resolvedSearchArtists{}, err
+	}
+	if len(roots) == 0 {
+		return resolvedSearchArtists{}, nil
+	}
+	rootsRaw, err := json.Marshal(roots)
+	if err != nil {
+		return resolvedSearchArtists{}, err
+	}
+	membersRaw, err := json.Marshal(members)
+	if err != nil {
+		return resolvedSearchArtists{}, err
+	}
+	return resolvedSearchArtists{
+		hasMatches:  true,
+		rootsJSON:   string(rootsRaw),
+		membersJSON: string(membersRaw),
+	}, nil
+}
+
 // Search ranks and pages IDs in SQLite before hydrating the selected page.
 // Artist previews never limit the set used to find related albums and tracks.
 func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResults, error) {
@@ -61,7 +114,11 @@ func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResult
 	if q == "" {
 		return result, nil
 	}
-	cte, args := searchArtistCTE(q)
+	variants := buildSearchQueryVariants(q)
+	resolved, err := s.resolveSearchArtists(ctx, variants)
+	if err != nil {
+		return result, err
+	}
 	bestScore := 4
 	ambiguousArtist := false
 	for _, category := range []string{"artists", "tracks", "albums", "composers"} {
@@ -73,36 +130,38 @@ func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResult
 		if options.Category != "" {
 			limit, offset = page(Filters{Limit: options.Limit, Offset: options.Offset})
 		}
-		candidates := searchCandidatesSQL(category)
+		var ids []int64
+		var scores []int
 		var total int64
-		// Count and page in one pass rather than rebuilding all alias and
-		// relationship sets for a separate COUNT query.
-		queryArgs := append(append([]any{}, args...), limit, offset)
-		rows, err := s.db.QueryContext(ctx, cte+candidates+` SELECT id,score,COUNT(*) OVER() FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`, queryArgs...)
-		if err != nil {
-			return result, err
-		}
-		ids := []int64{}
-		scores := []int{}
-		for rows.Next() {
-			var id int64
-			var score int
-			if err = rows.Scan(&id, &score, &total); err != nil {
-				rows.Close()
+		if (category == "artists" || category == "composers") && !resolved.hasMatches {
+			ids = []int64{}
+		} else {
+			pageSQL, countSQL, baseArgs := searchCategorySQL(category, variants, resolved)
+			queryArgs := append(append([]any{}, baseArgs...), limit, offset)
+			rows, qErr := s.db.QueryContext(ctx, pageSQL, queryArgs...)
+			if qErr != nil {
+				return result, qErr
+			}
+			for rows.Next() {
+				var id int64
+				var score int
+				if err = rows.Scan(&id, &score, &total); err != nil {
+					rows.Close()
+					return result, err
+				}
+				ids = append(ids, id)
+				scores = append(scores, score)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
 				return result, err
 			}
-			ids = append(ids, id)
-			scores = append(scores, score)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return result, err
-		}
-		// A page beyond the end has no row to carry the window count.
-		if len(ids) == 0 && offset > 0 {
-			if err := s.db.QueryRowContext(ctx, cte+candidates+` SELECT COUNT(*) FROM ranked`, args...).Scan(&total); err != nil {
-				return result, err
+			// A page beyond the end has no row to carry the window count.
+			if len(ids) == 0 && offset > 0 {
+				if err := s.db.QueryRowContext(ctx, countSQL, baseArgs...).Scan(&total); err != nil {
+					return result, err
+				}
 			}
 		}
 		var candidate *SearchMatch
@@ -164,38 +223,66 @@ func (s *Store) Search(ctx context.Context, options SearchOptions) (SearchResult
 	return result, nil
 }
 
-func searchTitleRankSQL(fields ...string) string {
-	values := make([]string, 0, len(fields))
-	for _, field := range fields {
-		values = append(values, "SELECT "+field+" AS value")
-	}
-	return `(SELECT MIN(CASE WHEN v.value=q.value COLLATE NOCASE THEN 0 WHEN v.value LIKE q.prefix ESCAPE '\' THEN 1 ELSE 2 END) FROM (` + strings.Join(values, " UNION ALL ") + `) v CROSS JOIN search_query q WHERE v.value LIKE q.contains ESCAPE '\')`
-}
-
-// Membership subqueries are deliberately uncorrelated: SQLite builds each
-// matching artist/album/track set once. A correlated EXISTS joining all primary
-// credits here can rescan the entire role index for every album in the library.
-func searchCandidatesSQL(category string) string {
+// searchCategorySQL builds the paginated and count SQL for one category using
+// pre-resolved artist matches, pushing match filters before materializing and
+// pinning join order from matched_members into album_artists/track_artists.
+func searchCategorySQL(category string, variants []searchQueryVariant, resolved resolvedSearchArtists) (pageSQL, countSQL string, args []any) {
 	switch category {
 	case "artists", "composers":
-		role := "'primary'"
-		albumCondition := `EXISTS(SELECT 1 FROM album_artists aa JOIN chain c ON c.id=aa.artist_id WHERE c.root=ar.id AND ` + albumVisibleSQL("aa.album_id") + `) OR `
-		if category == "composers" {
-			role = "'composer'"
-			albumCondition = ""
+		var visibleSQL string
+		if category == "artists" {
+			visibleSQL = `SELECT DISTINCT mm.root FROM matched_members mm CROSS JOIN album_artists aa ON aa.artist_id=mm.id WHERE ` + albumVisibleSQL("aa.album_id") +
+				` UNION SELECT DISTINCT mm.root FROM matched_members mm CROSS JOIN track_artists ta ON ta.artist_id=mm.id WHERE ta.role='primary' AND ` + trackVisibleSQL("ta.track_id")
+		} else {
+			visibleSQL = `SELECT DISTINCT mm.root FROM matched_members mm CROSS JOIN track_artists ta ON ta.artist_id=mm.id WHERE ta.role='composer' AND ` + trackVisibleSQL("ta.track_id")
 		}
-		return `,ranked AS (SELECT ar.id,m.score,0 AS relation,COALESCE(ar.user_display_name,ar.display_name) AS title FROM search_matches m JOIN artists ar ON ar.id=m.root WHERE (` + albumCondition + `EXISTS(SELECT 1 FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE c.root=ar.id AND ta.role=` + role + ` AND ` + trackVisibleSQL("ta.track_id") + `)))`
+		cte := `WITH matched_roots(root,score) AS MATERIALIZED (SELECT CAST(json_extract(value,'$[0]') AS INTEGER),CAST(json_extract(value,'$[1]') AS INTEGER) FROM json_each(?)),` +
+			` matched_members(id,root) AS MATERIALIZED (SELECT CAST(json_extract(value,'$[0]') AS INTEGER),CAST(json_extract(value,'$[1]') AS INTEGER) FROM json_each(?)),` +
+			` visible_roots(root) AS MATERIALIZED (` + visibleSQL + `) `
+		args = []any{resolved.rootsJSON, resolved.membersJSON}
+		pageSQL = cte + `SELECT ar.id,m.score,COUNT(*) OVER() FROM visible_roots v JOIN matched_roots m ON m.root=v.root CROSS JOIN artists ar ON ar.id=v.root ORDER BY m.score,COALESCE(ar.user_display_name,ar.display_name) COLLATE NOCASE,ar.id LIMIT ? OFFSET ?`
+		countSQL = cte + `SELECT COUNT(*) FROM visible_roots`
+		return pageSQL, countSQL, args
+
 	case "albums":
-		return `,album_candidates AS MATERIALIZED (SELECT a.id,COALESCE(a.user_title,a.title) title,` + searchTitleRankSQL("COALESCE(a.user_title,a.title)", "a.reading_title") + ` AS score,
-   a.id IN (SELECT aa.album_id FROM album_artists aa JOIN chain c ON c.id=aa.artist_id JOIN search_matches m ON m.root=c.root) AS album_match,
-   a.id IN (SELECT t.album_id FROM track_artists ta JOIN chain c ON c.id=ta.artist_id JOIN search_matches m ON m.root=c.root JOIN tracks t ON t.id=ta.track_id WHERE ta.role='primary' AND ` + trackVisibleSQL("t.id") + `) AS track_match,
-   CASE WHEN COALESCE(a.user_is_compilation,a.is_compilation,0)=0 AND (SELECT COUNT(*) FROM album_artists aa WHERE aa.album_id=a.id)=1 THEN 0 ELSE 1 END AS collaboration
-   FROM albums a WHERE ` + albumVisibleSQL("a.id") + `),ranked AS (SELECT id,COALESCE(score,3) score,CASE WHEN album_match THEN collaboration ELSE 2 END AS relation,title FROM album_candidates WHERE score IS NOT NULL OR album_match OR track_match)`
+		titleCond, titleArgs := searchLikeCondition(variants, "COALESCE(a.user_title,a.title)", "COALESCE(a.reading_title,'')")
+		scoreExpr, scoreArgs := searchScoreExpr(variants, "title", "COALESCE(reading_title,'')")
+		if !resolved.hasMatches {
+			cte := `WITH matched AS (SELECT a.id,COALESCE(a.user_title,a.title) AS title,a.reading_title FROM albums a WHERE ` + titleCond + ` AND ` + albumVisibleSQL("a.id") + `),` +
+				` ranked AS (SELECT id,COALESCE(` + scoreExpr + `,3) AS score,2 AS relation,title FROM matched) `
+			args = append(append([]any(nil), titleArgs...), scoreArgs...)
+			return cte + `SELECT id,score,COUNT(*) OVER() FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`,
+				cte + `SELECT COUNT(*) FROM ranked`, args
+		}
+		cte := `WITH matched_members(id,root) AS MATERIALIZED (SELECT CAST(json_extract(value,'$[0]') AS INTEGER),CAST(json_extract(value,'$[1]') AS INTEGER) FROM json_each(?)),` +
+			` album_artist_hits(album_id) AS MATERIALIZED (SELECT DISTINCT aa.album_id FROM matched_members mm CROSS JOIN album_artists aa ON aa.artist_id=mm.id),` +
+			` track_artist_hits(album_id) AS MATERIALIZED (SELECT DISTINCT t.album_id FROM matched_members mm CROSS JOIN track_artists ta ON ta.artist_id=mm.id CROSS JOIN tracks t ON t.id=ta.track_id WHERE ta.role='primary' AND ` + trackVisibleSQL("t.id") + `),` +
+			` matched AS (SELECT a.id,COALESCE(a.user_title,a.title) AS title,a.reading_title,a.user_is_compilation,a.is_compilation,a.id IN (SELECT album_id FROM album_artist_hits) AS album_match FROM albums a WHERE (a.id IN (SELECT album_id FROM album_artist_hits) OR a.id IN (SELECT album_id FROM track_artist_hits) OR ` + titleCond + `) AND ` + albumVisibleSQL("a.id") + `),` +
+			` ranked AS (SELECT id,COALESCE(` + scoreExpr + `,3) AS score,CASE WHEN album_match THEN CASE WHEN COALESCE(user_is_compilation,is_compilation,0)=0 AND (SELECT COUNT(*) FROM album_artists aa WHERE aa.album_id=matched.id)=1 THEN 0 ELSE 1 END ELSE 2 END AS relation,title FROM matched) `
+		args = append([]any{resolved.membersJSON}, titleArgs...)
+		args = append(args, scoreArgs...)
+		return cte + `SELECT id,score,COUNT(*) OVER() FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`,
+			cte + `SELECT COUNT(*) FROM ranked`, args
+
 	case "tracks":
-		return `,track_candidates AS MATERIALIZED (SELECT t.id,COALESCE(t.user_title,t.title) title,` + searchTitleRankSQL("COALESCE(t.user_title,t.title)") + ` AS score,
-   (t.id IN (SELECT ta.track_id FROM track_artists ta JOIN chain c ON c.id=ta.artist_id JOIN search_matches m ON m.root=c.root WHERE ta.role='primary') OR
-   (NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.role='primary') AND t.album_id IN (SELECT aa.album_id FROM album_artists aa JOIN chain c ON c.id=aa.artist_id JOIN search_matches m ON m.root=c.root))) AS performer_match
-   FROM tracks t WHERE ` + trackVisibleSQL("t.id") + `),ranked AS (SELECT id,COALESCE(score,3) score,0 AS relation,title FROM track_candidates WHERE score IS NOT NULL OR performer_match)`
+		titleCond, titleArgs := searchLikeCondition(variants, "COALESCE(t.user_title,t.title)")
+		scoreExpr, scoreArgs := searchScoreExpr(variants, "title")
+		if !resolved.hasMatches {
+			cte := `WITH matched AS (SELECT t.id,COALESCE(t.user_title,t.title) AS title FROM tracks t WHERE ` + titleCond + ` AND ` + trackVisibleSQL("t.id") + `),` +
+				` ranked AS (SELECT id,COALESCE(` + scoreExpr + `,3) AS score,0 AS relation,title FROM matched) `
+			args = append(append([]any(nil), titleArgs...), scoreArgs...)
+			return cte + `SELECT id,score,COUNT(*) OVER() FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`,
+				cte + `SELECT COUNT(*) FROM ranked`, args
+		}
+		cte := `WITH matched_members(id,root) AS MATERIALIZED (SELECT CAST(json_extract(value,'$[0]') AS INTEGER),CAST(json_extract(value,'$[1]') AS INTEGER) FROM json_each(?)),` +
+			` direct_track_hits(track_id) AS MATERIALIZED (SELECT DISTINCT ta.track_id FROM matched_members mm CROSS JOIN track_artists ta ON ta.artist_id=mm.id WHERE ta.role='primary'),` +
+			` album_fallback_hits(album_id) AS MATERIALIZED (SELECT DISTINCT aa.album_id FROM matched_members mm CROSS JOIN album_artists aa ON aa.artist_id=mm.id),` +
+			` matched AS (SELECT t.id,COALESCE(t.user_title,t.title) AS title FROM tracks t WHERE (t.id IN (SELECT track_id FROM direct_track_hits) OR (t.album_id IN (SELECT album_id FROM album_fallback_hits) AND NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=t.id AND ta.role='primary')) OR ` + titleCond + `) AND ` + trackVisibleSQL("t.id") + `),` +
+			` ranked AS (SELECT id,COALESCE(` + scoreExpr + `,3) AS score,0 AS relation,title FROM matched) `
+		args = append([]any{resolved.membersJSON}, titleArgs...)
+		args = append(args, scoreArgs...)
+		return cte + `SELECT id,score,COUNT(*) OVER() FROM ranked ORDER BY score,relation,title COLLATE NOCASE,id LIMIT ? OFFSET ?`,
+			cte + `SELECT COUNT(*) FROM ranked`, args
 	}
 	panic("unvalidated search category")
 }
@@ -205,14 +292,17 @@ func (s *Store) searchArtistsByIDs(ctx context.Context, ids []int64, composer bo
 	if len(ids) == 0 {
 		return result, nil
 	}
-	placeholders, args := inClause(ids)
+	placeholders, idArgs := inClause(ids)
 	role := "'primary'"
 	if composer {
 		role = "'composer'"
 	}
-	rows, err := s.db.QueryContext(ctx, artistMergeChainSQL+` SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,ar.is_favorite,
- (SELECT COUNT(DISTINCT aa.album_id) FROM album_artists aa JOIN chain c ON c.id=aa.artist_id WHERE c.root=ar.id AND `+albumVisibleSQL("aa.album_id")+`),
- (SELECT COUNT(DISTINCT ta.track_id) FROM track_artists ta JOIN chain c ON c.id=ta.artist_id WHERE c.root=ar.id AND ta.role=`+role+` AND `+trackVisibleSQL("ta.track_id")+`) FROM artists ar WHERE ar.id IN (`+placeholders+`)`, args...)
+	args := make([]any, 0, len(idArgs)*2)
+	args = append(args, idArgs...)
+	args = append(args, idArgs...)
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE chain(id,root) AS (SELECT id,id FROM artists WHERE id IN (`+placeholders+`) UNION SELECT a.id,c.root FROM artists a JOIN chain c ON a.merged_into_artist_id=c.id) SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),`+artistImageURLSQL("ar")+`,ar.is_favorite,
+ (SELECT COUNT(DISTINCT aa.album_id) FROM chain c CROSS JOIN album_artists aa ON aa.artist_id=c.id WHERE c.root=ar.id AND `+albumVisibleSQL("aa.album_id")+`),
+ (SELECT COUNT(DISTINCT ta.track_id) FROM chain c CROSS JOIN track_artists ta ON ta.artist_id=c.id WHERE c.root=ar.id AND ta.role=`+role+` AND `+trackVisibleSQL("ta.track_id")+`) FROM artists ar WHERE ar.id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}

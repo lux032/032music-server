@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/storage"
 )
 
@@ -523,5 +524,85 @@ func TestCapabilitiesAdvertiseHome(t *testing.T) {
 	}
 	if body.Home.Endpoint != "/api/v1/home" || strings.Join(body.Home.WorkFilters, ",") != "all,anime,game,movie" || len(body.Home.PlayTypes) != 5 {
 		t.Fatalf("home capability: %+v", body.Home)
+	}
+}
+
+func TestAPIHomeDedupAndBatchedAlbumArtists(t *testing.T) {
+	ctx := context.Background()
+	app, store, _ := setupTestApp(t)
+	fixedHomeDay(app)
+	_, _, _, _ = seedHomeAPILibrary(t, app, store)
+
+	// Add a second album in the same year (2024) and a third album in an earlier year (2022)
+	// with distinct artists so chronicle totals and batched artist refs cover multiple distinct albums.
+	lib, err := store.LibraryByRoot(ctx, "/music")
+	if err != nil {
+		t.Fatalf("library: %v", err)
+	}
+	for _, spec := range []struct {
+		path   string
+		album  string
+		artist string
+		year   int
+	}{
+		{"a2/01.flac", "Second 2024", "Artist Two", 2024},
+		{"a3/01.flac", "Older 2022", "Artist Three", 2022},
+	} {
+		if err := store.ImportTrack(ctx, storage.ImportInput{
+			LibraryID:    lib.ID,
+			RelativePath: spec.path,
+			FileSize:     100,
+			ModifiedAtNS: 1,
+			Metadata: metadata.AudioMetadata{
+				Title:        spec.album + " Track",
+				Album:        spec.album,
+				Artists:      []string{spec.artist},
+				AlbumArtists: []string{spec.artist},
+				Year:         spec.year,
+				DiscNumber:   1,
+				TrackNumber:  1,
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := apiGet(t, app, "/api/v1/home", testAppAPIToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var home homeAPIWire
+	decodeHomeJSON(t, rec, &home)
+
+	if home.Spotlight == nil || home.Spotlight.Recent == nil || home.Spotlight.Listening == nil || home.Spotlight.Random == nil {
+		t.Fatalf("expected all spotlight album panes: %+v", home.Spotlight)
+	}
+	if len(home.RecentAlbums) != 3 {
+		t.Fatalf("recentAlbums len = %d, want 3", len(home.RecentAlbums))
+	}
+	if home.Spotlight.Recent.Album.ID != home.RecentAlbums[0].ID {
+		t.Fatalf("spotlight.recent album %d != recentAlbums[0] %d", home.Spotlight.Recent.Album.ID, home.RecentAlbums[0].ID)
+	}
+	if home.Spotlight.Listening.Resume == nil || len(home.Resume) == 0 || home.Spotlight.Listening.Resume.TrackID != home.Resume[0].TrackID {
+		t.Fatalf("spotlight.listening resume mismatch vs resume[0]")
+	}
+	// Verify every album across all home sections received batched artist refs.
+	for _, pane := range []*homeAPIAlbumPaneWire{home.Spotlight.Recent, home.Spotlight.Listening, home.Spotlight.Random} {
+		if len(pane.Album.Artists) != 1 || pane.Album.Artists[0].Name == "" {
+			t.Fatalf("spotlight %s missing artist refs: %+v", pane.Focus, pane.Album.Artists)
+		}
+	}
+	for _, album := range home.RecentAlbums {
+		if len(album.Artists) != 1 || album.Artists[0].Name == "" {
+			t.Fatalf("recent album %q missing artist refs: %+v", album.Title, album.Artists)
+		}
+	}
+	if home.Chronicle == nil || home.Chronicle.SelectedYear != 2024 || home.Chronicle.Result.Total != 2 || len(home.Chronicle.Result.Albums) != 2 {
+		t.Fatalf("chronicle = %+v, want selectedYear=2024 total=2", home.Chronicle)
+	}
+	for _, album := range home.Chronicle.Result.Albums {
+		if len(album.Artists) != 1 || album.Artists[0].Name == "" {
+			t.Fatalf("chronicle album %q missing artist refs: %+v", album.Title, album.Artists)
+		}
 	}
 }

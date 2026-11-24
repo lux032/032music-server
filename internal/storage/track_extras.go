@@ -35,7 +35,12 @@ const albumArtworkURLSQL = `COALESCE((SELECT '/api/v1/artwork/'||aw_art.id FROM 
 func artistImageURLSQL(alias string) string {
 	// Inner aliases (ma) matter: reusing the outer alias would make the
 	// merged-from subquery self-referencing and silently empty.
-	return `COALESCE((SELECT '/api/v1/artists/'||` + alias + `.id||'/image?v='||substr(ci.content_hash,1,12) FROM artist_custom_images ci WHERE ci.artist_id=` + alias + `.id OR ci.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id) ORDER BY (ci.artist_id=` + alias + `.id) DESC,ci.artist_id ASC LIMIT 1),CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=` + alias + `.id OR ai.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=` + alias + `.id)) THEN '/api/v1/artists/'||` + alias + `.id||'/image' ELSE '' END)`
+	// Separate self PK lookup from merged-source index lookup so SQLite never
+	// falls back to scanning artists via an OR IN predicate.
+	return `COALESCE(` +
+		`(SELECT '/api/v1/artists/'||` + alias + `.id||'/image?v='||substr(ci.content_hash,1,12) FROM artist_custom_images ci WHERE ci.artist_id=` + alias + `.id LIMIT 1),` +
+		`(SELECT '/api/v1/artists/'||` + alias + `.id||'/image?v='||substr(ci.content_hash,1,12) FROM artists ma JOIN artist_custom_images ci ON ci.artist_id=ma.id WHERE ma.merged_into_artist_id=` + alias + `.id ORDER BY ci.artist_id ASC LIMIT 1),` +
+		`CASE WHEN EXISTS(SELECT 1 FROM artist_image_cache ai WHERE ai.artist_id=` + alias + `.id) OR EXISTS(SELECT 1 FROM artists ma JOIN artist_image_cache ai ON ai.artist_id=ma.id WHERE ma.merged_into_artist_id=` + alias + `.id) THEN '/api/v1/artists/'||` + alias + `.id||'/image' ELSE '' END)`
 }
 
 // ArtistImageURLs resolves display image URLs for the given artist IDs in a

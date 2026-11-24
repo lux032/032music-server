@@ -83,6 +83,8 @@ func sqliteDSN(databasePath string) (string, error) {
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
 	query.Add("_pragma", "synchronous(NORMAL)")
+	query.Add("_pragma", "cache_size(-64000)")
+	query.Add("_pragma", "temp_store(MEMORY)")
 	databaseURIPath := filepath.ToSlash(absolutePath)
 	if runtime.GOOS == "windows" {
 		// A Windows drive path must be represented as file:///D:/path.
@@ -199,6 +201,9 @@ func (s *Store) MigrateUpTo(ctx context.Context, upTo int) error {
 	// repair needs no schema migration and is safe to run after every migrate.
 	if err := s.cleanEmptyAlbumSubjectCandidates(ctx); err != nil {
 		return fmt.Errorf("clean empty album subject candidates: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA optimize`); err != nil {
+		return fmt.Errorf("optimize sqlite query planner: %w", err)
 	}
 
 	return nil

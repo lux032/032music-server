@@ -31,10 +31,24 @@ const (
 	thumbnailNegativeLimit = 4096
 )
 
+type thumbnailResult int
+
+const (
+	thumbnailServed thumbnailResult = iota
+	thumbnailFallbackCacheable
+	thumbnailFallbackNoCache
+)
+
+type thumbnailNegativeEntry struct {
+	at        time.Time
+	cacheable bool
+}
+
 type thumbnailJob struct {
-	done     chan struct{}
-	err      error
-	original bool
+	done      chan struct{}
+	err       error
+	original  bool
+	cacheable bool
 }
 type thumbnailFile struct {
 	size int64
@@ -47,7 +61,7 @@ type thumbnailManager struct {
 	mu           sync.Mutex
 	jobs         map[string]*thumbnailJob
 	files        map[string]thumbnailFile
-	negative     map[string]time.Time
+	negative     map[string]thumbnailNegativeEntry
 	decodeConfig func(*os.File) (image.Config, string, error)
 	decode       func(*os.File) (image.Image, string, error)
 	// openCache allows tests to simulate removal between cache lookup and open.
@@ -56,7 +70,7 @@ type thumbnailManager struct {
 }
 
 func newThumbnailManager(cfg config.Config) *thumbnailManager {
-	m := &thumbnailManager{dir: filepath.Join(cfg.DataDirectory, "thumbs"), limit: int64(positiveLimit(cfg.ThumbCacheMB, 512)) * 1024 * 1024, slots: make(chan struct{}, 2), jobs: make(map[string]*thumbnailJob), files: make(map[string]thumbnailFile), negative: make(map[string]time.Time), decodeConfig: func(f *os.File) (image.Config, string, error) { return image.DecodeConfig(f) }, decode: func(f *os.File) (image.Image, string, error) { return image.Decode(f) }, openCache: os.Open, removeCache: os.Remove}
+	m := &thumbnailManager{dir: filepath.Join(cfg.DataDirectory, "thumbs"), limit: int64(positiveLimit(cfg.ThumbCacheMB, 512)) * 1024 * 1024, slots: make(chan struct{}, 2), jobs: make(map[string]*thumbnailJob), files: make(map[string]thumbnailFile), negative: make(map[string]thumbnailNegativeEntry), decodeConfig: func(f *os.File) (image.Config, string, error) { return image.DecodeConfig(f) }, decode: func(f *os.File) (image.Image, string, error) { return image.Decode(f) }, openCache: os.Open, removeCache: os.Remove}
 	if err := os.MkdirAll(m.dir, 0750); err == nil {
 		entries, _ := os.ReadDir(m.dir)
 		for _, e := range entries {
@@ -111,6 +125,11 @@ func (m *thumbnailManager) key(source string, id int64, path string, info os.Fil
 
 // thumbnail coalesces work by key. A cancelled leader never poisons a live follower.
 func (m *thumbnailManager) thumbnail(ctx context.Context, source string, id int64, file *os.File, info os.FileInfo, bucket int) (key, name string, ok bool, err error) {
+	key, name, state, err := m.thumbnailStatus(ctx, source, id, file, info, bucket)
+	return key, name, state == thumbnailServed, err
+}
+
+func (m *thumbnailManager) thumbnailStatus(ctx context.Context, source string, id int64, file *os.File, info os.FileInfo, bucket int) (key, name string, state thumbnailResult, err error) {
 	key, name = m.key(source, id, file.Name(), info, bucket)
 	for attempt := 0; attempt < 2; attempt++ {
 		m.mu.Lock()
@@ -118,7 +137,7 @@ func (m *thumbnailManager) thumbnail(ctx context.Context, source string, id int6
 			m.mu.Unlock()
 			if _, e := os.Stat(name); e == nil {
 				m.touch(filepath.Base(name))
-				return key, name, true, nil
+				return key, name, thumbnailServed, nil
 			}
 			m.mu.Lock()
 			m.removeFileLocked(filepath.Base(name))
@@ -127,10 +146,14 @@ func (m *thumbnailManager) thumbnail(ctx context.Context, source string, id int6
 			m.mu.Unlock()
 		}
 		m.mu.Lock()
-		if _, exists := m.negative[key]; exists {
-			m.negative[key] = time.Now()
+		if entry, exists := m.negative[key]; exists {
+			entry.at = time.Now()
+			m.negative[key] = entry
 			m.mu.Unlock()
-			return key, name, false, nil
+			if entry.cacheable {
+				return key, name, thumbnailFallbackCacheable, nil
+			}
+			return key, name, thumbnailFallbackNoCache, nil
 		}
 		job := m.jobs[key]
 		if job == nil {
@@ -143,32 +166,39 @@ func (m *thumbnailManager) thumbnail(ctx context.Context, source string, id int6
 			select {
 			case <-job.done:
 			case <-ctx.Done():
-				return key, name, false, ctx.Err()
+				return key, name, thumbnailFallbackNoCache, ctx.Err()
 			}
 		}
 		if (errors.Is(job.err, context.Canceled) || errors.Is(job.err, context.DeadlineExceeded)) && ctx.Err() == nil && attempt == 0 {
 			continue
 		}
-		return key, name, !job.original && job.err == nil, job.err
+		if !job.original && job.err == nil {
+			return key, name, thumbnailServed, nil
+		}
+		if job.original && job.cacheable && job.err == nil {
+			return key, name, thumbnailFallbackCacheable, nil
+		}
+		return key, name, thumbnailFallbackNoCache, job.err
 	}
-	return key, name, false, ctx.Err()
+	return key, name, thumbnailFallbackNoCache, ctx.Err()
 }
 func (m *thumbnailManager) lead(ctx context.Context, key, name string, file *os.File, bucket int, job *thumbnailJob) {
 	defer func() {
 		if p := recover(); p != nil {
 			job.original = true
+			job.cacheable = false
 			job.err = fmt.Errorf("thumbnail panic: %v", p)
 		}
 		m.mu.Lock()
 		if job.original {
 			if job.err == nil || (job.err != nil && !errors.Is(job.err, context.Canceled) && !errors.Is(job.err, context.DeadlineExceeded)) {
-				m.negative[key] = time.Now()
+				m.negative[key] = thumbnailNegativeEntry{at: time.Now(), cacheable: job.cacheable}
 				if len(m.negative) > thumbnailNegativeLimit {
 					var oldest string
 					var at time.Time
 					for k, v := range m.negative {
-						if oldest == "" || v.Before(at) {
-							oldest, at = k, v
+						if oldest == "" || v.at.Before(at) {
+							oldest, at = k, v.at
 						}
 					}
 					delete(m.negative, oldest)
@@ -184,58 +214,58 @@ func (m *thumbnailManager) lead(ctx context.Context, key, name string, file *os.
 		close(job.done)
 		m.mu.Unlock()
 	}()
-	job.original, job.err = m.generate(ctx, file, name, bucket)
+	job.original, job.cacheable, job.err = m.generate(ctx, file, name, bucket)
 }
-func (m *thumbnailManager) generate(ctx context.Context, file *os.File, name string, bucket int) (original bool, err error) {
+func (m *thumbnailManager) generate(ctx context.Context, file *os.File, name string, bucket int) (original bool, cacheable bool, err error) {
 	if _, err = file.Seek(0, 0); err != nil {
-		return false, err
+		return false, false, err
 	}
 	cfg, format, err := m.decodeConfig(file)
 	if err != nil {
-		return thumbnailFormatError(err), err
+		return thumbnailFormatError(err), false, err
 	}
 	if err = ctx.Err(); err != nil {
-		return false, err
+		return false, false, err
 	}
 	// WebP (x/image) decodes to YCbCr/NYCbCrA/NRGBA; sourceRGBA handles
 	// YCbCr directly and everything else through the At() fallback.
 	if format != "jpeg" && format != "png" && format != "gif" && format != "webp" {
-		return true, nil
+		return true, true, nil
 	}
 	pixels := int64(cfg.Width) * int64(cfg.Height)
 	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 12000 || cfg.Height > 12000 || pixels > thumbnailMaxPixels || pixels*thumbnailBytesPerPixel(cfg.ColorModel)+thumbnailCanvasBytes(format, pixels) > thumbnailMaxBytes {
-		return true, nil
+		return true, false, nil
 	}
 	if cfg.Width <= bucket && cfg.Height <= bucket {
-		return true, nil
+		return true, true, nil
 	}
 	select {
 	case m.slots <- struct{}{}:
 		defer func() { <-m.slots }()
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return false, false, ctx.Err()
 	}
 	if err = ctx.Err(); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if _, err = file.Seek(0, 0); err != nil {
-		return false, err
+		return false, false, err
 	}
 	img, _, err := m.decode(file)
 	if err != nil {
-		return true, err // Decode failures are logged once and negative-cached by source key.
+		return true, false, err // Decode failures are logged once and negative-cached by source key.
 	}
 	if format == "gif" {
 		b := img.Bounds()
 		if b.Min.X < 0 || b.Min.Y < 0 || b.Max.X > cfg.Width || b.Max.Y > cfg.Height {
-			return true, nil
+			return true, false, nil
 		}
 		canvas := image.NewRGBA(image.Rect(0, 0, cfg.Width, cfg.Height))
 		draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 		draw.Draw(canvas, b, img, b.Min, draw.Over)
 		img = canvas
 	} else if img.Bounds().Dx() != cfg.Width || img.Bounds().Dy() != cfg.Height {
-		return true, nil
+		return true, false, nil
 	}
 	width, height := cfg.Width, cfg.Height
 	if width >= height {
@@ -254,12 +284,12 @@ func (m *thumbnailManager) generate(ctx context.Context, file *os.File, name str
 	dest := image.NewRGBA(image.Rect(0, 0, width, height))
 	boxThumbnail(ctx, dest, img)
 	if err = ctx.Err(); err != nil {
-		return false, err
+		return false, false, err
 	}
 	part := strings.TrimSuffix(name, ".jpg") + ".part"
 	out, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0640)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer os.Remove(part)
 	defer out.Close() // Close before removing .part even when jpeg.Encode panics.
@@ -271,9 +301,9 @@ func (m *thumbnailManager) generate(ctx context.Context, file *os.File, name str
 		err = closeErr
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return false, os.Rename(part, name)
+	return false, false, os.Rename(part, name)
 }
 func thumbnailCanvasBytes(format string, pixels int64) int64 {
 	if format == "gif" {
@@ -372,7 +402,7 @@ func boxThumbnail(ctx context.Context, dest *image.RGBA, img image.Image) {
 		}
 	}
 }
-func (a *App) serveThumbnail(w http.ResponseWriter, r *http.Request, file *os.File, info os.FileInfo, source string, id int64, bucket int, cacheControl string) bool {
+func (a *App) serveThumbnail(w http.ResponseWriter, r *http.Request, file *os.File, info os.FileInfo, source string, id int64, bucket int, cacheControl string) thumbnailResult {
 	key, name := a.thumbnails.key(source, id, file.Name(), info, bucket)
 	for attempt := 0; attempt < 3; attempt++ {
 		cached, err := a.thumbnails.openCache(name)
@@ -384,14 +414,25 @@ func (a *App) serveThumbnail(w http.ResponseWriter, r *http.Request, file *os.Fi
 			w.Header().Set("ETag", "\""+key+"\"")
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			http.ServeContent(w, r, "thumbnail.jpg", time.Time{}, cached)
-			return true
+			return thumbnailServed
 		}
 		if r.Method == http.MethodHead {
-			return false
+			a.thumbnails.mu.Lock()
+			entry, exists := a.thumbnails.negative[key]
+			if exists {
+				entry.at = time.Now()
+				a.thumbnails.negative[key] = entry
+			}
+			a.thumbnails.mu.Unlock()
+			if exists && entry.cacheable {
+				w.Header().Set("ETag", "\""+key+"\"")
+				return thumbnailFallbackCacheable
+			}
+			return thumbnailFallbackNoCache
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			a.logger.Warn("thumbnail cache open failed; serving original", "error", err)
-			return false
+			return thumbnailFallbackNoCache
 		}
 		if attempt == 2 {
 			break
@@ -400,18 +441,22 @@ func (a *App) serveThumbnail(w http.ResponseWriter, r *http.Request, file *os.Fi
 		a.thumbnails.mu.Lock()
 		a.thumbnails.removeFileLocked(filepath.Base(name))
 		a.thumbnails.mu.Unlock()
-		_, _, ok, e := a.thumbnails.thumbnail(r.Context(), source, id, file, info, bucket)
+		_, _, state, e := a.thumbnails.thumbnailStatus(r.Context(), source, id, file, info, bucket)
 		if e != nil {
 			if r.Context().Err() == nil {
 				a.logger.Warn("thumbnail generation failed; serving original", "path", file.Name(), "error", e)
 			}
-			return false
+			return thumbnailFallbackNoCache
 		}
-		if !ok {
-			return false
+		if state == thumbnailFallbackCacheable {
+			w.Header().Set("ETag", "\""+key+"\"")
+			return thumbnailFallbackCacheable
+		}
+		if state != thumbnailServed {
+			return thumbnailFallbackNoCache
 		}
 	}
-	return false
+	return thumbnailFallbackNoCache
 }
 func (m *thumbnailManager) touch(name string) {
 	m.mu.Lock()

@@ -323,7 +323,7 @@ func (s *Store) RecordPlaybackEvent(ctx context.Context, input PlaybackEventInpu
 }
 
 func (s *Store) recordPlaybackEventTx(ctx context.Context, input PlaybackEventInput) (PlaybackEventResult, error) {
-	tx, err := s.db.DB.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return PlaybackEventResult{}, err
 	}
@@ -679,6 +679,13 @@ func (s *Store) SetPlaybackSessionHeartbeatForTest(ctx context.Context, sessionI
 // (and lets late heartbeats get a precise 409); it is safe to run at any
 // cadence, including once at startup after a server restart (B1).
 func (s *Store) FixExpiredPlaybackSessions(ctx context.Context) (int64, error) {
+	var hasExpired bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM playback_sessions WHERE ended_at IS NULL AND (`+sessionExpiredSQL+`))`).Scan(&hasExpired); err != nil {
+		return 0, err
+	}
+	if !hasExpired {
+		return 0, nil
+	}
 	// ended_at = last_heartbeat_at: the last sign of life, identical to the
 	// time the read path already derived the expiry from (M-1).
 	result, err := s.db.ExecContext(ctx, `UPDATE playback_sessions SET state='ended',ended_at=last_heartbeat_at,end_reason='expired' WHERE ended_at IS NULL AND (`+sessionExpiredSQL+`)`)
