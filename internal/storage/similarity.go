@@ -35,30 +35,34 @@ type similarityFactors struct {
 
 func clamp(v float64) float64 { return math.Max(0, math.Min(1, v)) }
 func scoreSimilarity(f similarityFactors) (float64, []string) {
-	score := .30*clamp(f.artist) + .20*clamp(f.credit) + .20*clamp(f.genre) + .10*clamp(f.era) + .10*clamp(f.playlist) + .10*clamp(f.work)
+	score := .26*clamp(f.artist) + .22*clamp(f.credit) + .18*clamp(f.work) + .14*clamp(f.playlist) + .13*clamp(f.genre) + .07*clamp(f.era)
 	reasons := []string{}
-	if .30*clamp(f.artist) >= .01 {
+	if .26*clamp(f.artist) >= .01 {
 		reasons = append(reasons, "sameArtist")
 	}
-	if .20*clamp(f.credit) >= .01 {
+	if .22*clamp(f.credit) >= .01 {
 		reasons = append(reasons, "sharedCredit")
 	}
-	if .20*clamp(f.genre) >= .01 {
+	if .13*clamp(f.genre) >= .01 {
 		reasons = append(reasons, "genre")
 	}
-	if .10*clamp(f.era) >= .01 {
+	if .07*clamp(f.era) >= .01 {
 		reasons = append(reasons, "era")
 	}
-	if .10*clamp(f.playlist) >= .01 {
+	if .14*clamp(f.playlist) >= .01 {
 		reasons = append(reasons, "coPlaylist")
 	}
-	if .10*clamp(f.work) >= .01 {
+	if .18*clamp(f.work) >= .01 {
 		reasons = append(reasons, "sameWork")
 	}
-	// Hybrid: when both tracks have been acoustically analysed, 60% metadata + 40% sound.
+	// Hybrid: when both tracks have been acoustically analysed, 70% metadata + 30% sound.
+	// Attach soundsSimilar alongside metadata reasons only when acoustic similarity is
+	// clearly strong (>= 0.65, centred cosine >= 0.59); fall back to >= 0.5 when acoustic
+	// similarity is the sole reason so pure acoustic neighbours remain explained.
 	if f.hasAcoustic {
-		score = .6*score + .4*clamp(f.acoustic)
-		if clamp(f.acoustic) >= .5 {
+		acoustic := clamp(f.acoustic)
+		score = .70*score + .30*acoustic
+		if acoustic >= .65 || (len(reasons) == 0 && acoustic >= .5) {
 			reasons = append(reasons, "soundsSimilar")
 		}
 	}
@@ -71,6 +75,29 @@ func scoreSimilarity(f similarityFactors) (float64, []string) {
 		reasons = append(reasons, "oftenSkipped")
 	}
 	return clamp(score), reasons
+}
+
+func hasStructuralSimilarityReason(reasons []string) bool {
+	for _, r := range reasons {
+		switch r {
+		case "sameWork", "sharedCredit", "coPlaylist", "sameArtist":
+			return true
+		}
+	}
+	return false
+}
+
+func isAcousticOnlySimilarity(reasons []string) bool {
+	hasAcoustic := false
+	for _, r := range reasons {
+		switch r {
+		case "sameWork", "sharedCredit", "coPlaylist", "sameArtist":
+			return false
+		case "soundsSimilar":
+			hasAcoustic = true
+		}
+	}
+	return hasAcoustic
 }
 func overlap(a, b map[int64]bool) int {
 	n := 0

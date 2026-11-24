@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 )
 
@@ -324,31 +325,73 @@ func dedupeCandidatesWithOptions(seed similarityMeta, ranked []scoredCandidate, 
 		seen[key] = true
 		unique = append(unique, r)
 	}
-	if opts.MaxPerArtist <= 0 {
+	if opts.MaxPerArtist <= 0 || len(unique) == 0 {
 		if len(unique) > limit {
 			return unique[:limit]
 		}
 		return unique
 	}
-	// Two-pass artist cap: prioritize artist diversity first, then backfill if the library is small.
+	// Two-pass artist & signal diversity: enforce artist cap and avoid long runs of
+	// purely acoustic-only matches when strong structural links (sameWork / sharedCredit /
+	// coPlaylist / sameArtist) are available, then backfill if the library is small.
+	minStructuralScore := math.Max(0.18, unique[0].score*0.50)
+	picked := make([]bool, len(unique))
 	artistCounts := map[string]int{}
 	out := make([]scoredCandidate, 0, min(limit, len(unique)))
-	deferred := make([]scoredCandidate, 0)
-	for _, r := range unique {
-		pk := primaryKey(r.meta)
-		if artistCounts[pk] >= opts.MaxPerArtist {
-			deferred = append(deferred, r)
-			continue
+	consecutiveAcousticOnly := 0
+	nextGeneral := 0
+	nextStructural := 0
+
+	advanceGeneral := func() int {
+		for nextGeneral < len(unique) {
+			if !picked[nextGeneral] && artistCounts[primaryKey(unique[nextGeneral].meta)] < opts.MaxPerArtist {
+				return nextGeneral
+			}
+			nextGeneral++
 		}
-		artistCounts[pk]++
+		return -1
+	}
+	advanceStructural := func() int {
+		for nextStructural < len(unique) {
+			r := unique[nextStructural]
+			if !picked[nextStructural] &&
+				artistCounts[primaryKey(r.meta)] < opts.MaxPerArtist &&
+				hasStructuralSimilarityReason(r.reasons) &&
+				r.score >= minStructuralScore {
+				return nextStructural
+			}
+			nextStructural++
+		}
+		return -1
+	}
+
+	for len(out) < limit {
+		gi := advanceGeneral()
+		if gi < 0 {
+			break
+		}
+		chosen := gi
+		if consecutiveAcousticOnly >= 2 && isAcousticOnlySimilarity(unique[gi].reasons) {
+			if si := advanceStructural(); si >= 0 {
+				chosen = si
+			}
+		}
+		picked[chosen] = true
+		r := unique[chosen]
+		artistCounts[primaryKey(r.meta)]++
 		out = append(out, r)
-		if len(out) >= limit {
-			return out
+		if isAcousticOnlySimilarity(r.reasons) {
+			consecutiveAcousticOnly++
+		} else {
+			consecutiveAcousticOnly = 0
 		}
 	}
-	for _, r := range deferred {
+	for i, r := range unique {
 		if len(out) >= limit {
 			break
+		}
+		if picked[i] {
+			continue
 		}
 		out = append(out, r)
 	}

@@ -218,3 +218,39 @@ func TestSimilarTracksExcludesAccompanimentAndInstrumentalSignals(t *testing.T) 
 		}
 	}
 }
+
+func TestDedupeCandidatesInterleavesStructuralWithAcousticOnly(t *testing.T) {
+	seed := similarityMeta{track: Track{ID: 1, Title: "Seed"}, primary: map[int64]bool{1: true}}
+	cand := func(id int64, artistID int64, score float64, reasons ...string) scoredCandidate {
+		return scoredCandidate{
+			id:      id,
+			score:   score,
+			reasons: reasons,
+			meta:    &similarityMeta{track: Track{ID: id, Title: string(rune('A' + id))}, primary: map[int64]bool{artistID: true}},
+		}
+	}
+	ranked := []scoredCandidate{
+		cand(2, 2, 0.42, "genre", "soundsSimilar"),
+		cand(3, 3, 0.41, "soundsSimilar"),
+		cand(4, 4, 0.40, "soundsSimilar"),
+		cand(5, 5, 0.39, "soundsSimilar"),
+		cand(6, 6, 0.38, "soundsSimilar"),
+		cand(7, 7, 0.32, "sameWork", "genre"),
+		cand(8, 8, 0.30, "sharedCredit", "era"),
+		cand(9, 9, 0.10, "coPlaylist"), // below quality floor (< 0.21) -> must not jump ahead
+	}
+	got := dedupeCandidatesWithOptions(seed, ranked, 6, SimilarTracksOptions{MaxPerArtist: 2})
+	want := []int64{2, 3, 7, 4, 5, 8}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want=%d got=%v", len(got), len(want), got)
+	}
+	for i, id := range want {
+		if got[i].id != id {
+			ids := make([]int64, len(got))
+			for j, g := range got {
+				ids[j] = g.id
+			}
+			t.Fatalf("got order %v want %v", ids, want)
+		}
+	}
+}

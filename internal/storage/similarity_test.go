@@ -11,19 +11,45 @@ import (
 
 func TestScoreSimilarity(t *testing.T) {
 	cases := []struct {
-		name string
-		f    similarityFactors
-		want float64
-	}{{"artist", similarityFactors{artist: 1}, .3}, {"credit", similarityFactors{credit: 1}, .2}, {"genre", similarityFactors{genre: 1}, .2}, {"era", similarityFactors{era: 1}, .1}, {"playlist", similarityFactors{playlist: 1}, .1}, {"work", similarityFactors{work: 1}, .1}, {"album", similarityFactors{artist: 1, sameAlbum: true}, .15}, {"clamp", similarityFactors{artist: 9, credit: 9, genre: 9, era: 9, playlist: 9, work: 9}, 1}, {"skip", similarityFactors{artist: 1, skipFactor: .5}, .15}}
+		name              string
+		f                 similarityFactors
+		want              float64
+		wantSoundsSimilar *bool
+	}{
+		{"artist", similarityFactors{artist: 1}, .26, nil},
+		{"credit", similarityFactors{credit: 1}, .22, nil},
+		{"work", similarityFactors{work: 1}, .18, nil},
+		{"playlist", similarityFactors{playlist: 1}, .14, nil},
+		{"genre", similarityFactors{genre: 1}, .13, nil},
+		{"era", similarityFactors{era: 1}, .07, nil},
+		{"album", similarityFactors{artist: 1, sameAlbum: true}, .13, nil},
+		{"clamp", similarityFactors{artist: 9, credit: 9, genre: 9, era: 9, playlist: 9, work: 9}, 1, nil},
+		{"skip", similarityFactors{artist: 1, skipFactor: .5}, .13, nil},
+		{"hybrid strong acoustic", similarityFactors{artist: 1, acoustic: .8, hasAcoustic: true}, .70*.26 + .30*.8, boolPtr(true)},
+		{"hybrid moderate acoustic with metadata", similarityFactors{work: 1, acoustic: .55, hasAcoustic: true}, .70*.18 + .30*.55, boolPtr(false)},
+		{"hybrid moderate acoustic sole reason", similarityFactors{acoustic: .55, hasAcoustic: true}, .30 * .55, boolPtr(true)},
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := scoreSimilarity(tc.f)
+			got, reasons := scoreSimilarity(tc.f)
 			if got < tc.want-1e-9 || got > tc.want+1e-9 {
 				t.Fatalf("got %v want %v", got, tc.want)
+			}
+			if tc.wantSoundsSimilar != nil {
+				found := false
+				for _, r := range reasons {
+					if r == "soundsSimilar" {
+						found = true
+					}
+				}
+				if found != *tc.wantSoundsSimilar {
+					t.Fatalf("soundsSimilar=%v want=%v reasons=%v", found, *tc.wantSoundsSimilar, reasons)
+				}
 			}
 		})
 	}
 }
+func boolPtr(v bool) *bool { return &v }
 func TestNormalizedTitle(t *testing.T) {
 	for _, tc := range [][2]string{{"ＨＥＬＬＯ　(TV Size)", "hello"}, {"勇者【カラオケ】", "勇者"}, {" Song [Remastered]", "song"}, {"炎（オフボーカル）", "炎"}, {"曲「インスト」", "曲"}, {"Song (Instinct)", "song (instinct)"}, {"Song (TV Size (Remastered))", "song"}, {"(Instrumental)", "(instrumental)"}} {
 		if got := normalizedTitle(tc[0]); got != tc[1] {
@@ -38,7 +64,7 @@ func TestSkipPenaltyScoring(t *testing.T) {
 		play, skip       int64
 		want             float64
 		wantOftenSkipped bool
-	}{{"neutral below evidence threshold", 1, 1, .3, false}, {"one third of outcomes skipped penalised lightly", 2, 1, .3 * (1 - .3*1.0/3.0), true}, {"half skipped penalised", 1, 3, .3 * (1 - .3*3.0/4.0), true}, {"always skipped capped at thirty percent", 0, 5, .3 * .7, true}} {
+	}{{"neutral below evidence threshold", 1, 1, .26, false}, {"one third of outcomes skipped penalised lightly", 2, 1, .26 * (1 - .3*1.0/3.0), true}, {"half skipped penalised", 1, 3, .26 * (1 - .3*3.0/4.0), true}, {"always skipped capped at thirty percent", 0, 5, .26 * .7, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			candidate := similarityMeta{track: Track{ID: 2, AlbumID: 2}, primary: map[int64]bool{1: true}, playCount: tc.play, skipCount: tc.skip}
 			score, reasons := compareSimilarity(seed, candidate)
