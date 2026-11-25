@@ -41,6 +41,69 @@ type aiArtistConfirmSnapshot struct {
 	RejectedCandidateIDs []int64 `json:"rejectedCandidateIds,omitempty"`
 }
 
+var (
+	ErrInvalidCreditSplit    = errors.New("无效的复合署名拆分名单")
+	ErrNoCompositeReferences = errors.New("该复合署名当前没有可更新的曲目或专辑关联")
+)
+
+type CreditSplitResult struct {
+	TracksUpdated int
+	AlbumsUpdated int
+	RolesUpdated  int
+	PartIDs       []int64
+	PartNames     []string
+}
+
+type creditSplitArtistRow struct {
+	ArtistID   int64  `json:"artistId"`
+	Position   int    `json:"position"`
+	JoinPhrase string `json:"joinPhrase,omitempty"`
+}
+
+type creditSplitPrimaryUndo struct {
+	TrackID          int64   `json:"trackId"`
+	ExpectedRevision int64   `json:"expectedRevision"`
+	BeforeActive     bool    `json:"beforeActive"`
+	BeforeIDs        []int64 `json:"beforeIds,omitempty"`
+}
+
+type creditSplitTrackRoleUndo struct {
+	TrackID int64                  `json:"trackId"`
+	Role    string                 `json:"role"`
+	Rows    []creditSplitArtistRow `json:"rows"`
+}
+
+type creditSplitSourceUndo struct {
+	TrackID    int64  `json:"trackId"`
+	ArtistID   int64  `json:"artistId"`
+	Position   int    `json:"position"`
+	Role       string `json:"role"`
+	JoinPhrase string `json:"joinPhrase,omitempty"`
+	Source     string `json:"source"`
+	ExternalID string `json:"externalId,omitempty"`
+	RunID      int64  `json:"runId,omitempty"`
+}
+
+type creditSplitAlbumUndo struct {
+	AlbumID      int64                  `json:"albumId"`
+	ArtistCredit string                 `json:"artistCredit,omitempty"`
+	Rows         []creditSplitArtistRow `json:"rows"`
+}
+
+type aiCreditSplitSnapshot struct {
+	CompositeArtistID    int64                      `json:"compositeArtistId"`
+	PartIDs              []int64                    `json:"partIds"`
+	PartNames            []string                   `json:"partNames"`
+	PrimaryTracks        []creditSplitPrimaryUndo   `json:"primaryTracks,omitempty"`
+	NonPrimaryRoles      []creditSplitTrackRoleUndo `json:"nonPrimaryRoles,omitempty"`
+	SourceRows           []creditSplitSourceUndo    `json:"sourceRows,omitempty"`
+	Albums               []creditSplitAlbumUndo     `json:"albums,omitempty"`
+	RejectedCandidateIDs []int64                    `json:"rejectedCandidateIds,omitempty"`
+	HadCompositeSkip     bool                       `json:"hadCompositeSkip,omitempty"`
+	CompositeSkipInput   string                     `json:"compositeSkipInput,omitempty"`
+	CompositeSkipConfig  string                     `json:"compositeSkipConfig,omitempty"`
+}
+
 // ConfirmAlbumSubjectCandidateByAI lands selected works for an album candidate
 // on behalf of AI review while enforcing every automatic safety and suppression
 // check. It returns a rollback snapshot alongside the created/linked work IDs.
@@ -384,7 +447,9 @@ func (s *Store) ConfirmArtistCandidateByAI(ctx context.Context, artistID, candid
 			}
 			return err
 		}
-		if metadata.CompositeArtistCredit(name) {
+		if composite, cErr := isCompositeArtistTx(ctx, tx, artistID, name); cErr != nil {
+			return cErr
+		} else if composite {
 			return nil
 		}
 
@@ -542,6 +607,15 @@ func (s *Store) RevertAIReviewDecision(ctx context.Context, decisionID int64) er
 			return err
 		}
 
+	case AITargetCreditSplit:
+		var snap aiCreditSplitSnapshot
+		if err = json.Unmarshal(d.AppliedSnapshot, &snap); err != nil {
+			return err
+		}
+		if err = revertCompositeCreditSplitTx(ctx, tx, d.TargetID, snap); err != nil {
+			return err
+		}
+
 	default:
 		return errors.New("该类型的 AI 操作不支持自动撤销")
 	}
@@ -569,84 +643,707 @@ func restoreCandidateStatusTx(ctx context.Context, tx *sql.Tx, table string, ids
 	return err
 }
 
-// ApplyCompositeCreditSplit replaces compositeArtistID in primary track credits
-// across all tracks where it appears using the existing PrimaryArtistCorrection
-// state machine so merges/rescans stay consistent.
-func (s *Store) ApplyCompositeCreditSplit(ctx context.Context, compositeArtistID int64, partNames []string) (int, error) {
+// ApplyCompositeCreditSplit replaces compositeArtistID across all track roles
+// (primary + backstage/involved-people), track_artist_sources, and album_artists,
+// persisting an active split rule so subsequent library rescans preserve the split.
+func (s *Store) ApplyCompositeCreditSplit(ctx context.Context, compositeArtistID int64, partNames []string) (CreditSplitResult, error) {
+	res, _, err := s.applyCompositeCreditSplit(ctx, compositeArtistID, partNames, "manual", 1)
+	return res, err
+}
+
+// ApplyCompositeCreditSplitByAI performs a composite credit split on behalf of
+// AI review (requiring at least 2 distinct canonical artists) and returns the
+// rollback snapshot for RevertAIReviewDecision.
+func (s *Store) ApplyCompositeCreditSplitByAI(ctx context.Context, compositeArtistID int64, partNames []string) (CreditSplitResult, json.RawMessage, error) {
+	return s.applyCompositeCreditSplit(ctx, compositeArtistID, partNames, "ai", 2)
+}
+
+type creditSplitSourceGroupKey struct {
+	TrackID    int64
+	Role       string
+	Source     string
+	ExternalID string
+}
+
+func (s *Store) applyCompositeCreditSplit(ctx context.Context, compositeArtistID int64, partNames []string, source string, minParts int) (CreditSplitResult, json.RawMessage, error) {
 	var cleaned []string
-	seen := map[string]bool{}
+	seenName := map[string]bool{}
 	for _, name := range partNames {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
 		key := metadata.Normalize(name)
-		if key == "" || seen[key] {
+		if key == "" || seenName[key] {
 			continue
 		}
-		seen[key] = true
+		seenName[key] = true
 		cleaned = append(cleaned, name)
 	}
-	if len(cleaned) == 0 || len(cleaned) > 32 {
-		return 0, errors.New("拆分后的艺人数量必须为 1 至 32 位")
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	partIDs, err := ensureArtists(ctx, tx, cleaned)
-	if err != nil {
-		return 0, err
-	}
-	if err = tx.Commit(); err != nil {
-		return 0, err
-	}
-
-	trackIDs, err := s.queryInt64List(ctx, `SELECT DISTINCT track_id FROM track_artists WHERE artist_id=? AND role='primary' ORDER BY track_id`, compositeArtistID)
-	if err != nil {
-		return 0, err
-	}
-	updated := 0
-	for _, trackID := range trackIDs {
-		snap, err := s.PrimaryArtistCorrection(ctx, trackID)
-		if err != nil {
-			return updated, err
+	if len(cleaned) < minParts || len(cleaned) > 32 {
+		if minParts > 1 {
+			return CreditSplitResult{}, nil, fmt.Errorf("%w：拆分后的艺人数量必须为 %d 至 32 位", ErrInvalidCreditSplit, minParts)
 		}
-		var nextIDs []int64
-		seenID := map[int64]bool{}
-		replaced := false
-		for _, cur := range snap.Artists {
-			if cur.ID == compositeArtistID {
-				replaced = true
-				for _, pid := range partIDs {
-					if !seenID[pid] {
-						seenID[pid] = true
-						nextIDs = append(nextIDs, pid)
-					}
-				}
+		return CreditSplitResult{}, nil, fmt.Errorf("%w：拆分后的艺人数量必须为 1 至 32 位", ErrInvalidCreditSplit)
+	}
+
+	var result CreditSplitResult
+	var snapRaw json.RawMessage
+	var noRefs bool
+
+	err := withBusyRetry(ctx, func() error {
+		result = CreditSplitResult{}
+		snapRaw = nil
+		noRefs = false
+
+		tx, err := s.beginWrite(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		var compositeName string
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=? AND merged_into_artist_id IS NULL`, compositeArtistID).Scan(&compositeName); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				noRefs = true
+				return nil
+			}
+			return err
+		}
+
+		rawPartIDs, err := ensureArtists(ctx, tx, cleaned)
+		if err != nil {
+			return err
+		}
+		var partIDs []int64
+		var canonicalNames []string
+		seenPartID := map[int64]bool{}
+		for i, rawID := range rawPartIDs {
+			cid, cErr := canonicalArtistID(ctx, tx, rawID)
+			if cErr != nil {
+				return cErr
+			}
+			if cid == compositeArtistID {
+				return fmt.Errorf("%w：拆分结果不能包含原复合署名自身", ErrInvalidCreditSplit)
+			}
+			if seenPartID[cid] {
 				continue
 			}
-			if !seenID[cur.ID] {
-				seenID[cur.ID] = true
-				nextIDs = append(nextIDs, cur.ID)
+			seenPartID[cid] = true
+			partIDs = append(partIDs, cid)
+			var dispName string
+			if qErr := tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, cid).Scan(&dispName); qErr == nil && strings.TrimSpace(dispName) != "" {
+				canonicalNames = append(canonicalNames, dispName)
+			} else {
+				canonicalNames = append(canonicalNames, cleaned[i])
 			}
 		}
-		if !replaced || len(nextIDs) == 0 {
+		if len(partIDs) < minParts {
+			return fmt.Errorf("%w：去重归一化后的独立艺人数量不足 %d 位", ErrInvalidCreditSplit, minParts)
+		}
+
+		snap := aiCreditSplitSnapshot{
+			CompositeArtistID: compositeArtistID,
+			PartIDs:           partIDs,
+			PartNames:         canonicalNames,
+		}
+		updatedTracks := map[int64]bool{}
+		updatedAlbums := map[int64]bool{}
+		touchAlbumsForTracks := map[int64]bool{}
+
+		// 1. Primary track credits (using PrimaryArtistCorrection state machine).
+		primaryTrackIDs, err := queryTxIDs(ctx, tx, `SELECT DISTINCT track_id FROM track_artists WHERE artist_id=? AND role='primary' ORDER BY track_id`, compositeArtistID)
+		if err != nil {
+			return err
+		}
+		for _, trackID := range primaryTrackIDs {
+			curSnap, err := correctionSnapshot(ctx, tx, trackID)
+			if err != nil {
+				return err
+			}
+			var beforeIDs []int64
+			if curSnap.Active {
+				var beforeRaw string
+				if qErr := tx.QueryRowContext(ctx, `SELECT artists_json FROM track_primary_artist_state WHERE track_id=?`, trackID).Scan(&beforeRaw); qErr == nil {
+					_ = json.Unmarshal([]byte(beforeRaw), &beforeIDs)
+				}
+			}
+			var nextIDs []int64
+			seenID := map[int64]bool{}
+			replaced := false
+			for _, cur := range curSnap.Artists {
+				if cur.ID == compositeArtistID {
+					replaced = true
+					for _, pid := range partIDs {
+						if !seenID[pid] {
+							seenID[pid] = true
+							nextIDs = append(nextIDs, pid)
+						}
+					}
+					continue
+				}
+				cid, cErr := canonicalArtistID(ctx, tx, cur.ID)
+				if cErr != nil {
+					return cErr
+				}
+				if !seenID[cid] {
+					seenID[cid] = true
+					nextIDs = append(nextIDs, cid)
+				}
+			}
+			if !replaced || len(nextIDs) == 0 {
+				continue
+			}
+			nextRev, err := setPrimaryArtistCorrectionTx(ctx, tx, trackID, curSnap, nextIDs, true)
+			if err != nil {
+				return err
+			}
+			snap.PrimaryTracks = append(snap.PrimaryTracks, creditSplitPrimaryUndo{
+				TrackID:          trackID,
+				ExpectedRevision: nextRev,
+				BeforeActive:     curSnap.Active,
+				BeforeIDs:        beforeIDs,
+			})
+			updatedTracks[trackID] = true
+			result.RolesUpdated++
+		}
+
+		// 2. Structured track_artist_sources MUST be updated before non-primary
+		// track_artists deletions so restore_sourced_track_artist_after_delete
+		// never resurrects removed composite rows.
+		srcGroupRows, err := tx.QueryContext(ctx, `SELECT DISTINCT track_id,role,source,external_id FROM track_artist_sources WHERE artist_id=? ORDER BY track_id,role,source,external_id`, compositeArtistID)
+		if err != nil {
+			return err
+		}
+		var srcGroups []creditSplitSourceGroupKey
+		for srcGroupRows.Next() {
+			var g creditSplitSourceGroupKey
+			if err = srcGroupRows.Scan(&g.TrackID, &g.Role, &g.Source, &g.ExternalID); err != nil {
+				srcGroupRows.Close()
+				return err
+			}
+			srcGroups = append(srcGroups, g)
+		}
+		if err = srcGroupRows.Err(); err != nil {
+			srcGroupRows.Close()
+			return err
+		}
+		srcGroupRows.Close()
+
+		for _, g := range srcGroups {
+			rows, qErr := tx.QueryContext(ctx, `SELECT artist_id,position,join_phrase,COALESCE(run_id,0) FROM track_artist_sources WHERE track_id=? AND role=? AND source=? AND external_id=? ORDER BY position,artist_id`, g.TrackID, g.Role, g.Source, g.ExternalID)
+			if qErr != nil {
+				return qErr
+			}
+			var existing []creditSplitSourceUndo
+			for rows.Next() {
+				var r creditSplitSourceUndo
+				r.TrackID, r.Role, r.Source, r.ExternalID = g.TrackID, g.Role, g.Source, g.ExternalID
+				if qErr = rows.Scan(&r.ArtistID, &r.Position, &r.JoinPhrase, &r.RunID); qErr != nil {
+					rows.Close()
+					return qErr
+				}
+				existing = append(existing, r)
+			}
+			if qErr = rows.Err(); qErr != nil {
+				rows.Close()
+				return qErr
+			}
+			rows.Close()
+			snap.SourceRows = append(snap.SourceRows, existing...)
+
+			if _, err = tx.ExecContext(ctx, `DELETE FROM track_artist_sources WHERE track_id=? AND role=? AND source=? AND external_id=?`, g.TrackID, g.Role, g.Source, g.ExternalID); err != nil {
+				return err
+			}
+			seenSrc := map[int64]bool{}
+			pos := 0
+			for _, r := range existing {
+				if r.ArtistID == compositeArtistID {
+					for _, pid := range partIDs {
+						if seenSrc[pid] {
+							continue
+						}
+						seenSrc[pid] = true
+						if err = ensureTrackArtistSource(ctx, tx, g.TrackID, pid, pos, g.Role, "", g.Source, g.ExternalID, r.RunID); err != nil {
+							return err
+						}
+						pos++
+					}
+					continue
+				}
+				cid, cErr := canonicalArtistID(ctx, tx, r.ArtistID)
+				if cErr != nil {
+					return cErr
+				}
+				if seenSrc[cid] {
+					continue
+				}
+				seenSrc[cid] = true
+				if err = ensureTrackArtistSource(ctx, tx, g.TrackID, cid, pos, g.Role, r.JoinPhrase, g.Source, g.ExternalID, r.RunID); err != nil {
+					return err
+				}
+				pos++
+			}
+			updatedTracks[g.TrackID] = true
+			touchAlbumsForTracks[g.TrackID] = true
+		}
+
+		// 3. Non-primary track_artists roles (composer, lyricist, arranger, producer, instrument:*, ...).
+		type trackRoleKey struct {
+			trackID int64
+			role    string
+		}
+		npRows, err := tx.QueryContext(ctx, `SELECT DISTINCT track_id,role FROM track_artists WHERE artist_id=? AND role<>'primary' ORDER BY track_id,role`, compositeArtistID)
+		if err != nil {
+			return err
+		}
+		var npKeys []trackRoleKey
+		for npRows.Next() {
+			var k trackRoleKey
+			if err = npRows.Scan(&k.trackID, &k.role); err != nil {
+				npRows.Close()
+				return err
+			}
+			npKeys = append(npKeys, k)
+		}
+		if err = npRows.Err(); err != nil {
+			npRows.Close()
+			return err
+		}
+		npRows.Close()
+
+		for _, k := range npKeys {
+			rows, qErr := tx.QueryContext(ctx, `SELECT artist_id,position,join_phrase FROM track_artists WHERE track_id=? AND role=? ORDER BY position,artist_id`, k.trackID, k.role)
+			if qErr != nil {
+				return qErr
+			}
+			var existing []creditSplitArtistRow
+			for rows.Next() {
+				var r creditSplitArtistRow
+				if qErr = rows.Scan(&r.ArtistID, &r.Position, &r.JoinPhrase); qErr != nil {
+					rows.Close()
+					return qErr
+				}
+				existing = append(existing, r)
+			}
+			if qErr = rows.Err(); qErr != nil {
+				rows.Close()
+				return qErr
+			}
+			rows.Close()
+			snap.NonPrimaryRoles = append(snap.NonPrimaryRoles, creditSplitTrackRoleUndo{
+				TrackID: k.trackID,
+				Role:    k.role,
+				Rows:    existing,
+			})
+
+			if _, err = tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id=? AND role=?`, k.trackID, k.role); err != nil {
+				return err
+			}
+			seenRole := map[int64]bool{}
+			pos := 0
+			for _, r := range existing {
+				if r.ArtistID == compositeArtistID {
+					for _, pid := range partIDs {
+						if seenRole[pid] {
+							continue
+						}
+						seenRole[pid] = true
+						if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,join_phrase,role) VALUES(?,?,?,?,?)`, k.trackID, pid, pos, "", k.role); err != nil {
+							return err
+						}
+						pos++
+					}
+					continue
+				}
+				cid, cErr := canonicalArtistID(ctx, tx, r.ArtistID)
+				if cErr != nil {
+					return cErr
+				}
+				if seenRole[cid] {
+					continue
+				}
+				seenRole[cid] = true
+				if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,join_phrase,role) VALUES(?,?,?,?,?)`, k.trackID, cid, pos, r.JoinPhrase, k.role); err != nil {
+					return err
+				}
+				pos++
+			}
+			updatedTracks[k.trackID] = true
+			touchAlbumsForTracks[k.trackID] = true
+			result.RolesUpdated++
+		}
+
+		// 4. Album artists.
+		albumIDs, err := queryTxIDs(ctx, tx, `SELECT DISTINCT album_id FROM album_artists WHERE artist_id=? ORDER BY album_id`, compositeArtistID)
+		if err != nil {
+			return err
+		}
+		for _, albumID := range albumIDs {
+			var prevCredit string
+			_ = tx.QueryRowContext(ctx, `SELECT COALESCE(artist_credit,'') FROM albums WHERE id=?`, albumID).Scan(&prevCredit)
+			rows, qErr := tx.QueryContext(ctx, `SELECT artist_id,position,join_phrase FROM album_artists WHERE album_id=? ORDER BY position,artist_id`, albumID)
+			if qErr != nil {
+				return qErr
+			}
+			var existing []creditSplitArtistRow
+			for rows.Next() {
+				var r creditSplitArtistRow
+				if qErr = rows.Scan(&r.ArtistID, &r.Position, &r.JoinPhrase); qErr != nil {
+					rows.Close()
+					return qErr
+				}
+				existing = append(existing, r)
+			}
+			if qErr = rows.Err(); qErr != nil {
+				rows.Close()
+				return qErr
+			}
+			rows.Close()
+			snap.Albums = append(snap.Albums, creditSplitAlbumUndo{
+				AlbumID:      albumID,
+				ArtistCredit: prevCredit,
+				Rows:         existing,
+			})
+
+			if _, err = tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id=?`, albumID); err != nil {
+				return err
+			}
+			seenAlbum := map[int64]bool{}
+			pos := 0
+			for _, r := range existing {
+				if r.ArtistID == compositeArtistID {
+					for _, pid := range partIDs {
+						if seenAlbum[pid] {
+							continue
+						}
+						seenAlbum[pid] = true
+						if _, err = tx.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position,join_phrase) VALUES(?,?,?,?)`, albumID, pid, pos, ""); err != nil {
+							return err
+						}
+						pos++
+					}
+					continue
+				}
+				cid, cErr := canonicalArtistID(ctx, tx, r.ArtistID)
+				if cErr != nil {
+					return cErr
+				}
+				if seenAlbum[cid] {
+					continue
+				}
+				seenAlbum[cid] = true
+				if _, err = tx.ExecContext(ctx, `INSERT INTO album_artists(album_id,artist_id,position,join_phrase) VALUES(?,?,?,?)`, albumID, cid, pos, r.JoinPhrase); err != nil {
+					return err
+				}
+				pos++
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE albums SET artist_credit=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, albumID); err != nil {
+				return err
+			}
+			updatedAlbums[albumID] = true
+			result.RolesUpdated++
+		}
+
+		// Touch timestamps for non-primary track updates so clients refresh.
+		for trackID := range touchAlbumsForTracks {
+			if _, err = tx.ExecContext(ctx, `UPDATE tracks SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, trackID); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE albums SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=(SELECT album_id FROM tracks WHERE id=?)`, trackID); err != nil {
+				return err
+			}
+		}
+
+		if len(updatedTracks) == 0 && len(updatedAlbums) == 0 {
+			// Clear stale review queue state when composite artist already has zero refs.
+			_, _ = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate'`, compositeArtistID)
+			_, _ = tx.ExecContext(ctx, `UPDATE artist_source_match_state SET outcome='rejected' WHERE artist_id=? AND source='_composite'`, compositeArtistID)
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+			noRefs = true
+			return nil
+		}
+
+		// 5. Clear pending candidates & composite skip state once no refs remain.
+		var remaining int
+		if err = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM track_artists WHERE artist_id=?)+(SELECT count(*) FROM album_artists WHERE artist_id=?)`, compositeArtistID, compositeArtistID).Scan(&remaining); err != nil {
+			return err
+		}
+		if remaining == 0 {
+			rejectedIDs, err := candidateSiblingIDsTx(ctx, tx, `SELECT id FROM artist_match_candidates WHERE artist_id=? AND status='candidate'`, compositeArtistID)
+			if err != nil {
+				return err
+			}
+			snap.RejectedCandidateIDs = rejectedIDs
+			var compOutcome, compInput, compConfig string
+			if qErr := tx.QueryRowContext(ctx, `SELECT outcome,input_key,config_key FROM artist_source_match_state WHERE artist_id=? AND source='_composite'`, compositeArtistID).Scan(&compOutcome, &compInput, &compConfig); qErr == nil && compOutcome == "skipped_composite" {
+				snap.HadCompositeSkip = true
+				snap.CompositeSkipInput = compInput
+				snap.CompositeSkipConfig = compConfig
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate'`, compositeArtistID); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE artist_source_match_state SET outcome='rejected' WHERE artist_id=? AND source='_composite'`, compositeArtistID); err != nil {
+				return err
+			}
+		}
+
+		partIDsJSON, _ := json.Marshal(partIDs)
+		partNamesJSON, _ := json.Marshal(canonicalNames)
+		encodedSnap, _ := json.Marshal(snap)
+
+		if _, err = tx.ExecContext(ctx, `INSERT INTO artist_credit_splits(composite_artist_id,part_ids_json,part_names_json,status,source,snapshot_json,updated_at)
+			VALUES(?,?,?,'active',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(composite_artist_id) DO UPDATE SET
+				part_ids_json=excluded.part_ids_json,
+				part_names_json=excluded.part_names_json,
+				status='active',
+				source=excluded.source,
+				snapshot_json=excluded.snapshot_json,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+			compositeArtistID, string(partIDsJSON), string(partNamesJSON), source, string(encodedSnap)); err != nil {
+			return err
+		}
+
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		result.TracksUpdated = len(updatedTracks)
+		result.AlbumsUpdated = len(updatedAlbums)
+		result.PartIDs = partIDs
+		result.PartNames = canonicalNames
+		snapRaw = encodedSnap
+		return nil
+	})
+	if err != nil {
+		return CreditSplitResult{}, nil, err
+	}
+	if noRefs {
+		return CreditSplitResult{}, nil, ErrNoCompositeReferences
+	}
+	return result, snapRaw, nil
+}
+
+// LinkCreditSplitDecision associates a persisted AI decision ID with the active
+// artist_credit_splits rule so audit/revert metadata stays linked.
+func (s *Store) LinkCreditSplitDecision(ctx context.Context, compositeArtistID, decisionID int64) error {
+	if compositeArtistID <= 0 || decisionID <= 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE artist_credit_splits SET decision_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE composite_artist_id=? AND status='active'`, decisionID, compositeArtistID)
+	return err
+}
+
+func revertCompositeCreditSplitTx(ctx context.Context, tx *sql.Tx, compositeArtistID int64, snap aiCreditSplitSnapshot) error {
+	if compositeArtistID <= 0 {
+		compositeArtistID = snap.CompositeArtistID
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists WHERE id=?`, compositeArtistID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return errors.New("原复合署名艺人记录已不存在，无法撤销")
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE artist_credit_splits SET status='reverted',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE composite_artist_id=?`, compositeArtistID); err != nil {
+		return err
+	}
+
+	// 1. Restore primary track corrections only when no newer manual edit intervened.
+	for _, pt := range snap.PrimaryTracks {
+		var trackExists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks WHERE id=?`, pt.TrackID).Scan(&trackExists); err != nil {
+			return err
+		}
+		if trackExists == 0 {
 			continue
 		}
-		if err = s.SetPrimaryArtistCorrection(ctx, trackID, snap.Token, nextIDs, false); err != nil {
-			return updated, err
+		curSnap, err := correctionSnapshot(ctx, tx, pt.TrackID)
+		if err != nil {
+			return err
 		}
-		updated++
-	}
-	if updated > 0 {
-		var remaining int
-		if qErr := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM track_artists WHERE artist_id=?)+(SELECT count(*) FROM album_artists WHERE artist_id=?)`, compositeArtistID, compositeArtistID).Scan(&remaining); qErr == nil && remaining == 0 {
-			_, _ = s.db.ExecContext(ctx, `UPDATE artist_match_candidates SET status='rejected' WHERE artist_id=? AND status='candidate'`, compositeArtistID)
-			_, _ = s.db.ExecContext(ctx, `UPDATE artist_source_match_state SET outcome='rejected' WHERE artist_id=? AND source='_composite'`, compositeArtistID)
+		if curSnap.Revision != pt.ExpectedRevision {
+			// Skip tracks that were manually edited after the AI split.
+			continue
+		}
+		if _, err = setPrimaryArtistCorrectionTx(ctx, tx, pt.TrackID, curSnap, pt.BeforeIDs, pt.BeforeActive); err != nil {
+			return err
 		}
 	}
-	return updated, nil
+
+	// 2. Restore track_artist_sources BEFORE touching non-primary track_artists so
+	// restore_sourced_track_artist_after_delete never reinserts split parts.
+	restoredSrcGroups := map[creditSplitSourceGroupKey]bool{}
+	for _, r := range snap.SourceRows {
+		g := creditSplitSourceGroupKey{TrackID: r.TrackID, Role: r.Role, Source: r.Source, ExternalID: r.ExternalID}
+		if !restoredSrcGroups[g] {
+			restoredSrcGroups[g] = true
+			if _, err := tx.ExecContext(ctx, `DELETE FROM track_artist_sources WHERE track_id=? AND role=? AND source=? AND external_id=?`, g.TrackID, g.Role, g.Source, g.ExternalID); err != nil {
+				return err
+			}
+		}
+	}
+	for _, r := range snap.SourceRows {
+		var trackExists, artistExists int
+		_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks WHERE id=?`, r.TrackID).Scan(&trackExists)
+		_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists WHERE id=?`, r.ArtistID).Scan(&artistExists)
+		if trackExists == 0 || artistExists == 0 {
+			continue
+		}
+		runID := r.RunID
+		if runID > 0 {
+			var runExists int
+			_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM enrichment_runs WHERE id=?`, runID).Scan(&runExists)
+			if runExists == 0 {
+				runID = 0
+			}
+		}
+		if err := ensureTrackArtistSource(ctx, tx, r.TrackID, r.ArtistID, r.Position, r.Role, r.JoinPhrase, r.Source, r.ExternalID, runID); err != nil {
+			return err
+		}
+	}
+
+	// 3. Restore non-primary track_artists roles.
+	touchedTracks := map[int64]bool{}
+	for _, nr := range snap.NonPrimaryRoles {
+		var trackExists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks WHERE id=?`, nr.TrackID).Scan(&trackExists); err != nil {
+			return err
+		}
+		if trackExists == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id=? AND role=?`, nr.TrackID, nr.Role); err != nil {
+			return err
+		}
+		for _, r := range nr.Rows {
+			var artistExists int
+			_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists WHERE id=?`, r.ArtistID).Scan(&artistExists)
+			if artistExists == 0 {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,join_phrase,role) VALUES(?,?,?,?,?)`, nr.TrackID, r.ArtistID, r.Position, r.JoinPhrase, nr.Role); err != nil {
+				return err
+			}
+		}
+		touchedTracks[nr.TrackID] = true
+	}
+	for trackID := range touchedTracks {
+		if _, err := tx.ExecContext(ctx, `UPDATE tracks SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, trackID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE albums SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=(SELECT album_id FROM tracks WHERE id=?)`, trackID); err != nil {
+			return err
+		}
+	}
+
+	// 4. Restore album_artists.
+	for _, al := range snap.Albums {
+		var albumExists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM albums WHERE id=?`, al.AlbumID).Scan(&albumExists); err != nil {
+			return err
+		}
+		if albumExists == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id=?`, al.AlbumID); err != nil {
+			return err
+		}
+		for _, r := range al.Rows {
+			var artistExists int
+			_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM artists WHERE id=?`, r.ArtistID).Scan(&artistExists)
+			if artistExists == 0 {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_artists(album_id,artist_id,position,join_phrase) VALUES(?,?,?,?)`, al.AlbumID, r.ArtistID, r.Position, r.JoinPhrase); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE albums SET artist_credit=NULLIF(?,''),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, al.ArtistCredit, al.AlbumID); err != nil {
+			return err
+		}
+	}
+
+	// 5. Restore candidates and composite skip state so the artist returns to Tab 2.
+	if err := restoreCandidateStatusTx(ctx, tx, "artist_match_candidates", snap.RejectedCandidateIDs); err != nil {
+		return err
+	}
+	if snap.HadCompositeSkip || len(snap.RejectedCandidateIDs) == 0 {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO artist_source_match_state(artist_id,source,input_key,config_key,outcome,checked_at,next_check_at,snapshot_json)
+			VALUES(?,'_composite',?,?,'skipped_composite',?,?,'{}')
+			ON CONFLICT(artist_id,source) DO UPDATE SET outcome='skipped_composite',checked_at=excluded.checked_at,next_check_at=excluded.next_check_at`,
+			compositeArtistID, snap.CompositeSkipInput, snap.CompositeSkipConfig, now, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expandActiveCreditSplitsTx expands any artist IDs that have an active rule in
+// artist_credit_splits into their canonical target IDs, preserving order and
+// deduplicating without cycles.
+func expandActiveCreditSplitsTx(ctx context.Context, tx *sql.Tx, ids []int64) ([]int64, bool, error) {
+	if len(ids) == 0 {
+		return ids, false, nil
+	}
+	placeholders, args := inClause(ids)
+	rows, err := tx.QueryContext(ctx, `SELECT composite_artist_id,part_ids_json FROM artist_credit_splits WHERE status='active' AND composite_artist_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table: artist_credit_splits") {
+			return ids, false, nil
+		}
+		return nil, false, err
+	}
+	rules := map[int64][]int64{}
+	for rows.Next() {
+		var compID int64
+		var raw string
+		if err = rows.Scan(&compID, &raw); err != nil {
+			rows.Close()
+			return nil, false, err
+		}
+		var parts []int64
+		if json.Unmarshal([]byte(raw), &parts) == nil && len(parts) > 0 {
+			rules[compID] = parts
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, false, err
+	}
+	rows.Close()
+	if len(rules) == 0 {
+		return ids, false, nil
+	}
+	out := make([]int64, 0, len(ids)+len(rules))
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		if parts, ok := rules[id]; ok {
+			for _, pid := range parts {
+				cid, cErr := canonicalArtistID(ctx, tx, pid)
+				if cErr != nil {
+					continue
+				}
+				if cid == id || seen[cid] {
+					continue
+				}
+				seen[cid] = true
+				out = append(out, cid)
+			}
+			continue
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return ids, false, nil
+	}
+	return out, true, nil
 }

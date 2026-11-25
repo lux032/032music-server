@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type ArtistExternalIDConflictError struct {
@@ -67,7 +66,15 @@ func artistIdentityConflict(ctx context.Context, db artistIdentityQuerier, artis
 		return v, err
 	}
 	// A formatted collaboration or unsafe tagged identity is not auto-mergeable.
-	v.CanMerge = manualOnly == 0 && !sourceMerged.Valid && v.TargetArtistID != artistID && !metadata.CompositeArtistCredit(v.TargetName) && !metadata.CompositeArtistCredit(sourceName)
+	targetComposite, err := isCompositeArtistTx(ctx, db, v.TargetArtistID, v.TargetName)
+	if err != nil {
+		return v, err
+	}
+	sourceComposite, err := isCompositeArtistTx(ctx, db, artistID, sourceName)
+	if err != nil {
+		return v, err
+	}
+	v.CanMerge = manualOnly == 0 && !sourceMerged.Valid && v.TargetArtistID != artistID && !targetComposite && !sourceComposite
 	return v, nil
 }
 func (s *Store) ArtistIdentityConflict(ctx context.Context, artistID, candidateID int64) (ArtistIdentityConflict, error) {

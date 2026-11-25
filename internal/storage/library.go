@@ -503,6 +503,10 @@ func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupK
 	if err != nil {
 		return 0, err
 	}
+	albumArtistIDs, albumExpanded, err := expandActiveCreditSplitsTx(ctx, tx, albumArtistIDs)
+	if err != nil {
+		return 0, err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id=?`, albumID); err != nil {
 		return 0, err
 	}
@@ -511,7 +515,10 @@ func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupK
 			return 0, err
 		}
 	}
-	credit := scannedArtistCredit(m.Raw, m.AlbumArtists, albumArtistIDs, true)
+	var credit any
+	if !albumExpanded {
+		credit = scannedArtistCredit(m.Raw, m.AlbumArtists, albumArtistIDs, true)
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE albums SET artist_credit=? WHERE id=? AND artist_credit IS NOT ?`, credit, albumID, credit); err != nil {
 		return 0, err
 	}
@@ -580,6 +587,22 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	}
 	if err = capturePrimaryArtistBase(ctx, tx, trackID); err != nil {
 		return err
+	}
+	if expandedPrimary, changed, expErr := expandActiveCreditSplitsTx(ctx, tx, artistIDs); expErr != nil {
+		return expErr
+	} else if changed {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id=? AND role='primary'`, trackID); err != nil {
+			return err
+		}
+		for i, id := range expandedPrimary {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, "primary"); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE tracks SET artist_credit=NULL WHERE id=? AND artist_credit IS NOT NULL`, trackID); err != nil {
+			return err
+		}
+		artistIDs = expandedPrimary
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_file_artist_identities WHERE audio_file_id=?`, audioID); err != nil {
 		return err
@@ -658,6 +681,10 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		if cErr != nil {
 			return cErr
 		}
+		creditIDs, _, cErr = expandActiveCreditSplitsTx(ctx, tx, creditIDs)
+		if cErr != nil {
+			return cErr
+		}
 		for i, id := range creditIDs {
 			// Use INSERT OR IGNORE to handle same artist appearing in multiple credit roles.
 			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,role) VALUES(?,?,?,?)`, trackID, id, i, credit.role); err != nil {
@@ -688,6 +715,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	}
 	involvedPositions := make(map[string]int)
 	involvedSeen := make(map[string]struct{})
+	involvedSeenIDs := make(map[string]map[int64]struct{})
 	for _, person := range m.InvolvedPeople {
 		name := strings.TrimSpace(person.Name)
 		role := NormalizeTrackArtistRole(person.Role)
@@ -704,13 +732,26 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		if involvedErr != nil {
 			return involvedErr
 		}
+		ids, _, involvedErr = expandActiveCreditSplitsTx(ctx, tx, ids)
+		if involvedErr != nil {
+			return involvedErr
+		}
 		if len(ids) == 0 {
 			continue
 		}
-		position := involvedPositions[role]
-		involvedPositions[role]++
-		if err = ensureTrackArtistSource(ctx, tx, trackID, ids[0], position, role, "", "file_tag", "", 0); err != nil {
-			return err
+		if involvedSeenIDs[role] == nil {
+			involvedSeenIDs[role] = make(map[int64]struct{})
+		}
+		for _, id := range ids {
+			if _, dup := involvedSeenIDs[role][id]; dup {
+				continue
+			}
+			involvedSeenIDs[role][id] = struct{}{}
+			position := involvedPositions[role]
+			involvedPositions[role]++
+			if err = ensureTrackArtistSource(ctx, tx, trackID, id, position, role, "", "file_tag", "", 0); err != nil {
+				return err
+			}
 		}
 	}
 	if err = materializeTrackArtistSources(ctx, tx, trackID); err != nil {

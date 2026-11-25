@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,9 +283,9 @@ func TestWorkConflictAndArtistCreditSplitGuards(t *testing.T) {
 	}
 
 	// Applying the split updates the track primary artists cleanly.
-	updated, err := s.ApplyCompositeCreditSplit(ctx, compositeID, []string{"Aimer", "Sawano"})
-	if err != nil || updated != 1 {
-		t.Fatalf("expected 1 updated track, got %d err=%v", updated, err)
+	splitRes, err := s.ApplyCompositeCreditSplit(ctx, compositeID, []string{"Aimer", "Sawano"})
+	if err != nil || splitRes.TracksUpdated != 1 {
+		t.Fatalf("expected 1 updated track, got %+v err=%v", splitRes, err)
 	}
 }
 
@@ -584,6 +585,163 @@ func TestArtistAutoConfirmRevertEmptyRunAndCompositeTargetFiltering(t *testing.T
 		if c.Status != "candidate" {
 			t.Fatalf("expected candidate status restored after revert, got %+v", restored)
 		}
+	}
+}
+
+func TestCreditSplitAutoModeAndGuardrails(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	_ = s.EnsureLibrary(ctx, "Music", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+
+	// Backstage composer-only composite artist whose target artists do not yet exist in the library.
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "E33/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Lumiere", Album: "Expedition 33 OST",
+			Artists: []string{"Main Vocal"}, AlbumArtists: []string{"Main Vocal"},
+			Composer: "Alice Duport-Percier, Lorien Testard",
+			DiscNumber: 1, TrackNumber: 1,
+		},
+	})
+	// Low-confidence composite artist (< 92) should stay manual review even in auto mode.
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "EG/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Insert Song", Album: "Single",
+			Artists: []string{"Singer"}, AlbumArtists: []string{"Singer"},
+			Lyricist: "Asuka Oda & Daisuke Kikuta",
+			DiscNumber: 1, TrackNumber: 1,
+		},
+	})
+
+	rev, _ := s.AIReviewSettings(ctx)
+	rev.Enabled = true
+	rev.CreditMode = storage.AIReviewModeAuto
+	if err := s.SaveAIReviewSettings(ctx, rev); err != nil {
+		t.Fatalf("SaveAIReviewSettings(credit_mode=auto) failed: %v", err)
+	}
+
+	var highID, lowID int64
+	artists, _ := s.ArtistsForMatching(ctx)
+	for _, a := range artists {
+		switch a.Name {
+		case "Alice Duport-Percier, Lorien Testard":
+			highID = a.ID
+		case "Asuka Oda & Daisuke Kikuta":
+			lowID = a.ID
+		}
+	}
+
+	svc := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		Limiter: aiclient.NewLimiter(6000),
+		NewChat: func(storage.AISettings) (tagging.Chat, error) {
+			return fakeChat{fn: func(req tagging.ChatRequest) (tagging.ChatResult, error) {
+				if strings.Contains(req.User, "Alice Duport-Percier") {
+					return tagging.ChatResult{
+						Content: `{"isComposite":true,"parts":["Alice Duport-Percier","Lorien Testard"],"confidence":100,"reason":"两位独立作曲家联合署名"}`,
+						Usage:   storage.AIUsage{Requests: 1},
+					}, nil
+				}
+				return tagging.ChatResult{
+					Content: `{"isComposite":true,"parts":["Asuka Oda","Daisuke Kikuta"],"confidence":89,"reason":"置信度低于自动阈值"}`,
+					Usage:   storage.AIUsage{Requests: 1},
+				}, nil
+			}}, nil
+		},
+	})
+
+	// High-confidence (>=92) auto-splits including brand-new artists and records rollback snapshot.
+	highRes, err := svc.EvaluateTarget(ctx, storage.AITargetCreditSplit, highID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !highRes.Applied || highRes.Action != storage.AIActionAutoConfirm {
+		t.Fatalf("expected auto_confirm applied=true, got %+v", highRes)
+	}
+	dec, ok, err := s.AIReviewDecisionByTarget(ctx, storage.AITargetCreditSplit, highID)
+	if err != nil || !ok || !dec.Applied || len(dec.AppliedSnapshot) < 5 {
+		t.Fatalf("expected saved applied credit split decision with snapshot, ok=%v err=%v dec=%+v", ok, err, dec)
+	}
+	appliedItems, err := s.RecentAIAppliedDecisions(ctx, []string{storage.AITargetCreditSplit}, 10)
+	if err != nil || len(appliedItems) != 1 || appliedItems[0].Decision.ID != dec.ID {
+		t.Fatalf("expected credit_split in RecentAIAppliedDecisions, got %+v err=%v", appliedItems, err)
+	}
+	// Reverting restores the composite artist cleanly.
+	if err := s.RevertAIReviewDecision(ctx, dec.ID); err != nil {
+		t.Fatalf("RevertAIReviewDecision(credit_split) failed: %v", err)
+	}
+
+	// Low-confidence (<92) stays recommend_accept without auto-applying.
+	lowRes, err := svc.EvaluateTarget(ctx, storage.AITargetCreditSplit, lowID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lowRes.Applied || lowRes.Action != storage.AIActionRecommendAccept {
+		t.Fatalf("expected recommend_accept applied=false for confidence 89, got %+v", lowRes)
+	}
+}
+
+func TestCreditSplitCachedUpgradeWithoutReCallingLLM(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	_ = s.EnsureLibrary(ctx, "Music", "/music")
+	lib, _ := s.LibraryByRoot(ctx, "/music")
+
+	_ = s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "XC/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Engage the Enemy", Album: "XC OST",
+			Artists: []string{"Performer"}, AlbumArtists: []string{"Performer"},
+			Composer: "ACE, 亀岡夏海",
+			DiscNumber: 1, TrackNumber: 1,
+		},
+	})
+	var compID int64
+	artists, _ := s.ArtistsForMatching(ctx)
+	for _, a := range artists {
+		if a.Name == "ACE, 亀岡夏海" {
+			compID = a.ID
+		}
+	}
+
+	// 1. Evaluate first in recommend mode (1 LLM call).
+	rev, _ := s.AIReviewSettings(ctx)
+	rev.Enabled = true
+	rev.CreditMode = storage.AIReviewModeRecommend
+	_ = s.SaveAIReviewSettings(ctx, rev)
+
+	llmCalls := 0
+	svc := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{
+		Limiter: aiclient.NewLimiter(6000),
+		NewChat: func(storage.AISettings) (tagging.Chat, error) {
+			return fakeChat{fn: func(req tagging.ChatRequest) (tagging.ChatResult, error) {
+				llmCalls++
+				return tagging.ChatResult{
+					Content: `{"isComposite":true,"parts":["ACE","亀岡夏海"],"confidence":100,"reason":"两位作曲家联合署名"}`,
+					Usage:   storage.AIUsage{Requests: 1},
+				}, nil
+			}}, nil
+		},
+	})
+	recRes, err := svc.EvaluateTarget(ctx, storage.AITargetCreditSplit, compID, false)
+	if err != nil || recRes.Applied || recRes.Action != storage.AIActionRecommendAccept || llmCalls != 1 {
+		t.Fatalf("recommend pass unexpected: res=%+v calls=%d err=%v", recRes, llmCalls, err)
+	}
+
+	// 2. Switch to auto mode and evaluate again without force: must upgrade cached decision with 0 LLM calls!
+	rev.CreditMode = storage.AIReviewModeAuto
+	_ = s.SaveAIReviewSettings(ctx, rev)
+
+	autoRes, err := svc.EvaluateTarget(ctx, storage.AITargetCreditSplit, compID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !autoRes.Applied || autoRes.Action != storage.AIActionAutoConfirm || autoRes.Skipped {
+		t.Fatalf("expected cached decision auto-upgrade, got %+v", autoRes)
+	}
+	if llmCalls != 1 {
+		t.Fatalf("expected 0 extra LLM calls on cached upgrade, total calls=%d", llmCalls)
 	}
 }
 

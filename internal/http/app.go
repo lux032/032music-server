@@ -611,6 +611,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/ai-review/runs/active.json", a.requireAdminJSON(http.HandlerFunc(a.handleActiveAIReviewRun)))
 	mux.Handle("POST /admin/ai-review/decisions/{id}/revert", a.requireAdmin(http.HandlerFunc(a.handleRevertAIReviewDecision)))
 	mux.Handle("POST /admin/artists/{id}/apply-credit-split", a.requireAdmin(http.HandlerFunc(a.handleApplyCreditSplit)))
+	mux.Handle("POST /admin/artists/{id}/exempt-composite", a.requireAdmin(http.HandlerFunc(a.handleExemptCompositeArtist)))
+	mux.Handle("POST /admin/matches/credits/apply-high-confidence", a.requireAdmin(http.HandlerFunc(a.handleBatchApplyHighConfidenceCreditSplits)))
 	mux.Handle("GET "+aiTaggingPath, a.requireAdmin(http.HandlerFunc(a.handleAITaggingPage)))
 	mux.Handle("GET "+aiTaggingPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleAITaggingStatus)))
 	mux.Handle("POST "+aiTaggingPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveAITagging)))

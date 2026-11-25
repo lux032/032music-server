@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/lux032/032music-server/internal/metadata"
 )
 
 // AIReviewMode controls how AI participates in a review module.
@@ -116,7 +114,7 @@ func validAIReviewMode(mode string, allowAuto bool) bool {
 func (s *Store) SaveAIReviewSettings(ctx context.Context, v AIReviewSettings) error {
 	if !validAIReviewMode(v.AlbumMode, true) || !validAIReviewMode(v.TrackMode, true) ||
 		!validAIReviewMode(v.WorkMode, true) || !validAIReviewMode(v.ArtistMode, true) ||
-		!validAIReviewMode(v.CreditMode, false) || !validAIReviewMode(v.SeriesMode, true) {
+		!validAIReviewMode(v.CreditMode, true) || !validAIReviewMode(v.SeriesMode, true) {
 		return errors.New("无效的 AI 审核策略取值")
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_review_settings(id,enabled,inline_enabled,web_search_enabled,model,album_mode,track_mode,work_mode,artist_mode,credit_mode,series_mode,updated_at)
@@ -776,7 +774,9 @@ func (s *Store) LoadArtistAIContext(ctx context.Context, artistID int64) (Artist
 	if err != nil {
 		return c, err
 	}
-	c.NeedsSplit = metadata.CompositeArtistCredit(c.Name)
+	if needsSplit, err := isCompositeArtistTx(ctx, s.db, artistID, c.Name); err == nil {
+		c.NeedsSplit = needsSplit
+	}
 
 	alRows, err := s.db.QueryContext(ctx, `SELECT value FROM artist_names WHERE artist_id=? UNION SELECT value FROM artist_search_aliases WHERE artist_id=? LIMIT 20`, artistID, artistID)
 	if err == nil {
@@ -969,6 +969,10 @@ func (s *Store) PendingWorkReviewTargetIDs(ctx context.Context) ([]int64, error)
 }
 
 func (s *Store) PendingArtistReviewTargetIDs(ctx context.Context) ([]int64, error) {
+	exempt, err := compositeExemptArtistIDs(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, artistInheritedProfilesCTE+`SELECT DISTINCT c.artist_id,COALESCE(ar.user_display_name,ar.display_name) FROM artist_match_candidates c JOIN artists ar ON ar.id=c.artist_id WHERE c.status='candidate' AND ar.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM ai_review_decisions d WHERE d.target_kind='artist_match' AND d.target_id=ar.id AND d.applied=1 AND d.reverted=0) AND `+artistCandidateUnmatchedSQL+` ORDER BY c.artist_id`)
 	if err != nil {
 		return nil, err
@@ -981,7 +985,7 @@ func (s *Store) PendingArtistReviewTargetIDs(ctx context.Context) ([]int64, erro
 		if err = rows.Scan(&id, &name); err != nil {
 			return nil, err
 		}
-		if metadata.CompositeArtistCredit(name) {
+		if isCompositeWithExemptions(exempt, id, name) {
 			continue
 		}
 		ids = append(ids, id)
@@ -990,6 +994,10 @@ func (s *Store) PendingArtistReviewTargetIDs(ctx context.Context) ([]int64, erro
 }
 
 func (s *Store) PendingCreditSplitArtistIDs(ctx context.Context) ([]int64, error) {
+	exempt, err := compositeExemptArtistIDs(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name) FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (EXISTS(SELECT 1 FROM artist_match_candidates c WHERE c.artist_id=ar.id AND c.status='candidate') OR (NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=ar.id) AND (EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=ar.id) OR EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=ar.id)))) ORDER BY ar.id`)
 	if err != nil {
 		return nil, err
@@ -1002,7 +1010,7 @@ func (s *Store) PendingCreditSplitArtistIDs(ctx context.Context) ([]int64, error
 		if err = rows.Scan(&id, &name); err != nil {
 			return nil, err
 		}
-		if metadata.CompositeArtistCredit(name) {
+		if isCompositeWithExemptions(exempt, id, name) {
 			ids = append(ids, id)
 		}
 	}

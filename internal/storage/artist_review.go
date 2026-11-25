@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-
-	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type ArtistReviewFilter struct {
@@ -90,6 +88,10 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 		return page, err
 	}
 	defer rows.Close()
+	exempt, err := compositeExemptArtistIDs(ctx, s.db)
+	if err != nil {
+		return page, err
+	}
 	var ids []int64
 	positions := map[int64]int{}
 	for rows.Next() {
@@ -97,7 +99,7 @@ func (s *Store) PendingArtistReviewPage(ctx context.Context, f ArtistReviewFilte
 		if err = rows.Scan(&item.Artist.ID, &item.Artist.Name, &item.Artist.ImageURL, &item.Artist.AlbumCount, &item.Artist.TrackCount); err != nil {
 			return page, err
 		}
-		item.NeedsCreditCorrection = metadata.CompositeArtistCredit(item.Artist.Name)
+		item.NeedsCreditCorrection = isCompositeWithExemptions(exempt, item.Artist.ID, item.Artist.Name)
 		positions[item.Artist.ID] = len(page.Items)
 		ids = append(ids, item.Artist.ID)
 		page.Items = append(page.Items, item)
@@ -186,6 +188,10 @@ func (s *Store) PendingArtistReviewSplitPages(ctx context.Context, f ArtistRevie
 	if err != nil {
 		return identityPage, creditsPage, err
 	}
+	exempt, err := compositeExemptArtistIDs(ctx, s.db)
+	if err != nil {
+		return identityPage, creditsPage, err
+	}
 	type namedID struct {
 		id   int64
 		name string
@@ -200,7 +206,7 @@ func (s *Store) PendingArtistReviewSplitPages(ctx context.Context, f ArtistRevie
 			rows.Close()
 			return identityPage, creditsPage, err
 		}
-		if metadata.CompositeArtistCredit(name) {
+		if isCompositeWithExemptions(exempt, id, name) {
 			creditEntries = append(creditEntries, namedID{id: id, name: name})
 			creditSeen[id] = true
 		} else {
@@ -241,7 +247,7 @@ func (s *Store) PendingArtistReviewSplitPages(ctx context.Context, f ArtistRevie
 				compRows.Close()
 				return identityPage, creditsPage, err
 			}
-			if !creditSeen[id] && metadata.CompositeArtistCredit(name) {
+			if !creditSeen[id] && isCompositeWithExemptions(exempt, id, name) {
 				creditEntries = append(creditEntries, namedID{id: id, name: name})
 				creditSeen[id] = true
 				addedFlagged = true
@@ -416,6 +422,10 @@ func (s *Store) attachBatchArtistIdentityConflicts(ctx context.Context, items []
 		return nil
 	}
 
+	exempt, err := compositeExemptArtistIDs(ctx, s.db)
+	if err != nil {
+		return err
+	}
 	canonicalCache := map[int64]int64{}
 	nameCache := map[int64]string{}
 	for _, rc := range raw {
@@ -443,7 +453,7 @@ func (s *Store) attachBatchArtistIdentityConflicts(ctx context.Context, items []
 		rc.conflict.TargetArtistID = targetID
 		rc.conflict.TargetName = targetName
 		sourceName := items[pos].Artist.Name
-		rc.conflict.CanMerge = rc.manual == 0 && targetID != rc.artistID && !metadata.CompositeArtistCredit(targetName) && !metadata.CompositeArtistCredit(sourceName)
+		rc.conflict.CanMerge = rc.manual == 0 && targetID != rc.artistID && !isCompositeWithExemptions(exempt, targetID, targetName) && !isCompositeWithExemptions(exempt, rc.artistID, sourceName)
 		if items[pos].Conflicts == nil {
 			items[pos].Conflicts = map[int64]ArtistIdentityConflict{}
 		}

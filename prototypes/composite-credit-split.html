@@ -1,0 +1,1774 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="032 Music Server 复合署名全角色拆分与 AI 分级自治交互原型">
+  <title>复合署名治理与 AI 分级自治（交互原型） · 032 Music</title>
+  <style>
+    @font-face {
+      font-family: Inter;
+      src: url('../internal/http/assets/inter-latin.woff2') format('woff2');
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: light;
+      --bg: #fafafa;
+      --bg-soft: #f4f4f5;
+      --bg-panel: #ffffff;
+      --surface: #ffffff;
+      --surface-hover: #f0f0f2;
+      --surface-sunken: #ededf0;
+      --fill: #efeff2;
+      --fill-hover: #e4e4e9;
+      --line: #e6e6ea;
+      --line-strong: #d4d4da;
+      --text: #111113;
+      --text-secondary: #4f4f59;
+      --muted: #64646e;
+      --text-on-accent: #ffffff;
+      --accent: #5b47e0;
+      --accent-hover: #4a37c9;
+      --accent-active: #3d2db0;
+      --accent-soft: rgba(91, 71, 224, 0.09);
+      --accent-soft-strong: rgba(91, 71, 224, 0.16);
+      --accent-line: rgba(91, 71, 224, 0.35);
+      --accent-strong-text: #4a37c9;
+      --danger: #c42b44;
+      --danger-soft: rgba(196, 43, 68, 0.08);
+      --danger-line: rgba(196, 43, 68, 0.35);
+      --success: #0e7651;
+      --success-soft: rgba(14, 118, 81, 0.09);
+      --success-line: rgba(14, 118, 81, 0.35);
+      --warning: #9a5b00;
+      --warning-soft: rgba(154, 91, 0, 0.09);
+      --warning-line: rgba(154, 91, 0, 0.35);
+      --shadow-pop: 0 14px 40px rgba(17, 17, 19, 0.16);
+
+      --font-ui: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+      --r-sm: 6px;
+      --r-row: 8px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --r-pill: 999px;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #111113;
+      --bg-soft: #161619;
+      --bg-panel: #18181b;
+      --surface: #19191c;
+      --surface-hover: #242428;
+      --surface-sunken: #222226;
+      --fill: #232327;
+      --fill-hover: #2e2e33;
+      --line: #2a2a2f;
+      --line-strong: #3a3a41;
+      --text: #f4f4f6;
+      --text-secondary: #b8b8c2;
+      --muted: #9a9aa5;
+      --text-on-accent: #140f33;
+      --accent: #8d7dff;
+      --accent-hover: #a194ff;
+      --accent-active: #b4aaff;
+      --accent-soft: rgba(141, 125, 255, 0.14);
+      --accent-soft-strong: rgba(141, 125, 255, 0.24);
+      --accent-line: rgba(141, 125, 255, 0.45);
+      --accent-strong-text: #b4aaff;
+      --danger: #ff6f83;
+      --danger-soft: rgba(255, 111, 131, 0.12);
+      --danger-line: rgba(255, 111, 131, 0.4);
+      --success: #45d39a;
+      --success-soft: rgba(69, 211, 154, 0.11);
+      --success-line: rgba(69, 211, 154, 0.38);
+      --warning: #f2b84b;
+      --warning-soft: rgba(242, 184, 75, 0.11);
+      --warning-line: rgba(242, 184, 75, 0.4);
+      --shadow-pop: 0 18px 46px rgba(0, 0, 0, 0.48);
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    ::selection { background: var(--accent-soft-strong); color: var(--text); }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 0.9rem;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, p { margin: 0; }
+    a { color: inherit; text-decoration: none; text-underline-offset: 3px; }
+    button, input, select { font: inherit; color: inherit; }
+    input { caret-color: var(--accent); }
+    button { cursor: pointer; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); }
+    .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .icon-sm { width: 14px; height: 14px; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+    /* ---- Page Container ---- */
+    .shell {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px clamp(16px, 3vw, 36px) 72px;
+    }
+
+    /* ---- Prototype Controls Bar ---- */
+    .proto-bar {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
+      margin-bottom: 20px; padding: 9px 14px;
+      border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+      background: var(--bg-soft); font-size: 0.78rem; color: var(--text-secondary);
+    }
+    .proto-bar-label { font-weight: 700; color: var(--text); }
+    .proto-sep { width: 1px; height: 16px; background: var(--line-strong); }
+    .proto-mode-group {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px; border-radius: var(--r-pill); background: var(--surface); border: 1px solid var(--line);
+    }
+    .proto-mode-btn {
+      border: 0; border-radius: var(--r-pill); padding: 4px 10px;
+      background: transparent; color: var(--text-secondary);
+      font-size: 0.75rem; font-weight: 600;
+      transition: background 0.16s var(--ease), color 0.16s var(--ease);
+    }
+    .proto-mode-btn:hover { color: var(--text); }
+    .proto-mode-btn.active { background: var(--accent-soft); color: var(--accent-strong-text); }
+    .proto-spacer { flex: 1; }
+
+    /* ---- Buttons (DESIGN.md: One Violet Rule + Filled Control Rule) ---- */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 0; border-radius: var(--r-pill); padding: 0.5rem 0.96rem;
+      font-size: 0.82rem; font-weight: 600; line-height: 1.2; white-space: nowrap;
+      transition: background 0.16s var(--ease), color 0.16s var(--ease), transform 0.1s var(--ease);
+    }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: var(--text-on-accent); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-secondary { background: var(--fill); color: var(--text); }
+    .btn-secondary:hover:not(:disabled) { background: var(--fill-hover); }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover:not(:disabled) { background: var(--fill); color: var(--text); }
+    .btn-danger { background: var(--danger); color: #ffffff; }
+    .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.78rem; }
+    .btn-xs { padding: 0.3rem 0.65rem; font-size: 0.74rem; }
+
+    /* ---- Page Header ---- */
+    .page-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+    }
+    .page-title h1 {
+      font-size: 1.65rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.2;
+    }
+    .page-title p {
+      margin-top: 6px; font-size: 0.84rem; color: var(--muted); max-width: 68ch;
+    }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Active Run Strip ---- */
+    .active-run-strip {
+      margin-bottom: 16px; padding: 14px 18px;
+      border: 1px solid var(--accent-line); border-radius: var(--r-lg);
+      background: var(--surface); display: grid; gap: 10px;
+    }
+    .active-run-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .active-run-title { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; }
+    .run-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      transition: background 0.18s var(--ease);
+    }
+    .run-dot.is-done { background: var(--success); }
+    .progress-track { height: 6px; border-radius: var(--r-pill); background: var(--surface-sunken); overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.22s var(--ease); }
+    .active-run-meta {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      font-size: 0.78rem; color: var(--text-secondary); font-variant-numeric: tabular-nums;
+    }
+
+    /* ---- Admin Tabs ---- */
+    .admin-tabs {
+      display: flex; align-items: center; gap: 4px; overflow-x: auto;
+      border-bottom: 1px solid var(--line); margin-bottom: 18px;
+    }
+    .admin-tab {
+      position: relative; display: inline-flex; align-items: center; gap: 7px;
+      border: 0; background: transparent; padding: 10px 14px;
+      color: var(--muted); font-size: 0.86rem; font-weight: 600; white-space: nowrap;
+      transition: color 0.16s var(--ease);
+    }
+    .admin-tab:hover { color: var(--text); }
+    .admin-tab.active { color: var(--text); }
+    .admin-tab.active::after {
+      content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px;
+      height: 2px; border-radius: 2px; background: var(--accent);
+    }
+    .tab-count {
+      min-width: 22px; height: 19px; padding: 0 6px; border-radius: var(--r-pill);
+      background: var(--fill); color: var(--text-secondary);
+      font-size: 0.72rem; font-weight: 700; display: inline-grid; place-items: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .admin-tab.active .tab-count { background: var(--accent-soft); color: var(--accent-strong-text); }
+
+    /* ---- Section Hint & Batch Action Bar ---- */
+    .section-banner {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px 18px; flex-wrap: wrap;
+      margin-bottom: 14px; padding: 14px 18px;
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface);
+    }
+    .section-banner-copy { min-width: 0; flex: 1 1 360px; }
+    .section-banner-copy h2 { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; }
+    .section-banner-copy p { margin-top: 4px; font-size: 0.8rem; color: var(--muted); max-width: 72ch; }
+    .section-banner-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Filter Toolbar ---- */
+    .filter-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px 14px; flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .search-wrap {
+      position: relative; display: flex; align-items: center; flex: 0 1 280px; min-width: 200px;
+    }
+    .search-wrap .icon { position: absolute; left: 11px; color: var(--muted); pointer-events: none; }
+    .search-input {
+      width: 100%; height: 34px; border: 0; border-radius: var(--r-pill);
+      background: var(--fill); padding: 0 14px 0 34px;
+      font-size: 0.82rem; color: var(--text);
+      transition: background 0.16s var(--ease);
+    }
+    .search-input::placeholder { color: var(--muted); }
+    .search-input:hover, .search-input:focus { background: var(--fill-hover); }
+    .filter-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      border: 0; border-radius: var(--r-pill); padding: 5px 11px;
+      background: var(--fill); color: var(--text-secondary);
+      font-size: 0.77rem; font-weight: 600;
+      transition: background 0.16s var(--ease), color 0.16s var(--ease);
+    }
+    .chip:hover { background: var(--fill-hover); color: var(--text); }
+    .chip.active { background: var(--accent-soft); color: var(--accent-strong-text); }
+    .chip-num { font-variant-numeric: tabular-nums; opacity: 0.85; }
+
+    /* ---- Adaptive Multi-Column Cards (Quiet Card Rule: 1px border, zero shadow) ---- */
+    .credit-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+    .credit-card {
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); overflow: hidden; min-width: 0;
+      transition: opacity 0.2s var(--ease), transform 0.2s var(--ease), border-color 0.16s var(--ease);
+    }
+    .credit-card:hover { border-color: var(--line-strong); }
+    .credit-card.is-leaving { opacity: 0; transform: translateY(-6px) scale(0.99); pointer-events: none; }
+
+    .credit-card-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+      padding: 13px 16px; border-bottom: 1px solid var(--line);
+    }
+    .credit-title-group { min-width: 0; display: grid; gap: 6px; }
+    .credit-name-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+    .credit-name { font-size: 0.96rem; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+    .credit-stats { font-size: 0.76rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .role-row { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+    .role-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 1px 8px; border-radius: var(--r-pill);
+      background: var(--fill); color: var(--text-secondary);
+      font-size: 0.71rem; font-weight: 600; font-variant-numeric: tabular-nums;
+    }
+    .role-pill.is-backstage { color: var(--text-secondary); }
+    .role-pill.is-primary { background: var(--surface-sunken); color: var(--text); }
+
+    .credit-card-body {
+      padding: 13px 16px; display: grid; gap: 11px;
+    }
+    .ai-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+    .ai-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 9px; border-radius: var(--r-pill);
+      font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .ai-chip.tone-accept { background: var(--accent-soft); color: var(--accent-strong-text); border: 1px solid var(--accent-line); }
+    .ai-chip.tone-auto { background: var(--success-soft); color: var(--success); border: 1px solid var(--success-line); }
+    .ai-chip.tone-reject { background: var(--warning-soft); color: var(--warning); border: 1px solid var(--warning-line); }
+    .ai-chip.tone-uncertain { background: var(--fill); color: var(--text-secondary); border: 1px solid var(--line-strong); }
+
+    .split-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 0.8rem; }
+    .split-part {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 9px; border-radius: var(--r-pill);
+      background: var(--accent-soft); color: var(--accent-strong-text);
+      font-weight: 650; font-size: 0.78rem;
+    }
+    .split-part .new-dot {
+      font-size: 0.66rem; font-weight: 700; padding: 0 4px; border-radius: 4px;
+      background: var(--surface); color: var(--text-secondary);
+    }
+    .split-sep { color: var(--muted); font-size: 0.74rem; font-weight: 700; }
+    .ai-reason { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.5; }
+
+    /* ---- Inline Split Editor ---- */
+    .split-editor {
+      display: grid; gap: 8px; padding: 10px 12px;
+      border-radius: var(--r-md); background: var(--bg-soft); border: 1px solid var(--line-strong);
+    }
+    .split-editor-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      font-size: 0.74rem; color: var(--muted);
+    }
+    .editor-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .editor-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 6px 3px 10px; border-radius: var(--r-pill);
+      background: var(--surface); border: 1px solid var(--line-strong);
+      font-size: 0.78rem; font-weight: 600;
+    }
+    .editor-tag-rm {
+      border: 0; background: transparent; color: var(--muted); width: 18px; height: 18px;
+      border-radius: 50%; display: inline-grid; place-items: center; padding: 0;
+    }
+    .editor-tag-rm:hover { background: var(--danger-soft); color: var(--danger); }
+    .editor-add-row { display: flex; gap: 6px; }
+    .editor-input {
+      flex: 1; min-width: 0; height: 32px; border: 1px solid var(--line-strong);
+      border-radius: var(--r-sm); background: var(--surface); padding: 0 10px;
+      font-size: 0.8rem; color: var(--text);
+    }
+    .editor-input::placeholder { color: var(--muted); }
+    .editor-error { font-size: 0.75rem; color: var(--danger); font-weight: 600; }
+
+    .card-actions {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--line);
+    }
+    .card-actions-left, .card-actions-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    /* ---- Tasks & Undo Panel + Rules Inspector ---- */
+    .two-col-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+      gap: 16px; align-items: start;
+    }
+    .panel-card {
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); padding: 18px; display: grid; gap: 14px;
+    }
+    .panel-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .panel-card-head h2 { font-size: 1rem; font-weight: 700; }
+    .panel-card-head p { margin-top: 4px; font-size: 0.8rem; color: var(--muted); }
+    .status-pill {
+      display: inline-flex; align-items: center; padding: 2px 9px; border-radius: var(--r-pill);
+      font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+      background: var(--fill); color: var(--text-secondary);
+    }
+    .status-pill.is-auto { background: var(--success-soft); color: var(--success); }
+    .status-pill.is-recommend { background: var(--accent-soft); color: var(--accent-strong-text); }
+
+    .applied-list { display: grid; gap: 8px; }
+    .applied-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      padding: 11px 13px; border-radius: var(--r-md); background: var(--bg-soft); border: 1px solid var(--line);
+    }
+    .applied-row-main { min-width: 0; flex: 1 1 280px; display: grid; gap: 4px; }
+    .applied-row-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 0.84rem; }
+    .applied-row-meta { font-size: 0.76rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .arrow-inline { color: var(--muted); font-weight: 700; }
+
+    /* ---- Zero State ---- */
+    .zero-state {
+      grid-column: 1 / -1;
+      padding: 40px 24px; text-align: center;
+      border: 1px dashed var(--line-strong); border-radius: var(--r-lg);
+      background: var(--surface); display: grid; gap: 6px; justify-items: center;
+    }
+    .zero-state strong { font-size: 0.96rem; color: var(--text); }
+    .zero-state span { font-size: 0.82rem; color: var(--muted); max-width: 52ch; }
+
+    /* ---- Settings Dialog ---- */
+    dialog.settings-dialog {
+      width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line-strong);
+      border-radius: var(--r-lg); background: var(--surface); color: var(--text);
+      box-shadow: var(--shadow-pop);
+    }
+    dialog.settings-dialog::backdrop { background: rgba(0, 0, 0, 0.56); }
+    .dialog-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 16px 20px; border-bottom: 1px solid var(--line);
+    }
+    .dialog-head h2 { font-size: 1rem; font-weight: 700; }
+    .dialog-body { padding: 18px 20px; display: grid; gap: 14px; }
+    .field-stack { display: grid; gap: 6px; }
+    .field-stack label { font-size: 0.82rem; font-weight: 650; }
+    .select-control {
+      height: 38px; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+      background: var(--bg-soft); padding: 0 12px; font-size: 0.84rem; color: var(--text);
+    }
+    .safety-note {
+      padding: 10px 12px; border-radius: var(--r-md); background: var(--bg-soft);
+      border: 1px solid var(--line); font-size: 0.78rem; color: var(--text-secondary); line-height: 1.55;
+    }
+    .dialog-foot {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 14px 20px; border-top: 1px solid var(--line);
+    }
+
+    /* ---- Toast ---- */
+    .toast-host {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      z-index: 80; pointer-events: none; width: max-content; max-width: calc(100vw - 32px);
+    }
+    .toast {
+      pointer-events: auto; display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; border-radius: var(--r-pill);
+      background: var(--text); color: var(--bg);
+      font-size: 0.82rem; font-weight: 600; box-shadow: var(--shadow-pop);
+      opacity: 0; transform: translateY(10px);
+      transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+    }
+    .toast.is-open { opacity: 1; transform: translateY(0); }
+    .toast-action {
+      border: 0; border-radius: var(--r-pill); padding: 3px 10px;
+      background: var(--accent); color: var(--text-on-accent); font-size: 0.76rem; font-weight: 700;
+    }
+
+    @media (max-width: 680px) {
+      .credit-grid { grid-template-columns: 1fr; }
+      .page-header { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 5-3.5 8-7 9-3.5-1-7-4-7-9V6z"/><path d="m9.5 12 1.8 1.8 3.7-3.8"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  </svg>
+
+  <main class="shell">
+    <!-- Prototype Controls -->
+    <div class="proto-bar" role="region" aria-label="原型交互控制台">
+      <span class="proto-bar-label">交互原型控制台</span>
+      <span class="proto-sep" aria-hidden="true"></span>
+      <span>复合署名 AI 策略：</span>
+      <div class="proto-mode-group" role="group" aria-label="切换复合署名策略">
+        <button type="button" class="proto-mode-btn active" data-set-mode="auto">分级自治（≥92% 自动拆分）</button>
+        <button type="button" class="proto-mode-btn" data-set-mode="recommend">仅给建议（人工确认）</button>
+      </div>
+      <button type="button" class="btn btn-secondary btn-xs" id="btn-open-settings">
+        <svg class="icon icon-sm"><use href="#i-sliders"/></svg>
+        AI 设置弹窗
+      </button>
+      <span class="proto-spacer"></span>
+      <button type="button" class="btn btn-secondary btn-xs" id="btn-toggle-theme">
+        <svg class="icon icon-sm"><use href="#i-sun"/></svg>
+        切换浅色 / 深色
+      </button>
+      <button type="button" class="btn btn-secondary btn-xs" id="btn-reset-demo">
+        <svg class="icon icon-sm"><use href="#i-refresh"/></svg>
+        重置演示数据
+      </button>
+    </div>
+
+    <!-- Header -->
+    <header class="page-header">
+      <div class="page-title">
+        <h1>艺术家与身份审核</h1>
+        <p>以 MusicBrainz / Last.fm 为来源扫描艺术家身份；复合署名现已支持演唱、幕后（作曲/作词/编曲/制作）及专辑艺人全角色原子拆分，并支持高置信分级自治与一键撤销。</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn btn-secondary" id="btn-header-ai-run">
+          <svg class="icon icon-sm"><use href="#i-spark"/></svg>
+          运行 AI 复合署名预审
+        </button>
+        <button type="button" class="btn btn-secondary" id="btn-header-settings">
+          <svg class="icon icon-sm"><use href="#i-sliders"/></svg>
+          复合署名策略
+        </button>
+      </div>
+    </header>
+
+    <!-- Active AI Run Progress Strip -->
+    <section class="active-run-strip" id="active-run-strip" hidden aria-live="polite">
+      <div class="active-run-head">
+        <div class="active-run-title">
+          <span class="run-dot" id="run-dot" aria-hidden="true"></span>
+          <strong id="run-title">AI 预审 #24 · 复合署名拆分</strong>
+          <span class="status-pill is-recommend" id="run-status">运行中</span>
+        </div>
+        <button type="button" class="btn btn-secondary btn-xs" id="btn-cancel-run">停止</button>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="run-progress-fill" style="width:0%"></div></div>
+      <div class="active-run-meta">
+        <span id="run-counts">处理 0 / 0 · 自动拆分 0 · 缓存免重评升级 0 · 给建议 0 · 非复合 0</span>
+        <span id="run-current">准备中…</span>
+      </div>
+    </section>
+
+    <!-- Workbench Tabs -->
+    <nav class="admin-tabs" role="tablist" aria-label="艺术家审核工作区">
+      <button type="button" class="admin-tab active" role="tab" aria-selected="true" data-tab="credits">
+        <span>复合署名</span>
+        <span class="tab-count" id="tab-count-credits">0</span>
+      </button>
+      <button type="button" class="admin-tab" role="tab" aria-selected="false" data-tab="tasks">
+        <span>任务与自动拆分撤销</span>
+        <span class="tab-count" id="tab-count-applied">0</span>
+      </button>
+      <button type="button" class="admin-tab" role="tab" aria-selected="false" data-tab="rules">
+        <span>持久化规则与豁免清单</span>
+        <span class="tab-count" id="tab-count-rules">0</span>
+      </button>
+    </nav>
+
+    <!-- PANEL 1: Composite Credits -->
+    <section id="panel-credits" role="tabpanel">
+      <div class="section-banner">
+        <div class="section-banner-copy">
+          <h2>需先修正署名</h2>
+          <p id="credits-banner-desc">以下艺术家疑似合作署名，拆分将同步更新演唱、幕后角色及专辑艺人关联并持久保留至后续全库重扫。真实单一组合可直接确认为单一艺人放行匹配。</p>
+        </div>
+        <div class="section-banner-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-batch-high">
+            <svg class="icon icon-sm"><use href="#i-check"/></svg>
+            <span id="batch-high-label">批量应用高置信拆分（0 位 ≥92%）</span>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-run-credit-ai">
+            <svg class="icon icon-sm"><use href="#i-spark"/></svg>
+            AI 分析复合署名
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="search-wrap">
+          <svg class="icon icon-sm"><use href="#i-search"/></svg>
+          <input type="search" class="search-input" id="credit-search" placeholder="搜索复合署名、拆出艺人或角色…" aria-label="搜索复合署名">
+        </div>
+        <div class="filter-chips" id="credit-filter-chips" role="group" aria-label="按 AI 结论筛选"></div>
+      </div>
+
+      <div class="credit-grid" id="credits-grid"></div>
+    </section>
+
+    <!-- PANEL 2: Tasks & AI Auto-Applied Undo -->
+    <section id="panel-tasks" role="tabpanel" hidden>
+      <div class="two-col-grid">
+        <article class="panel-card">
+          <div class="panel-card-head">
+            <div>
+              <h2>AI 最近自动处理记录（可一键撤销）</h2>
+              <p>所有自动落库的复合署名拆分与身份绑定均保存完整多角色快照；点击撤销立即恢复原曲目、专辑关联及待审队列。</p>
+            </div>
+            <span class="status-pill" id="applied-mode-pill">分级自治 ≥92%</span>
+          </div>
+          <div class="applied-list" id="applied-list"></div>
+        </article>
+
+        <article class="panel-card">
+          <div class="panel-card-head">
+            <div>
+              <h2>本次会话操作摘要与扫描联动</h2>
+              <p>模拟验证拆分后全库重扫不回退、以及单一艺人豁免放行 MusicBrainz / Last.fm 增量扫描的效果。</p>
+            </div>
+          </div>
+          <div class="safety-note" id="session-summary"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-simulate-rescan">
+              <svg class="icon icon-sm"><use href="#i-refresh"/></svg>
+              模拟全库重扫（验证拆分持久不回退）
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-simulate-mb-scan">
+              <svg class="icon icon-sm"><use href="#i-spark"/></svg>
+              模拟增量匹配新单人艺人 &amp; 已豁免组合
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- PANEL 3: Persistent Rules & Exemptions -->
+    <section id="panel-rules" role="tabpanel" hidden>
+      <div class="two-col-grid">
+        <article class="panel-card">
+          <div class="panel-card-head">
+            <div>
+              <h2>生效中的拆分规则（artist_credit_splits）</h2>
+              <p>扫描器重新导入音频文件时若命中以下复合艺人，将自动按规则展开为目标单人艺人，且受孤儿清理保护。</p>
+            </div>
+            <span class="status-pill is-auto" id="active-rules-count">0 条生效</span>
+          </div>
+          <div class="applied-list" id="rules-list"></div>
+        </article>
+
+        <article class="panel-card">
+          <div class="panel-card-head">
+            <div>
+              <h2>已确认单一艺人豁免（artist_composite_exemptions）</h2>
+              <p>名称含 <code>&amp;</code>、<code>, </code> 等标点的真实乐队/组合豁免后，不再进入复合署名队列，允许正常自动绑定外部身份。</p>
+            </div>
+            <span class="status-pill is-recommend" id="exemptions-count">0 位豁免</span>
+          </div>
+          <div class="applied-list" id="exemptions-list"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <!-- Settings Dialog (mirrors /admin/settings/ai credit_mode) -->
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="dialog-head">
+        <h2 id="settings-title">AI 复合署名拆分策略设置</h2>
+        <button type="button" class="btn btn-ghost btn-xs" id="btn-close-settings" aria-label="关闭">
+          <svg class="icon"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <div class="field-stack">
+          <label for="select-credit-mode">复合署名拆分策略（credit_mode）</label>
+          <select id="select-credit-mode" class="select-control" name="credit_mode">
+            <option value="off">关闭</option>
+            <option value="recommend">仅给建议（页面一键应用拆分）</option>
+            <option value="auto">分级自治（≥92 分且拆出 ≥2 位独立艺人自动拆分）</option>
+          </select>
+        </div>
+        <div class="safety-note">
+          <strong>安全护栏与存量提速说明：</strong><br>
+          1. 开启「分级自治」后，AI 置信度 ≥ 92% 且拆出至少 2 位独立艺人（不含自身）时将自动落库，涵盖演唱、幕后（作曲/作词/编曲/制作）及专辑艺人，并自动创建曲库尚未收录的新单人艺人。<br>
+          2. 已有高置信（≥ 92%）未应用建议在再次运行预审或点击顶部批量应用时直接落库，不重复消耗模型 token。<br>
+          3. <strong>安全铁律不变</strong>：AI 绝不自动写入单一艺人豁免或永久拒绝；所有自动拆分均保存全角色快照，随时可在「任务与补全」一键撤销。
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-settings">取消</button>
+        <button type="submit" class="btn btn-primary btn-sm">保存策略设置</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Toast -->
+  <div class="toast-host" aria-live="polite" aria-atomic="true">
+    <div class="toast" id="toast">
+      <span id="toast-msg"></span>
+      <button type="button" class="toast-action" id="toast-action" hidden>撤销</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const AUTO_THRESHOLD = 92;
+      const EXISTING_LIBRARY_ARTISTS = new Set([
+        'ACE', '亀岡夏海', '八木遼太郎', '光田康典', '吉村隆行',
+        '100回嘔吐', 'ずっと真夜中でいいのに。', 'ACAね', 'Mori Calliope',
+        'Aimer', '澤野弘之', 'ARM', 'まろん', 'Asuka Oda', 'Daisuke Kikuta', 'Mili'
+      ]);
+
+      function createInitialState() {
+        return {
+          creditMode: 'auto', // 'off' | 'recommend' | 'auto'
+          activeTab: 'credits',
+          filter: 'all',
+          search: '',
+          editingId: null,
+          editDrafts: {}, // id -> { parts: string[], error: string }
+          batchArmed: false,
+          runningTimer: null,
+          stats: {
+            tracksUpdated: 0,
+            albumsUpdated: 0,
+            newArtistsCreated: 0,
+            tokensSavedByCache: 0
+          },
+          credits: [
+            {
+              id: 101,
+              name: 'ACE, 亀岡夏海',
+              albums: 0,
+              tracks: 15,
+              roles: [{ label: '作曲', count: 15, kind: 'backstage' }],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 100,
+                parts: ['ACE', '亀岡夏海'],
+                reason: '该署名由音乐组合 ACE 和作曲家亀岡夏海共同组成，二者均有独立的艺术家条目。'
+              }
+            },
+            {
+              id: 102,
+              name: 'Alice Duport-Percier, Lorien Testard',
+              albums: 0,
+              tracks: 45,
+              roles: [
+                { label: '作曲', count: 42, kind: 'backstage' },
+                { label: '演唱', count: 3, kind: 'primary' }
+              ],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 100,
+                parts: ['Alice Duport-Percier', 'Lorien Testard'],
+                reason: '逗号分隔的两位独立音乐人共同署名（均为新收录单人艺人，拆分后将自动建档）。'
+              }
+            },
+            {
+              id: 103,
+              name: '100回嘔吐, ずっと真夜中でいいのに。',
+              albums: 0,
+              tracks: 1,
+              roles: [{ label: '编曲', count: 1, kind: 'backstage' }],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 99,
+                parts: ['100回嘔吐', 'ずっと真夜中でいいのに。'],
+                reason: '逗号分隔了两位独立艺人，且均可匹配现有艺人条目，属于合作署名。'
+              }
+            },
+            {
+              id: 104,
+              name: 'ACAね, Mori Calliope',
+              albums: 0,
+              tracks: 1,
+              roles: [
+                { label: '作词', count: 1, kind: 'backstage' },
+                { label: '演唱', count: 1, kind: 'primary' }
+              ],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 100,
+                parts: ['ACAね', 'Mori Calliope'],
+                reason: '该名称由两位独立艺人组成，是歌曲《綺羅キラー》的合作署名。'
+              }
+            },
+            {
+              id: 105,
+              name: 'Aimer feat. Sawano',
+              albums: 1,
+              tracks: 3,
+              roles: [
+                { label: '专辑艺人', count: 1, kind: 'primary' },
+                { label: '演唱', count: 3, kind: 'primary' },
+                { label: '作曲', count: 1, kind: 'backstage' }
+              ],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 96,
+                parts: ['Aimer', '澤野弘之'],
+                reason: '包含 feat. 合作署名，同时出现在专辑艺人、演唱与作曲角色，将一并原子拆分。'
+              }
+            },
+            {
+              id: 106,
+              name: 'ACE, 亀岡夏海, 八木遼太郎',
+              albums: 0,
+              tracks: 2,
+              roles: [{ label: '作曲', count: 2, kind: 'backstage' }],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 100,
+                parts: ['ACE', '亀岡夏海', '八木遼太郎'],
+                reason: '该名称以逗号连接了三位独立音乐人或音乐组合，属于合作署名。'
+              }
+            },
+            {
+              id: 107,
+              name: 'Asuka Oda & Daisuke Kikuta',
+              albums: 0,
+              tracks: 1,
+              roles: [{ label: '作词', count: 1, kind: 'backstage' }],
+              ai: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 89,
+                parts: ['Asuka Oda', 'Daisuke Kikuta'],
+                reason: '由 & 连接的两位 Elements Garden 创作者，置信度低于 92% 自动阈值，建议人工微调或确认。'
+              }
+            },
+            {
+              id: 108,
+              name: 'Simon & Garfunkel',
+              albums: 2,
+              tracks: 24,
+              roles: [
+                { label: '专辑艺人', count: 2, kind: 'primary' },
+                { label: '演唱', count: 24, kind: 'primary' }
+              ],
+              ai: {
+                isComposite: false,
+                action: 'recommend_reject',
+                confidence: 99,
+                parts: [],
+                reason: '著名双人民谣组合的官方固定名称，包含 & 但并非临时合作署名，建议确认为单一艺人。'
+              }
+            },
+            {
+              id: 109,
+              name: 'Earth, Wind & Fire',
+              albums: 1,
+              tracks: 12,
+              roles: [
+                { label: '专辑艺人', count: 1, kind: 'primary' },
+                { label: '演唱', count: 12, kind: 'primary' }
+              ],
+              ai: {
+                isComposite: false,
+                action: 'recommend_reject',
+                confidence: 98,
+                parts: [],
+                reason: '经典乐队官方名称，逗号和 & 属于组合名本身，不应拆分。'
+              }
+            },
+            {
+              id: 110,
+              name: 'Mili / Momocashew',
+              albums: 0,
+              tracks: 2,
+              roles: [{ label: '演唱', count: 2, kind: 'primary' }],
+              ai: {
+                isComposite: false,
+                action: 'uncertain',
+                confidence: 64,
+                parts: ['Mili', 'Momocashew'],
+                reason: 'Momocashew 为 Mili 主唱，无法确定曲目是双署名合作还是单团别称，请人工决定拆分或豁免。'
+              }
+            },
+            {
+              id: 111,
+              name: 'ACE, 吉村隆行',
+              albums: 0,
+              tracks: 8,
+              roles: [{ label: '作曲', count: 8, kind: 'backstage' }],
+              ai: null,
+              futureAI: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 100,
+                parts: ['ACE', '吉村隆行'],
+                reason: '逗号分隔的两位独立作曲者，均命中现有艺人条目。'
+              }
+            },
+            {
+              id: 112,
+              name: 'ARM, まろん',
+              albums: 0,
+              tracks: 2,
+              roles: [{ label: '编曲', count: 2, kind: 'backstage' }],
+              ai: null,
+              futureAI: {
+                isComposite: true,
+                action: 'recommend_accept',
+                confidence: 98,
+                parts: ['ARM', 'まろん'],
+                reason: 'IOSYS 两位独立编曲家联合署名，均匹配曲库现有艺人。'
+              }
+            }
+          ],
+          appliedDecisions: [
+            {
+              decisionId: 901,
+              kind: 'artist_match',
+              title: 'Kenshi Yonezu → 米津玄師',
+              confidence: 96,
+              reason: '代表作专辑与 MusicBrainz 别名精确一致。',
+              revertible: true,
+              snapshot: null
+            }
+          ],
+          activeRules: [],
+          exemptions: []
+        };
+      }
+
+      let state = createInitialState();
+      let nextDecisionId = 910;
+      let toastTimer = null;
+      let lastToastUndo = null;
+
+      const $ = (sel, root = document) => root.querySelector(sel);
+      const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+      function esc(str) {
+        return String(str ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function showToast(message, undoLabel, undoFn) {
+        clearTimeout(toastTimer);
+        $('#toast-msg').textContent = message;
+        const btn = $('#toast-action');
+        if (undoLabel && typeof undoFn === 'function') {
+          btn.textContent = undoLabel;
+          btn.hidden = false;
+          lastToastUndo = undoFn;
+        } else {
+          btn.hidden = true;
+          lastToastUndo = null;
+        }
+        $('#toast').classList.add('is-open');
+        toastTimer = setTimeout(() => {
+          $('#toast').classList.remove('is-open');
+        }, 5200);
+      }
+
+      function isHighConfidence(item) {
+        return Boolean(item.ai && item.ai.isComposite && item.ai.parts.length >= 2 && item.ai.confidence >= AUTO_THRESHOLD);
+      }
+
+      function bucketOf(item) {
+        if (!item.ai) return 'unanalyzed';
+        if (isHighConfidence(item)) return 'high';
+        if (!item.ai.isComposite && item.ai.action === 'recommend_reject') return 'non_composite';
+        return 'manual';
+      }
+
+      function formatRolesSummary(roles) {
+        return roles.map((r) => `${r.label} ${r.count}`).join(' · ');
+      }
+
+      function applySplitItem(itemId, customParts, source, viaCachedUpgrade) {
+        const idx = state.credits.findIndex((c) => c.id === itemId);
+        if (idx < 0) return { ok: false, error: '未找到该复合署名条目' };
+        const item = state.credits[idx];
+        const cleaned = [];
+        const seen = new Set();
+        for (const raw of customParts) {
+          const name = String(raw || '').trim();
+          const key = name.toLowerCase();
+          if (!name || seen.has(key)) continue;
+          seen.add(key);
+          cleaned.push(name);
+        }
+        if (cleaned.length === 0) {
+          return { ok: false, error: '请至少保留 1 位拆分后的艺人名称' };
+        }
+        if (cleaned.some((p) => p.toLowerCase() === item.name.trim().toLowerCase())) {
+          return { ok: false, error: '拆分结果不能包含原复合署名自身，请修改后再应用' };
+        }
+        if (source === 'ai' && cleaned.length < 2) {
+          return { ok: false, error: 'AI 自动拆分要求至少 2 位独立艺人' };
+        }
+
+        const newlyCreated = cleaned.filter((p) => !EXISTING_LIBRARY_ARTISTS.has(p));
+        newlyCreated.forEach((p) => EXISTING_LIBRARY_ARTISTS.add(p));
+
+        state.credits.splice(idx, 1);
+        if (state.editingId === itemId) state.editingId = null;
+        delete state.editDrafts[itemId];
+
+        state.stats.tracksUpdated += item.tracks;
+        state.stats.albumsUpdated += item.albums;
+        state.stats.newArtistsCreated += newlyCreated.length;
+        if (viaCachedUpgrade) state.stats.tokensSavedByCache += 1;
+
+        const decisionId = nextDecisionId++;
+        const snapshot = {
+          item: JSON.parse(JSON.stringify(item)),
+          parts: cleaned,
+          newlyCreated
+        };
+
+        state.activeRules.unshift({
+          id: decisionId,
+          compositeId: item.id,
+          compositeName: item.name,
+          parts: cleaned,
+          roles: formatRolesSummary(item.roles),
+          tracks: item.tracks,
+          albums: item.albums,
+          source,
+          snapshot
+        });
+
+        state.appliedDecisions.unshift({
+          decisionId,
+          kind: 'credit_split',
+          source,
+          title: `${item.name} → ${cleaned.join(' / ')}`,
+          confidence: item.ai ? item.ai.confidence : 100,
+          reason: `${source === 'ai' ? (viaCachedUpgrade ? '缓存高置信升级自动拆分' : 'AI 自动拆分') : '人工应用拆分'} · 更新 ${item.tracks} 首曲目${item.albums ? `、${item.albums} 张专辑` : ''}（${formatRolesSummary(item.roles)}）${newlyCreated.length ? ` · 新建 ${newlyCreated.length} 位艺人` : ''}`,
+          revertible: true,
+          snapshot
+        });
+
+        return { ok: true, item, parts: cleaned, decisionId, newlyCreated };
+      }
+
+      function revertDecision(decisionId) {
+        const idx = state.appliedDecisions.findIndex((d) => d.decisionId === decisionId);
+        if (idx < 0) return;
+        const dec = state.appliedDecisions[idx];
+        state.appliedDecisions.splice(idx, 1);
+
+        if (dec.kind === 'credit_split' && dec.snapshot) {
+          const ruleIdx = state.activeRules.findIndex((r) => r.id === decisionId);
+          if (ruleIdx >= 0) state.activeRules.splice(ruleIdx, 1);
+          const restored = dec.snapshot.item;
+          state.credits.unshift(restored);
+          state.stats.tracksUpdated = Math.max(0, state.stats.tracksUpdated - restored.tracks);
+          state.stats.albumsUpdated = Math.max(0, state.stats.albumsUpdated - restored.albums);
+          showToast(`已撤销《${restored.name}》拆分，原 ${restored.tracks} 首曲目${restored.albums ? `、${restored.albums} 张专辑` : ''}关联已还原并退回「复合署名」`);
+        } else {
+          showToast(`已撤销《${dec.title}》的自动绑定，候选已退回待审队列`);
+        }
+        renderAll();
+      }
+
+      function exemptSingleArtist(itemId) {
+        const idx = state.credits.findIndex((c) => c.id === itemId);
+        if (idx < 0) return;
+        const item = state.credits.splice(idx, 1)[0];
+        if (state.editingId === itemId) state.editingId = null;
+        state.exemptions.unshift({
+          id: item.id,
+          name: item.name,
+          albums: item.albums,
+          tracks: item.tracks,
+          roles: formatRolesSummary(item.roles),
+          item: JSON.parse(JSON.stringify(item))
+        });
+        renderAll();
+        showToast(
+          `已确认《${item.name}》为单一艺人，已移出复合署名并放行 MusicBrainz / Last.fm 匹配`,
+          '撤回豁免',
+          () => undoExemption(item.id)
+        );
+      }
+
+      function undoExemption(artistId) {
+        const idx = state.exemptions.findIndex((e) => e.id === artistId);
+        if (idx < 0) return;
+        const ex = state.exemptions.splice(idx, 1)[0];
+        state.credits.unshift(ex.item);
+        renderAll();
+        showToast(`已撤回《${ex.name}》的单一艺人豁免，重新回到复合署名队列`);
+      }
+
+      function renderCountsAndControls() {
+        $('#tab-count-credits').textContent = state.credits.length;
+        $('#tab-count-applied').textContent = state.appliedDecisions.length;
+        $('#tab-count-rules').textContent = state.activeRules.length + state.exemptions.length;
+
+        $$('[data-set-mode]').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.setMode === state.creditMode);
+        });
+        $('#select-credit-mode').value = state.creditMode;
+
+        const modePill = $('#applied-mode-pill');
+        if (state.creditMode === 'auto') {
+          modePill.textContent = '分级自治 ≥92%';
+          modePill.className = 'status-pill is-auto';
+        } else if (state.creditMode === 'recommend') {
+          modePill.textContent = '仅给建议';
+          modePill.className = 'status-pill is-recommend';
+        } else {
+          modePill.textContent = '已关闭';
+          modePill.className = 'status-pill';
+        }
+
+        const highItems = state.credits.filter(isHighConfidence);
+        const batchBtn = $('#btn-batch-high');
+        batchBtn.disabled = highItems.length === 0;
+        if (state.batchArmed && highItems.length > 0) {
+          batchBtn.classList.remove('btn-primary');
+          batchBtn.classList.add('btn-danger');
+          $('#batch-high-label').textContent = `再次点击确认批量拆分 ${highItems.length} 位`;
+        } else {
+          batchBtn.classList.remove('btn-danger');
+          batchBtn.classList.add('btn-primary');
+          $('#batch-high-label').textContent = `批量应用高置信拆分（${highItems.length} 位 ≥92%）`;
+          state.batchArmed = false;
+        }
+      }
+
+      function renderFilterChips() {
+        const counts = {
+          all: state.credits.length,
+          high: state.credits.filter((c) => bucketOf(c) === 'high').length,
+          manual: state.credits.filter((c) => bucketOf(c) === 'manual').length,
+          non_composite: state.credits.filter((c) => bucketOf(c) === 'non_composite').length,
+          unanalyzed: state.credits.filter((c) => bucketOf(c) === 'unanalyzed').length
+        };
+        const defs = [
+          ['all', '全部'],
+          ['high', '高置信待拆 ≥92%'],
+          ['manual', '需人工复核'],
+          ['non_composite', 'AI 判定非复合'],
+          ['unanalyzed', '未分析']
+        ];
+        $('#credit-filter-chips').innerHTML = defs.map(([key, label]) => `
+          <button type="button" class="chip ${state.filter === key ? 'active' : ''}" data-filter="${key}">
+            <span>${label}</span>
+            <span class="chip-num">${counts[key]}</span>
+          </button>
+        `).join('');
+      }
+
+      function renderCreditsGrid() {
+        const q = state.search.trim().toLowerCase();
+        const visible = state.credits.filter((item) => {
+          if (state.filter !== 'all' && bucketOf(item) !== state.filter) return false;
+          if (!q) return true;
+          const hay = [
+            item.name,
+            ...(item.ai?.parts || []),
+            ...item.roles.map((r) => r.label)
+          ].join(' ').toLowerCase();
+          return hay.includes(q);
+        });
+
+        const grid = $('#credits-grid');
+        if (visible.length === 0) {
+          grid.innerHTML = `<div class="zero-state">
+            <strong>${state.credits.length === 0 ? '复合署名队列已清空' : '当前筛选条件下没有匹配项'}</strong>
+            <span>${state.credits.length === 0
+              ? '所有待处理复合署名均已拆分或确认单一艺人；如需回退可前往「任务与自动拆分撤销」一键撤销。'
+              : '切换上方筛选胶囊或清空搜索关键词以查看其余条目。'}</span>
+          </div>`;
+          return;
+        }
+
+        grid.innerHTML = visible.map((item) => {
+          const isEditing = state.editingId === item.id;
+          const draft = state.editDrafts[item.id] || {
+            parts: item.ai && item.ai.parts && item.ai.parts.length ? [...item.ai.parts] : item.name.split(/\s*(?:,|&|\/|feat\.?)\s*/i).filter(Boolean),
+            error: ''
+          };
+
+          const rolesHtml = item.roles.map((r) =>
+            `<span class="role-pill ${r.kind === 'primary' ? 'is-primary' : 'is-backstage'}">${esc(r.label)} ${r.count}</span>`
+          ).join('');
+
+          let aiBlock = '';
+          if (item.ai) {
+            let chipClass = 'tone-uncertain';
+            let chipText = `AI 不确定 · ${item.ai.confidence}%`;
+            if (item.ai.isComposite) {
+              chipClass = isHighConfidence(item) ? 'tone-accept' : 'tone-uncertain';
+              chipText = `AI 建议拆分 · ${item.ai.confidence}%`;
+            } else if (item.ai.action === 'recommend_reject') {
+              chipClass = 'tone-reject';
+              chipText = `AI 判定非复合署名 · ${item.ai.confidence}%`;
+            }
+
+            const partsPreview = item.ai.isComposite && item.ai.parts.length && !isEditing
+              ? `<div class="split-preview" aria-label="建议拆分结果">
+                  ${item.ai.parts.map((p) => {
+                    const isNew = !EXISTING_LIBRARY_ARTISTS.has(p);
+                    return `<span class="split-part">${esc(p)}${isNew ? '<span class="new-dot">新艺人</span>' : ''}</span>`;
+                  }).join('<span class="split-sep">/</span>')}
+                </div>`
+              : '';
+
+            aiBlock = `
+              <div class="ai-line">
+                <span class="ai-chip ${chipClass}">${chipText}</span>
+                ${partsPreview}
+              </div>
+              <p class="ai-reason">${esc(item.ai.reason)}</p>
+            `;
+          } else {
+            aiBlock = `
+              <div class="ai-line">
+                <span class="ai-chip tone-uncertain">尚未 AI 分析</span>
+              </div>
+              <p class="ai-reason">疑似合作署名，可点击上方「AI 分析复合署名」自动判断，或直接展开微调手动拆分。</p>
+            `;
+          }
+
+          const editorHtml = isEditing ? `
+            <div class="split-editor" data-editor="${item.id}">
+              <div class="split-editor-head">
+                <span>编辑拆分后的独立艺人名单（回车添加）</span>
+                ${item.ai && item.ai.parts && item.ai.parts.length ? `<button type="button" class="btn btn-ghost btn-xs" data-reset-parts="${item.id}">恢复 AI 建议</button>` : ''}
+              </div>
+              <div class="editor-tags">
+                ${draft.parts.map((p, i) => `
+                  <span class="editor-tag">
+                    <span>${esc(p)}</span>
+                    <button type="button" class="editor-tag-rm" data-remove-part="${item.id}" data-part-idx="${i}" aria-label="移除 ${esc(p)}">
+                      <svg class="icon icon-sm"><use href="#i-x"/></svg>
+                    </button>
+                  </span>
+                `).join('')}
+              </div>
+              <div class="editor-add-row">
+                <input type="text" class="editor-input" data-add-input="${item.id}" placeholder="输入艺人名称后按回车或点击添加…" aria-label="新增拆分艺人">
+                <button type="button" class="btn btn-secondary btn-xs" data-add-part="${item.id}">
+                  <svg class="icon icon-sm"><use href="#i-plus"/></svg>
+                  添加
+                </button>
+              </div>
+              ${draft.error ? `<div class="editor-error" role="alert">${esc(draft.error)}</div>` : ''}
+            </div>
+          ` : '';
+
+          const isNonComposite = item.ai && !item.ai.isComposite && item.ai.action === 'recommend_reject';
+          let actionsHtml = '';
+          if (isEditing) {
+            actionsHtml = `
+              <div class="card-actions-left">
+                <button type="button" class="btn btn-ghost btn-xs" data-cancel-edit="${item.id}">取消</button>
+              </div>
+              <div class="card-actions-right">
+                <button type="button" class="btn btn-primary btn-sm" data-apply-edited="${item.id}">
+                  <svg class="icon icon-sm"><use href="#i-check"/></svg>
+                  应用微调后拆分（${item.tracks} 首${item.albums ? ` · ${item.albums} 专` : ''}）
+                </button>
+              </div>
+            `;
+          } else if (isNonComposite) {
+            actionsHtml = `
+              <div class="card-actions-left">
+                <button type="button" class="btn btn-ghost btn-xs" data-open-edit="${item.id}">
+                  <svg class="icon icon-sm"><use href="#i-edit"/></svg>
+                  手动拆分
+                </button>
+              </div>
+              <div class="card-actions-right">
+                <button type="button" class="btn btn-secondary btn-sm" data-exempt-single="${item.id}">
+                  <svg class="icon icon-sm"><use href="#i-shield"/></svg>
+                  确认为单一艺人
+                </button>
+              </div>
+            `;
+          } else if (item.ai && item.ai.isComposite && item.ai.parts.length) {
+            actionsHtml = `
+              <div class="card-actions-left">
+                <button type="button" class="btn btn-secondary btn-xs" data-open-edit="${item.id}">
+                  <svg class="icon icon-sm"><use href="#i-edit"/></svg>
+                  微调人名
+                </button>
+                <button type="button" class="btn btn-ghost btn-xs" data-exempt-single="${item.id}">非复合</button>
+              </div>
+              <div class="card-actions-right">
+                <button type="button" class="btn btn-primary btn-sm" data-apply-split="${item.id}">
+                  一键应用拆分
+                </button>
+              </div>
+            `;
+          } else {
+            actionsHtml = `
+              <div class="card-actions-left">
+                <button type="button" class="btn btn-ghost btn-xs" data-exempt-single="${item.id}">确认为单一艺人</button>
+              </div>
+              <div class="card-actions-right">
+                <button type="button" class="btn btn-secondary btn-sm" data-open-edit="${item.id}">
+                  <svg class="icon icon-sm"><use href="#i-edit"/></svg>
+                  手动拆分
+                </button>
+              </div>
+            `;
+          }
+
+          return `<article class="credit-card" data-credit-card="${item.id}">
+            <header class="credit-card-head">
+              <div class="credit-title-group">
+                <div class="credit-name-row">
+                  <span class="credit-name">${esc(item.name)}</span>
+                  <span class="credit-stats">${item.albums} 张专辑 · ${item.tracks} 首</span>
+                </div>
+                <div class="role-row">${rolesHtml}</div>
+              </div>
+            </header>
+            <div class="credit-card-body">
+              ${aiBlock}
+              ${editorHtml}
+              <div class="card-actions">${actionsHtml}</div>
+            </div>
+          </article>`;
+        }).join('');
+      }
+
+      function renderTasksAndRules() {
+        const appliedEl = $('#applied-list');
+        if (!state.appliedDecisions.length) {
+          appliedEl.innerHTML = `<div class="zero-state"><strong>暂无可撤销记录</strong><span>执行 AI 自动拆分或人工拆分后，记录会集中出现在这里。</span></div>`;
+        } else {
+          appliedEl.innerHTML = state.appliedDecisions.map((d) => `
+            <div class="applied-row">
+              <div class="applied-row-main">
+                <div class="applied-row-top">
+                  <span class="ai-chip ${d.kind === 'credit_split' ? 'tone-auto' : 'tone-accept'}">${d.kind === 'credit_split' ? '复合署名拆分' : '艺术家匹配'}</span>
+                  <span class="muted tabular" style="font-size:0.75rem;font-weight:600;">置信度 ${d.confidence}%</span>
+                </div>
+                <strong style="font-size:0.86rem;overflow-wrap:anywhere;">${esc(d.title)}</strong>
+                <span class="applied-row-meta">${esc(d.reason)}</span>
+              </div>
+              <button type="button" class="btn btn-secondary btn-xs" data-revert-decision="${d.decisionId}">
+                <svg class="icon icon-sm"><use href="#i-undo"/></svg>
+                一键撤销
+              </button>
+            </div>
+          `).join('');
+        }
+
+        $('#session-summary').innerHTML = `
+          <div class="tabular">
+            累计更新关联：<strong>${state.stats.tracksUpdated}</strong> 首曲目 · <strong>${state.stats.albumsUpdated}</strong> 张专辑<br>
+            生效持久化拆分规则：<strong>${state.activeRules.length}</strong> 条 · 单一艺人豁免：<strong>${state.exemptions.length}</strong> 位<br>
+            拆分新建单人艺人：<strong>${state.stats.newArtistsCreated}</strong> 位 · 缓存免重评省 token：<strong>${state.stats.tokensSavedByCache}</strong> 次
+          </div>
+        `;
+
+        $('#active-rules-count').textContent = `${state.activeRules.length} 条生效`;
+        const rulesEl = $('#rules-list');
+        if (!state.activeRules.length) {
+          rulesEl.innerHTML = `<div class="zero-state"><strong>尚无生效拆分规则</strong><span>拆分任意复合署名后，持久化规则会记录于此并在后续全库重扫时自动重放。</span></div>`;
+        } else {
+          rulesEl.innerHTML = state.activeRules.map((r) => `
+            <div class="applied-row">
+              <div class="applied-row-main">
+                <div class="applied-row-top">
+                  <strong>${esc(r.compositeName)}</strong>
+                  <span class="arrow-inline">→</span>
+                  <span>${r.parts.map((p) => `<span class="split-part">${esc(p)}</span>`).join(' ')}</span>
+                </div>
+                <span class="applied-row-meta">覆盖角色：${esc(r.roles)} · 来源：${r.source === 'ai' ? 'AI 自动' : '人工应用'} · 孤儿清理已保护</span>
+              </div>
+              <button type="button" class="btn btn-secondary btn-xs" data-revert-decision="${r.id}">撤销规则</button>
+            </div>
+          `).join('');
+        }
+
+        $('#exemptions-count').textContent = `${state.exemptions.length} 位豁免`;
+        const exEl = $('#exemptions-list');
+        if (!state.exemptions.length) {
+          exEl.innerHTML = `<div class="zero-state"><strong>尚无单一艺人豁免</strong><span>例如对「Simon &amp; Garfunkel」点击「确认为单一艺人」后，将记录在此并放行身份匹配。</span></div>`;
+        } else {
+          exEl.innerHTML = state.exemptions.map((e) => `
+            <div class="applied-row">
+              <div class="applied-row-main">
+                <div class="applied-row-top">
+                  <strong>${esc(e.name)}</strong>
+                  <span class="status-pill is-auto">已放行 MB / Last.fm</span>
+                </div>
+                <span class="applied-row-meta">${e.albums} 张专辑 · ${e.tracks} 首（${esc(e.roles)}）</span>
+              </div>
+              <button type="button" class="btn btn-secondary btn-xs" data-undo-exempt="${e.id}">撤回豁免</button>
+            </div>
+          `).join('');
+        }
+      }
+
+      function renderTabs() {
+        $$('.admin-tab').forEach((tab) => {
+          const on = tab.dataset.tab === state.activeTab;
+          tab.classList.toggle('active', on);
+          tab.setAttribute('aria-selected', String(on));
+        });
+        $('#panel-credits').hidden = state.activeTab !== 'credits';
+        $('#panel-tasks').hidden = state.activeTab !== 'tasks';
+        $('#panel-rules').hidden = state.activeTab !== 'rules';
+      }
+
+      function renderAll() {
+        renderCountsAndControls();
+        renderFilterChips();
+        renderCreditsGrid();
+        renderTasksAndRules();
+        renderTabs();
+      }
+
+      function startSimulatedAIRun() {
+        if (state.creditMode === 'off') {
+          showToast('复合署名 AI 策略当前为「关闭」，请先在设置中启用「仅给建议」或「分级自治」');
+          return;
+        }
+        if (state.runningTimer) return;
+
+        // Collect items: either unanalyzed, or (in auto mode) cached high-confidence items eligible for zero-token upgrade.
+        const queue = state.credits.filter((c) => !c.ai || (state.creditMode === 'auto' && isHighConfidence(c)));
+        if (!queue.length) {
+          showToast(state.creditMode === 'auto'
+            ? '当前没有可自动升级或待分析的复合署名条目'
+            : '所有复合署名均已分析完毕（当前为「仅给建议」模式，可点批量应用或切至「分级自治」）');
+          return;
+        }
+
+        const strip = $('#active-run-strip');
+        strip.hidden = false;
+        $('#run-dot').classList.remove('is-done');
+        $('#run-status').textContent = '运行中';
+        const total = queue.length;
+        let processed = 0;
+        let autoSplit = 0;
+        let cacheUpgraded = 0;
+        let recommended = 0;
+        let nonComposite = 0;
+
+        function updateProgress(label) {
+          $('#run-progress-fill').style.width = `${Math.round((processed / total) * 100)}%`;
+          $('#run-counts').textContent = `处理 ${processed} / ${total} · 自动拆分 ${autoSplit}（其中缓存免重评 ${cacheUpgraded}）· 留待人工 ${recommended} · 非复合 ${nonComposite}`;
+          $('#run-current').textContent = label;
+        }
+        updateProgress('初始化队列…');
+
+        let idx = 0;
+        state.runningTimer = setInterval(() => {
+          if (idx >= queue.length) {
+            clearInterval(state.runningTimer);
+            state.runningTimer = null;
+            $('#run-dot').classList.add('is-done');
+            $('#run-status').textContent = '已完成';
+            updateProgress('全部处理完成');
+            setTimeout(() => { strip.hidden = true; }, 1600);
+            showToast(state.creditMode === 'auto'
+              ? `AI 预审完成：自动拆分 ${autoSplit} 位（${cacheUpgraded} 位复用已有缓存免调模型），其余留待人工确认`
+              : `AI 分析完成：新增 ${recommended} 条拆分建议`);
+            renderAll();
+            return;
+          }
+
+          const target = queue[idx++];
+          const live = state.credits.find((c) => c.id === target.id);
+          processed += 1;
+          if (!live) {
+            updateProgress(`跳过已处理项`);
+            return;
+          }
+
+          if (!live.ai && live.futureAI) {
+            live.ai = JSON.parse(JSON.stringify(live.futureAI));
+            if (state.creditMode === 'auto' && isHighConfidence(live)) {
+              const res = applySplitItem(live.id, live.ai.parts, 'ai', false);
+              if (res.ok) autoSplit += 1;
+            } else if (live.ai.isComposite) {
+              recommended += 1;
+            } else {
+              nonComposite += 1;
+            }
+            updateProgress(`新评估：${live.name}`);
+          } else if (state.creditMode === 'auto' && isHighConfidence(live)) {
+            const res = applySplitItem(live.id, live.ai.parts, 'ai', true);
+            if (res.ok) {
+              autoSplit += 1;
+              cacheUpgraded += 1;
+            }
+            updateProgress(`缓存免重评自动拆分：${live.name}`);
+          } else {
+            recommended += 1;
+            updateProgress(`保留建议：${live.name}`);
+          }
+          renderAll();
+        }, 420);
+      }
+
+      /* ---- Event Delegation ---- */
+      document.addEventListener('click', (e) => {
+        const el = e.target.closest('button');
+        if (!el) return;
+
+        // Tabs
+        if (el.dataset.tab) {
+          state.activeTab = el.dataset.tab;
+          state.batchArmed = false;
+          renderTabs();
+          return;
+        }
+
+        // Proto mode toggle
+        if (el.dataset.setMode) {
+          state.creditMode = el.dataset.setMode;
+          renderAll();
+          showToast(state.creditMode === 'auto'
+            ? '已切换为「分级自治（≥92% 自动拆分）」，点「AI 分析复合署名」即可体验缓存免重评自动落库'
+            : '已切换为「仅给建议」模式，AI 仅输出建议方案供人工应用');
+          return;
+        }
+
+        // Filter chips
+        if (el.dataset.filter) {
+          state.filter = el.dataset.filter;
+          renderFilterChips();
+          renderCreditsGrid();
+          return;
+        }
+
+        // Single click split (direct AI parts)
+        if (el.dataset.applySplit) {
+          const id = Number(el.dataset.applySplit);
+          const item = state.credits.find((c) => c.id === id);
+          if (!item || !item.ai) return;
+          const res = applySplitItem(id, item.ai.parts, 'manual', false);
+          if (!res.ok) {
+            showToast(res.error);
+            return;
+          }
+          renderAll();
+          showToast(
+            `已拆分为 ${res.parts.join('、')}（更新 ${res.item.tracks} 首曲目${res.item.albums ? `、${res.item.albums} 张专辑` : ''}）`,
+            '撤销',
+            () => revertDecision(res.decisionId)
+          );
+          return;
+        }
+
+        // Open inline editor
+        if (el.dataset.openEdit) {
+          const id = Number(el.dataset.openEdit);
+          const item = state.credits.find((c) => c.id === id);
+          if (!item) return;
+          state.editingId = id;
+          state.editDrafts[id] = {
+            parts: item.ai && item.ai.parts && item.ai.parts.length
+              ? [...item.ai.parts]
+              : item.name.split(/\s*(?:,|&|\/|feat\.?)\s*/i).filter(Boolean),
+            error: ''
+          };
+          renderCreditsGrid();
+          const input = $(`[data-add-input="${id}"]`);
+          if (input) input.focus();
+          return;
+        }
+
+        if (el.dataset.cancelEdit) {
+          state.editingId = null;
+          renderCreditsGrid();
+          return;
+        }
+
+        if (el.dataset.resetParts) {
+          const id = Number(el.dataset.resetParts);
+          const item = state.credits.find((c) => c.id === id);
+          if (item && item.ai) {
+            state.editDrafts[id] = { parts: [...item.ai.parts], error: '' };
+            renderCreditsGrid();
+          }
+          return;
+        }
+
+        if (el.dataset.removePart) {
+          const id = Number(el.dataset.removePart);
+          const idx = Number(el.dataset.partIdx);
+          if (state.editDrafts[id]) {
+            state.editDrafts[id].parts.splice(idx, 1);
+            state.editDrafts[id].error = '';
+            renderCreditsGrid();
+          }
+          return;
+        }
+
+        if (el.dataset.addPart) {
+          const id = Number(el.dataset.addPart);
+          const input = $(`[data-add-input="${id}"]`);
+          const val = input ? input.value.trim() : '';
+          if (val && state.editDrafts[id]) {
+            state.editDrafts[id].parts.push(val);
+            state.editDrafts[id].error = '';
+            renderCreditsGrid();
+            const nextInput = $(`[data-add-input="${id}"]`);
+            if (nextInput) nextInput.focus();
+          }
+          return;
+        }
+
+        if (el.dataset.applyEdited) {
+          const id = Number(el.dataset.applyEdited);
+          const draft = state.editDrafts[id];
+          if (!draft) return;
+          const res = applySplitItem(id, draft.parts, 'manual', false);
+          if (!res.ok) {
+            draft.error = res.error;
+            renderCreditsGrid();
+            return;
+          }
+          renderAll();
+          showToast(
+            `已按微调结果拆分为 ${res.parts.join('、')}（更新 ${res.item.tracks} 首曲目${res.item.albums ? `、${res.item.albums} 张专辑` : ''}）`,
+            '撤销',
+            () => revertDecision(res.decisionId)
+          );
+          return;
+        }
+
+        // Exempt single artist
+        if (el.dataset.exemptSingle) {
+          exemptSingleArtist(Number(el.dataset.exemptSingle));
+          return;
+        }
+
+        // Undo exemption
+        if (el.dataset.undoExempt) {
+          undoExemption(Number(el.dataset.undoExempt));
+          return;
+        }
+
+        // Revert decision
+        if (el.dataset.revertDecision) {
+          revertDecision(Number(el.dataset.revertDecision));
+          return;
+        }
+      });
+
+      // Enter key in inline editor input adds part
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.matches('[data-add-input]')) {
+          e.preventDefault();
+          const id = Number(e.target.dataset.addInput);
+          const val = e.target.value.trim();
+          if (val && state.editDrafts[id]) {
+            state.editDrafts[id].parts.push(val);
+            state.editDrafts[id].error = '';
+            renderCreditsGrid();
+            const nextInput = $(`[data-add-input="${id}"]`);
+            if (nextInput) nextInput.focus();
+          }
+        }
+      });
+
+      // Batch apply high-confidence (2-step confirm)
+      $('#btn-batch-high').addEventListener('click', () => {
+        const targets = state.credits.filter(isHighConfidence);
+        if (!targets.length) return;
+        if (!state.batchArmed) {
+          state.batchArmed = true;
+          renderCountsAndControls();
+          return;
+        }
+        state.batchArmed = false;
+        let count = 0;
+        let tracks = 0;
+        let albums = 0;
+        const ids = targets.map((t) => t.id);
+        for (const id of ids) {
+          const live = state.credits.find((c) => c.id === id);
+          if (!live || !live.ai) continue;
+          const res = applySplitItem(live.id, live.ai.parts, 'manual', false);
+          if (res.ok) {
+            count += 1;
+            tracks += res.item.tracks;
+            albums += res.item.albums;
+          }
+        }
+        renderAll();
+        showToast(
+          `已批量拆分 ${count} 位高置信复合署名（更新 ${tracks} 首曲目${albums ? `、${albums} 张专辑` : ''}）`,
+          '查看撤销记录',
+          () => {
+            state.activeTab = 'tasks';
+            renderTabs();
+          }
+        );
+      });
+
+      $('#btn-run-credit-ai').addEventListener('click', startSimulatedAIRun);
+      $('#btn-header-ai-run').addEventListener('click', startSimulatedAIRun);
+
+      $('#btn-cancel-run').addEventListener('click', () => {
+        if (state.runningTimer) {
+          clearInterval(state.runningTimer);
+          state.runningTimer = null;
+          $('#active-run-strip').hidden = true;
+          showToast('已停止 AI 复合署名预审任务');
+        }
+      });
+
+      $('#credit-search').addEventListener('input', (e) => {
+        state.search = e.target.value;
+        renderCreditsGrid();
+      });
+
+      $('#btn-toggle-theme').addEventListener('click', () => {
+        const root = document.documentElement;
+        root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      });
+
+      $('#btn-reset-demo').addEventListener('click', () => {
+        if (state.runningTimer) clearInterval(state.runningTimer);
+        state = createInitialState();
+        $('#active-run-strip').hidden = true;
+        $('#credit-search').value = '';
+        renderAll();
+        showToast('已重置全部演示数据');
+      });
+
+      const dialog = $('#settings-dialog');
+      const openSettings = () => {
+        $('#select-credit-mode').value = state.creditMode;
+        dialog.showModal();
+      };
+      $('#btn-open-settings').addEventListener('click', openSettings);
+      $('#btn-header-settings').addEventListener('click', openSettings);
+      $('#btn-close-settings').addEventListener('click', () => dialog.close());
+      $('#btn-cancel-settings').addEventListener('click', () => dialog.close());
+      dialog.addEventListener('click', (e) => {
+        if (e.target === dialog) dialog.close();
+      });
+      $('#settings-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        state.creditMode = $('#select-credit-mode').value;
+        dialog.close();
+        renderAll();
+        const labels = { off: '关闭', recommend: '仅给建议', auto: '分级自治（≥92% 自动拆分）' };
+        showToast(`AI 复合署名策略已保存为：${labels[state.creditMode]}`);
+      });
+
+      $('#toast-action').addEventListener('click', () => {
+        if (typeof lastToastUndo === 'function') {
+          const fn = lastToastUndo;
+          lastToastUndo = null;
+          $('#toast').classList.remove('is-open');
+          fn();
+        }
+      });
+
+      $('#btn-simulate-rescan').addEventListener('click', () => {
+        const count = state.activeRules.length;
+        showToast(count > 0
+          ? `模拟全库重扫完成：已自动重放 ${count} 条持久化拆分规则，0 条回退为复合署名，孤儿清理已保护全部规则艺人`
+          : '当前暂无生效拆分规则，请先拆分至少 1 条复合署名后再模拟全库重扫');
+      });
+
+      $('#btn-simulate-mb-scan').addEventListener('click', () => {
+        const exNames = state.exemptions.map((e) => e.name);
+        const newCount = state.stats.newArtistsCreated;
+        if (!exNames.length && !newCount) {
+          showToast('暂无新增单人艺人或已豁免组合；可先拆分「Alice Duport-Percier, Lorien Testard」或豁免「Simon & Garfunkel」');
+          return;
+        }
+        showToast(`增量匹配已纳入 ${newCount} 位新单人艺人${exNames.length ? `与已豁免单一艺人（${exNames.join('、')}）` : ''}，可正常绑定 MusicBrainz 身份`);
+      });
+
+      renderAll();
+    })();
+  </script>
+</body>
+</html>

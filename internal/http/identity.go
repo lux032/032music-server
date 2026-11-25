@@ -15,11 +15,12 @@ import (
 )
 
 type matchReviewItem struct {
-	Artist     storage.Artist
-	Candidates []storage.ArtistCandidate
-	Conflicts  map[int64]storage.ArtistIdentityConflict
-	PageURLs   map[int64]string
-	AI         *aiDecisionView
+	Artist        storage.Artist
+	Candidates    []storage.ArtistCandidate
+	Conflicts     map[int64]storage.ArtistIdentityConflict
+	PageURLs      map[int64]string
+	RoleBreakdown []storage.ArtistRoleSummary
+	AI            *aiDecisionView
 }
 
 func (m matchReviewItem) ConflictFor(candidateID int64) *storage.ArtistIdentityConflict {
@@ -130,6 +131,7 @@ type identityPageData struct {
 	ReviewPage                                               int
 	CreditReviewTotal, CreditReviewLimit, CreditReviewOffset int
 	CreditReviewPage                                         int
+	CreditHighConfidenceCount                                int
 	ReviewQuery, ReviewSource                                string
 	// 历史任务分页（GET server 控制，1 起页码）。
 	ArtistRunsPage  int
@@ -1002,6 +1004,10 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	}
 	artistAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetArtistMatch, reviewIDs)
 	creditAIMap, _ := a.store.AIReviewDecisionsForTargets(r.Context(), storage.AITargetCreditSplit, creditIDs)
+	creditRolesMap, _ := a.store.ArtistRoleBreakdownForIDs(r.Context(), creditIDs)
+	if highCands, hErr := a.store.HighConfidencePendingCreditSplits(r.Context(), 92); hErr == nil {
+		data.CreditHighConfidenceCount = len(highCands)
+	}
 	for _, item := range identityPage.Items {
 		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs}
 		if d, ok := artistAIMap[item.Artist.ID]; ok {
@@ -1010,7 +1016,7 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		data.Review = append(data.Review, review)
 	}
 	for _, item := range creditsPageData.Items {
-		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs}
+		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs, RoleBreakdown: creditRolesMap[item.Artist.ID]}
 		if d, ok := creditAIMap[item.Artist.ID]; ok {
 			review.AI = buildAIDecisionView(d)
 		}
@@ -1018,7 +1024,7 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	}
 	artistAIScopes := []string{"artists_all", "artist_matches", "credit_splits"}
 	data.AIConfigured, data.AIReviewEnabled, data.ActiveAIRun, data.LastAIRun = a.aiReviewMeta(r.Context(), artistAIScopes)
-	if applied, err := a.store.RecentAIAppliedDecisions(r.Context(), []string{storage.AITargetArtistMatch}, 30); err == nil {
+	if applied, err := a.store.RecentAIAppliedDecisions(r.Context(), []string{storage.AITargetArtistMatch, storage.AITargetCreditSplit}, 30); err == nil {
 		data.AIApplied = applied
 	}
 	// 头像补全区块：统计只读 DB+磁盘；失败只记日志，页面其余部分照常渲染。

@@ -55,7 +55,7 @@ func TestAISettingsPageAndSave(t *testing.T) {
 		"track_mode":        {"recommend"},
 		"work_mode":         {"auto"},
 		"artist_mode":       {"auto"},
-		"credit_mode":       {"recommend"},
+		"credit_mode":       {"auto"},
 		"series_mode":       {"recommend"},
 	})
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), url.QueryEscape("AI 设置已保存")) {
@@ -67,7 +67,7 @@ func TestAISettingsPageAndSave(t *testing.T) {
 		t.Fatalf("unexpected saved AI settings: %+v err=%v", st, err)
 	}
 	rev, err := store.AIReviewSettings(context.Background())
-	if err != nil || !rev.Enabled || !rev.InlineEnabled || rev.TrackMode != "recommend" {
+	if err != nil || !rev.Enabled || !rev.InlineEnabled || rev.TrackMode != "recommend" || rev.CreditMode != storage.AIReviewModeAuto {
 		t.Fatalf("unexpected saved AI review settings: %+v err=%v", rev, err)
 	}
 }
@@ -384,5 +384,155 @@ func TestMatchReviewIdentityConflictLinksAndDirectMerge(t *testing.T) {
 	detail, err := store.ArtistDetail(ctx, sourceID)
 	if err != nil || detail.MergedIntoID != targetID {
 		t.Fatalf("expected source merged into %d, got detail=%+v err=%v", targetID, detail, err)
+	}
+}
+
+func TestCreditSplitWorkbenchEditBatchExemptAndRevert(t *testing.T) {
+	store := credentialTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureLibrary(ctx, "Music", "/music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := store.LibraryByRoot(ctx, "/music")
+
+	// 1. Backstage composer-only composite (for edited inline split)
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "XC/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Counterattack", Album: "XC2 OST",
+			Artists: []string{"Performer"}, AlbumArtists: []string{"Performer"},
+			Composer: "ACE, 亀岡夏海", DiscNumber: 1, TrackNumber: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 2. High-confidence backstage composite (for batch apply + revert)
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "E33/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Lumiere", Album: "E33 OST",
+			Artists: []string{"Main"}, AlbumArtists: []string{"Main"},
+			Composer: "Alice Duport-Percier, Lorien Testard", DiscNumber: 1, TrackNumber: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 3. Low-confidence composite (must NOT be touched by batch apply)
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "EG/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Song EG", Album: "EG Single",
+			Artists: []string{"Vocal"}, AlbumArtists: []string{"Vocal"},
+			Lyricist: "Asuka Oda & Daisuke Kikuta", DiscNumber: 1, TrackNumber: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 4. Genuine duo flagged by heuristic (for single-artist exemption)
+	if err := store.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "SG/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Sound of Silence", Album: "SG Album",
+			Artists: []string{"Simon & Garfunkel"}, AlbumArtists: []string{"Simon & Garfunkel"},
+			DiscNumber: 1, TrackNumber: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	allArtists, _ := store.ArtistsForMatching(ctx)
+	ids := map[string]int64{}
+	for _, a := range allArtists {
+		ids[a.Name] = a.ID
+		if a.Name == "ACE, 亀岡夏海" || a.Name == "Alice Duport-Percier, Lorien Testard" || a.Name == "Asuka Oda & Daisuke Kikuta" || a.Name == "Simon & Garfunkel" {
+			_ = store.SaveArtistCompositeSkip(ctx, a, nil)
+		}
+	}
+
+	// Save cached AI decisions: ACE (100%), Alice (100%), Asuka (89%), Simon & Garfunkel (non-composite 99%).
+	saveDec := func(artistID int64, action string, conf int, isComp bool, parts []string, reason string) {
+		p, _ := json.Marshal(map[string]any{"isComposite": isComp, "parts": parts})
+		if _, err := store.SaveAIReviewDecision(ctx, storage.AIReviewDecision{
+			TargetKind: storage.AITargetCreditSplit, TargetID: artistID,
+			Action: action, Confidence: conf, Payload: p, Reason: reason,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveDec(ids["ACE, 亀岡夏海"], storage.AIActionRecommendAccept, 100, true, []string{"ACE", "亀岡夏海"}, "作曲组合")
+	saveDec(ids["Alice Duport-Percier, Lorien Testard"], storage.AIActionRecommendAccept, 100, true, []string{"Alice Duport-Percier", "Lorien Testard"}, "两位作曲家")
+	saveDec(ids["Asuka Oda & Daisuke Kikuta"], storage.AIActionRecommendAccept, 89, true, []string{"Asuka Oda", "Daisuke Kikuta"}, "置信度偏低")
+	saveDec(ids["Simon & Garfunkel"], storage.AIActionRecommendReject, 99, false, nil, "真实双人组合")
+
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	// Tab 2 renders role breakdown badges, batch high-confidence button (2 items >=92%), inline editor, and exempt CTA.
+	body := getAdmin(t, handler, cookie, "/admin/matches?tab=credits")
+	for _, want := range []string{
+		`批量应用高置信拆分（2 位 ≥92%）`,
+		`作曲 1`,
+		`data-credit-edit-toggle`,
+		`确认为单一艺人`,
+		`/admin/matches/credits/apply-high-confidence`,
+		fmt.Sprintf(`/admin/artists/%d/exempt-composite`, ids["Simon & Garfunkel"]),
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("credits tab missing %q", want)
+		}
+	}
+
+	// 1. Inline edited split on backstage-only composite ("ACE, 亀岡夏海" -> custom "ACE / Natsumi Kameoka").
+	editRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/apply-credit-split", ids["ACE, 亀岡夏海"]), url.Values{
+		"parts":    {"ACE / Natsumi Kameoka"},
+		"returnTo": {"/admin/matches?tab=credits"},
+	})
+	if editRec.Code != http.StatusSeeOther || !strings.Contains(editRec.Header().Get("Location"), url.QueryEscape("更新 1 首曲目")) {
+		t.Fatalf("edited backstage split unexpected response: code=%d loc=%q", editRec.Code, editRec.Header().Get("Location"))
+	}
+
+	// 2. Batch apply high-confidence splits: should apply remaining 1 high-confidence item (Alice) and leave Asuka (89%).
+	batchRec := postSecurity(t, app, handler, cookie, "/admin/matches/credits/apply-high-confidence", url.Values{
+		"returnTo": {"/admin/matches?tab=credits"},
+	})
+	if batchRec.Code != http.StatusSeeOther || !strings.Contains(batchRec.Header().Get("Location"), url.QueryEscape("已批量拆分 1 位高置信复合署名")) {
+		t.Fatalf("batch apply unexpected response: code=%d loc=%q", batchRec.Code, batchRec.Header().Get("Location"))
+	}
+
+	// Batch-applied Alice split must appear in AI recent applied list on /admin/matches and be revertible!
+	tasksBody := getAdmin(t, handler, cookie, "/admin/matches?tab=tasks")
+	if !strings.Contains(tasksBody, "AI 最近自动处理记录") || !strings.Contains(tasksBody, "复合署名拆分") {
+		t.Fatal("tasks tab missing auto-applied credit_split record for revert")
+	}
+	aliceDec, ok, err := store.AIReviewDecisionByTarget(ctx, storage.AITargetCreditSplit, ids["Alice Duport-Percier, Lorien Testard"])
+	if err != nil || !ok || !aliceDec.Applied {
+		t.Fatalf("expected applied Alice decision, ok=%v err=%v dec=%+v", ok, err, aliceDec)
+	}
+	revRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/ai-review/decisions/%d/revert", aliceDec.ID), url.Values{
+		"returnTo": {"/admin/matches?tab=tasks"},
+	})
+	if revRec.Code != http.StatusSeeOther {
+		t.Fatalf("revert credit split redirect = %d", revRec.Code)
+	}
+	// After revert, Alice returns to Tab 2 credits list!
+	afterRevert := getAdmin(t, handler, cookie, "/admin/matches?tab=credits")
+	if !strings.Contains(afterRevert, "Alice Duport-Percier, Lorien Testard") {
+		t.Fatal("reverted composite artist should reappear on credits tab")
+	}
+
+	// 3. Exempt Simon & Garfunkel as single artist.
+	exRec := postSecurity(t, app, handler, cookie, fmt.Sprintf("/admin/artists/%d/exempt-composite", ids["Simon & Garfunkel"]), url.Values{
+		"returnTo": {"/admin/matches?tab=credits"},
+	})
+	if exRec.Code != http.StatusSeeOther || !strings.Contains(exRec.Header().Get("Location"), url.QueryEscape("已确认为单一艺人")) {
+		t.Fatalf("exempt composite unexpected response: code=%d loc=%q", exRec.Code, exRec.Header().Get("Location"))
+	}
+	afterExempt := getAdmin(t, handler, cookie, "/admin/matches?tab=credits")
+	if strings.Contains(afterExempt, "Simon &amp; Garfunkel") {
+		t.Fatal("exempted single artist should leave credits tab")
+	}
+	if !strings.Contains(afterExempt, "Asuka Oda &amp; Daisuke Kikuta") {
+		t.Fatal("low-confidence composite artist should remain on credits tab")
 	}
 }

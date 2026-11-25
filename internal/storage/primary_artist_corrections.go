@@ -321,3 +321,59 @@ func (s *Store) SetPrimaryArtistCorrection(ctx context.Context, trackID int64, t
 	}
 	return tx.Commit()
 }
+
+// setPrimaryArtistCorrectionTx writes a new primary-artist correction revision
+// inside an existing write transaction. Callers pass the current snapshot and
+// target active/ids state (when active is false, base scanner tags are restored).
+func setPrimaryArtistCorrectionTx(ctx context.Context, tx *sql.Tx, trackID int64, snapshot PrimaryArtistCorrection, ids []int64, active bool) (int64, error) {
+	if len(ids) > 32 {
+		return 0, errors.New("最多选择 32 位艺术家")
+	}
+	beforeActive := snapshot.Active
+	beforeRaw := "[]"
+	if err := tx.QueryRowContext(ctx, `SELECT artists_json FROM track_primary_artist_state WHERE track_id=?`, trackID).Scan(&beforeRaw); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	normalized := []int64{}
+	if active {
+		seen := map[int64]bool{}
+		for _, id := range ids {
+			canonical, e := canonicalArtistID(ctx, tx, id)
+			if e != nil {
+				return 0, e
+			}
+			if seen[canonical] {
+				continue
+			}
+			seen[canonical] = true
+			normalized = append(normalized, canonical)
+		}
+		if len(normalized) == 0 {
+			active = false
+		}
+	}
+	raw, _ := json.Marshal(normalized)
+	nextRev := snapshot.Revision + 1
+	if _, err := tx.ExecContext(ctx, `INSERT INTO track_primary_artist_state(track_id,revision,active,artists_json) VALUES(?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET revision=excluded.revision,active=excluded.active,artists_json=excluded.artists_json,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, trackID, nextRev, active, string(raw)); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO track_primary_artist_operations(track_id,revision,before_active,before_json,after_active,after_json) VALUES(?,?,?,?,?,?)`, trackID, nextRev, beforeActive, beforeRaw, active, string(raw)); err != nil {
+		return 0, err
+	}
+	var err error
+	if active {
+		err = applyPrimaryArtistCorrection(ctx, tx, trackID)
+	} else {
+		err = restorePrimaryArtistBase(ctx, tx, trackID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE tracks SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, trackID); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE albums SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=(SELECT album_id FROM tracks WHERE id=?)`, trackID); err != nil {
+		return 0, err
+	}
+	return nextRev, nil
+}

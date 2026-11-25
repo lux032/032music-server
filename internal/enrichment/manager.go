@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/lux032/032music-server/internal/aiclient"
-	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/netfetch"
 	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
@@ -462,9 +461,13 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 		if err != nil {
 			return MatchResult{}, err
 		}
-		if metadata.CompositeArtistCredit(input.Name) {
-			if m.inlineAI != nil {
-				m.inlineAI(ctx, storage.AITargetCreditSplit, artistID)
+		isComposite, compErr := m.store.IsCompositeArtist(ctx, artistID, input.Name)
+		if compErr != nil {
+			return MatchResult{}, compErr
+		}
+		if isComposite {
+			if m.inlineAI != nil && m.inlineAI(ctx, storage.AITargetCreditSplit, artistID) {
+				return MatchResult{AutoMatched: true, InlineAIConfirmed: true, Outcome: "matched"}, nil
 			}
 			if err := m.store.SaveArtistCompositeSkip(ctx, input, checkpoint); err != nil {
 				return MatchResult{}, err
@@ -509,7 +512,10 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 	}
 	var candidates []storage.ArtistCandidate
 	unsafeTaggedIdentity := false
-	compositeCredit := metadata.CompositeArtistCredit(artist.Name)
+	compositeCredit, err := m.store.IsCompositeArtist(ctx, artistID, artist.Name)
+	if err != nil {
+		return MatchResult{}, err
+	}
 	queriedSources := 0
 	successfulSources := 0
 	var refreshedSources []string

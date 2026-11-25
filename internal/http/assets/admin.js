@@ -1117,6 +1117,25 @@ document.addEventListener('submit', async (event) => {
       }
     }
 
+    // Credit split inline editor toggle / cancel
+    const editToggle = e.target.closest('[data-credit-edit-toggle]');
+    if (editToggle && root && root.contains(editToggle)) {
+      const id = editToggle.getAttribute('data-credit-edit-toggle');
+      const form = root.querySelector(`[data-credit-edit-form="${id}"]`);
+      if (form) {
+        form.hidden = !form.hidden;
+        if (!form.hidden) form.querySelector('input[name="parts"]')?.focus();
+      }
+      return;
+    }
+    const editCancel = e.target.closest('[data-credit-edit-cancel]');
+    if (editCancel && root && root.contains(editCancel)) {
+      const id = editCancel.getAttribute('data-credit-edit-cancel');
+      const form = root.querySelector(`[data-credit-edit-form="${id}"]`);
+      if (form) form.hidden = true;
+      return;
+    }
+
     // Close settings dialog when clicking the backdrop
     if (e.target instanceof HTMLDialogElement && e.target.classList.contains('match-settings-dialog')) {
       e.target.close();

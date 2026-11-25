@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -259,29 +260,41 @@ func (a *App) handleRevertAIReviewDecision(w http.ResponseWriter, r *http.Reques
 	redirectWithNotice(w, r, returnTo, "已撤销 AI 自动处理，候选已退回待审队列")
 }
 
+func parseSplitPartsText(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer("\r\n", "\n", " / ", "\n", "/", "\n", "、", "\n", "，", "\n", ";", "\n", "；", "\n")
+	raw = replacer.Replace(raw)
+	var parts []string
+	for _, line := range strings.Split(raw, "\n") {
+		p := strings.TrimSpace(line)
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return parts
+}
+
 func (a *App) handleApplyCreditSplit(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
 	artistID := parseInt64(r.PathValue("id"))
-	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches")
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=credits")
 	if artistID <= 0 {
 		redirectWithNotice(w, r, returnTo, "无效的艺术家 ID")
 		return
 	}
 	var parts []string
 	if err := r.ParseForm(); err == nil {
-		for _, p := range r.Form["part"] {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				parts = append(parts, p)
-			}
-		}
-	}
-	if len(parts) == 0 {
 		if raw := strings.TrimSpace(r.FormValue("parts")); raw != "" {
-			for _, p := range strings.Split(raw, " / ") {
+			parts = parseSplitPartsText(raw)
+		}
+		if len(parts) == 0 {
+			for _, p := range r.Form["part"] {
 				p = strings.TrimSpace(p)
 				if p != "" {
 					parts = append(parts, p)
@@ -293,10 +306,83 @@ func (a *App) handleApplyCreditSplit(w http.ResponseWriter, r *http.Request) {
 		redirectWithNotice(w, r, returnTo, "没有有效的拆分艺人名单")
 		return
 	}
-	updated, err := a.store.ApplyCompositeCreditSplit(r.Context(), artistID, parts)
+	res, err := a.store.ApplyCompositeCreditSplit(r.Context(), artistID, parts)
+	if errors.Is(err, storage.ErrNoCompositeReferences) {
+		redirectWithNotice(w, r, returnTo, "该复合署名当前没有可更新的曲目或专辑关联，已清理残留待审状态")
+		return
+	}
 	if err != nil {
 		redirectWithNotice(w, r, returnTo, "应用拆分失败："+err.Error())
 		return
 	}
-	redirectWithNotice(w, r, returnTo, "已将复合署名拆分为 "+strings.Join(parts, "、")+"（更新 "+strconv.Itoa(updated)+" 首曲目）")
+	msg := "已将复合署名拆分为 " + strings.Join(res.PartNames, "、") + "（更新 " + strconv.Itoa(res.TracksUpdated) + " 首曲目"
+	if res.AlbumsUpdated > 0 {
+		msg += "、" + strconv.Itoa(res.AlbumsUpdated) + " 张专辑"
+	}
+	msg += "）"
+	redirectWithNotice(w, r, returnTo, msg)
+}
+
+func (a *App) handleBatchApplyHighConfidenceCreditSplits(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=credits")
+	const minConfidence = 92
+	candidates, err := a.store.HighConfidencePendingCreditSplits(r.Context(), minConfidence)
+	if err != nil {
+		redirectWithNotice(w, r, returnTo, "加载高置信复合署名建议失败："+err.Error())
+		return
+	}
+	if len(candidates) == 0 {
+		redirectWithNotice(w, r, returnTo, "当前没有待应用的高置信（≥92%）复合署名建议")
+		return
+	}
+	applied, skipped, tracksUpdated, albumsUpdated := 0, 0, 0, 0
+	for _, c := range candidates {
+		res, snap, splitErr := a.store.ApplyCompositeCreditSplitByAI(r.Context(), c.ArtistID, c.Parts)
+		if splitErr != nil {
+			skipped++
+			continue
+		}
+		if dec, ok, dErr := a.store.AIReviewDecisionByTarget(r.Context(), storage.AITargetCreditSplit, c.ArtistID); dErr == nil && ok {
+			dec.Action = storage.AIActionAutoConfirm
+			dec.Applied = true
+			dec.AppliedSnapshot = snap
+			if decID, saveErr := a.store.SaveAIReviewDecision(r.Context(), dec); saveErr == nil && decID > 0 {
+				_ = a.store.LinkCreditSplitDecision(r.Context(), c.ArtistID, decID)
+			}
+		}
+		applied++
+		tracksUpdated += res.TracksUpdated
+		albumsUpdated += res.AlbumsUpdated
+	}
+	msg := "已批量拆分 " + strconv.Itoa(applied) + " 位高置信复合署名（更新 " + strconv.Itoa(tracksUpdated) + " 首曲目"
+	if albumsUpdated > 0 {
+		msg += "、" + strconv.Itoa(albumsUpdated) + " 张专辑"
+	}
+	msg += "）"
+	if skipped > 0 {
+		msg += "，跳过 " + strconv.Itoa(skipped) + " 位"
+	}
+	redirectWithNotice(w, r, returnTo, msg)
+}
+
+func (a *App) handleExemptCompositeArtist(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	artistID := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=credits")
+	if artistID <= 0 {
+		redirectWithNotice(w, r, returnTo, "无效的艺术家 ID")
+		return
+	}
+	if err := a.store.ExemptCompositeArtist(r.Context(), artistID, "人工确认为单一艺人"); err != nil {
+		redirectWithNotice(w, r, returnTo, "确认单一艺人失败："+err.Error())
+		return
+	}
+	redirectWithNotice(w, r, returnTo, "已确认为单一艺人，已移出复合署名并放行身份匹配扫描")
 }

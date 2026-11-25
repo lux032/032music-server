@@ -55,7 +55,7 @@
             <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg>
             <span class="match-hint-popover" id="tip-scan-ai" role="tooltip">
               <strong>AI 批量消歧与署名分析</strong>
-              <span>调用 AI 批量评估待审身份与复合署名：高置信且无冲突的身份将自动绑定并补全头像/简介（支持在「任务与补全」一键撤销），复合署名仅生成拆分建议供人工应用。</span>
+              <span>调用 AI 批量评估待审身份与复合署名：高置信且无冲突的身份将自动绑定并补全头像/简介；复合署名开启分级自治后高置信（≥92%）将自动全角色拆分，均支持在「任务与补全」一键撤销。</span>
             </span>
           </span>
         </div>
@@ -382,24 +382,40 @@
       <div class="match-section-hint">
         <div>
           <h2>需先修正署名</h2>
-          <p class="muted">以下艺术家疑似合作署名，系统不会自动绑定个人身份；可一键应用 AI 拆分，或在艺术家详情页手动修正后再重新扫描。{{if or .ReviewQuery .ReviewSource}}（当前筛选：{{if .ReviewQuery}}「{{.ReviewQuery}}」{{end}}{{if and .ReviewQuery .ReviewSource}} · {{end}}{{.ReviewSource}} · <a href="/admin/matches?tab=credits&amp;runsPage={{.ArtistRunsPage}}">清除筛选</a>）{{end}}</p>
+          <p class="muted">以下艺术家疑似合作署名，拆分将同步更新演唱、幕后角色及专辑艺人关联并跨重扫持久保留；真实单一组合可直接确认为单一艺人放行匹配。{{if or .ReviewQuery .ReviewSource}}（当前筛选：{{if .ReviewQuery}}「{{.ReviewQuery}}」{{end}}{{if and .ReviewQuery .ReviewSource}} · {{end}}{{.ReviewSource}} · <a href="/admin/matches?tab=credits&amp;runsPage={{.ArtistRunsPage}}">清除筛选</a>）{{end}}</p>
         </div>
-        {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
-        <form method="post" action="/admin/ai-review/run">
-          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
-          <input type="hidden" name="scope" value="credit_splits">
-          <input type="hidden" name="returnTo" value="{{.TabReturnTo "credits"}}" data-match-return-to="credits">
-          <button type="submit" class="secondary-button compact-button" data-pending-text="启动中…">AI 分析复合署名</button>
-        </form>
-        {{end}}
+        <div class="match-hint-actions">
+          {{if gt .CreditHighConfidenceCount 0}}
+          <form method="post" action="/admin/matches/credits/apply-high-confidence" class="match-inline-confirm-form">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo "credits"}}" data-match-return-to="credits">
+            <button type="submit" class="primary-button compact-button" data-inline-confirm="确认批量拆分 {{.CreditHighConfidenceCount}} 位" data-pending-text="批量拆分中…">批量应用高置信拆分（{{.CreditHighConfidenceCount}} 位 ≥92%）</button>
+          </form>
+          {{end}}
+          {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
+          <form method="post" action="/admin/ai-review/run">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="scope" value="credit_splits">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo "credits"}}" data-match-return-to="credits">
+            <button type="submit" class="secondary-button compact-button" data-pending-text="启动中…">AI 分析复合署名</button>
+          </form>
+          {{end}}
+        </div>
       </div>
       <div class="match-review-stack">
         {{range $item := .CreditCorrectionReview}}
         <article class="review-card match-review-card">
           <header class="review-head match-review-card-head">
-            <div class="review-card-title">
-              <a class="match-artist-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
-              <span class="match-artist-stats">{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+            <div class="review-card-title match-credit-title-wrap">
+              <div class="match-credit-name-line">
+                <a class="match-artist-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile"><strong>{{$item.Artist.Name}}</strong></a>
+                <span class="match-artist-stats">{{$item.Artist.AlbumCount}} 张专辑 · {{$item.Artist.TrackCount}} 首</span>
+              </div>
+              {{if $item.RoleBreakdown}}
+              <div class="match-credit-roles">
+                {{range $item.RoleBreakdown}}<span class="match-role-pill">{{creditLabel .Role}} {{.Count}}</span>{{end}}
+              </div>
+              {{end}}
             </div>
             {{if gt (len $item.Candidates) 0}}
             <form method="post" action="/admin/artists/{{$item.Artist.ID}}/reject-all" class="review-reject-all-form match-inline-confirm-form">
@@ -423,21 +439,75 @@
               </div>
               <p class="match-ai-reason">{{$item.AI.Reason}}</p>
             </div>
-            {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
-            <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
+            <div class="match-split-actions">
+              {{if and $item.AI.CreditIsComposite $item.AI.CreditParts}}
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="ai-quick-accept-form">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
+                {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
+                <button type="submit" class="primary-button compact-button" data-pending-text="拆分中…">一键应用拆分到关联曲目</button>
+              </form>
+              <button type="button" class="secondary-button compact-button" data-credit-edit-toggle="{{$item.Artist.ID}}">微调人名</button>
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/exempt-composite" class="ai-quick-accept-form">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
+                <button type="submit" class="match-ghost-btn compact-button" data-pending-text="处理中…">非复合</button>
+              </form>
+              {{else if eq $item.AI.Action "recommend_reject"}}
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/exempt-composite" class="ai-quick-accept-form">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
+                <button type="submit" class="secondary-button compact-button" data-pending-text="确认中…">确认为单一艺人</button>
+              </form>
+              <button type="button" class="match-ghost-btn compact-button" data-credit-edit-toggle="{{$item.Artist.ID}}">手动拆分</button>
+              <a class="button-link match-ghost-btn compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
+              {{else}}
+              <button type="button" class="secondary-button compact-button" data-credit-edit-toggle="{{$item.Artist.ID}}">手动拆分</button>
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/exempt-composite" class="ai-quick-accept-form">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
+                <button type="submit" class="match-ghost-btn compact-button" data-pending-text="确认中…">确认为单一艺人</button>
+              </form>
+              <a class="button-link match-ghost-btn compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
+              {{end}}
+            </div>
+            <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="match-split-editor" data-credit-edit-form="{{$item.Artist.ID}}" hidden>
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
-              {{range $item.AI.CreditParts}}<input type="hidden" name="part" value="{{.}}">{{end}}
-              <button type="submit" class="primary-button compact-button" data-pending-text="拆分中…">一键应用拆分到关联曲目</button>
+              <label class="match-split-editor-label">
+                <span>编辑拆分后的独立艺人名单（使用 <code> / </code> 或 <code>、</code> 分隔）</span>
+                <input type="text" name="parts" value="{{if $item.AI.CreditPartsCSV}}{{$item.AI.CreditPartsCSV}}{{else}}{{$item.Artist.Name}}{{end}}" required>
+              </label>
+              <div class="match-split-editor-actions">
+                <button type="button" class="match-ghost-btn compact-button" data-credit-edit-cancel="{{$item.Artist.ID}}">取消</button>
+                <button type="submit" class="primary-button compact-button" data-pending-text="拆分中…">应用微调后拆分</button>
+              </div>
             </form>
-            {{else}}
-            <a class="button-link secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页核对 →</a>
-            {{end}}
           </div>
           {{else}}
           <div class="match-split-body">
             <p class="muted match-ai-reason">疑似合作署名，需先修正艺术家关系。</p>
-            <a class="button-link secondary-button compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页拆分 →</a>
+            <div class="match-split-actions">
+              <button type="button" class="secondary-button compact-button" data-credit-edit-toggle="{{$item.Artist.ID}}">手动拆分</button>
+              <form method="post" action="/admin/artists/{{$item.Artist.ID}}/exempt-composite" class="ai-quick-accept-form">
+                <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
+                <button type="submit" class="match-ghost-btn compact-button" data-pending-text="确认中…">确认为单一艺人</button>
+              </form>
+              <a class="button-link match-ghost-btn compact-button" href="/admin/artists/{{$item.Artist.ID}}?view=profile">前往歌手页拆分 →</a>
+            </div>
+            <form method="post" action="/admin/artists/{{$item.Artist.ID}}/apply-credit-split" class="match-split-editor" data-credit-edit-form="{{$item.Artist.ID}}" hidden>
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "credits"}}" data-match-return-to="credits">
+              <label class="match-split-editor-label">
+                <span>编辑拆分后的独立艺人名单（使用 <code> / </code> 或 <code>、</code> 分隔）</span>
+                <input type="text" name="parts" value="{{$item.Artist.Name}}" required>
+              </label>
+              <div class="match-split-editor-actions">
+                <button type="button" class="match-ghost-btn compact-button" data-credit-edit-cancel="{{$item.Artist.ID}}">取消</button>
+                <button type="submit" class="primary-button compact-button" data-pending-text="拆分中…">应用微调后拆分</button>
+              </div>
+            </form>
           </div>
           {{end}}
         </article>
@@ -578,7 +648,7 @@
               <p class="muted">
                 {{if not .AIConfigured}}尚未配置模型服务，请先前往 <a href="/admin/settings/ai">AI 设置</a> 配置接口与密钥。
                 {{else if not .AIReviewEnabled}}AI 初审总开关未开启，可在 <a href="/admin/settings/ai">AI 设置</a> 中启用。
-                {{else}}批量消歧待审艺术家身份（高置信且无身份冲突时自动绑定），并为复合署名生成一键拆分方案。{{end}}
+                {{else}}批量消歧待审艺术家身份（高置信且无身份冲突时自动绑定），并分析复合署名（分级自治模式 ≥92% 自动全角色拆分）。{{end}}
               </p>
             </div>
             <span class="run-status {{if .ActiveAIRun}}status-{{.ActiveAIRun.Status}}{{else if and .AIConfigured .AIReviewEnabled}}match-status-idle{{else}}status-paused{{end}}" data-pipeline-status>
@@ -605,7 +675,7 @@
           {{end}}
           {{if .AIApplied}}
           <details class="run-history disclosure match-details">
-            <summary>AI 最近自动绑定记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
+            <summary>AI 最近自动处理记录（{{len .AIApplied}} 条，可一键撤销退回待审）</summary>
             <ul class="ai-applied-list">
               {{range .AIApplied}}
               <li>

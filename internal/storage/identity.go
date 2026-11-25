@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type MetadataSourceSetting struct {
@@ -399,7 +397,9 @@ func (s *Store) confirmArtistCandidate(ctx context.Context, artistID, candidateI
 	if err != nil {
 		return err
 	}
-	if metadata.CompositeArtistCredit(localName) {
+	if composite, cErr := isCompositeArtistTx(ctx, tx, artistID, localName); cErr != nil {
+		return cErr
+	} else if composite {
 		return ErrCompositeArtistIdentity
 	}
 	if err = artistIdentityOwnerCheck(ctx, tx, artistID, p.Source, p.ExternalID); err != nil {
@@ -597,7 +597,9 @@ func markArtistSourcesRejectedTx(ctx context.Context, tx *sql.Tx, input ArtistMa
 			return err
 		}
 	}
-	if metadata.CompositeArtistCredit(input.Name) {
+	if composite, cErr := isCompositeArtistTx(ctx, tx, input.ID, input.Name); cErr != nil {
+		return cErr
+	} else if composite {
 		var anyPending bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_match_candidates WHERE artist_id=? AND status='candidate')`, input.ID).Scan(&anyPending); err != nil {
 			return err
@@ -1130,7 +1132,9 @@ func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p Exter
 			}
 			return err
 		}
-		if metadata.CompositeArtistCredit(name) {
+		if composite, cErr := isCompositeArtistTx(ctx, tx, artistID, name); cErr != nil {
+			return cErr
+		} else if composite {
 			return nil
 		}
 		var status string

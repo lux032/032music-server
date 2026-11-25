@@ -125,6 +125,7 @@
               <select name="credit_mode">
                 <option value="off" {{if eq .Review.CreditMode "off"}}selected{{end}}>关闭</option>
                 <option value="recommend" {{if eq .Review.CreditMode "recommend"}}selected{{end}}>仅给建议（页面一键应用拆分）</option>
+                <option value="auto" {{if eq .Review.CreditMode "auto"}}selected{{end}}>分级自治（≥92 分自动拆分）</option>
               </select>
             </label>
             <label>作品系列建议

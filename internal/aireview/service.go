@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	autoThresholdAlbum  = 88
-	autoThresholdTrack  = 88
-	autoThresholdWork   = 90
-	autoThresholdArtist = 90
-	autoThresholdSeries = 92
+	autoThresholdAlbum       = 88
+	autoThresholdTrack       = 88
+	autoThresholdWork        = 90
+	autoThresholdArtist      = 90
+	autoThresholdCreditSplit = 92
+	autoThresholdSeries      = 92
 )
 
 type Options struct {
@@ -144,7 +145,7 @@ func (s *Service) EvaluateTarget(ctx context.Context, kind string, targetID int6
 	case storage.AITargetArtistMatch:
 		return s.evalArtist(ctx, ai, rev, chat, model, mode, targetID, force)
 	case storage.AITargetCreditSplit:
-		return s.evalCreditSplit(ctx, ai, chat, model, targetID, force)
+		return s.evalCreditSplit(ctx, ai, chat, model, mode, targetID, force)
 	case storage.AITargetSeriesSuggestion:
 		return s.evalSeriesSuggestion(ctx, ai, chat, model, mode, targetID, force)
 	default:
@@ -710,13 +711,41 @@ func (s *Service) evalArtist(ctx context.Context, ai storage.AISettings, rev sto
 
 // ---------------------------------------------------------------- composite credit splits
 
-func (s *Service) evalCreditSplit(ctx context.Context, ai storage.AISettings, chat tagging.Chat, model string, artistID int64, force bool) (EvalResult, error) {
+func (s *Service) evalCreditSplit(ctx context.Context, ai storage.AISettings, chat tagging.Chat, model, mode string, artistID int64, force bool) (EvalResult, error) {
 	info, err := s.store.LoadCreditSplitAIContext(ctx, artistID)
 	if err != nil {
 		return EvalResult{}, err
 	}
-	if cached, ok := s.alreadyEvaluated(ctx, storage.AITargetCreditSplit, artistID, info.Fingerprint, force); ok {
-		return cached, nil
+	if !force && info.Fingerprint != "" {
+		if existing, ok, lookupErr := s.store.AIReviewDecisionByTarget(ctx, storage.AITargetCreditSplit, artistID); lookupErr == nil && ok && existing.Fingerprint == info.Fingerprint && !existing.Reverted {
+			if mode == storage.AIReviewModeAuto && !existing.Applied && existing.Action == storage.AIActionRecommendAccept && existing.Confidence >= autoThresholdCreditSplit {
+				var cachedPayload struct {
+					IsComposite bool     `json:"isComposite"`
+					Parts       []string `json:"parts"`
+				}
+				if json.Unmarshal(existing.Payload, &cachedPayload) == nil && cachedPayload.IsComposite && len(cachedPayload.Parts) >= 2 {
+					if _, snap, splitErr := s.store.ApplyCompositeCreditSplitByAI(ctx, artistID, cachedPayload.Parts); splitErr == nil {
+						existing.Action = storage.AIActionAutoConfirm
+						existing.Applied = true
+						existing.AppliedSnapshot = snap
+						if decID, saveErr := s.store.SaveAIReviewDecision(ctx, existing); saveErr == nil {
+							_ = s.store.LinkCreditSplitDecision(ctx, artistID, decID)
+						}
+						return EvalResult{
+							Kind: storage.AITargetCreditSplit, TargetID: artistID, Action: storage.AIActionAutoConfirm,
+							Applied: true, Confidence: existing.Confidence, Reason: existing.Reason,
+						}, nil
+					} else if !errors.Is(splitErr, storage.ErrInvalidCreditSplit) && !errors.Is(splitErr, storage.ErrNoCompositeReferences) {
+						s.logger.Warn("ai credit split cached upgrade failed", "artistId", artistID, "error", splitErr)
+					}
+				}
+			}
+			return EvalResult{
+				Kind: storage.AITargetCreditSplit, TargetID: artistID, Action: existing.Action,
+				Applied: existing.Applied, Skipped: true, Confidence: existing.Confidence,
+				Reason: existing.Reason, WebSearched: existing.WebSearched,
+			}, nil
+		}
 	}
 
 	var out creditSplitOutput
@@ -744,21 +773,41 @@ func (s *Service) evalCreditSplit(ctx context.Context, ai storage.AISettings, ch
 		}
 	}
 
+	applied := false
+	var snap json.RawMessage
+	if mode == storage.AIReviewModeAuto && out.IsComposite && len(parts) >= 2 && out.Confidence >= autoThresholdCreditSplit {
+		if _, sRaw, splitErr := s.store.ApplyCompositeCreditSplitByAI(ctx, artistID, parts); splitErr != nil {
+			if errors.Is(splitErr, storage.ErrInvalidCreditSplit) {
+				action = storage.AIActionUncertain
+			} else if !errors.Is(splitErr, storage.ErrNoCompositeReferences) {
+				s.logger.Warn("ai credit split auto apply failed", "artistId", artistID, "error", splitErr)
+			}
+		} else {
+			applied = true
+			action = storage.AIActionAutoConfirm
+			snap = sRaw
+		}
+	}
+
 	payloadJSON, _ := json.Marshal(map[string]any{"isComposite": out.IsComposite, "parts": parts})
-	_, err = s.store.SaveAIReviewDecision(ctx, storage.AIReviewDecision{
-		TargetKind:  storage.AITargetCreditSplit,
-		TargetID:    artistID,
-		Fingerprint: info.Fingerprint,
-		Action:      action,
-		Payload:     payloadJSON,
-		Confidence:  out.Confidence,
-		Reason:      out.Reason,
-		Model:       usedModel,
-		Applied:     false,
+	decID, err := s.store.SaveAIReviewDecision(ctx, storage.AIReviewDecision{
+		TargetKind:      storage.AITargetCreditSplit,
+		TargetID:        artistID,
+		Fingerprint:     info.Fingerprint,
+		Action:          action,
+		Payload:         payloadJSON,
+		Confidence:      out.Confidence,
+		Reason:          out.Reason,
+		Model:           usedModel,
+		Applied:         applied,
+		AppliedSnapshot: snap,
 	})
+	if err == nil && applied && decID > 0 {
+		_ = s.store.LinkCreditSplitDecision(ctx, artistID, decID)
+	}
 	return EvalResult{
 		Kind: storage.AITargetCreditSplit, TargetID: artistID, Action: action,
-		Confidence: out.Confidence, Reason: out.Reason,
+		Applied: applied, Confidence: out.Confidence, Reason: out.Reason,
 	}, err
 }
 

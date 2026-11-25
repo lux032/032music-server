@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/lux032/032music-server/internal/metadata"
 )
 
 type ArtistScanMode string
@@ -286,13 +284,17 @@ func (s *Store) FilterArtistsForScan(ctx context.Context, artists []ArtistMatchI
 	}
 	candRows.Close()
 
+	exempt, err := compositeExemptArtistIDs(ctx, s.db)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, artist := range artists {
 		if m := confirmed[artist.ID]; m != nil {
 			artist.LastFMQueryMBID = m["musicbrainz"]
 		}
 		artist.LastFMQueryCaptured = true
 
-		if metadata.CompositeArtistCredit(artist.Name) {
+		if isCompositeWithExemptions(exempt, artist.ID, artist.Name) {
 			if rescanSettled {
 				composites = append(composites, artist)
 				continue

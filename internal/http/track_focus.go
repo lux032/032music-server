@@ -134,6 +134,10 @@ func creditLabel(role string) string {
 	switch role {
 	case "any":
 		return "幕后"
+	case "album_artist":
+		return "专辑艺人"
+	case "primary":
+		return "演唱"
 	case "lyricist":
 		return "作词"
 	case "composer":
@@ -142,6 +146,9 @@ func creditLabel(role string) string {
 		return "编曲"
 	case "producer":
 		return "制作"
+	}
+	if strings.HasPrefix(role, "instrument:") {
+		return strings.TrimPrefix(role, "instrument:")
 	}
 	return role
 }
