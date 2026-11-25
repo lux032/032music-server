@@ -82,8 +82,8 @@ func ParseLRC(content string) LyricsResult {
 	}
 
 	if hasTimed && len(synced) > 0 {
-		// Sort by timestamp
-		sort.Slice(synced, func(i, j int) bool {
+		// Sort by timestamp stably to preserve original order for identical timestamps.
+		sort.SliceStable(synced, func(i, j int) bool {
 			return synced[i].TimeMs < synced[j].TimeMs
 		})
 		return LyricsResult{Synced: true, Lines: synced}

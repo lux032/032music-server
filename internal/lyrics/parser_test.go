@@ -146,6 +146,32 @@ func TestParseLRC_SortsByTimestamp(t *testing.T) {
 	}
 }
 
+func TestParseLRC_StableSortDuplicateTimestamps(t *testing.T) {
+	input := `[00:20.00]late
+[00:10.00]dup-1
+[00:10.00]dup-2
+[00:10.00]dup-3
+[00:10.00]dup-4
+[00:10.00]dup-5
+[00:10.00]dup-6
+[00:10.00]dup-7
+[00:10.00]dup-8
+[00:05.00]early`
+	result := ParseLRC(input)
+	if !result.Synced {
+		t.Fatal("expected synced=true")
+	}
+	want := []string{"early", "dup-1", "dup-2", "dup-3", "dup-4", "dup-5", "dup-6", "dup-7", "dup-8", "late"}
+	if len(result.Lines) != len(want) {
+		t.Fatalf("got %d lines, want %d", len(result.Lines), len(want))
+	}
+	for i, w := range want {
+		if result.Lines[i].Text != w {
+			t.Errorf("line %d: text=%q, want %q", i, result.Lines[i].Text, w)
+		}
+	}
+}
+
 func TestParseLRC_WindowsLineEndings(t *testing.T) {
 	input := "[00:05.00]line one\r\n[00:10.00]line two"
 	result := ParseLRC(input)

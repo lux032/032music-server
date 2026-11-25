@@ -170,7 +170,7 @@ func (a *App) handleAPILyricsTranslation(w http.ResponseWriter, r *http.Request)
 	if a.writeLyricsError(w, trackID, err) {
 		return
 	}
-	if resolved.TranslationLRC != "" && lyricsonline.IsSimplifiedChinese(body.TargetLanguage) {
+	if resolved.Result.Synced && resolved.TranslationLRC != "" && lyricsonline.IsSimplifiedChinese(body.TargetLanguage) {
 		if aligned, ok := lyricsonline.AlignTranslation(resolved.Result.Lines, resolved.TranslationLRC); ok {
 			writeJSON(w, http.StatusOK, lyricsTranslationResponse{TargetLanguage: body.TargetLanguage, Lines: aligned,
 				Model: lyricsonline.SourceName(resolved.Source), Cached: true, Source: resolved.Source})

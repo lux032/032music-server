@@ -14,6 +14,7 @@ import (
 
 	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/tagging"
 )
 
 // fakeLyricsSource is a NetEase-like provider with scripted behaviour.
@@ -246,4 +247,73 @@ func TestLocalLyricsWinOverOnlineUnlessManual(t *testing.T) {
 	if got, _ = getLyrics(t, handler, trackID); got.Source != "embedded" {
 		t.Fatalf("after clear = %+v", got)
 	}
+}
+
+func TestOnlineLyricsTranslationClearLinesAndUnsyncedGuard(t *testing.T) {
+	t.Run("1ms clear-lines in tlyric do not drop translations", func(t *testing.T) {
+		_, store, handler, _, trackID := lyricsTestApp(t, "わたしたちのオカルト", "")
+		ctx := context.Background()
+		if err := store.SaveOnlineLyricsFound(ctx, storage.OnlineLyrics{
+			TrackID:      trackID,
+			Source:       lyricsonline.SourceNetEase,
+			RemoteID:     "3459819275",
+			RemoteTitle:  "わたしたちのオカルト",
+			RemoteArtist: "NOMELON NOLEMON",
+			Lyrics: strings.Join([]string{
+				"[00:34.110]第六感的な何か？未だ識らないことばかり",
+				"[00:38.523]",
+				"[00:38.524]「ねえ、気付いちゃった？気付いちゃったんでしょう？」",
+				"[00:47.805]",
+				"[00:47.806]超常現象ランデヴ わたし大言壮語のアイラヴュ",
+			}, "\n"),
+			TranslationLyrics: strings.Join([]string{
+				"[by:字幕组]",
+				"[00:34.110]像是第六感之类的？怎么都是些没见过的",
+				"[00:38.523]",
+				"[00:38.524]“呐 你发现了吗？你已经发现了吧？”",
+				"[00:47.805]",
+				"[00:47.806]和灵异相约 我的那句我爱你 听来简直大言不惭",
+			}, "\n"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		tr, code, body := translateRequest(handler, trackID, "zh-Hans")
+		want := "像是第六感之类的？怎么都是些没见过的||“呐 你发现了吗？你已经发现了吧？”||和灵异相约 我的那句我爱你 听来简直大言不惭"
+		if code != http.StatusOK || tr.Source != lyricsonline.SourceNetEase || strings.Join(tr.Lines, "|") != want {
+			t.Fatalf("translation = %d %s", code, body)
+		}
+	})
+
+	t.Run("unsynced original lyrics skip synced source translation alignment", func(t *testing.T) {
+		app, store, handler, _, trackID := lyricsTestApp(t, "Plain Song", "")
+		ctx := context.Background()
+		if err := store.SaveOnlineLyricsFound(ctx, storage.OnlineLyrics{
+			TrackID:           trackID,
+			Source:            lyricsonline.SourceNetEase,
+			RemoteID:          "999",
+			RemoteTitle:       "Plain Song",
+			RemoteArtist:      "Band",
+			Lyrics:            "first plain line\nsecond plain line",
+			TranslationLyrics: "[00:00.00]零秒译文\n[00:05.00]五秒译文",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// With AI disabled, unsynced lyrics must not align tlyric onto 0ms lines.
+		if _, code, body := translateRequest(handler, trackID, "zh-Hans"); code != http.StatusConflict || !strings.Contains(body, "translation_disabled") {
+			t.Fatalf("unsynced without AI = %d %s", code, body)
+		}
+		// With AI enabled, unsynced lyrics fall through to AI translation.
+		fake := &fakeTranslator{}
+		app.newTranslationChat = func(storage.AISettings) (tagging.Chat, error) { return fake, nil }
+		if err := store.SaveAISettings(ctx, storage.AISettings{BaseURL: "https://x.test/v1", APIKey: "sk-test", Model: "flash", RequestsPerMinute: 60, Concurrency: 2}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveLyricsTranslationSettings(ctx, storage.LyricsTranslationSettings{Enabled: true, Model: "flash"}); err != nil {
+			t.Fatal(err)
+		}
+		tr, code, body := translateRequest(handler, trackID, "zh-Hans")
+		if code != http.StatusOK || tr.Source != "ai" || strings.Join(tr.Lines, "|") != "flash:first plain line|flash:second plain line" {
+			t.Fatalf("unsynced with AI = %d %s", code, body)
+		}
+	})
 }
