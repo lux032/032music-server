@@ -30,6 +30,7 @@ import (
 	"github.com/lux032/032music-server/internal/enrichment"
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/listenbrainz"
+	"github.com/lux032/032music-server/internal/loudness"
 	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
@@ -84,6 +85,8 @@ type App struct {
 	homeRotation *homeRotation
 	// audioAnalysis is the optional acoustic analysis worker (nil hides it).
 	audioAnalysis *analysis.Service
+	// loudness measures per-track EBU R128 loudness and album aggregates in the background.
+	loudness *loudness.Service
 	// aiTagging is the AI (OpenAI-compatible) mood/style tagging worker.
 	aiTagging       *tagging.Service
 	aiReview        *aireview.Service
@@ -188,7 +191,7 @@ type Chrome struct {
 func (c Chrome) IsAdminNav() bool {
 	switch c.Nav {
 	case "console", "missing", "rules", "work-review", "matches", "artist-aliases",
-		"merges", "series", "enrichment", "audio-analysis", "ai-tagging",
+		"merges", "series", "enrichment", "audio-analysis", "ai-tagging", "loudness",
 		"online-lyrics", "lyrics-translations", "daily-mixes", "settings",
 		"acquisition-settings", "ai-settings", "backups", "security":
 		return true
@@ -242,6 +245,7 @@ type dashboardPageData struct {
 	PurgeMissing   purgeMissingView
 	AlbumRules     albumRulesSummary
 	AudioAnalysis  audioAnalysisView
+	Loudness       loudnessView
 	AITagging      aiTaggingView
 	DailyMixes     string
 	Translation    string
@@ -415,6 +419,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/status", a.requireAPIOrAdmin(http.HandlerFunc(a.handleStatus)))
 	mux.Handle("GET /api/v1/capabilities", a.requireAPIOrAdmin(http.HandlerFunc(a.handleCapabilities)))
 	mux.Handle("GET /api/v1/audio-analysis", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAudioAnalysisStatus)))
+	mux.Handle("GET /api/v1/loudness", a.requireAPIOrAdmin(http.HandlerFunc(a.handleLoudnessStatus)))
 	mux.Handle("GET /api/v1/ai/tagging", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAITaggingStatus)))
 	mux.Handle("POST /api/v1/ai/playlists", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPIAIPlaylist)))
 	mux.Handle("GET /api/v1/tracks/{id}/tags", a.requireAPIOrAdmin(http.HandlerFunc(a.handleAPITrackTags)))
@@ -599,6 +604,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST "+audioAnalysisPath+"/pause", a.requireAdmin(a.handleAudioAnalysisPause(true)))
 	mux.Handle("POST "+audioAnalysisPath+"/resume", a.requireAdmin(a.handleAudioAnalysisPause(false)))
 	mux.Handle("POST "+audioAnalysisPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleAudioAnalysisRetry)))
+	mux.Handle("GET "+loudnessPath, a.requireAdmin(http.HandlerFunc(a.handleLoudnessPage)))
+	mux.Handle("GET "+loudnessPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleLoudnessStatus)))
+	mux.Handle("POST "+loudnessPath+"/pause", a.requireAdmin(a.handleLoudnessPause(true)))
+	mux.Handle("POST "+loudnessPath+"/resume", a.requireAdmin(a.handleLoudnessPause(false)))
+	mux.Handle("POST "+loudnessPath+"/failures/retry", a.requireAdmin(http.HandlerFunc(a.handleLoudnessRetry)))
 	mux.Handle("GET /admin/artist-aliases", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasPage)))
 	mux.Handle("GET /admin/artist-aliases/status", a.requireAdminJSON(http.HandlerFunc(a.handleArtistAliasStatus)))
 	mux.Handle("POST /admin/artist-aliases/{action}", a.requireAdmin(http.HandlerFunc(a.handleArtistAliasAction)))
@@ -1019,6 +1029,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PurgeMissing:     a.purgeMissingView(r.Context()),
 		AlbumRules:       a.albumRulesSummary(r.Context()),
 		AudioAnalysis:    a.dashboardAudioAnalysisView(r.Context()),
+		Loudness:         a.dashboardLoudnessView(r.Context()),
 		AITagging:        a.dashboardAITaggingView(r.Context()),
 		DailyMixes:       a.dashboardDailyMixSummary(r.Context()),
 		Translation:      a.dashboardLyricsTranslationSummary(r.Context()),

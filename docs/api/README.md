@@ -48,6 +48,7 @@
 | `GET` | `/api/v1/tracks/{id}/similar`、`/api/v1/tracks/path` | 相似曲目（元数据 + 声学混合，支持 `limit`/`exclude`/`diverse`/`maxPerArtist`/`hideInstrumental`/`seed`）与渐变路径（JSON 凭据）。 |
 | `POST` | `/api/v1/enrichment/run` | 启动增强；`/api/v1/enrichment/jobs` 和 `/{id}` 查状态，POST `/{id}/cancel` 取消。 |
 | `GET` | `/api/v1/audio-analysis` | 声学分析状态：开关、进度、校准、分析服务信息（`capabilities.features.audioAnalysis` 表示已部署且已开启）。 |
+| `GET` | `/api/v1/loudness` | EBU R128 响度分析状态：进度、并发数、曲库响度中位数与失败统计（`capabilities.features.loudness` 表示支持响度数据；`capabilities.loudness` 附带 `available`、`analyzedTracks`、`totalTracks` 与可选 `libraryMedianLufs`）。已分析曲目在列表、详情及 `/api/v1/sync/tracks` 中附带可选原始物理量 `loudnessLufs`、`truePeakDb`、`loudnessRange`、`albumLoudnessLufs`、`albumTruePeakDb`（未分析曲目省略字段）。 |
 | `GET` | `/api/v1/ai/tagging` | AI 打标状态：进度、用量、复核与抽样对比（`capabilities.features.trackTags` 表示已配置且已开启）。 |
 | `GET/PUT` | `/api/v1/tracks/{id}/tags` | 曲目的情绪/风格标签（生效结果、各来源与 AI 元信息）；PUT `{"moods":["cheerful"],"styles":["pop"]}` 设置人工修正，空数组清除该类修正。 |
 | `GET` | `/api/v1/daily-mixes` | 今天的每日推荐（`status`：`ready` / `generating`（202，稍后重试）/ `not_ready` / `disabled`；每项含标题、简介、主题标签、曲数、时长、最多 4 张封面、评价）。`capabilities.features.dailyMixes` 表示已开启。 |

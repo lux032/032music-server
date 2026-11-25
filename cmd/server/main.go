@@ -23,6 +23,7 @@ import (
 	webhttp "github.com/lux032/032music-server/internal/http"
 	"github.com/lux032/032music-server/internal/lastfm"
 	"github.com/lux032/032music-server/internal/listenbrainz"
+	"github.com/lux032/032music-server/internal/loudness"
 	"github.com/lux032/032music-server/internal/lyricsonline"
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/sourcegate"
@@ -145,20 +146,27 @@ func run() error {
 	// off by default; once enabled it tags the whole library, then new tracks as
 	// soon as their acoustic analysis is saved (or right away when analysis is off).
 	var taggingService *tagging.Service
+	audioBusy := func() string {
+		if app.TranscodesActive() > 0 {
+			return "有转码进行中"
+		}
+		if scannerManager.Running() {
+			return "曲库扫描中"
+		}
+		return ""
+	}
 	analysisService := analysis.New(db, logger, analysis.Options{
 		Client:     analyzerClient,
 		OnAnalyzed: func() { taggingService.Wake() },
-		Busy: func() string {
-			if app.TranscodesActive() > 0 {
-				return "有转码进行中"
-			}
-			if scannerManager.Running() {
-				return "曲库扫描中"
-			}
-			return ""
-		},
+		Busy:       audioBusy,
 	})
 	app.SetAudioAnalysis(analysisService)
+	loudnessService := loudness.New(db, logger, loudness.Options{
+		Measurer: loudness.NewFFmpegMeasurer(cfg.FFmpegPath),
+		Workers:  cfg.LoudnessWorkers,
+		Busy:     audioBusy,
+	})
+	app.SetLoudness(loudnessService)
 	sharedAILimiter := aiclient.NewLimiter(60)
 	if aiSt, aiErr := db.AISettings(context.Background()); aiErr == nil && aiSt.RequestsPerMinute > 0 {
 		sharedAILimiter.SetRate(aiSt.RequestsPerMinute)
@@ -206,6 +214,7 @@ func run() error {
 	app.SetDailyMixes(dailyMixService)
 	dailyMixService.Start(rootCtx)
 	analysisService.Start(rootCtx)
+	loudnessService.Start(rootCtx)
 	scannerManager.SetOnComplete(func() {
 		if err := db.CompleteReleaseGroupRebuild(rootCtx); err != nil {
 			logger.Error("complete RG identity", "error", err)
@@ -213,11 +222,15 @@ func run() error {
 		if err := db.RefreshReleaseGroupIdentities(rootCtx); err != nil {
 			logger.Error("refresh RG identity", "error", err)
 		}
+		if err := db.ReconcileAlbumLoudness(rootCtx); err != nil {
+			logger.Error("reconcile album loudness", "error", err)
+		}
 
 		acquisitionService.Wake()
 		enrichmentManager.StartAuto(rootCtx)
 		app.GCCustomImages(rootCtx)
 		analysisService.Wake()
+		loudnessService.Wake()
 		taggingService.Wake()
 		aliasService.Wake()
 	})
@@ -305,6 +318,7 @@ func run() error {
 		lastFMService.Wait()
 		listenBrainzService.Wait()
 		analysisService.Wait()
+		loudnessService.Wait()
 		taggingService.Wait()
 		aliasService.Wait()
 		dailyMixService.Wait()

@@ -1155,3 +1155,63 @@ document.addEventListener('submit', async (event) => {
     }
   });
 })();
+
+// Polls /admin/loudness/status every 3 s on /admin/loudness (or 15 s on dashboard).
+(function () {
+  'use strict';
+  if (window.__032_loudness_initialized) return;
+  window.__032_loudness_initialized = true;
+  let timer = null;
+
+  const setLine = (id, text) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.hidden = !text;
+  };
+
+  async function refresh() {
+    const root = document.getElementById('loudness-status');
+    const summary = document.getElementById('ln-summary');
+    if (!root && !summary) return;
+    try {
+      const response = await fetch('/admin/loudness/status', { credentials: 'same-origin' });
+      if (!response.ok) return;
+      const { view } = await response.json();
+      if (summary) summary.textContent = view.summaryText || '';
+      if (!root) return;
+      root.dataset.tone = view.tone || 'off';
+      const state = document.getElementById('ln-state');
+      if (state) state.textContent = view.stateLabel || '';
+      setLine('ln-state-detail', view.stateDetail);
+      const bar = document.getElementById('ln-progress');
+      if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(view.percent) || 0))}%`;
+      const progress = document.getElementById('ln-progress-text');
+      if (progress) progress.textContent = view.progressText || '';
+      setLine('ln-median', view.medianText);
+      setLine('ln-current', view.currentText);
+      setLine('ln-eta', view.etaText);
+      setLine('ln-failure', view.failureText);
+      setLine('ln-last-error', view.lastErrorText);
+      setLine('ln-worker', view.workerText);
+    } catch (_) { /* keep the last rendered state; retry on the next tick */ }
+  }
+
+  function schedule() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (document.hidden) return;
+    if (document.getElementById('loudness-status')) timer = setTimeout(tick, 3000);
+    else if (document.getElementById('ln-summary')) timer = setTimeout(tick, 15000);
+  }
+
+  async function tick() {
+    await refresh();
+    schedule();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (timer) { clearTimeout(timer); timer = null; } } else { tick(); }
+  });
+  document.addEventListener('032:pjax-applied', () => { tick(); });
+  schedule();
+})();

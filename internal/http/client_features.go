@@ -16,6 +16,7 @@ func similarityMethod(hasAcoustic bool) string {
 }
 
 func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	loudnessAvail, loudnessInfo := a.capabilitiesLoudness(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": "v1", "apiRevision": 3,
 		"features": map[string]bool{
@@ -36,6 +37,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// /api/v1/browse/{albums,tracks,artists}: order, seeded random, album year range, artist refs.
 			"browse":        true,
 			"audioAnalysis": a.audioAnalysisEnabled(r.Context()),
+			"loudness":      loudnessAvail,
 			"trackTags":     a.aiTaggingEnabled(r.Context()),
 			// POST /api/v1/tracks/{id}/lyrics/translation; clients show their translate switch only when true.
 			"lyricsTranslation": a.lyricsTranslationEnabled(r.Context()),
@@ -47,6 +49,7 @@ func (a *App) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// Playback sessions accept a start context (daily mix attribution, §7.1).
 			"playbackContext": true,
 		},
+		"loudness": loudnessInfo,
 		"home": map[string]any{
 			"endpoint":     "/api/v1/home",
 			"workFilters":  append([]string{"all"}, homeWorkFilters...),

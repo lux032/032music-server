@@ -29,6 +29,8 @@ type Store struct {
 	skipMigrationTemplate bool
 	// acoustic caches the in-memory acoustic index (acoustic.go).
 	acoustic acousticCache
+	// loudnessMedian caches the library median integrated LUFS (loudness.go).
+	loudnessMedian loudnessMedianCache
 }
 
 type Statistics struct {

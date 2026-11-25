@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>响度分析 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="admin-wrap browser-main feature-main audio-analysis-main">
+    <header class="admin-header browser-header">
+      <div>
+        <h1>响度分析</h1>
+        <p class="result-count">在后台用 EBU R128 测量每首歌的集成响度（LUFS）、真峰值（dBTP）与响度范围（LRA），并按专辑聚合成专辑响度，供桌面端与移动端实时做响度均衡。源文件只读，不改动曲库文件。</p>
+      </div>
+    </header>
+    <nav class="admin-tabs" aria-label="声学与打标视图">
+      <a href="/admin/audio-analysis" class="admin-tab">声学分析</a>
+      <a href="/admin/ai-tagging" class="admin-tab">AI 曲库打标</a>
+      <a href="/admin/loudness" class="admin-tab active" aria-current="page">响度分析</a>
+    </nav>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <div class="admin-split">
+      <div class="admin-stack">
+        <section class="card feature-card audio-analysis-status" id="loudness-status" data-tone="{{.View.Tone}}" aria-live="polite">
+          <div class="card-head audio-analysis-head">
+            <div>
+              <p class="card-kicker kicker">状态</p>
+              <h2 id="ln-state">{{.View.StateLabel}}</h2>
+              <p id="ln-state-detail" class="result-count"{{if not .View.StateDetail}} hidden{{end}}>{{.View.StateDetail}}</p>
+            </div>
+            {{if .Status.Available}}
+            <form method="post" action="/admin/loudness/{{if .Status.Paused}}resume{{else}}pause{{end}}">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <button class="secondary-button">{{if .Status.Paused}}继续{{else}}暂停{{end}}</button>
+            </form>
+            {{end}}
+          </div>
+          <div class="progress"><span id="ln-progress" style="width:{{.View.Percent}}%"></span></div>
+          <p id="ln-progress-text" class="audio-analysis-line">{{.View.ProgressText}}</p>
+          <p id="ln-median" class="audio-analysis-line"{{if not .View.MedianText}} hidden{{end}}>{{.View.MedianText}}</p>
+          <p id="ln-current" class="audio-analysis-line audio-analysis-current"{{if not .View.CurrentText}} hidden{{end}}>{{.View.CurrentText}}</p>
+          <p id="ln-eta" class="audio-analysis-line"{{if not .View.ETAText}} hidden{{end}}>{{.View.ETAText}}</p>
+          <p id="ln-failure" class="audio-analysis-line"{{if not .View.FailureText}} hidden{{end}}>{{.View.FailureText}}</p>
+          <p id="ln-last-error" class="audio-analysis-line audio-analysis-error"{{if not .View.LastErrorText}} hidden{{end}}>{{.View.LastErrorText}}</p>
+          <p id="ln-worker" class="audio-analysis-line audio-analysis-meta"{{if not .View.WorkerText}} hidden{{end}}>{{.View.WorkerText}}</p>
+        </section>
+
+        {{if .Failures}}
+        <section class="card feature-card audio-analysis-failures">
+          <div class="card-head audio-analysis-head">
+            <div>
+              <p class="card-kicker kicker">失败</p>
+              <h2>无法测量的曲目</h2>
+            </div>
+            <form method="post" action="/admin/loudness/failures/retry">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <button class="secondary-button">全部重试</button>
+            </form>
+          </div>
+          <div class="data-table-wrap"><table class="data-table"><thead><tr><th>曲目</th><th>音频文件</th><th>失败状态</th></tr></thead><tbody>
+            {{range .Failures}}<tr>
+              <td><strong>{{.Title}}</strong></td><td><code>{{.RelativePath}}</code></td>
+              <td>{{if .Permanent}}文件变化前不再重试{{else}}第 {{.Attempts}} 次失败，{{formatAdminTime .NextRetryAt}} 自动重试{{end}}<small>{{.LastError}}</small></td>
+            </tr>{{end}}
+          </tbody></table></div>
+        </section>
+        {{end}}
+      </div>
+
+      <section class="card feature-card audio-analysis-about">
+        <p class="card-kicker kicker">说明</p>
+        <ul class="audio-analysis-steps">
+          <li>复用服务端内置 <code>ffmpeg</code> 的 <code>ebur128=peak=true</code> 滤镜，单进程锁定单线程，默认并发 <code>clamp(CPU/2, 1, 2)</code>（可通过 <code>MUSIC_SERVER_LOUDNESS_WORKERS</code> 设为 1-4）。</li>
+          <li>优先测量已收藏与近期播放曲目所在专辑，其余曲库按专辑聚类顺序测量；曲库扫描或实时转码进行中会自动让路。</li>
+          <li>测量结果按文件大小与修改时间指纹永久缓存，后续只增量测量新入库或变更的文件。</li>
+          <li>API 只下发原始物理量（<code>loudnessLufs</code>、<code>truePeakDb</code>、<code>albumLoudnessLufs</code> 等），具体目标响度与限幅策略由各客户端自行控制。</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

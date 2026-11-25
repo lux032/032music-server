@@ -34,6 +34,7 @@ type Config struct {
 	TranscodeLiveMax                                         int
 	TranscodeCacheJobs                                       int
 	TranscodeCacheMB                                         int
+	LoudnessWorkers                                          int
 	ThumbCacheMB                                             int
 	DevMode                                                  bool
 	// MediaTokenGenerated is true when no MEDIA_TOKEN was configured and a
@@ -166,6 +167,7 @@ func Load() (Config, error) {
 		TranscodeLiveMax:     positiveEnv("MUSIC_SERVER_TRANSCODE_LIVE_MAX", 4),
 		TranscodeCacheJobs:   positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_JOBS", 2),
 		TranscodeCacheMB:     positiveEnv("MUSIC_SERVER_TRANSCODE_CACHE_MB", 4096),
+		LoudnessWorkers:      positiveEnv("MUSIC_SERVER_LOUDNESS_WORKERS", 0),
 		ThumbCacheMB:         positiveEnv("MUSIC_SERVER_THUMB_CACHE_MB", 512),
 		LogLevel:             strings.ToLower(envOrDefault("MUSIC_SERVER_LOG_LEVEL", "info")),
 		DevMode:              devMode,

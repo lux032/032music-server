@@ -2,21 +2,27 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
 
 // TrackExtras is shared by full and sync track responses. audio_files.bitrate is kbps.
 type TrackExtras struct {
-	Codec        string `json:"codec,omitempty"`
-	SampleRate   int    `json:"sampleRate,omitempty"`
-	BitDepth     int    `json:"bitDepth,omitempty"`
-	BitrateKbps  int    `json:"bitrateKbps,omitempty"`
-	Channels     int    `json:"channels,omitempty"`
-	ViewCount    *int64 `json:"viewCount,omitempty"`
-	SkipCount    *int64 `json:"skipCount,omitempty"`
-	LastViewedAt *int64 `json:"lastViewedAt,omitempty"`
-	LyricsURL    string `json:"lyricsUrl,omitempty"`
+	Codec             string   `json:"codec,omitempty"`
+	SampleRate        int      `json:"sampleRate,omitempty"`
+	BitDepth          int      `json:"bitDepth,omitempty"`
+	BitrateKbps       int      `json:"bitrateKbps,omitempty"`
+	Channels          int      `json:"channels,omitempty"`
+	ViewCount         *int64   `json:"viewCount,omitempty"`
+	SkipCount         *int64   `json:"skipCount,omitempty"`
+	LastViewedAt      *int64   `json:"lastViewedAt,omitempty"`
+	LyricsURL         string   `json:"lyricsUrl,omitempty"`
+	LoudnessLUFS      *float64 `json:"loudnessLufs,omitempty"`
+	TruePeakDB        *float64 `json:"truePeakDb,omitempty"`
+	LoudnessRange     *float64 `json:"loudnessRange,omitempty"`
+	AlbumLoudnessLUFS *float64 `json:"albumLoudnessLufs,omitempty"`
+	AlbumTruePeakDB   *float64 `json:"albumTruePeakDb,omitempty"`
 }
 
 const trackArtistSQL = `COALESCE(` + trackCreditDisplaySQL + `,` + albumCreditDisplaySQL + `,a.user_performed_by,a.performed_by,'Unknown Artist')`
@@ -116,7 +122,7 @@ func hydrateTrackExtras[T extraTrack](ctx context.Context, s *Store, items []T) 
 			byID[id] = append(byID[id], item)
 		}
 		placeholders, args := inClause(ids)
-		rows, err := s.db.QueryContext(ctx, `SELECT t.id,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(af.codec,''),COALESCE(af.sample_rate,0),COALESCE(af.bit_depth,0),COALESCE(af.bitrate,0),COALESCE(af.channels,0),COALESCE(pp.play_count,0),COALESCE(pp.skip_count,0),COALESCE(pp.last_played_at,''),CASE WHEN TRIM(COALESCE(t.lyrics,''))<>'' OR COALESCE(af.has_external_lrc,0)=1 THEN 1 ELSE 0 END FROM tracks t LEFT JOIN audio_files af ON af.id=(SELECT id FROM audio_files WHERE track_id=t.id AND status='available' ORDER BY id LIMIT 1) LEFT JOIN playback_progress pp ON pp.track_id=t.id WHERE t.id IN (`+placeholders+`)`, args...)
+		rows, err := s.db.QueryContext(ctx, `SELECT t.id,COALESCE(t.user_disc_number,t.disc_number),COALESCE(t.user_track_number,t.track_number),COALESCE(af.codec,''),COALESCE(af.sample_rate,0),COALESCE(af.bit_depth,0),COALESCE(af.bitrate,0),COALESCE(af.channels,0),COALESCE(pp.play_count,0),COALESCE(pp.skip_count,0),COALESCE(pp.last_played_at,''),CASE WHEN TRIM(COALESCE(t.lyrics,''))<>'' OR COALESCE(af.has_external_lrc,0)=1 THEN 1 ELSE 0 END,al.integrated_lufs,al.true_peak_db,al.loudness_range,abl.integrated_lufs,abl.true_peak_db FROM tracks t LEFT JOIN audio_files af ON af.id=(SELECT id FROM audio_files WHERE track_id=t.id AND status='available' ORDER BY id LIMIT 1) LEFT JOIN playback_progress pp ON pp.track_id=t.id LEFT JOIN audio_loudness al ON al.audio_file_id=af.id AND al.file_size=af.file_size AND al.modified_at_ns=af.modified_at_ns AND al.analyzer_version=? LEFT JOIN album_loudness abl ON abl.album_id=t.album_id WHERE t.id IN (`+placeholders+`)`, append([]any{LoudnessAnalyzerVersion}, args...)...)
 		if err != nil {
 			return err
 		}
@@ -125,7 +131,8 @@ func hydrateTrackExtras[T extraTrack](ctx context.Context, s *Store, items []T) 
 			var d, n, hasLyrics int
 			var date string
 			var x TrackExtras
-			if err = rows.Scan(&id, &d, &n, &x.Codec, &x.SampleRate, &x.BitDepth, &x.BitrateKbps, &x.Channels, &plays, &skips, &date, &hasLyrics); err != nil {
+			var lufs, peak, lra, albumLufs, albumPeak sql.NullFloat64
+			if err = rows.Scan(&id, &d, &n, &x.Codec, &x.SampleRate, &x.BitDepth, &x.BitrateKbps, &x.Channels, &plays, &skips, &date, &hasLyrics, &lufs, &peak, &lra, &albumLufs, &albumPeak); err != nil {
 				break
 			}
 			if date != "" {
@@ -140,6 +147,11 @@ func hydrateTrackExtras[T extraTrack](ctx context.Context, s *Store, items []T) 
 			if hasLyrics != 0 {
 				x.LyricsURL = fmt.Sprintf("/api/v1/tracks/%d/lyrics.lrc", id)
 			}
+			x.LoudnessLUFS = nullFloat(lufs)
+			x.TruePeakDB = nullFloat(peak)
+			x.LoudnessRange = nullFloat(lra)
+			x.AlbumLoudnessLUFS = nullFloat(albumLufs)
+			x.AlbumTruePeakDB = nullFloat(albumPeak)
 			for _, item := range byID[id] {
 				*item.extras() = x
 				item.setNumbers(d, n)
