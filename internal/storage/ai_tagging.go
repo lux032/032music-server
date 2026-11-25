@@ -507,8 +507,8 @@ type AlbumTrackFeatures struct {
 }
 
 func (s *Store) AlbumAudioFeatures(ctx context.Context, albumID int64, limit int) ([]AlbumTrackFeatures, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT f.track_id, f.analysis_version, f.genre, f.instrument, f.heads_json, f.arousal
-		FROM track_audio_features f JOIN tracks t ON t.id = f.track_id WHERE t.album_id = ? ORDER BY t.id LIMIT ?`, albumID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.track_id, f.analysis_version, v.genre, v.instrument, f.heads_json, f.arousal
+		FROM track_audio_features f JOIN track_audio_vectors v ON v.track_id = f.track_id JOIN tracks t ON t.id = f.track_id WHERE t.album_id = ? ORDER BY t.id LIMIT ?`, albumID, limit)
 	if err != nil {
 		return nil, err
 	}

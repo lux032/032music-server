@@ -253,17 +253,23 @@ func (s *Store) SaveTrackAudioFeatures(ctx context.Context, f TrackAudioFeatures
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, `INSERT INTO track_audio_features(track_id, file_fingerprint, analysis_version, mode, duration_ms, windows, patches,
-		genre, moodtheme, instrument, embedding, heads_json, musicnn_valence, musicnn_arousal, valence, arousal, av_source, av_model_id, analyze_ms, analyzed_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?, ''),?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		heads_json, musicnn_valence, musicnn_arousal, valence, arousal, av_source, av_model_id, analyze_ms, analyzed_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?, ''),?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		ON CONFLICT(track_id) DO UPDATE SET file_fingerprint = excluded.file_fingerprint, analysis_version = excluded.analysis_version,
 			mode = excluded.mode, duration_ms = excluded.duration_ms, windows = excluded.windows, patches = excluded.patches,
-			genre = excluded.genre, moodtheme = excluded.moodtheme, instrument = excluded.instrument, embedding = excluded.embedding,
 			heads_json = excluded.heads_json, musicnn_valence = excluded.musicnn_valence, musicnn_arousal = excluded.musicnn_arousal,
 			valence = excluded.valence, arousal = excluded.arousal, av_source = excluded.av_source, av_model_id = excluded.av_model_id,
 			analyze_ms = excluded.analyze_ms, analyzed_at = excluded.analyzed_at`,
 		f.TrackID, f.Fingerprint, f.AnalysisVersion, f.Mode, f.DurationMs, f.Windows, f.Patches,
-		f.Genre, f.MoodTheme, f.Instrument, f.Embedding, f.HeadsJSON, f.MusicnnValence, f.MusicnnArousal,
+		f.HeadsJSON, f.MusicnnValence, f.MusicnnArousal,
 		f.Valence, f.Arousal, f.AVSource, f.AVModelID, f.AnalyzeMs); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO track_audio_vectors(track_id, genre, moodtheme, instrument, embedding)
+		VALUES (?,?,?,?,?)
+		ON CONFLICT(track_id) DO UPDATE SET genre = excluded.genre, moodtheme = excluded.moodtheme,
+			instrument = excluded.instrument, embedding = excluded.embedding`,
+		f.TrackID, f.Genre, f.MoodTheme, f.Instrument, f.Embedding); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM audio_analysis_failures WHERE track_id = ?`, f.TrackID); err != nil {
@@ -284,9 +290,9 @@ func (s *Store) TrackAudioFeaturesByID(ctx context.Context, trackID int64) (Trac
 	var source sql.NullString
 	var modelID sql.NullInt64
 	var mv, ma, v, a sql.NullFloat64
-	err := s.db.QueryRowContext(ctx, `SELECT track_id, file_fingerprint, analysis_version, mode, duration_ms, windows, patches,
-		genre, moodtheme, instrument, embedding, heads_json, musicnn_valence, musicnn_arousal, valence, arousal, av_source, av_model_id, analyze_ms, analyzed_at
-		FROM track_audio_features WHERE track_id = ?`, trackID).Scan(&f.TrackID, &f.Fingerprint, &f.AnalysisVersion, &f.Mode, &f.DurationMs,
+	err := s.db.QueryRowContext(ctx, `SELECT f.track_id, f.file_fingerprint, f.analysis_version, f.mode, f.duration_ms, f.windows, f.patches,
+		v.genre, v.moodtheme, v.instrument, v.embedding, f.heads_json, f.musicnn_valence, f.musicnn_arousal, f.valence, f.arousal, f.av_source, f.av_model_id, f.analyze_ms, f.analyzed_at
+		FROM track_audio_features f JOIN track_audio_vectors v ON v.track_id = f.track_id WHERE f.track_id = ?`, trackID).Scan(&f.TrackID, &f.Fingerprint, &f.AnalysisVersion, &f.Mode, &f.DurationMs,
 		&f.Windows, &f.Patches, &f.Genre, &f.MoodTheme, &f.Instrument, &f.Embedding, &f.HeadsJSON, &mv, &ma, &v, &a, &source, &modelID, &f.AnalyzeMs, &f.AnalyzedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, false, nil
@@ -415,8 +421,9 @@ func (s *Store) AudioAnalysisStats(ctx context.Context, version string, now time
 
 // AudioCalibrationSamples 返回当前版本的全部校准样本（full 模式且有 musicnn 唤醒度/效价）。
 func (s *Store) AudioCalibrationSamples(ctx context.Context, version string) ([]AudioAVSample, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT track_id, embedding, heads_json, musicnn_valence, musicnn_arousal FROM track_audio_features
-		WHERE analysis_version = ? AND mode = 'full' AND musicnn_valence IS NOT NULL AND musicnn_arousal IS NOT NULL ORDER BY track_id`, version)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.track_id, v.embedding, f.heads_json, f.musicnn_valence, f.musicnn_arousal
+		FROM track_audio_features f JOIN track_audio_vectors v ON v.track_id = f.track_id
+		WHERE f.analysis_version = ? AND f.mode = 'full' AND f.musicnn_valence IS NOT NULL AND f.musicnn_arousal IS NOT NULL ORDER BY f.track_id`, version)
 	if err != nil {
 		return nil, err
 	}
@@ -493,8 +500,9 @@ func (s *Store) ActiveAudioAVModel(ctx context.Context, version string) (AudioAV
 
 // AudioAVPendingTracks 返回已分析、还没有唤醒度/效价的曲目（等待回归模型回填）。
 func (s *Store) AudioAVPendingTracks(ctx context.Context, version string, limit int) ([]AudioAVPending, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT track_id, embedding, heads_json FROM track_audio_features
-		WHERE analysis_version = ? AND av_source IS NULL ORDER BY track_id LIMIT ?`, version, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.track_id, v.embedding, f.heads_json
+		FROM track_audio_features f JOIN track_audio_vectors v ON v.track_id = f.track_id
+		WHERE f.analysis_version = ? AND f.av_source IS NULL ORDER BY f.track_id LIMIT ?`, version, limit)
 	if err != nil {
 		return nil, err
 	}

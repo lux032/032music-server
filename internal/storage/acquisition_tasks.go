@@ -77,14 +77,11 @@ func (s *Store) CreateAcquisitionTask(ctx context.Context, t AcquisitionTask) (A
 		t.DownloadRef = ref
 	}
 	// Serialize creation with discovery decisions, then recheck under the write lock.
-	tx, e := s.db.BeginTx(ctx, nil)
+	tx, e := s.beginWrite(ctx)
 	if e != nil {
 		return t, e
 	}
 	defer tx.Rollback()
-	if e = discoveryLock(ctx, tx); e != nil {
-		return t, e
-	}
 	old, e := scanAcquisitionTask(tx.QueryRowContext(ctx, `SELECT `+acquisitionTaskColumns+` FROM acquisition_tasks WHERE idempotency_key=?`, t.IdempotencyKey))
 	if e == nil {
 		return old, nil

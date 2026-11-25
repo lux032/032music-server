@@ -21,16 +21,19 @@ const (
 
 // selectEnv is the shared state of one day's selection.
 type selectEnv struct {
-	now        time.Time
-	day        string
-	explore    float64
-	length     int
-	recentMix  map[int64]string // track → latest day in a mix (before today)
-	usedToday  map[int64]bool   // tracks already in today's other mixes
-	usedTitles map[string]bool
-	acoustic   *storage.AcousticSnapshot
-	profile    *Profile
-	allowSad   bool
+	now           time.Time
+	day           string
+	dayCutoffsFor string
+	dayMinus7     string
+	dayMinus14    string
+	explore       float64
+	length        int
+	recentMix     map[int64]string // track → latest day in a mix (before today)
+	usedToday     map[int64]bool   // tracks already in today's other mixes
+	usedTitles    map[string]bool
+	acoustic      *storage.AcousticSnapshot
+	profile       *Profile
+	allowSad      bool
 	// affinity is the decayed implicit feedback per track (plays from daily mixes).
 	affinity map[int64]float64
 }
@@ -92,13 +95,23 @@ func preference(t *storage.RecTrack) float64 {
 	return math.Max(0.2, math.Min(2.5, p))
 }
 
+func (e *selectEnv) dayCutoffs() (minus7, minus14 string) {
+	if e.dayCutoffsFor != e.day {
+		e.dayMinus7 = storage.DayAfter(e.day, -7)
+		e.dayMinus14 = storage.DayAfter(e.day, -14)
+		e.dayCutoffsFor = e.day
+	}
+	return e.dayMinus7, e.dayMinus14
+}
+
 // novelty: recently recommended or just played tracks step back.
 func (e *selectEnv) novelty(t *storage.RecTrack) float64 {
 	n := 1.0
 	if day, ok := e.recentMix[t.ID]; ok {
-		if day >= storage.DayAfter(e.day, -7) {
+		d7, d14 := e.dayCutoffs()
+		if day >= d7 {
 			n *= 0.3
-		} else if day >= storage.DayAfter(e.day, -14) {
+		} else if day >= d14 {
 			n *= 0.6
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -166,6 +167,46 @@ func baseTitle(title string) string {
 	return n
 }
 
+const recPrimaryArtistsQuery = `SELECT ta.track_id, COALESCE(ar.merged_into_artist_id, ar.id),
+		COALESCE(c.user_display_name, c.display_name, ar.user_display_name, ar.display_name, '')
+		FROM track_artists ta
+		JOIN artists ar ON ar.id = ta.artist_id
+		LEFT JOIN artists c ON c.id = ar.merged_into_artist_id
+		WHERE ta.role = 'primary'
+		ORDER BY ta.track_id, ta.position`
+
+const recWorksQuery = `SELECT track_id, work_id, '' FROM work_tracks
+		UNION ALL
+		SELECT t.id, aw.work_id, '' FROM tracks t JOIN album_works aw ON aw.album_id = t.album_id`
+
+func formatRecTitleKey(title string, artistIDs []int64) string {
+	base := baseTitle(title)
+	var buf [96]byte
+	b := append(buf[:0], base...)
+	b = append(b, '\x00', '[')
+	for i, id := range artistIDs {
+		if i > 0 {
+			b = append(b, ' ')
+		}
+		b = strconv.AppendInt(b, id, 10)
+	}
+	b = append(b, ']')
+	return string(b)
+}
+
+func tagSourceRank(src string) int {
+	switch src {
+	case "user":
+		return 0
+	case "llm":
+		return 1
+	case "audio":
+		return 2
+	default:
+		return 9
+	}
+}
+
 // RecLibrary loads every playable track (available audio file, positive duration).
 func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.album_id, COALESCE(t.user_title, t.title),
@@ -206,9 +247,7 @@ func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 		return nil, err
 	}
 	// Primary artists (canonical ids and names).
-	if err = s.recPairs(ctx, `SELECT ta.track_id, COALESCE(ar.merged_into_artist_id, ar.id),
-		COALESCE((SELECT COALESCE(c.user_display_name, c.display_name) FROM artists c WHERE c.id = COALESCE(ar.merged_into_artist_id, ar.id)), '')
-		FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id WHERE ta.role = 'primary' ORDER BY ta.track_id, ta.position`,
+	if err = s.recPairs(ctx, recPrimaryArtistsQuery,
 		func(id, ref int64, name string) {
 			if i, ok := byID[id]; ok && !containsID(out[i].ArtistIDs, ref) {
 				out[i].ArtistIDs = append(out[i].ArtistIDs, ref)
@@ -225,7 +264,7 @@ func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 		}); err != nil {
 		return nil, err
 	}
-	if err = s.recPairs(ctx, `SELECT track_id, work_id, '' FROM work_tracks UNION SELECT t.id, aw.work_id, '' FROM tracks t JOIN album_works aw ON aw.album_id = t.album_id`,
+	if err = s.recPairs(ctx, recWorksQuery,
 		func(id, ref int64, _ string) {
 			if i, ok := byID[id]; ok && !containsID(out[i].Works, ref) {
 				out[i].Works = append(out[i].Works, ref)
@@ -233,7 +272,7 @@ func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 		}); err != nil {
 		return nil, err
 	}
-	// Effective tags: user > llm > audio, per kind.
+	// Effective tags: user > llm > audio, per kind (zero per-track helper map allocations).
 	tagRows, err := s.db.QueryContext(ctx, `SELECT track_id, kind, tag, weight, confidence, source FROM track_tags ORDER BY track_id`)
 	if err != nil {
 		return nil, err
@@ -244,22 +283,49 @@ func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 	flush := func() {
 		if i, ok := byID[cur]; ok && len(pending) > 0 {
 			t := &out[i]
-			rank := map[string]int{"user": 0, "llm": 1, "audio": 2}
-			best := 9
-			for _, tg := range EffectiveTags(pending) {
+			bestMood, bestStyle := 9, 9
+			for _, tg := range pending {
+				r := tagSourceRank(tg.Source)
+				if r >= 9 {
+					continue
+				}
 				if tg.Kind == "mood" {
+					if r < bestMood {
+						bestMood = r
+					}
+				} else if tg.Kind == "style" {
+					if r < bestStyle {
+						bestStyle = r
+					}
+				}
+			}
+			bestOverall := 9
+			for _, tg := range pending {
+				r := tagSourceRank(tg.Source)
+				if r >= 9 {
+					continue
+				}
+				if tg.Kind == "mood" {
+					if r != bestMood {
+						continue
+					}
 					if t.Moods == nil {
 						t.Moods = map[string]RecTag{}
 					}
 					t.Moods[tg.Tag] = RecTag{tg.Weight, tg.Confidence, tg.Source}
-				} else {
+				} else if tg.Kind == "style" {
+					if r != bestStyle {
+						continue
+					}
 					if t.Styles == nil {
 						t.Styles = map[string]RecTag{}
 					}
 					t.Styles[tg.Tag] = RecTag{tg.Weight, tg.Confidence, tg.Source}
+				} else {
+					continue
 				}
-				if r := rank[tg.Source]; r < best {
-					best = r
+				if r < bestOverall {
+					bestOverall = r
 					t.TagSource = tg.Source
 				}
 			}
@@ -284,7 +350,7 @@ func (s *Store) RecLibrary(ctx context.Context) ([]RecTrack, error) {
 	}
 	for i := range out {
 		t := &out[i]
-		t.TitleKey = baseTitle(t.Title) + "\x00" + fmt.Sprint(t.ArtistIDs)
+		t.TitleKey = formatRecTitleKey(t.Title, t.ArtistIDs)
 		t.Version = titleVersion(t.Title)
 	}
 	return out, nil
@@ -481,11 +547,18 @@ func insertDailyMix(ctx context.Context, tx *sql.Tx, day string, generation int,
 	if err != nil {
 		return 0, err
 	}
-	for _, it := range m.Items {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO daily_mix_items(mix_id, position, track_id, bucket, reason_json) VALUES (?, ?, ?, ?, ?)`,
-			id, it.Position, it.TrackID, it.Bucket, it.ReasonJSON); err != nil {
+	if len(m.Items) > 0 {
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO daily_mix_items(mix_id, position, track_id, bucket, reason_json) VALUES (?, ?, ?, ?, ?)`)
+		if err != nil {
 			return 0, err
 		}
+		for _, it := range m.Items {
+			if _, err = stmt.ExecContext(ctx, id, it.Position, it.TrackID, it.Bucket, it.ReasonJSON); err != nil {
+				stmt.Close()
+				return 0, err
+			}
+		}
+		stmt.Close()
 	}
 	cooldown := sql.NullString{}
 	if m.CooldownDays > 0 {
@@ -609,6 +682,38 @@ func (s *Store) DailyMixItems(ctx context.Context, mixID int64) ([]DailyMixItem,
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// DailyMixItemsByMixIDs batch-loads tracks for multiple mixes in order.
+func (s *Store) DailyMixItemsByMixIDs(ctx context.Context, mixIDs []int64) (map[int64][]DailyMixItem, error) {
+	out := make(map[int64][]DailyMixItem, len(mixIDs))
+	if len(mixIDs) == 0 {
+		return out, nil
+	}
+	const chunkSize = 500
+	for start := 0; start < len(mixIDs); start += chunkSize {
+		part := mixIDs[start:min(start+chunkSize, len(mixIDs))]
+		in, args := inClause(part)
+		rows, err := s.db.QueryContext(ctx, `SELECT mix_id, position, track_id, bucket, reason_json FROM daily_mix_items WHERE mix_id IN (`+in+`) ORDER BY mix_id, position`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var mixID int64
+			var it DailyMixItem
+			if err := rows.Scan(&mixID, &it.Position, &it.TrackID, &it.Bucket, &it.ReasonJSON); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[mixID] = append(out[mixID], it)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
 }
 
 // ReplacementsOn counts mixes replaced on a day (the daily “换一个” budget).
@@ -803,7 +908,7 @@ func (s *Store) SaveDailyMixAsPlaylist(ctx context.Context, id int64, name, desc
 	if err != nil {
 		return Playlist{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return p, err
 	}

@@ -67,9 +67,38 @@ func (a *AcousticSnapshot) Has(id int64) bool {
 
 func (a *AcousticSnapshot) row(i int) []int8 { return a.vecs[i*a.dims : (i+1)*a.dims] }
 
+// IndexOf returns the dense row index of track id in the snapshot, or (-1, false) when absent.
+func (a *AcousticSnapshot) IndexOf(id int64) (int, bool) {
+	if a == nil {
+		return -1, false
+	}
+	i, ok := a.pos[id]
+	if !ok {
+		return -1, false
+	}
+	return i, true
+}
+
 func dotI8(x, y []int8) int32 {
-	var sum int32
-	for i := range x {
+	n := len(x)
+	if n == 0 || len(y) < n {
+		var sum int32
+		for i := 0; i < n && i < len(y); i++ {
+			sum += int32(x[i]) * int32(y[i])
+		}
+		return sum
+	}
+	_ = y[n-1]
+	var s0, s1, s2, s3 int32
+	i := 0
+	for ; i+3 < n; i += 4 {
+		s0 += int32(x[i]) * int32(y[i])
+		s1 += int32(x[i+1]) * int32(y[i+1])
+		s2 += int32(x[i+2]) * int32(y[i+2])
+		s3 += int32(x[i+3]) * int32(y[i+3])
+	}
+	sum := (s0 + s1) + (s2 + s3)
+	for ; i < n; i++ {
 		sum += int32(x[i]) * int32(y[i])
 	}
 	return sum
@@ -144,6 +173,15 @@ func (a *AcousticSnapshot) CosineTo(id int64, centroid []int8) (float64, bool) {
 	return float64(dotI8(a.row(i), centroid)) / (127 * 127), true
 }
 
+// CosineToIndex returns the cosine between the track at dense index idx (from IndexOf)
+// and a centroid without a map lookup.
+func (a *AcousticSnapshot) CosineToIndex(idx int, centroid []int8) (float64, bool) {
+	if a == nil || centroid == nil || idx < 0 || idx >= len(a.ids) {
+		return 0, false
+	}
+	return float64(dotI8(a.row(idx), centroid)) / (127 * 127), true
+}
+
 func (a *AcousticSnapshot) nearest(q []int8, k int, keep func(int64) bool) []Neighbor {
 	if k <= 0 {
 		return nil
@@ -189,7 +227,17 @@ func quantizeInto(out []int8, v []float64) {
 	}
 }
 
-func f16(h uint16) float32 {
+var f16Table = func() [65536]float32 {
+	var tbl [65536]float32
+	for i := 0; i < 65536; i++ {
+		tbl[i] = f16Decode(uint16(i))
+	}
+	return tbl
+}()
+
+func f16(h uint16) float32 { return f16Table[h] }
+
+func f16Decode(h uint16) float32 {
 	sign := uint32(h>>15) << 31
 	exp := uint32(h>>10) & 0x1f
 	frac := uint32(h) & 0x3ff
@@ -238,7 +286,7 @@ func (s *Store) HasAcousticFeatures(ctx context.Context) bool {
 	}
 	c.mu.Unlock()
 	var one int
-	return s.db.QueryRowContext(ctx, `SELECT 1 FROM track_audio_features WHERE length(embedding) >= 4 LIMIT 1`).Scan(&one) == nil
+	return s.db.QueryRowContext(ctx, `SELECT 1 FROM track_audio_vectors WHERE length(embedding) >= 4 LIMIT 1`).Scan(&one) == nil
 }
 
 // AcousticIndex returns the current snapshot (nil when no track has been analysed).
@@ -351,7 +399,7 @@ func (s *Store) buildAcoustic(ctx context.Context, version, stamp string, countH
 	if hook != nil {
 		hook()
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT track_id, embedding FROM track_audio_features WHERE analysis_version = ? ORDER BY track_id`, version)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.track_id, v.embedding FROM track_audio_features f JOIN track_audio_vectors v ON v.track_id = f.track_id WHERE f.analysis_version = ? ORDER BY f.track_id`, version)
 	if err != nil {
 		return nil, err
 	}

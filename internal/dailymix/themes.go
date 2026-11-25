@@ -295,6 +295,25 @@ const minStyleRel = 0.6
 // another theme's pool; it still appears in mood × style combinations.
 const genericShare = 0.30
 
+type scoredTrack struct {
+	t   *storage.RecTrack
+	idx int
+	rel float64
+}
+
+type themeIndex struct {
+	mildSad          []bool
+	acousticIdx      []int
+	styleCount       map[string]int
+	byMood           map[string][]scoredTrack
+	byMoodAdj        map[string][]scoredTrack
+	byStyle          map[string][]scoredTrack
+	byStyleAdj       map[string][]scoredTrack
+	untaggedAcoustic []int
+	familiar         []int
+	acousticNonSad   []int
+}
+
 type builder struct {
 	tracks   []*storage.RecTrack
 	allowSad bool
@@ -304,6 +323,67 @@ type builder struct {
 	profile  *Profile
 	today    string
 	generic  map[string]bool
+	idx      *themeIndex
+}
+
+func (b *builder) ensureIndex() *themeIndex {
+	if b.idx != nil {
+		return b.idx
+	}
+	n := len(b.tracks)
+	idx := &themeIndex{
+		mildSad:     make([]bool, n),
+		acousticIdx: make([]int, n),
+		styleCount:  make(map[string]int, len(tagging.Styles)),
+		byMood:      make(map[string][]scoredTrack, len(tagging.Moods)),
+		byMoodAdj:   make(map[string][]scoredTrack, len(tagging.Moods)),
+		byStyle:     make(map[string][]scoredTrack, len(tagging.Styles)),
+		byStyleAdj:  make(map[string][]scoredTrack, len(tagging.Styles)),
+	}
+	hasAcoustic := b.acoustic.Len() > 0
+	for i, t := range b.tracks {
+		sad := mildlySad(t, b.allowSad)
+		idx.mildSad[i] = sad
+		aIdx := -1
+		if hasAcoustic {
+			if pos, ok := b.acoustic.IndexOf(t.ID); ok {
+				aIdx = pos
+			}
+		}
+		idx.acousticIdx[i] = aIdx
+		if !sad {
+			if familiar(t) {
+				idx.familiar = append(idx.familiar, i)
+			}
+			if aIdx >= 0 {
+				idx.acousticNonSad = append(idx.acousticNonSad, i)
+				if t.TagSource == "" || t.TagSource == "audio" {
+					idx.untaggedAcoustic = append(idx.untaggedAcoustic, i)
+				}
+			}
+		}
+		for m := range t.Moods {
+			r := moodRel(t, m)
+			if r >= minRel {
+				idx.byMood[m] = append(idx.byMood[m], scoredTrack{t: t, idx: i, rel: r})
+			}
+			if r >= 0.6 {
+				idx.byMoodAdj[m] = append(idx.byMoodAdj[m], scoredTrack{t: t, idx: i, rel: r})
+			}
+		}
+		for st := range t.Styles {
+			r := styleRel(t, st)
+			if r >= minStyleRel {
+				idx.styleCount[st]++
+				idx.byStyle[st] = append(idx.byStyle[st], scoredTrack{t: t, idx: i, rel: r})
+			}
+			if r >= 0.75 {
+				idx.byStyleAdj[st] = append(idx.byStyleAdj[st], scoredTrack{t: t, idx: i, rel: r})
+			}
+		}
+	}
+	b.idx = idx
+	return idx
 }
 
 // computeGeneric marks the styles that are too broad (see genericShare).
@@ -312,14 +392,10 @@ func (b *builder) computeGeneric() {
 	if len(b.tracks) == 0 {
 		return
 	}
+	idx := b.ensureIndex()
+	total := float64(len(b.tracks))
 	for _, st := range tagging.Styles {
-		n := 0
-		for _, t := range b.tracks {
-			if styleRel(t, st.ID) >= minStyleRel {
-				n++
-			}
-		}
-		if float64(n)/float64(len(b.tracks)) > genericShare {
+		if float64(idx.styleCount[st.ID])/total > genericShare {
 			b.generic[st.ID] = true
 		}
 	}
@@ -346,54 +422,115 @@ func capAdjacent(pool []Candidate) []Candidate {
 	return append(out, adj[:direct]...)
 }
 
-func (b *builder) moodPool(mood string, withAdjacent bool) []Candidate {
-	var out []Candidate
-	for _, t := range b.tracks {
-		if mildlySad(t, b.allowSad) && !lowEnergyMoods[mood] {
-			continue
-		}
-		if r := moodRel(t, mood); r >= minRel {
-			out = append(out, Candidate{t, r, "tag"})
-			continue
-		}
-		if !withAdjacent {
-			continue
-		}
-		var best float64
-		for _, adj := range adjacentMoods[mood] {
-			best = math.Max(best, moodRel(t, adj))
-		}
-		if best >= 0.6 {
-			out = append(out, Candidate{t, 0.45 * best, "adjacent"})
+func mergeDirectAndAdjacent(direct, adj []scoredTrack, adjFactor float64) []Candidate {
+	out := make([]Candidate, 0, len(direct)+len(adj))
+	i, j := 0, 0
+	for i < len(direct) && j < len(adj) {
+		if direct[i].idx < adj[j].idx {
+			out = append(out, Candidate{direct[i].t, direct[i].rel, "tag"})
+			i++
+		} else {
+			out = append(out, Candidate{adj[j].t, adjFactor * adj[j].rel, "adjacent"})
+			j++
 		}
 	}
-	return capAdjacent(out)
+	for ; i < len(direct); i++ {
+		out = append(out, Candidate{direct[i].t, direct[i].rel, "tag"})
+	}
+	for ; j < len(adj); j++ {
+		out = append(out, Candidate{adj[j].t, adjFactor * adj[j].rel, "adjacent"})
+	}
+	return out
+}
+
+func (b *builder) moodPool(mood string, withAdjacent bool) []Candidate {
+	idx := b.ensureIndex()
+	allowMildSad := lowEnergyMoods[mood]
+	rawDirect := idx.byMood[mood]
+	direct := make([]scoredTrack, 0, len(rawDirect))
+	var directMark map[int]bool
+	if withAdjacent {
+		directMark = make(map[int]bool, len(rawDirect))
+	}
+	for _, st := range rawDirect {
+		if idx.mildSad[st.idx] && !allowMildSad {
+			continue
+		}
+		direct = append(direct, st)
+		if withAdjacent {
+			directMark[st.idx] = true
+		}
+	}
+	if !withAdjacent {
+		out := make([]Candidate, len(direct))
+		for i, st := range direct {
+			out[i] = Candidate{st.t, st.rel, "tag"}
+		}
+		return out
+	}
+	adjBest := map[int]scoredTrack{}
+	for _, adj := range adjacentMoods[mood] {
+		for _, st := range idx.byMoodAdj[adj] {
+			if directMark[st.idx] || (idx.mildSad[st.idx] && !allowMildSad) {
+				continue
+			}
+			if prev, ok := adjBest[st.idx]; !ok || st.rel > prev.rel {
+				adjBest[st.idx] = st
+			}
+		}
+	}
+	adjList := make([]scoredTrack, 0, len(adjBest))
+	for _, st := range adjBest {
+		adjList = append(adjList, st)
+	}
+	sort.Slice(adjList, func(i, j int) bool { return adjList[i].idx < adjList[j].idx })
+	return capAdjacent(mergeDirectAndAdjacent(direct, adjList, 0.45))
 }
 
 func (b *builder) stylePool(style string, withAdjacent bool) []Candidate {
-	var out []Candidate
-	for _, t := range b.tracks {
-		if mildlySad(t, b.allowSad) {
+	idx := b.ensureIndex()
+	rawDirect := idx.byStyle[style]
+	direct := make([]scoredTrack, 0, len(rawDirect))
+	var directMark map[int]bool
+	if withAdjacent {
+		directMark = make(map[int]bool, len(rawDirect))
+	}
+	for _, st := range rawDirect {
+		if idx.mildSad[st.idx] {
 			continue
 		}
-		if r := styleRel(t, style); r >= minStyleRel {
-			out = append(out, Candidate{t, r, "tag"})
-			continue
-		}
-		if !withAdjacent {
-			continue
-		}
-		var best float64
-		for _, adj := range adjacentStyles[style] {
-			if !b.generic[adj] {
-				best = math.Max(best, styleRel(t, adj))
-			}
-		}
-		if best >= 0.75 {
-			out = append(out, Candidate{t, 0.4 * best, "adjacent"})
+		direct = append(direct, st)
+		if withAdjacent {
+			directMark[st.idx] = true
 		}
 	}
-	return capAdjacent(out)
+	if !withAdjacent {
+		out := make([]Candidate, len(direct))
+		for i, st := range direct {
+			out[i] = Candidate{st.t, st.rel, "tag"}
+		}
+		return out
+	}
+	adjBest := map[int]scoredTrack{}
+	for _, adj := range adjacentStyles[style] {
+		if b.generic[adj] {
+			continue
+		}
+		for _, st := range idx.byStyleAdj[adj] {
+			if directMark[st.idx] || idx.mildSad[st.idx] {
+				continue
+			}
+			if prev, ok := adjBest[st.idx]; !ok || st.rel > prev.rel {
+				adjBest[st.idx] = st
+			}
+		}
+	}
+	adjList := make([]scoredTrack, 0, len(adjBest))
+	for _, st := range adjBest {
+		adjList = append(adjList, st)
+	}
+	sort.Slice(adjList, func(i, j int) bool { return adjList[i].idx < adjList[j].idx })
+	return capAdjacent(mergeDirectAndAdjacent(direct, adjList, 0.4))
 }
 
 // expandAcoustic adds untagged (or audio-only tagged) tracks that sound like the core
@@ -402,12 +539,13 @@ func (b *builder) expandAcoustic(pool []Candidate, limit int) []Candidate {
 	if b.acoustic.Len() == 0 || limit <= 0 {
 		return pool
 	}
+	idx := b.ensureIndex()
 	core := append([]Candidate(nil), pool...)
 	sort.Slice(core, func(i, j int) bool {
 		return core[i].Rel > core[j].Rel || (core[i].Rel == core[j].Rel && core[i].T.ID < core[j].T.ID)
 	})
 	var ids []int64
-	in := map[int64]bool{}
+	in := make(map[int64]bool, len(core))
 	for i, c := range core {
 		in[c.T.ID] = true
 		if i < 30 && c.Via == "tag" {
@@ -423,11 +561,12 @@ func (b *builder) expandAcoustic(pool []Candidate, limit int) []Candidate {
 		c float64
 	}
 	var extra []scored
-	for _, t := range b.tracks {
-		if in[t.ID] || (t.TagSource != "" && t.TagSource != "audio") || mildlySad(t, b.allowSad) {
+	for _, ti := range idx.untaggedAcoustic {
+		t := b.tracks[ti]
+		if in[t.ID] {
 			continue
 		}
-		if cos, ok := b.acoustic.CosineTo(t.ID, centroid); ok && storage.AcousticScore(cos) >= 0.5 {
+		if cos, ok := b.acoustic.CosineToIndex(idx.acousticIdx[ti], centroid); ok && storage.AcousticScore(cos) >= 0.5 {
 			extra = append(extra, scored{t, cos})
 		}
 	}
@@ -447,6 +586,7 @@ func (b *builder) expandAcoustic(pool []Candidate, limit int) []Candidate {
 func bridgeNeed(length int) int { return max(3, length/6) }
 
 func (b *builder) bridge(th *Theme) []Candidate {
+	idx := b.ensureIndex()
 	in := make(map[int64]bool, len(th.Pool))
 	for _, c := range th.Pool {
 		in[c.T.ID] = true
@@ -464,8 +604,9 @@ func (b *builder) bridge(th *Theme) []Candidate {
 		}
 	}
 	var out []Candidate
-	for _, t := range b.tracks {
-		if in[t.ID] || !familiar(t) || mildlySad(t, b.allowSad) {
+	for _, ti := range idx.familiar {
+		t := b.tracks[ti]
+		if in[t.ID] {
 			continue
 		}
 		var mr, sr float64
@@ -562,7 +703,44 @@ func (b *builder) Candidates() []*Theme {
 			b.add(&out, &Theme{Type: TypeStyle, Key: st.ID, Style: st.ID, Pool: pool})
 		}
 	}
-	// mood × style combinations (direct hits only).
+	// mood × style combinations (direct hits only), accumulated in one pass over tracks
+	// to preserve exact b.tracks order while avoiding 216 full-library scans.
+	idx := b.ensureIndex()
+	negMood := make(map[string]bool, len(tagging.Moods))
+	for _, m := range tagging.Moods {
+		if m.Negative {
+			negMood[m.ID] = true
+		}
+	}
+	type msKey struct{ mood, style string }
+	msPools := make(map[msKey][]Candidate, 64)
+	for ti, t := range b.tracks {
+		if len(t.Moods) == 0 || len(t.Styles) == 0 {
+			continue
+		}
+		sad := idx.mildSad[ti]
+		for m := range t.Moods {
+			if negMood[m] || (sad && !lowEnergyMoods[m]) {
+				continue
+			}
+			mr := moodRel(t, m)
+			if mr < minRel {
+				continue
+			}
+			for st := range t.Styles {
+				if b.generic[st] {
+					continue
+				}
+				sr := styleRel(t, st)
+				if sr < minStyleRel {
+					continue
+				}
+				k := msKey{m, st}
+				msPools[k] = append(msPools[k], Candidate{t, math.Sqrt(mr * sr), "tag"})
+			}
+		}
+	}
+	minMS := minPool(TypeMoodStyle, b.length)
 	for _, m := range tagging.Moods {
 		if m.Negative {
 			continue
@@ -571,17 +749,10 @@ func (b *builder) Candidates() []*Theme {
 			if b.generic[st.ID] {
 				continue // “cheerful × pop” is just “cheerful” with a quarter of the library
 			}
-			var pool []Candidate
-			for _, t := range b.tracks {
-				if mildlySad(t, b.allowSad) && !lowEnergyMoods[m.ID] {
-					continue
-				}
-				mr, sr := moodRel(t, m.ID), styleRel(t, st.ID)
-				if mr >= minRel && sr >= minStyleRel {
-					pool = append(pool, Candidate{t, math.Sqrt(mr * sr), "tag"})
-				}
+			pool := msPools[msKey{m.ID, st.ID}]
+			if len(pool) >= minMS {
+				b.add(&out, &Theme{Type: TypeMoodStyle, Key: m.ID + "+" + st.ID, Mood: m.ID, Style: st.ID, Pool: pool})
 			}
-			b.add(&out, &Theme{Type: TypeMoodStyle, Key: m.ID + "+" + st.ID, Mood: m.ID, Style: st.ID, Pool: pool})
 		}
 	}
 	b.auxiliary(&out)
@@ -635,11 +806,12 @@ func (b *builder) radioArtists(ids []int64, byArtist map[int64][]*storage.RecTra
 
 // auxiliary builds work / composer / artist / rediscover themes.
 func (b *builder) auxiliary(out *[]*Theme) {
+	idx := b.ensureIndex()
 	byWork := map[int64][]*storage.RecTrack{}
 	byComposer := map[int64][]*storage.RecTrack{}
 	byArtist := map[int64][]*storage.RecTrack{}
-	for _, t := range b.tracks {
-		if mildlySad(t, b.allowSad) {
+	for ti, t := range b.tracks {
+		if idx.mildSad[ti] {
 			continue
 		}
 		for _, w := range t.Works {
@@ -697,8 +869,8 @@ func (b *builder) auxiliary(out *[]*Theme) {
 				continue
 			}
 			own := byArtist[id]
-			var seedIDs []int64
-			mine := map[int64]bool{}
+			seedIDs := make([]int64, 0, len(own))
+			mine := make(map[int64]bool, len(own))
 			for _, t := range own {
 				seedIDs = append(seedIDs, t.ID)
 				mine[t.ID] = true
@@ -708,11 +880,12 @@ func (b *builder) auxiliary(out *[]*Theme) {
 				continue
 			}
 			p := pool(own, "artist")
-			for _, t := range b.tracks {
-				if mine[t.ID] || mildlySad(t, b.allowSad) {
+			for _, ti := range idx.acousticNonSad {
+				t := b.tracks[ti]
+				if mine[t.ID] {
 					continue
 				}
-				if cos, ok := b.acoustic.CosineTo(t.ID, centroid); ok {
+				if cos, ok := b.acoustic.CosineToIndex(idx.acousticIdx[ti], centroid); ok {
 					if s := storage.AcousticScore(cos); s >= 0.6 {
 						p = append(p, Candidate{t, 0.8 * s, "similar"})
 					}
@@ -725,18 +898,26 @@ func (b *builder) auxiliary(out *[]*Theme) {
 	}
 	// Rediscover: often played (or favourite) but not in the last 60 days, by mood.
 	cutoff := b.profile.Now.AddDate(0, 0, -60)
+	var rediscoverIdx []int
+	for ti, t := range b.tracks {
+		if (t.PlayCount >= 3 || t.Favorite) && !t.AddedAt.After(cutoff) && (t.LastPlayed.IsZero() || !t.LastPlayed.After(cutoff)) {
+			rediscoverIdx = append(rediscoverIdx, ti)
+		}
+	}
+	if len(rediscoverIdx) == 0 {
+		return
+	}
 	for _, m := range tagging.Moods {
 		if m.Negative {
 			continue
 		}
+		allowMildSad := lowEnergyMoods[m.ID]
 		var p []Candidate
-		for _, t := range b.tracks {
-			if !(t.PlayCount >= 3 || t.Favorite) || t.AddedAt.After(cutoff) || (!t.LastPlayed.IsZero() && t.LastPlayed.After(cutoff)) {
+		for _, ti := range rediscoverIdx {
+			if idx.mildSad[ti] && !allowMildSad {
 				continue
 			}
-			if mildlySad(t, b.allowSad) && !lowEnergyMoods[m.ID] {
-				continue
-			}
+			t := b.tracks[ti]
 			r := moodRel(t, m.ID)
 			for _, adj := range adjacentMoods[m.ID] {
 				r = math.Max(r, 0.6*moodRel(t, adj))

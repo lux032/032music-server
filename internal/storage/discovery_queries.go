@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"time"
 )
 
 func (s *Store) DiscoveryLocalAlbums(c context.Context) ([]DiscoveryLocalAlbum, error) {
@@ -76,19 +75,22 @@ func (s *Store) DiscoveryOwnership(c context.Context, ids []string) (map[string]
 	if e := s.IdentityReady(c); e != nil {
 		return nil, e
 	}
-	keys := []string{}
+	out := make(map[string]Ownership, len(ids))
+	keys := make([]string, 0, len(ids))
 	for _, raw := range ids {
 		id, e := normalizedDiscoveryID(raw)
 		if e != nil {
 			return nil, e
 		}
-		keys = append(keys, id)
+		if _, exists := out[id]; !exists {
+			out[id] = Ownership{}
+			keys = append(keys, id)
+		}
+	}
+	if len(keys) == 0 {
+		return out, nil
 	}
 	raw, _ := json.Marshal(keys)
-	out := map[string]Ownership{}
-	for _, id := range keys {
-		out[id] = Ownership{}
-	}
 	rows, e := s.db.QueryContext(c, `SELECT j.value,COALESCE(g.album_id,0),EXISTS(SELECT 1 FROM release_group_decisions d WHERE d.rgid=j.value),EXISTS(SELECT 1 FROM acquisition_tasks t WHERE t.rgid=j.value AND t.state IN (`+AcquisitionActiveStates+`)) FROM json_each(?) j LEFT JOIN album_release_groups g ON g.rgid=j.value AND g.status='resolved'`, string(raw))
 	if e != nil {
 		return nil, e
@@ -154,6 +156,36 @@ func (s *Store) DiscoveryRejections(c context.Context) (map[string]map[int64]boo
 	}
 	return out, rows.Err()
 }
+const listDiscoveryCandidatesSQL = `SELECT ` + discoveryGroupSelect + `,
+	COALESCE(d.seed_artist_id,0),COALESCE(a.user_display_name,a.display_name,''),
+	d.generation,d.score,d.lane,COALESCE(d.rank,0),d.reasons_json,
+	d.seed_kind,COALESCE(d.seed_work_id,0),COALESCE(d.bangumi_subject_id,0),
+	COALESCE(w.title,''),COALESCE(sm.series_id,0),
+	COALESCE(wm.relation,''),
+	CASE WHEN m.status IS NOT NULL AND mc.rgid IS NULL THEN m.status ELSE '' END
+	FROM discovery_candidates d
+	JOIN discovery_release_groups r ON r.rgid=d.rgid
+	LEFT JOIN artists a ON a.id=d.seed_artist_id
+	LEFT JOIN works w ON w.id=d.seed_work_id
+	LEFT JOIN work_series_members sm ON sm.work_id=w.id
+	LEFT JOIN discovery_work_music wm ON wm.work_id=d.seed_work_id AND wm.subject_id=d.bangumi_subject_id
+	LEFT JOIN discovery_bangumi_mappings m ON m.subject_id=d.bangumi_subject_id AND m.rgid=d.rgid
+	LEFT JOIN discovery_bangumi_mappings mc ON mc.subject_id=m.subject_id AND mc.status='confirmed' AND mc.rgid<>m.rgid
+	ORDER BY COALESCE(d.rank,2147483647),d.score DESC,r.rgid`
+
+type rawDiscoveryItem struct {
+	item         DiscoveryItem
+	secondaryRaw string
+	reasonsRaw   string
+	optionRaws   []string
+}
+
+func (s *Store) CountAcquisitionTasks(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM acquisition_tasks WHERE state IN (`+AcquisitionActiveStates+`) OR (state='IN_LIBRARY' AND finished_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days'))`).Scan(&n)
+	return n, err
+}
+
 func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offset int) ([]DiscoveryItem, DiscoveryCounts, error) {
 	var counts DiscoveryCounts
 	if e := s.IdentityReady(c); e != nil {
@@ -165,35 +197,27 @@ func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offs
 	if tab != "recommended" && tab != "possible" && tab != "ignored" && tab != "acquiring" && tab != "mapping" {
 		return nil, counts, errors.New("invalid discovery tab")
 	}
-	rows, e := s.db.QueryContext(c, `SELECT `+discoveryGroupSelect+`,COALESCE(d.seed_artist_id,0),COALESCE(a.user_display_name,a.display_name,''),d.generation,d.score,d.lane,COALESCE(d.rank,0),d.reasons_json,d.seed_kind,COALESCE(d.seed_work_id,0),COALESCE(d.bangumi_subject_id,0),COALESCE(w.title,''),COALESCE(sm.series_id,0),COALESCE((SELECT relation FROM discovery_work_music wm WHERE wm.work_id=d.seed_work_id AND wm.subject_id=d.bangumi_subject_id),''),COALESCE((SELECT status FROM discovery_bangumi_mappings m WHERE m.subject_id=d.bangumi_subject_id AND m.rgid=d.rgid AND NOT EXISTS(SELECT 1 FROM discovery_bangumi_mappings x WHERE x.subject_id=m.subject_id AND x.status='confirmed' AND x.rgid<>m.rgid)),'') FROM discovery_candidates d JOIN discovery_release_groups r ON r.rgid=d.rgid LEFT JOIN artists a ON a.id=d.seed_artist_id LEFT JOIN works w ON w.id=d.seed_work_id LEFT JOIN work_series_members sm ON sm.work_id=w.id ORDER BY COALESCE(d.rank,2147483647),d.score DESC,r.rgid`)
+	rows, e := s.db.QueryContext(c, listDiscoveryCandidatesSQL)
 	if e != nil {
 		return nil, counts, e
 	}
-	all := []DiscoveryItem{}
+	all := []rawDiscoveryItem{}
 	ids := []string{}
 	for rows.Next() {
-		var v DiscoveryItem
-		var secondary, reasons string
-		e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &secondary, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedArtistID, &v.Artist, &v.Generation, &v.Score, &v.Lane, &v.Rank, &reasons, &v.SeedKind, &v.SeedWorkID, &v.SubjectID, &v.WorkTitle, &v.SeriesID, &v.Relation, &v.MappingStatus)
+		var entry rawDiscoveryItem
+		v := &entry.item
+		e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &entry.secondaryRaw, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedArtistID, &v.Artist, &v.Generation, &v.Score, &v.Lane, &v.Rank, &entry.reasonsRaw, &v.SeedKind, &v.SeedWorkID, &v.SubjectID, &v.WorkTitle, &v.SeriesID, &v.Relation, &v.MappingStatus)
 		if e != nil {
 			rows.Close()
 			return nil, counts, e
 		}
-		if e = json.Unmarshal([]byte(secondary), &v.SecondaryTypes); e != nil {
-			rows.Close()
-			return nil, counts, e
-		}
-		if e = json.Unmarshal([]byte(reasons), &v.Reasons); e != nil {
-			rows.Close()
-			return nil, counts, e
-		}
 		if len(v.FirstReleaseDate) >= 4 {
-			if d, e := time.Parse("2006", v.FirstReleaseDate[:4]); e == nil {
-				v.Year = d.Year()
+			if y, err := strconv.Atoi(v.FirstReleaseDate[:4]); err == nil && y > 0 {
+				v.Year = y
 			}
 		}
 		v.CoverAvailable = v.CoverStatus == "cached"
-		all = append(all, v)
+		all = append(all, entry)
 		ids = append(ids, v.RGID)
 	}
 	e = rows.Err()
@@ -201,33 +225,40 @@ func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offs
 	if e != nil {
 		return nil, counts, e
 	}
-	mapping, e := s.discoveryMappingCatalog(c, true)
+	mapping, e := s.discoveryMappingCatalogRaw(c, true)
 	if e != nil {
 		return nil, counts, e
 	}
-	for _, v := range mapping {
-		ids = append(ids, v.RGID)
+	for _, entry := range mapping {
+		ids = append(ids, entry.cand.RGID)
 	}
 	own, e := s.DiscoveryOwnership(c, ids)
 	if e != nil {
 		return nil, counts, e
 	}
-	tasks, e := s.ListAcquisitionTasks(c)
-	if e != nil {
-		return nil, counts, e
-	}
-	counts.Acquiring = len(tasks)
-	out := []DiscoveryItem{}
+	out := []rawDiscoveryItem{}
 	if tab == "acquiring" {
-		for _, task := range tasks {
-			out = append(out, DiscoveryItem{DiscoveryCandidate: DiscoveryCandidate{DiscoveryReleaseGroup: DiscoveryReleaseGroup{RGID: task.RGID, Title: task.Title, ArtistCredit: task.Artist, Kind: task.Kind}}})
+		tasks, e := s.ListAcquisitionTasks(c)
+		if e != nil {
+			return nil, counts, e
 		}
+		counts.Acquiring = len(tasks)
+		for _, task := range tasks {
+			out = append(out, rawDiscoveryItem{item: DiscoveryItem{DiscoveryCandidate: DiscoveryCandidate{DiscoveryReleaseGroup: DiscoveryReleaseGroup{RGID: task.RGID, Title: task.Title, ArtistCredit: task.Artist, Kind: task.Kind}}}})
+		}
+	} else {
+		n, e := s.CountAcquisitionTasks(c)
+		if e != nil {
+			return nil, counts, e
+		}
+		counts.Acquiring = n
 	}
 	metadata, err := s.discoveryMappingMetadata(c)
 	if err != nil {
 		return nil, counts, err
 	}
-	for _, v := range all {
+	for _, entry := range all {
+		v := entry.item
 		if v.SubjectID > 0 {
 			if _, ok := metadata[discoveryMappingKey(v.SubjectID, v.RGID)]; !ok {
 				continue
@@ -254,15 +285,16 @@ func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offs
 			counts.Recommended++
 		}
 		if kind == tab && (source == "all" || source == v.SeedKind) {
-			v.Possible = o.Possible
-			out = append(out, v)
+			entry.item.Possible = o.Possible
+			out = append(out, entry)
 		}
 	}
 	seenMappings := map[string]bool{}
 	perSubject := map[int64]int{}
 	groupIndexes := map[string]int{}
 	counted := map[string]bool{}
-	for _, v := range mapping {
+	for _, mEntry := range mapping {
+		v := mEntry.cand
 		if _, ok := metadata[discoveryMappingKey(v.SubjectID, v.RGID)]; !ok {
 			continue
 		}
@@ -303,22 +335,19 @@ func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offs
 			}
 			groupKey := fmt.Sprintf("%s:%d", kind, v.SubjectID)
 			if index, ok := groupIndexes[groupKey]; ok {
-				out[index].MappingOptions = append(out[index].MappingOptions, item)
+				out[index].item.MappingOptions = append(out[index].item.MappingOptions, item)
+				out[index].optionRaws = append(out[index].optionRaws, mEntry.secondaryRaw)
 			} else {
 				item.MappingOptions = []DiscoveryItem{item}
 				groupIndexes[groupKey] = len(out)
-				out = append(out, item)
+				out = append(out, rawDiscoveryItem{
+					item:         item,
+					secondaryRaw: mEntry.secondaryRaw,
+					optionRaws:   []string{mEntry.secondaryRaw},
+				})
 			}
 		}
 	}
-	enriched := out[:0]
-	for _, item := range out {
-		item, ok := enrichDiscoveryMappingItem(item, metadata)
-		if ok {
-			enriched = append(enriched, item)
-		}
-	}
-	out = enriched
 	if offset < 0 {
 		offset = 0
 	}
@@ -332,7 +361,35 @@ func (s *Store) ListDiscovery(c context.Context, tab, source string, limit, offs
 	if end > len(out) {
 		end = len(out)
 	}
-	return out[offset:end], counts, nil
+	pageRaw := out[offset:end]
+	page := make([]DiscoveryItem, 0, len(pageRaw))
+	for _, entry := range pageRaw {
+		if entry.secondaryRaw != "" {
+			if e = json.Unmarshal([]byte(entry.secondaryRaw), &entry.item.SecondaryTypes); e != nil {
+				return nil, counts, e
+			}
+		}
+		if entry.reasonsRaw != "" {
+			if e = json.Unmarshal([]byte(entry.reasonsRaw), &entry.item.Reasons); e != nil {
+				return nil, counts, e
+			}
+		}
+		for i := range entry.item.MappingOptions {
+			if i < len(entry.optionRaws) && entry.optionRaws[i] != "" {
+				if e = json.Unmarshal([]byte(entry.optionRaws[i]), &entry.item.MappingOptions[i].SecondaryTypes); e != nil {
+					return nil, counts, e
+				}
+			}
+		}
+		item, ok, e := enrichDiscoveryMappingItem(entry.item, metadata)
+		if e != nil {
+			return nil, counts, e
+		}
+		if ok {
+			page = append(page, item)
+		}
+	}
+	return page, counts, nil
 }
 func (s *Store) DiscoveryIgnore(c context.Context, raw string, ignored bool) error {
 	if e := s.IdentityReady(c); e != nil {
@@ -352,14 +409,11 @@ func (s *Store) DiscoveryIgnore(c context.Context, raw string, ignored bool) err
 	if !ignored {
 		return s.SetReleaseGroupIgnored(c, id, false)
 	}
-	tx, e := s.db.BeginTx(c, nil)
+	tx, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
-	if e = discoveryLock(c, tx); e != nil {
-		return e
-	}
 	var active bool
 	if e = tx.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM acquisition_tasks WHERE rgid=? AND state IN (`+AcquisitionActiveStates+`))`, id).Scan(&active); e != nil {
 		return e
@@ -380,14 +434,11 @@ func (s *Store) DiscoveryNotSame(c context.Context, raw string, album int64) err
 	if e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	res, e := t.ExecContext(c, `INSERT OR IGNORE INTO discovery_match_rejections SELECT ?,? WHERE EXISTS(SELECT 1 FROM discovery_release_groups WHERE rgid=?) AND EXISTS(SELECT 1 FROM albums WHERE id=? AND `+albumVisibleSQL("albums.id")+`)`, id, album, id, album)
 	if e != nil {
 		return e
@@ -415,14 +466,11 @@ func (s *Store) DiscoveryOwned(c context.Context, raw string, album int64, confi
 	if e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	var active bool
 	if e = t.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM acquisition_tasks WHERE rgid=? AND state IN (`+AcquisitionActiveStates+`))`, id).Scan(&active); e != nil {
 		return e
@@ -462,6 +510,8 @@ func (s *Store) DiscoveryOwned(c context.Context, raw string, album int64, confi
 	}
 	return t.Commit()
 }
+const discoveryArtistPlays90dSQL = artistMergeChainSQL + `, recent AS MATERIALIZED (SELECT session_id,track_id,counted_at FROM playback_sessions WHERE counted_at IS NOT NULL AND counted_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-90 days')) SELECT DISTINCT p.session_id,a.root,julianday('now')-julianday(p.counted_at) FROM recent p JOIN track_artists ta ON ta.track_id=p.track_id AND ta.role='primary' JOIN chain a ON a.id=ta.artist_id`
+
 func (s *Store) DiscoveryArtistSignals(c context.Context) (map[int64]DiscoverySignals, error) {
 	if e := s.IdentityReady(c); e != nil {
 		return nil, e
@@ -516,7 +566,7 @@ func (s *Store) DiscoveryArtistSignals(c context.Context) (map[int64]DiscoverySi
 			return nil, e
 		}
 	}
-	rows, e = s.db.QueryContext(c, artistMergeChainSQL+` SELECT DISTINCT p.session_id,a.root,julianday('now')-julianday(p.counted_at) FROM playback_sessions p JOIN track_artists ta ON ta.track_id=p.track_id AND ta.role='primary' JOIN chain a ON a.id=ta.artist_id WHERE p.counted_at IS NOT NULL AND julianday(p.counted_at)>=julianday('now','-90 days')`)
+	rows, e = s.db.QueryContext(c, discoveryArtistPlays90dSQL)
 	if e != nil {
 		return nil, e
 	}
@@ -539,35 +589,43 @@ func (s *Store) DiscoveryArtistSignals(c context.Context) (map[int64]DiscoverySi
 }
 
 // Promote the first surviving option if a concurrent refresh retired the head.
-func enrichDiscoveryMappingItem(item DiscoveryItem, metadata map[string]discoveryMappingDisplay) (DiscoveryItem, bool) {
+func enrichDiscoveryMappingItem(item DiscoveryItem, metadata map[string]discoveryMappingDisplay) (DiscoveryItem, bool, error) {
 	if item.SubjectID == 0 {
-		return item, true
+		return item, true, nil
 	}
 	if len(item.MappingOptions) > 0 {
 		options := []DiscoveryItem{}
 		for _, option := range item.MappingOptions {
 			if info, ok := metadata[discoveryMappingKey(option.SubjectID, option.RGID)]; ok {
+				ev, err := info.decodeEvidence()
+				if err != nil {
+					return DiscoveryItem{}, false, err
+				}
 				option.SubjectName = info.name
 				option.SubjectNameCN = info.nameCN
-				option.MappingEvidence = info.evidence
+				option.MappingEvidence = ev
 				option.MappingScore = info.score
 				options = append(options, option)
 			}
 		}
 		if len(options) == 0 {
-			return DiscoveryItem{}, false
+			return DiscoveryItem{}, false, nil
 		}
 		item = options[0]
 		item.MappingOptions = options
-		return item, true
+		return item, true, nil
 	}
 	info, ok := metadata[discoveryMappingKey(item.SubjectID, item.RGID)]
 	if !ok {
-		return DiscoveryItem{}, false
+		return DiscoveryItem{}, false, nil
+	}
+	ev, err := info.decodeEvidence()
+	if err != nil {
+		return DiscoveryItem{}, false, err
 	}
 	item.SubjectName = info.name
 	item.SubjectNameCN = info.nameCN
-	item.MappingEvidence = info.evidence
+	item.MappingEvidence = ev
 	item.MappingScore = info.score
-	return item, true
+	return item, true, nil
 }

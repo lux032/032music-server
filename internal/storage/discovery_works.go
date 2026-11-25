@@ -165,14 +165,11 @@ func (s *Store) SaveDiscoveryWorkSeed(c context.Context, g int64, seed Discovery
 	if e := s.IdentityReady(c); e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	if e = discoveryWorkGuard(c, t, g, []DiscoveryWorkSeed{seed}); e != nil {
 		return e
 	}
@@ -288,14 +285,11 @@ func (s *Store) DiscoveryMappingDecision(c context.Context, subjectID int64, rgi
 	if subjectID <= 0 || status == "" {
 		return errors.New("invalid mapping decision")
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	if decision == "confirm" {
 		var exists bool
 		if e = t.QueryRowContext(c, `SELECT EXISTS(SELECT 1 FROM discovery_bangumi_mappings WHERE subject_id=? AND status='confirmed' AND rgid<>?)`, subjectID, id).Scan(&exists); e != nil {
@@ -315,10 +309,26 @@ func (s *Store) DiscoveryMappingDecision(c context.Context, subjectID int64, rgi
 	}
 	return t.Commit()
 }
-func (s *Store) DiscoveryWorkCatalog(c context.Context) ([]DiscoveryCandidate, error) {
-	return s.discoveryMappingCatalog(c, false)
+type rawDiscoveryMappingCand struct {
+	cand         DiscoveryCandidate
+	secondaryRaw string
 }
-func (s *Store) discoveryMappingCatalog(c context.Context, suggestions bool) ([]DiscoveryCandidate, error) {
+
+func (s *Store) DiscoveryWorkCatalog(c context.Context) ([]DiscoveryCandidate, error) {
+	rawList, err := s.discoveryMappingCatalogRaw(c, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DiscoveryCandidate, len(rawList))
+	for i, entry := range rawList {
+		if err := json.Unmarshal([]byte(entry.secondaryRaw), &entry.cand.SecondaryTypes); err != nil {
+			return nil, err
+		}
+		out[i] = entry.cand
+	}
+	return out, nil
+}
+func (s *Store) discoveryMappingCatalogRaw(c context.Context, suggestions bool) ([]rawDiscoveryMappingCand, error) {
 	if e := s.IdentityReady(c); e != nil {
 		return nil, e
 	}
@@ -331,23 +341,22 @@ func (s *Store) discoveryMappingCatalog(c context.Context, suggestions bool) ([]
 		return nil, e
 	}
 	defer rows.Close()
-	out := []DiscoveryCandidate{}
+	out := []rawDiscoveryMappingCand{}
 	for rows.Next() {
-		v := DiscoveryCandidate{SeedKind: "work"}
-		var raw string
-		if e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &raw, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedWorkID, &v.SubjectID, &v.WorkTitle, &v.Relation, &v.MappingStatus, &v.SeriesID, &v.Score); e != nil {
+		entry := rawDiscoveryMappingCand{cand: DiscoveryCandidate{SeedKind: "work"}}
+		v := &entry.cand
+		if e = rows.Scan(&v.RGID, &v.Title, &v.PrimaryType, &entry.secondaryRaw, &v.Kind, &v.FirstReleaseDate, &v.Disambiguation, &v.ArtistCredit, &v.CoverStatus, &v.CoverExt, &v.CoverCheckedAt, &v.SeedWorkID, &v.SubjectID, &v.WorkTitle, &v.Relation, &v.MappingStatus, &v.SeriesID, &v.Score); e != nil {
 			return nil, e
 		}
-		if e = json.Unmarshal([]byte(raw), &v.SecondaryTypes); e != nil {
-			return nil, e
-		}
-		out = append(out, v)
+		out = append(out, entry)
 	}
 	return out, rows.Err()
 }
 
 // The union counts each track once even when it has both album and track links.
 const discoveryWorkTracksSQL = `WITH wt AS (SELECT work_id,track_id FROM work_tracks UNION SELECT aw.work_id,t.id FROM album_works aw JOIN tracks t ON t.album_id=aw.album_id)`
+
+var discoveryWorkPlays90dSQL = discoveryWorkTracksSQL + `, recent AS MATERIALIZED (SELECT session_id,track_id,counted_at FROM playback_sessions WHERE counted_at IS NOT NULL AND counted_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-90 days')) SELECT DISTINCT p.session_id,wt.work_id,julianday('now')-julianday(p.counted_at) FROM recent p JOIN wt ON wt.track_id=p.track_id WHERE ` + trackVisibleSQL("wt.track_id")
 
 func (s *Store) DiscoveryWorkSignals(c context.Context) (map[int64]DiscoverySignals, error) {
 	if e := s.IdentityReady(c); e != nil {
@@ -391,7 +400,7 @@ func (s *Store) DiscoveryWorkSignals(c context.Context) (map[int64]DiscoverySign
 	if e != nil {
 		return nil, e
 	}
-	rows, e = s.db.QueryContext(c, discoveryWorkTracksSQL+` SELECT DISTINCT p.session_id,wt.work_id,julianday('now')-julianday(p.counted_at) FROM playback_sessions p JOIN wt ON wt.track_id=p.track_id WHERE `+trackVisibleSQL("wt.track_id")+` AND p.counted_at IS NOT NULL AND julianday(p.counted_at)>=julianday('now','-90 days')`)
+	rows, e = s.db.QueryContext(c, discoveryWorkPlays90dSQL)
 	if e != nil {
 		return nil, e
 	}
@@ -417,14 +426,11 @@ func (s *Store) DiscoveryMessage(c context.Context, g int64, message string) err
 	if e := s.IdentityReady(c); e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	if e = discoveryGuard(c, t, g, nil); e != nil {
 		return e
 	}
@@ -437,7 +443,19 @@ func (s *Store) DiscoveryMessage(c context.Context, g int64, message string) err
 type discoveryMappingDisplay struct {
 	name, nameCN string
 	evidence     []string
+	evidenceRaw  string
 	score        float64
+}
+
+func (d discoveryMappingDisplay) decodeEvidence() ([]string, error) {
+	if d.evidenceRaw == "" {
+		return d.evidence, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(d.evidenceRaw), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func discoveryMappingKey(subject int64, rgid string) string {
@@ -454,12 +472,9 @@ func (s *Store) discoveryMappingMetadata(c context.Context) (map[string]discover
 	out := map[string]discoveryMappingDisplay{}
 	for rows.Next() {
 		var subject int64
-		var rgid, raw string
+		var rgid string
 		var v discoveryMappingDisplay
-		if e = rows.Scan(&subject, &rgid, &v.name, &v.nameCN, &v.score, &raw); e != nil {
-			return nil, e
-		}
-		if e = json.Unmarshal([]byte(raw), &v.evidence); e != nil {
+		if e = rows.Scan(&subject, &rgid, &v.name, &v.nameCN, &v.score, &v.evidenceRaw); e != nil {
 			return nil, e
 		}
 		out[discoveryMappingKey(subject, rgid)] = v

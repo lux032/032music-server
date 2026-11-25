@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"github.com/lux032/032music-server/internal/storage"
@@ -253,15 +254,30 @@ func Rank(input []storage.DiscoveryCandidate, signals map[int64]storage.Discover
 			explore = append(explore, i)
 		}
 	}
-	sort.SliceStable(explore, func(i, j int) bool {
-		a, b := all[explore[i]], all[explore[j]]
-		wa, wb := kindWeight(a.Kind)*recency(a.FirstReleaseDate, now), kindWeight(b.Kind)*recency(b.FirstReleaseDate, now)
-		if wa != wb {
-			return wa > wb
+	type exploreKey struct {
+		idx    int
+		weight float64
+		hash   [32]byte
+	}
+	dateTag := now.Format("2006-01-02")
+	exploreKeys := make([]exploreKey, len(explore))
+	for k, idx := range explore {
+		c := all[idx]
+		exploreKeys[k] = exploreKey{
+			idx:    idx,
+			weight: kindWeight(c.Kind) * recency(c.FirstReleaseDate, now),
+			hash:   sha256.Sum256([]byte(c.RGID + dateTag)),
 		}
-		ha, hb := sha256.Sum256([]byte(a.RGID+now.Format("2006-01-02"))), sha256.Sum256([]byte(b.RGID+now.Format("2006-01-02")))
-		return string(ha[:]) < string(hb[:])
+	}
+	sort.SliceStable(exploreKeys, func(i, j int) bool {
+		if exploreKeys[i].weight != exploreKeys[j].weight {
+			return exploreKeys[i].weight > exploreKeys[j].weight
+		}
+		return bytes.Compare(exploreKeys[i].hash[:], exploreKeys[j].hash[:]) < 0
 	})
+	for k, ek := range exploreKeys {
+		explore[k] = ek.idx
+	}
 	counts := map[string]int{}
 	take := func(pool *[]int) int {
 		for len(*pool) > 0 {

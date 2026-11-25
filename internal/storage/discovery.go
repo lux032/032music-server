@@ -119,10 +119,6 @@ func (s *Store) DiscoverySeedSnapshot(c context.Context) ([]DiscoverySeed, error
 	return out, rows.Err()
 }
 
-func discoveryLock(c context.Context, t *sql.Tx) error {
-	_, e := t.ExecContext(c, `UPDATE discovery_refresh_state SET generation=generation WHERE 0`)
-	return e
-}
 func discoveryGuard(c context.Context, t *sql.Tx, g int64, seeds []DiscoverySeed) error {
 	var current int64
 	var status string
@@ -156,14 +152,11 @@ func (s *Store) BeginDiscoveryRefresh(c context.Context, seeds []DiscoverySeed, 
 	if e := s.IdentityReady(c); e != nil {
 		return 0, e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return 0, e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return 0, e
-	}
 	var g int64
 	if e = t.QueryRowContext(c, `UPDATE discovery_refresh_state SET generation=generation+1,status='running',total=?,processed=0,error_message='',started_at=?,finished_at=NULL WHERE id=1 RETURNING generation`, len(seeds)+workSeedCount(workSeeds), now.UTC().Format(time.RFC3339)).Scan(&g); e != nil {
 		return 0, e
@@ -219,14 +212,11 @@ func (s *Store) SaveDiscoverySeed(c context.Context, g int64, seed DiscoverySeed
 	if e := s.IdentityReady(c); e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	if e = discoveryGuard(c, t, g, []DiscoverySeed{seed}); e != nil {
 		return e
 	}
@@ -291,14 +281,11 @@ func (s *Store) SaveDiscoveryCandidates(c context.Context, g int64, seeds []Disc
 	if e := s.IdentityReady(c); e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	if e = discoveryGuard(c, t, g, seeds); e != nil {
 		return e
 	}
@@ -330,20 +317,36 @@ func (s *Store) SaveDiscoveryCandidates(c context.Context, g int64, seeds []Disc
 			checkedWorks[v.SeedWorkID] = true
 		}
 	}
-	for _, v := range items {
-		raw, _ := json.Marshal(v.Reasons)
-		var rank any
-		if v.Rank > 0 {
-			rank = v.Rank
-		}
-		if _, e = t.ExecContext(c, `INSERT INTO discovery_candidates(rgid,seed_kind,seed_artist_id,seed_work_id,bangumi_subject_id,generation,score,lane,rank,reasons_json) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.RGID, discoverySeedKind(v), nullableDiscoveryID(v.SeedArtistID), nullableDiscoveryID(v.SeedWorkID), nullableDiscoveryID(v.SubjectID), g, v.Score, v.Lane, rank, string(raw)); e != nil {
+	if len(items) > 0 {
+		candStmt, e := t.PrepareContext(c, `INSERT INTO discovery_candidates(rgid,seed_kind,seed_artist_id,seed_work_id,bangumi_subject_id,generation,score,lane,rank,reasons_json) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+		if e != nil {
 			return e
 		}
+		for _, v := range items {
+			raw, _ := json.Marshal(v.Reasons)
+			var rank any
+			if v.Rank > 0 {
+				rank = v.Rank
+			}
+			if _, e = candStmt.ExecContext(c, v.RGID, discoverySeedKind(v), nullableDiscoveryID(v.SeedArtistID), nullableDiscoveryID(v.SeedWorkID), nullableDiscoveryID(v.SubjectID), g, v.Score, v.Lane, rank, string(raw)); e != nil {
+				candStmt.Close()
+				return e
+			}
+		}
+		candStmt.Close()
 	}
-	for _, v := range matches {
-		if _, e = t.ExecContext(c, `INSERT OR IGNORE INTO discovery_possible_matches(rgid,album_id,reason) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM discovery_match_rejections WHERE rgid=? AND album_id=?)`, v.RGID, v.AlbumID, v.Reason, v.RGID, v.AlbumID); e != nil {
+	if len(matches) > 0 {
+		matchStmt, e := t.PrepareContext(c, `INSERT OR IGNORE INTO discovery_possible_matches(rgid,album_id,reason) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM discovery_match_rejections WHERE rgid=? AND album_id=?)`)
+		if e != nil {
 			return e
 		}
+		for _, v := range matches {
+			if _, e = matchStmt.ExecContext(c, v.RGID, v.AlbumID, v.Reason, v.RGID, v.AlbumID); e != nil {
+				matchStmt.Close()
+				return e
+			}
+		}
+		matchStmt.Close()
 	}
 	_, e = t.ExecContext(c, `UPDATE discovery_refresh_state SET status='completed',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1 AND status='running'`)
 	if e != nil {
@@ -355,14 +358,11 @@ func (s *Store) UpdateDiscoveryCover(c context.Context, g int64, seeds []Discove
 	if e := s.IdentityReady(c); e != nil {
 		return e
 	}
-	t, e := s.db.BeginTx(c, nil)
+	t, e := s.beginWrite(c)
 	if e != nil {
 		return e
 	}
 	defer t.Rollback()
-	if e = discoveryLock(c, t); e != nil {
-		return e
-	}
 	if e = discoveryGuard(c, t, g, nil); e != nil {
 		return e
 	}

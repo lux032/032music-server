@@ -334,6 +334,7 @@ func (g *Generator) GenerateReplacement(ctx context.Context, now time.Time, old 
 		}
 	}
 	env := p.env(now, day, set)
+	mixIDs := make([]int64, 0, len(today))
 	for _, m := range today {
 		th := &Theme{Type: m.ThemeType, Key: m.ThemeKey}
 		if m.ID != old.ID {
@@ -344,11 +345,14 @@ func (g *Generator) GenerateReplacement(ctx context.Context, now time.Time, old 
 				in.excludeStyle[m.ThemeKey] = true
 			}
 		}
-		items, err := g.Store.DailyMixItems(ctx, m.ID)
-		if err != nil {
-			return storage.NewDailyMix{}, *info, err
-		}
-		for _, it := range items {
+		mixIDs = append(mixIDs, m.ID)
+	}
+	itemsByMix, err := g.Store.DailyMixItemsByMixIDs(ctx, mixIDs)
+	if err != nil {
+		return storage.NewDailyMix{}, *info, err
+	}
+	for _, m := range today {
+		for _, it := range itemsByMix[m.ID] {
 			env.usedToday[it.TrackID] = true // the replaced mix's tracks are excluded too
 		}
 	}
