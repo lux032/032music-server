@@ -187,7 +187,7 @@ type Chrome struct {
 // workspace (rather than the music-library player experience).
 func (c Chrome) IsAdminNav() bool {
 	switch c.Nav {
-	case "console", "missing", "work-review", "matches", "artist-aliases",
+	case "console", "missing", "rules", "work-review", "matches", "artist-aliases",
 		"merges", "series", "enrichment", "audio-analysis", "ai-tagging",
 		"online-lyrics", "lyrics-translations", "daily-mixes", "settings",
 		"acquisition-settings", "ai-settings", "backups", "security":
@@ -240,6 +240,7 @@ type dashboardPageData struct {
 	Scan           storage.ScanJob
 	LibraryWatch   libraryWatchView
 	PurgeMissing   purgeMissingView
+	AlbumRules     albumRulesSummary
 	AudioAnalysis  audioAnalysisView
 	AITagging      aiTaggingView
 	DailyMixes     string
@@ -590,6 +591,8 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/library-watch", a.requireAdmin(http.HandlerFunc(a.handleSaveLibraryWatch)))
 	mux.Handle("POST /admin/settings/library-watch/reset", a.requireAdmin(http.HandlerFunc(a.handleResetLibraryWatch)))
 	mux.Handle("GET /admin/library/missing", a.requireAdmin(http.HandlerFunc(a.handleMissingFilesPage)))
+	mux.Handle("GET "+albumRulesPath, a.requireAdmin(http.HandlerFunc(a.handleAlbumRulesPage)))
+	mux.Handle("POST "+albumRulesPath+"/delete", a.requireAdmin(http.HandlerFunc(a.handleDeleteAlbumRules)))
 	mux.Handle("GET "+audioAnalysisPath, a.requireAdmin(http.HandlerFunc(a.handleAudioAnalysisPage)))
 	mux.Handle("GET "+audioAnalysisPath+"/status", a.requireAdminJSON(http.HandlerFunc(a.handleAudioAnalysisStatus)))
 	mux.Handle("POST "+audioAnalysisPath+"/settings", a.requireAdmin(http.HandlerFunc(a.handleSaveAudioAnalysis)))
@@ -1014,6 +1017,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Scan:             latestScan(a.store, r),
 		LibraryWatch:     a.libraryWatchView(r.Context()),
 		PurgeMissing:     a.purgeMissingView(r.Context()),
+		AlbumRules:       a.albumRulesSummary(r.Context()),
 		AudioAnalysis:    a.dashboardAudioAnalysisView(r.Context()),
 		AITagging:        a.dashboardAITaggingView(r.Context()),
 		DailyMixes:       a.dashboardDailyMixSummary(r.Context()),

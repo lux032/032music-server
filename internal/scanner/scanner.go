@@ -243,8 +243,9 @@ type discoveredFile struct {
 }
 
 type discoveredLibrary struct {
-	files    []discoveredFile
-	lrcPaths map[string]struct{}
+	files          []discoveredFile
+	lrcPaths       map[string]struct{}
+	unreadableDirs []string
 }
 
 type preparedImport struct {
@@ -300,13 +301,13 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 		return false
 	}
 
-	var processed, skipped, failed int64
+	var processed, skipped, ruleSkipped, failed int64
 	lastFlush := time.Now()
 	sinceFlush := 0
 	flushProgress := func(current string) {
 		sinceFlush++
 		if sinceFlush >= scanProgressFlushEvery || time.Since(lastFlush) >= scanProgressFlushInterval {
-			_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, current)
+			_ = m.store.UpdateScanJobProgress(ctx, jobID, processed, skipped, ruleSkipped, failed, current)
 			sinceFlush = 0
 			lastFlush = time.Now()
 		}
@@ -374,13 +375,13 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 	}
 
 	if !cancelled && len(toImport) > 0 {
-		pipeCancelled := m.runImportPipeline(ctx, jobID, toImport, discovered.lrcPaths, legacyCreators, seenRel, &processed, &failed, flushProgress)
+		pipeCancelled := m.runImportPipeline(ctx, jobID, toImport, discovered.lrcPaths, legacyCreators, seenRel, &processed, &skipped, &ruleSkipped, &failed, flushProgress)
 		if pipeCancelled {
 			cancelled = true
 		}
 	}
 
-	_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, "")
+	_ = m.store.UpdateScanJobProgress(ctx, jobID, processed, skipped, ruleSkipped, failed, "")
 	if cancelled {
 		// A partial scan must never feed MarkMissing/CleanupOrphans: every
 		// file not yet visited would be wrongly marked missing.
@@ -413,6 +414,19 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 		m.fail(ctx, jobID, err)
 		return false
 	}
+	if len(discovered.files) > 0 {
+		discoveredAlbumDirs := make(map[string]struct{}, len(discovered.files))
+		for _, df := range discovered.files {
+			if df.rel != "" {
+				discoveredAlbumDirs[metadata.Normalize(storage.AlbumFolder(df.rel))] = struct{}{}
+			}
+		}
+		if pruned, pruneErr := m.store.PruneStaleDeleteAlbumRules(ctx, m.library.ID, discoveredAlbumDirs, discovered.unreadableDirs); pruneErr != nil {
+			m.logger.Warn("prune stale album delete rules failed", "jobId", jobID, "error", pruneErr)
+		} else if len(pruned) > 0 {
+			m.logger.Info("pruned stale album delete rules", "jobId", jobID, "count", len(pruned))
+		}
+	}
 	// 只有通过上面的 S1 保护（未取消、未疑似掉盘）后才会走到这里，因此
 	// 永久删除不会在挂载失效时把整个曲库清空。
 	var purgedFiles int64
@@ -437,7 +451,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 	if err = m.store.FinishScanJob(ctx, jobID, "completed", missing, ""); err != nil {
 		m.logger.Error("finish scan job", "error", err)
 	}
-	m.logger.Info("library scan completed", "jobId", jobID, "discovered", len(discovered.files), "processed", processed, "skipped", skipped, "failed", failed, "missing", missing)
+	m.logger.Info("library scan completed", "jobId", jobID, "discovered", len(discovered.files), "processed", processed, "skipped", skipped, "ruleSkipped", ruleSkipped, "failed", failed, "missing", missing)
 	return true
 }
 
@@ -448,7 +462,7 @@ func (m *Manager) runImportPipeline(
 	lrcPaths map[string]struct{},
 	legacyCreators bool,
 	seenRel map[string]struct{},
-	processed, failed *int64,
+	processed, skipped, ruleSkipped, failed *int64,
 	flushProgress func(current string),
 ) bool {
 	readMetadata := m.readMetadata
@@ -544,7 +558,7 @@ func (m *Manager) runImportPipeline(
 		for i := range batch {
 			inputs[i] = batch[i].input
 		}
-		errs, txErr := m.store.ImportTrackBatch(ctx, inputs)
+		importResults, txErr := m.store.ImportTrackBatchDetailed(ctx, inputs)
 		if txErr != nil {
 			if ctx.Err() != nil {
 				cancelled = true
@@ -561,10 +575,15 @@ func (m *Manager) runImportPipeline(
 			return
 		}
 		for i, item := range batch {
-			if errs[i] != nil {
+			res := importResults[i]
+			switch {
+			case res.Err != nil:
 				*failed++
-				m.recordError(ctx, jobID, item.rel, "import_failed", errs[i])
-			} else {
+				m.recordError(ctx, jobID, item.rel, "import_failed", res.Err)
+			case res.RuleSkipped:
+				*skipped++
+				*ruleSkipped++
+			default:
 				*processed++
 				seenRel[item.rel] = struct{}{}
 			}
@@ -653,6 +672,13 @@ func (m *Manager) discover() (discoveredLibrary, error) {
 			// A single unreadable entry (permissions, dangling mount) must
 			// not abort the whole scan; skip it and keep walking.
 			m.logger.Warn("scan skipped unreadable path", "path", path, "error", err)
+			if path == m.library.RootPath {
+				result.unreadableDirs = append(result.unreadableDirs, ".")
+			} else if entry == nil || entry.IsDir() {
+				if rel, relErr := filepath.Rel(m.library.RootPath, path); relErr == nil {
+					result.unreadableDirs = append(result.unreadableDirs, filepath.ToSlash(rel))
+				}
+			}
 			if entry != nil && entry.IsDir() {
 				return filepath.SkipDir
 			}

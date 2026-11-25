@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/lux032/032music-server/internal/metadata"
 )
 
 // ErrAlbumSelection reports an invalid album merge/delete selection.
@@ -234,4 +237,181 @@ func (s *Store) DeleteAlbums(ctx context.Context, ids []int64) (int, error) {
 	// Artists/genres left without references disappear right away instead
 	// of waiting for the next scan.
 	return len(albums), s.CleanupOrphans(ctx)
+}
+
+// AlbumKeyRule represents a persisted delete or merge rule in album_key_rules.
+type AlbumKeyRule struct {
+	LibraryID        int64
+	GroupingKey      string
+	Action           string
+	TargetAlbumID    int64
+	TargetAlbumTitle string
+	SourceTitle      string
+	CreatedAt        string
+}
+
+// AlbumKeyRuleKey uniquely identifies one row in album_key_rules.
+type AlbumKeyRuleKey struct {
+	LibraryID   int64
+	GroupingKey string
+}
+
+// ListAlbumKeyRules returns all stored delete and merge rules, delete rules
+// first and newest first within each action type.
+func (s *Store) ListAlbumKeyRules(ctx context.Context) ([]AlbumKeyRule, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.library_id,r.grouping_key,r.action,COALESCE(r.target_album_id,0),COALESCE(a.user_title,a.title,''),r.source_title,r.created_at FROM album_key_rules r LEFT JOIN albums a ON a.id=r.target_album_id ORDER BY CASE r.action WHEN 'delete' THEN 0 ELSE 1 END,r.created_at DESC,r.grouping_key ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := make([]AlbumKeyRule, 0)
+	for rows.Next() {
+		var r AlbumKeyRule
+		if err = rows.Scan(&r.LibraryID, &r.GroupingKey, &r.Action, &r.TargetAlbumID, &r.TargetAlbumTitle, &r.SourceTitle, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// CountAlbumKeyRules returns the counts of active delete and merge rules.
+func (s *Store) CountAlbumKeyRules(ctx context.Context) (deleteCount, mergeCount int64, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN action='delete' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN action='merge' THEN 1 ELSE 0 END),0) FROM album_key_rules`).Scan(&deleteCount, &mergeCount)
+	return deleteCount, mergeCount, err
+}
+
+// DeleteAlbumKeyRules removes the specified album_key_rules entries so future
+// scans no longer suppress or redirect those grouping keys.
+func (s *Store) DeleteAlbumKeyRules(ctx context.Context, keys []AlbumKeyRuleKey) (int64, error) {
+	seen := make(map[AlbumKeyRuleKey]struct{}, len(keys))
+	unique := make([]AlbumKeyRuleKey, 0, len(keys))
+	for _, k := range keys {
+		if k.LibraryID <= 0 || k.GroupingKey == "" {
+			continue
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		unique = append(unique, k)
+	}
+	if len(unique) == 0 {
+		return 0, nil
+	}
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var total int64
+	for _, k := range unique {
+		res, execErr := tx.ExecContext(ctx, `DELETE FROM album_key_rules WHERE library_id=? AND grouping_key=?`, k.LibraryID, k.GroupingKey)
+		if execErr != nil {
+			return 0, execErr
+		}
+		n, raErr := res.RowsAffected()
+		if raErr != nil {
+			return 0, raErr
+		}
+		total += n
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// PruneStaleDeleteAlbumRules removes action='delete' rules for libraryID whose
+// normalized album directory has zero discovered supported audio files in a
+// completed, non-cancelled, S1-validated scan. Rules whose directory still has
+// discovered audio files, rules at or beneath any unreadable directory, and
+// all merge rules are preserved. Returns the pruned rules without acquiring a
+// write lock when nothing is stale.
+func (s *Store) PruneStaleDeleteAlbumRules(ctx context.Context, libraryID int64, discoveredAlbumDirs map[string]struct{}, unreadableDirs []string) ([]AlbumKeyRule, error) {
+	if libraryID <= 0 || len(discoveredAlbumDirs) == 0 {
+		return nil, nil
+	}
+	normUnreadable := make([]string, 0, len(unreadableDirs))
+	for _, u := range unreadableDirs {
+		norm := metadata.Normalize(strings.TrimSuffix(strings.TrimSpace(u), "/"))
+		if norm == "" || norm == "." {
+			// Library root was unreadable; refuse to prune any delete rule.
+			return nil, nil
+		}
+		normUnreadable = append(normUnreadable, norm)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT grouping_key,source_title,created_at FROM album_key_rules WHERE library_id=? AND action='delete'`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []AlbumKeyRule
+	for rows.Next() {
+		r := AlbumKeyRule{LibraryID: libraryID, Action: "delete"}
+		if err = rows.Scan(&r.GroupingKey, &r.SourceTitle, &r.CreatedAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !deleteRuleDirActive(r.GroupingKey, discoveredAlbumDirs, normUnreadable) {
+			candidates = append(candidates, r)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	pruned := make([]AlbumKeyRule, 0, len(candidates))
+	for _, r := range candidates {
+		res, execErr := tx.ExecContext(ctx, `DELETE FROM album_key_rules WHERE library_id=? AND action='delete' AND grouping_key=?`, libraryID, r.GroupingKey)
+		if execErr != nil {
+			return nil, execErr
+		}
+		if n, raErr := res.RowsAffected(); raErr != nil {
+			return nil, raErr
+		} else if n > 0 {
+			pruned = append(pruned, r)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return pruned, nil
+}
+
+func deleteRuleDirActive(groupingKey string, discoveredAlbumDirs map[string]struct{}, unreadableDirs []string) bool {
+	ruleDir, _, hasSep := strings.Cut(groupingKey, "|")
+	if !hasSep {
+		return true
+	}
+	if _, ok := discoveredAlbumDirs[ruleDir]; ok {
+		return true
+	}
+	extraPipes := strings.Count(groupingKey, "|") > 2
+	if extraPipes {
+		for dir := range discoveredAlbumDirs {
+			if strings.HasPrefix(groupingKey, dir+"|") {
+				return true
+			}
+		}
+	}
+	for _, u := range unreadableDirs {
+		if ruleDir == u || strings.HasPrefix(ruleDir, u+"/") {
+			return true
+		}
+		if extraPipes && (strings.HasPrefix(groupingKey, u+"|") || strings.HasPrefix(groupingKey, u+"/")) {
+			return true
+		}
+	}
+	return false
 }

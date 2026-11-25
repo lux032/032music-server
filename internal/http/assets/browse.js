@@ -406,8 +406,8 @@
     const count = albumSelection.length;
     if (action === 'merge') {
       if (count < 2) return;
-      if (!window.confirm(`将其余 ${count - 1} 张专辑的歌曲全部合并到主专辑《${albumSelection[0].title}》？\n合并后其余专辑会消失，重新扫描也会保持合并。`)) return;
-    } else if (!window.confirm(`从曲库删除选中的 ${count} 张专辑及其全部歌曲？\n磁盘上的音乐文件不会被删除，但之后重新扫描也不会再导入它们。`)) return;
+      if (!window.confirm(`将其余 ${count - 1} 张专辑的歌曲全部合并到主专辑《${albumSelection[0].title}》？\n合并后其余专辑会消失，系统会记录合并规则以在重扫时保持合并；后续可随时在「专辑规则」中查看或解除。`)) return;
+    } else if (!window.confirm(`从曲库删除选中的 ${count} 张专辑及其全部歌曲？\n磁盘上的音乐文件不会被删除，系统会记录屏蔽规则以避免重扫重新导入；若后续想恢复或清空目录后重新放入专辑，可随时在「专辑规则」中查看或解除。`)) return;
     form.querySelectorAll('input[name="album"]').forEach(input => input.remove());
     for (const item of albumSelection) {
       const input = document.createElement('input');

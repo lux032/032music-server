@@ -66,6 +66,7 @@
         <p id="scan-path" class="scan-current">{{.Scan.CurrentRelativePath}}</p>
         <div class="progress"><span id="scan-progress"{{if or (eq .Scan.Status "completed") (eq .Scan.Status "never") (not .Scan.Status)}} class="ok" style="width:100%"{{else}} style="width:{{scanProgress .Scan}}%"{{end}}></span></div>
         <p id="scan-detail" class="result-count">发现 {{.Scan.DiscoveredFiles}} · 已处理 {{.Scan.ProcessedFiles}} · 跳过 {{.Scan.SkippedFiles}} · 失败 {{.Scan.FailedFiles}}</p>
+        <p id="scan-rule-skipped" class="scan-rule-notice"{{if eq .Scan.RuleSkippedFiles 0}} hidden{{end}}>其中 <strong id="scan-rule-skipped-count">{{.Scan.RuleSkippedFiles}}</strong> 个文件被已删除专辑规则跳过 · <a href="/admin/library/rules">查看或恢复规则 →</a></p>
 
         {{with .LibraryWatch}}{{if .Available}}
         <div class="library-watch" id="library-watch">
@@ -96,6 +97,11 @@
         <div class="library-missing" id="library-missing">
           <span><strong>缺失文件清理策略</strong> <small>{{.PurgeMissing.PolicyLabel}}</small></span>
           <a href="/admin/library/missing">{{if .Statistics.MissingFiles}}{{.Statistics.MissingFiles}} 个缺失文件，查看与清理 →{{else}}没有缺失文件 · 清理设置 →{{end}}</a>
+        </div>
+
+        <div class="library-missing library-rules" id="library-rules">
+          <span><strong>专辑屏蔽与合并规则</strong> <small>屏蔽 {{.AlbumRules.DeleteCount}} · 合并 {{.AlbumRules.MergeCount}}</small></span>
+          <a href="/admin/library/rules">{{if .AlbumRules.Total}}共 {{.AlbumRules.Total}} 条规则，查看与管理 →{{else}}暂无规则 · 管理页 →{{end}}</a>
         </div>
 
         <details class="console-disclosure disclosure">

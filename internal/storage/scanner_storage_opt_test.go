@@ -411,3 +411,98 @@ func TestRefreshAlbumWorksAndCleanupOrphansPlans(t *testing.T) {
 		t.Fatal("CleanupOrphans failed to delete unreferenced orphan artist")
 	}
 }
+
+func TestScanJobRuleSkippedProgressAndMigrationIdempotency(t *testing.T) {
+	ctx := context.Background()
+	s, libID := openScannerOptTestStore(t)
+	// Re-running Migrate must remain idempotent with Migration 089 applied.
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("second Migrate failed: %v", err)
+	}
+	jobID, err := s.CreateScanJob(ctx, libID, "incremental")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartScanJob(ctx, jobID, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateScanJobProgress(ctx, jobID, 10, 88, 12, 2, "Artist/Album/01.flac"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.LatestScanJob(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ProcessedFiles != 10 || job.SkippedFiles != 88 || job.RuleSkippedFiles != 12 || job.FailedFiles != 2 || job.CurrentRelativePath != "Artist/Album/01.flac" {
+		t.Fatalf("LatestScanJob after UpdateScanJobProgress = %+v", job)
+	}
+	if err := s.UpdateScanJob(ctx, jobID, 20, 80, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	job, err = s.LatestScanJob(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ProcessedFiles != 20 || job.SkippedFiles != 80 || job.RuleSkippedFiles != 0 || job.FailedFiles != 0 {
+		t.Fatalf("LatestScanJob after backward-compatible UpdateScanJob = %+v", job)
+	}
+}
+
+func TestImportTrackBatchDetailedRuleSkippedAndSavepoint(t *testing.T) {
+	ctx := context.Background()
+	s, libID := openScannerOptTestStore(t)
+
+	// Seed and delete one album so its grouping_key receives an active delete rule.
+	if err := s.ImportTrack(ctx, ImportInput{
+		LibraryID: libID, RelativePath: "ナナヲアカリ/ぴ/01.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{Title: "ぴ", Album: "ぴ", Year: 2026, Artists: []string{"ナナヲアカリ"}, AlbumArtists: []string{"ナナヲアカリ"}, DiscNumber: 1, TrackNumber: 1, DurationMillis: 200000},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var deletedID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM albums WHERE title='ぴ'`).Scan(&deletedID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteAlbums(ctx, []int64{deletedID}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_bad_track BEFORE INSERT ON tracks WHEN NEW.title='BAD_TRACK' BEGIN SELECT RAISE(ABORT, 'bad track'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.ImportTrackBatchDetailed(ctx, []ImportInput{
+		{
+			LibraryID: libID, RelativePath: "ナナヲアカリ/ぴ/02.flac", FileSize: 200, ModifiedAtNS: 2,
+			Metadata: metadata.AudioMetadata{Title: "だらだらり", Album: "ぴ", Year: 2026, Artists: []string{"ナナヲアカリ"}, AlbumArtists: []string{"ナナヲアカリ"}, DiscNumber: 1, TrackNumber: 2, DurationMillis: 180000},
+		},
+		{
+			LibraryID: libID, RelativePath: "Good/01.flac", FileSize: 150, ModifiedAtNS: 2,
+			Metadata: metadata.AudioMetadata{Title: "BAD_TRACK", Album: "Good", Year: 2026, Artists: []string{"GoodArtist"}, AlbumArtists: []string{"GoodArtist"}, DiscNumber: 1, TrackNumber: 1, DurationMillis: 180000},
+		},
+		{
+			LibraryID: libID, RelativePath: "Good/02.flac", FileSize: 160, ModifiedAtNS: 2,
+			Metadata: metadata.AudioMetadata{Title: "OK Song", Album: "Good", Year: 2026, Artists: []string{"GoodArtist"}, AlbumArtists: []string{"GoodArtist"}, DiscNumber: 1, TrackNumber: 2, DurationMillis: 190000},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportTrackBatchDetailed error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("len(results) = %d, want 3", len(results))
+	}
+	if !results[0].RuleSkipped || results[0].Err != nil {
+		t.Fatalf("results[0] = %+v, want RuleSkipped=true Err=nil", results[0])
+	}
+	if results[1].RuleSkipped || results[1].Err == nil {
+		t.Fatalf("results[1] = %+v, want RuleSkipped=false Err!=nil", results[1])
+	}
+	if results[2].RuleSkipped || results[2].Err != nil {
+		t.Fatalf("results[2] = %+v, want RuleSkipped=false Err=nil", results[2])
+	}
+
+	var trackCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracks`).Scan(&trackCount); err != nil || trackCount != 1 {
+		t.Fatalf("tracks count = %d (err=%v), want 1 (only OK Song)", trackCount, err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lux032/032music-server/internal/metadata"
 )
@@ -194,4 +195,108 @@ func TestDeletedMergeTargetDoesNotRedirectAfterOrphanCleanup(t *testing.T) {
 	}
 	f.importFile(t, "B/01.flac", "B", "b", 1, 2)
 	f.albumID(t, "B")
+}
+
+func TestAlbumKeyRulesListCountDeleteAndPruneStale(t *testing.T) {
+	f := newAlbumMergeFixture(t)
+	f.importFile(t, "Keep/01.flac", "Keep", "k", 1, 1)
+	f.importFile(t, "MergedSrc/01.flac", "MergedSrc", "ms", 1, 1)
+	f.importFile(t, "ナナヲアカリ/ぴ/01.flac", "ぴ", "p1", 1, 1)
+	f.importFile(t, "MultiDisc/CD1/01.flac", "MultiDisc", "md1", 1, 1)
+	f.importFile(t, "Artist/A|B/01.flac", "PipeAlbum", "pa1", 1, 1)
+	f.importFile(t, "Locked/Sub/01.flac", "LockedAlbum", "la1", 1, 1)
+
+	keep := f.albumID(t, "Keep")
+	mergedSrc := f.albumID(t, "MergedSrc")
+	pi := f.albumID(t, "ぴ")
+	multi := f.albumID(t, "MultiDisc")
+	pipe := f.albumID(t, "PipeAlbum")
+	locked := f.albumID(t, "LockedAlbum")
+
+	if _, err := f.store.MergeAlbums(f.ctx, keep, []int64{mergedSrc}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.DeleteAlbums(f.ctx, []int64{pi, multi, pipe, locked}); err != nil {
+		t.Fatal(err)
+	}
+
+	delCount, mergeCount, err := f.store.CountAlbumKeyRules(f.ctx)
+	if err != nil || delCount != 4 || mergeCount != 1 {
+		t.Fatalf("CountAlbumKeyRules = (%d, %d, %v), want (4, 1, nil)", delCount, mergeCount, err)
+	}
+	rules, err := f.store.ListAlbumKeyRules(f.ctx)
+	if err != nil || len(rules) != 5 {
+		t.Fatalf("ListAlbumKeyRules len=%d err=%v, want 5", len(rules), err)
+	}
+	// Delete rules come first, merge rule carries target album title.
+	if rules[0].Action != "delete" || rules[4].Action != "merge" || rules[4].TargetAlbumID != keep || rules[4].TargetAlbumTitle != "Keep" {
+		t.Fatalf("unexpected rules ordering/fields: %+v", rules)
+	}
+
+	// Empty discovered dirs or unreadable root must prune nothing.
+	if pruned, err := f.store.PruneStaleDeleteAlbumRules(f.ctx, f.library, nil, nil); err != nil || len(pruned) != 0 {
+		t.Fatalf("empty discovery prune = (%+v, %v), want empty", pruned, err)
+	}
+	allDirs := map[string]struct{}{
+		metadata.Normalize(AlbumFolder("Keep/01.flac")):          {},
+		metadata.Normalize(AlbumFolder("MultiDisc/CD1/01.flac")): {},
+		metadata.Normalize(AlbumFolder("Artist/A|B/01.flac")):    {},
+	}
+	if pruned, err := f.store.PruneStaleDeleteAlbumRules(f.ctx, f.library, allDirs, []string{"."}); err != nil || len(pruned) != 0 {
+		t.Fatalf("unreadable root prune = (%+v, %v), want empty", pruned, err)
+	}
+
+	// When nothing is stale, PruneStaleDeleteAlbumRules must not acquire a write lock.
+	activeWithAll := map[string]struct{}{
+		metadata.Normalize(AlbumFolder("Keep/01.flac")):          {},
+		metadata.Normalize(AlbumFolder("ナナヲアカリ/ぴ/01.flac")):      {},
+		metadata.Normalize(AlbumFolder("MultiDisc/CD1/01.flac")): {},
+		metadata.Normalize(AlbumFolder("Artist/A|B/01.flac")):    {},
+	}
+	holdTx, err := f.store.beginWrite(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortCtx, cancel := context.WithTimeout(f.ctx, 200*time.Millisecond)
+	prunedNone, pruneErr := f.store.PruneStaleDeleteAlbumRules(shortCtx, f.library, activeWithAll, []string{"Locked"})
+	cancel()
+	holdTx.Rollback()
+	if pruneErr != nil || len(prunedNone) != 0 {
+		t.Fatalf("no-stale prune while write lock held = (%+v, %v), want empty nil", prunedNone, pruneErr)
+	}
+
+	// Now ナナヲアカリ/ぴ is absent from disk, MultiDisc/CD1 and Artist/A|B are present, Locked is unreadable, merge rule must stay.
+	pruned, err := f.store.PruneStaleDeleteAlbumRules(f.ctx, f.library, allDirs, []string{"Locked"})
+	if err != nil || len(pruned) != 1 || pruned[0].GroupingKey != "ナナヲアカリ/ぴ|ぴ|0" {
+		t.Fatalf("PruneStaleDeleteAlbumRules = (%+v, %v), want only ナナヲアカリ/ぴ", pruned, err)
+	}
+	delCount, mergeCount, err = f.store.CountAlbumKeyRules(f.ctx)
+	if err != nil || delCount != 3 || mergeCount != 1 {
+		t.Fatalf("counts after prune = (%d, %d, %v), want (3, 1, nil)", delCount, mergeCount, err)
+	}
+
+	// Re-importing ナナヲアカリ/ぴ succeeds immediately after stale rule pruning.
+	f.importFile(t, "ナナヲアカリ/ぴ/02.flac", "ぴ", "p2", 1, 2)
+	f.albumID(t, "ぴ")
+
+	// Manual DeleteAlbumKeyRules removes both delete and merge rules cleanly.
+	deleted, err := f.store.DeleteAlbumKeyRules(f.ctx, []AlbumKeyRuleKey{
+		{LibraryID: f.library, GroupingKey: "multidisc|multidisc|0"},
+		{LibraryID: f.library, GroupingKey: "multidisc|multidisc|0"}, // duplicate ignored
+		{LibraryID: f.library, GroupingKey: "mergedsrc|mergedsrc|0"},
+	})
+	if err != nil || deleted != 2 {
+		t.Fatalf("DeleteAlbumKeyRules = (%d, %v), want (2, nil)", deleted, err)
+	}
+	delCount, mergeCount, err = f.store.CountAlbumKeyRules(f.ctx)
+	if err != nil || delCount != 2 || mergeCount != 0 {
+		t.Fatalf("counts after manual delete = (%d, %d, %v), want (2, 0, nil)", delCount, mergeCount, err)
+	}
+	// Existing tracks already merged into Keep must survive removing the merge rule.
+	if got := f.count(t, `SELECT COUNT(*) FROM tracks WHERE album_id=?`, keep); got != 2 {
+		t.Fatalf("tracks in Keep after removing merge rule = %d, want 2", got)
+	}
+	// Unblocked MultiDisc can now re-import.
+	f.importFile(t, "MultiDisc/CD1/01.flac", "MultiDisc", "md1", 1, 2)
+	f.albumID(t, "MultiDisc")
 }

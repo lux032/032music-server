@@ -246,3 +246,276 @@ func TestScanConcurrentPipelineArtworkDedupErrorIsolationAndCancel(t *testing.T)
 		t.Fatalf("available after cancel = %d (%v), want 118", avail, err)
 	}
 }
+
+func TestScanRuleSkippedAccountingAndSkipsOrphanCleanup(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "rule-skip.db")
+	store, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := store.EnsureLibrary(ctx, "Test", root); err != nil {
+		t.Fatal(err)
+	}
+	library, err := store.LibraryByRoot(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeAlbum := func(folder string, tracks int) {
+		dir := filepath.Join(root, folder)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		for i := 1; i <= tracks; i++ {
+			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%02d.flac", i)), []byte("fLaC"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	writeAlbum("Keep", 2)
+	writeAlbum("Blocked", 3)
+
+	m := New(ctx, store, logger(), library, t.TempDir())
+	m.workers = 2
+	m.SetMetadataReader(func(path string) (metadata.AudioMetadata, error) {
+		album := filepath.Base(filepath.Dir(path))
+		return metadata.AudioMetadata{
+			Title:          album + "-" + strings.TrimSuffix(filepath.Base(path), ".flac"),
+			Album:          album,
+			Year:           2026,
+			Artists:        []string{"Singer"},
+			AlbumArtists:   []string{"Singer"},
+			DiscNumber:     1,
+			TrackNumber:    1,
+			DurationMillis: 180000,
+			Container:      "flac",
+		}, nil
+	})
+	m.probeAudio = func(string, string) metadata.AudioProps {
+		return metadata.AudioProps{Codec: "flac", SampleRate: 44100, BitDepth: 16, Channels: 2}
+	}
+
+	scan := func(scanType string) storage.ScanJob {
+		t.Helper()
+		id, e := m.Start(ctx, scanType)
+		if e != nil {
+			t.Fatal(e)
+		}
+		m.Wait()
+		return waitJob(t, store, id)
+	}
+
+	if job := scan("incremental"); job.Status != "completed" || job.ProcessedFiles != 5 || job.RuleSkippedFiles != 0 {
+		t.Fatalf("initial scan = %+v", job)
+	}
+
+	// Delete Blocked in library while leaving its 3 files on disk.
+	albums, err := store.ListAlbums(ctx, storage.Filters{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blockedID int64
+	for _, a := range albums {
+		if a.Title == "Blocked" {
+			blockedID = a.ID
+		}
+	}
+	if blockedID == 0 {
+		t.Fatal("Blocked album not found")
+	}
+	if _, err := store.DeleteAlbums(ctx, []int64{blockedID}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plant a sentinel orphan artist to prove CleanupOrphans is skipped on zero real changes.
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { rawDB.Close() })
+	if _, err := rawDB.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('SentinelRuleSkip','sentinelruleskip','sentinelruleskip')`); err != nil {
+		t.Fatal(err)
+	}
+
+	job := scan("incremental")
+	if job.Status != "completed" || job.DiscoveredFiles != 5 || job.ProcessedFiles != 0 || job.SkippedFiles != 5 || job.RuleSkippedFiles != 3 || job.FailedFiles != 0 {
+		t.Fatalf("rule-skipped incremental scan = %+v, want discovered=5 processed=0 skipped=5 ruleSkipped=3 failed=0", job)
+	}
+	var sentinelExists bool
+	if err := rawDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artists WHERE identity_key='sentinelruleskip')`).Scan(&sentinelExists); err != nil || !sentinelExists {
+		t.Fatalf("CleanupOrphans unexpectedly ran when only rule-skipped files were seen: exists=%v err=%v", sentinelExists, err)
+	}
+
+	// Full scan re-imports Keep (2) and counts Blocked (3) in skipped & ruleSkipped.
+	fullJob := scan("full")
+	if fullJob.Status != "completed" || fullJob.DiscoveredFiles != 5 || fullJob.ProcessedFiles != 2 || fullJob.SkippedFiles != 3 || fullJob.RuleSkippedFiles != 3 || fullJob.FailedFiles != 0 {
+		t.Fatalf("full scan with delete rule = %+v, want processed=2 skipped=3 ruleSkipped=3", fullJob)
+	}
+}
+
+func TestScanPrunesStaleDeleteRules(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "prune-rules.db")
+	store, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := store.EnsureLibrary(ctx, "Test", root); err != nil {
+		t.Fatal(err)
+	}
+	library, err := store.LibraryByRoot(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeTrack := func(rel string) {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("fLaC"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTrack("Keep/01.flac")
+	writeTrack("Keep/02.flac")
+	writeTrack("Keep/03.flac")
+	writeTrack("MergedSrc/01.flac")
+	writeTrack("ナナヲアカリ/ぴ/01.flac")
+	writeTrack("StillHere/CD1/01.flac")
+	writeTrack("Locked/01.flac")
+
+	m := New(ctx, store, logger(), library, t.TempDir())
+	m.workers = 2
+	m.SetMetadataReader(func(path string) (metadata.AudioMetadata, error) {
+		rel, _ := filepath.Rel(root, path)
+		folder := storage.AlbumFolder(filepath.ToSlash(rel))
+		album := filepath.Base(folder)
+		return metadata.AudioMetadata{
+			Title:          album + "-" + strings.TrimSuffix(filepath.Base(path), ".flac"),
+			Album:          album,
+			Year:           2026,
+			Artists:        []string{"Singer"},
+			AlbumArtists:   []string{"Singer"},
+			DiscNumber:     1,
+			TrackNumber:    1,
+			DurationMillis: 180000,
+			Container:      "flac",
+		}, nil
+	})
+	m.probeAudio = func(string, string) metadata.AudioProps {
+		return metadata.AudioProps{Codec: "flac"}
+	}
+
+	scan := func(mgr *Manager, scanType string) storage.ScanJob {
+		t.Helper()
+		id, e := mgr.Start(ctx, scanType)
+		if e != nil {
+			t.Fatal(e)
+		}
+		mgr.Wait()
+		return waitJob(t, store, id)
+	}
+
+	if job := scan(m, "incremental"); job.Status != "completed" || job.ProcessedFiles != 7 {
+		t.Fatalf("seed scan = %+v", job)
+	}
+
+	albums, err := store.ListAlbums(ctx, storage.Filters{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]int64{}
+	for _, a := range albums {
+		byTitle[a.Title] = a.ID
+	}
+	if _, err := store.MergeAlbums(ctx, byTitle["Keep"], []int64{byTitle["MergedSrc"]}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeleteAlbums(ctx, []int64{byTitle["ぴ"], byTitle["StillHere"], byTitle["Locked"]}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove ナナヲアカリ/ぴ from disk (simulating moving it away) and make Locked unreadable.
+	if err := os.RemoveAll(filepath.Join(root, "ナナヲアカリ", "ぴ")); err != nil {
+		t.Fatal(err)
+	}
+	lockedDir := filepath.Join(root, "Locked")
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(lockedDir, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(lockedDir, 0o750) })
+	}
+
+	// 1. Mid-flight cancelled scan must never prune stale delete rules.
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	mCancelled := New(cancelCtx, store, logger(), library, t.TempDir())
+	mCancelled.workers = 1
+	mCancelled.SetMetadataReader(func(path string) (metadata.AudioMetadata, error) {
+		cancel()
+		return m.readMetadata(path)
+	})
+	mCancelled.probeAudio = m.probeAudio
+	if cJob := scan(mCancelled, "full"); cJob.Status != "failed" {
+		t.Fatalf("cancelled scan = %+v, want failed", cJob)
+	}
+	if delCount, mergeCount, err := store.CountAlbumKeyRules(ctx); err != nil || delCount != 3 || mergeCount != 1 {
+		t.Fatalf("rules after cancelled scan = (%d, %d, %v), want (3, 1, nil)", delCount, mergeCount, err)
+	}
+
+	// 2. Healthy incremental scan prunes only the emptied ナナヲアカリ/ぴ delete rule;
+	// StillHere/CD1 (still on disk), Locked (unreadable), and MergedSrc (merge rule) survive.
+	if job := scan(m, "incremental"); job.Status != "completed" || job.ProcessedFiles != 0 || job.RuleSkippedFiles != 1 {
+		t.Fatalf("prune scan = %+v, want completed processed=0 ruleSkipped=1", job)
+	}
+	wantDel := int64(2)
+	if os.Geteuid() == 0 {
+		// Root ignores chmod 0000; Locked was readable and still had 01.flac, so still 2.
+		wantDel = 2
+	}
+	if delCount, mergeCount, err := store.CountAlbumKeyRules(ctx); err != nil || delCount != wantDel || mergeCount != 1 {
+		t.Fatalf("rules after healthy prune = (%d, %d, %v), want (%d, 1, nil)", delCount, mergeCount, err, wantDel)
+	}
+
+	// 3. Placing a brand-new album into ナナヲアカリ/ぴ now imports cleanly!
+	writeTrack("ナナヲアカリ/ぴ/01.flac")
+	writeTrack("ナナヲアカリ/ぴ/02.flac")
+	if job := scan(m, "incremental"); job.Status != "completed" || job.ProcessedFiles != 2 || job.RuleSkippedFiles != 1 {
+		t.Fatalf("re-import ぴ scan = %+v, want processed=2 ruleSkipped=1", job)
+	}
+	albumsAfter, err := store.ListAlbums(ctx, storage.Filters{Query: "ぴ", Limit: 10})
+	if err != nil || len(albumsAfter) != 1 || albumsAfter[0].TrackCount != 2 {
+		t.Fatalf("albums matching ぴ = %+v (err=%v), want 1 album with 2 tracks", albumsAfter, err)
+	}
+
+	// 4. S1 (>50% missing guard) refusal must never prune stale delete rules.
+	if err := os.RemoveAll(filepath.Join(root, "StillHere")); err != nil {
+		t.Fatal(err)
+	}
+	// Also temporarily remove Keep + ぴ (>50% of available tracks) to trip S1 guard.
+	if err := os.RemoveAll(filepath.Join(root, "Keep")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "ナナヲアカリ")); err != nil {
+		t.Fatal(err)
+	}
+	if s1Job := scan(m, "incremental"); s1Job.Status != "failed" {
+		t.Fatalf("S1 guarded scan = %+v, want failed", s1Job)
+	}
+	// StillHere delete rule must still be intact because S1 guard refused reconciliation.
+	if delCount, _, err := store.CountAlbumKeyRules(ctx); err != nil || delCount != wantDel {
+		t.Fatalf("delete rules after S1 refusal = %d (err=%v), want %d", delCount, err, wantDel)
+	}
+}

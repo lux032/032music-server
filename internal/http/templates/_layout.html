@@ -74,6 +74,7 @@
       <p class="admin-nav-section">总览与运维</p>
       <a href="/admin" data-nav="console" class="{{if eq .Nav "console"}}active{{end}}"{{if eq .Nav "console"}} aria-current="page"{{end}} title="控制台总览" aria-label="控制台总览"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 控制台总览</a>
       <a href="/admin/library/missing" data-nav="missing" class="{{if eq .Nav "missing"}}active{{end}}"{{if eq .Nav "missing"}} aria-current="page"{{end}} title="缺失文件与清理" aria-label="缺失文件与清理"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-folder-x"></use></svg> 缺失文件与清理</a>
+      <a href="/admin/library/rules" data-nav="rules" class="{{if eq .Nav "rules"}}active{{end}}"{{if eq .Nav "rules"}} aria-current="page"{{end}} title="专辑屏蔽与合并规则" aria-label="专辑屏蔽与合并规则"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-rules"></use></svg> 专辑规则</a>
 
       <p class="admin-nav-section">审核中心</p>
       <a href="/admin/work-review" data-nav="work-review" class="{{if eq .Nav "work-review"}}active{{end}}"{{if eq .Nav "work-review"}} aria-current="page"{{end}} title="作品关联审核" aria-label="作品关联审核"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品关联审核{{with .PendingReviewCount}}<span class="nav-badge">{{.}}</span>{{end}}</a>
@@ -138,6 +139,7 @@
       <p>总览与运维</p>
       <a href="/admin" data-nav="console" class="{{if eq .Nav "console"}}active{{end}}"{{if eq .Nav "console"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-console"></use></svg> 控制台总览</a>
       <a href="/admin/library/missing" data-nav="missing" class="{{if eq .Nav "missing"}}active{{end}}"{{if eq .Nav "missing"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-folder-x"></use></svg> 缺失文件与清理</a>
+      <a href="/admin/library/rules" data-nav="rules" class="{{if eq .Nav "rules"}}active{{end}}"{{if eq .Nav "rules"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-rules"></use></svg> 专辑规则</a>
       <p>审核中心</p>
       <a href="/admin/work-review" data-nav="work-review" class="{{if eq .Nav "work-review"}}active{{end}}"{{if eq .Nav "work-review"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-works"></use></svg> 作品关联审核{{with .PendingReviewCount}}<span class="nav-badge">{{.}}</span>{{end}}</a>
       <a href="/admin/matches" data-nav="matches" class="{{if eq .Nav "matches"}}active{{end}}"{{if eq .Nav "matches"}} aria-current="page"{{end}}><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-matches"></use></svg> 艺术家与身份审核</a>

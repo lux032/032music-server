@@ -158,6 +158,13 @@
         if (path) path.textContent = scan.currentRelativePath || '';
         const detail = document.querySelector('#scan-detail');
         if (detail) detail.textContent = `发现 ${scan.discoveredFiles || 0} · 已处理 ${scan.processedFiles || 0} · 跳过 ${scan.skippedFiles || 0} · 失败 ${scan.failedFiles || 0} · 丢失 ${scan.missingFiles || 0}`;
+        const ruleSkipped = scan.ruleSkippedFiles || 0;
+        const ruleSkippedNotice = document.querySelector('#scan-rule-skipped');
+        if (ruleSkippedNotice) {
+          ruleSkippedNotice.hidden = ruleSkipped <= 0;
+          const ruleSkippedCount = document.querySelector('#scan-rule-skipped-count');
+          if (ruleSkippedCount) ruleSkippedCount.textContent = String(ruleSkipped);
+        }
         const progress = document.querySelector('#scan-progress');
         if (progress) {
           const percent = scan.discoveredFiles ? Math.min(100, ((scan.processedFiles + scan.skippedFiles + scan.failedFiles) / scan.discoveredFiles) * 100) : 0;

@@ -3545,6 +3545,14 @@ div.artist-avatar { color: var(--text-secondary); font-size: 1.1rem; font-weight
 .library-missing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .library-missing small { color: var(--muted); font-size: var(--fs-xs); }
 .library-missing a { color: var(--accent); font-weight: 600; }
+.scan-rule-notice { margin: 10px 0 0; padding: 8px 12px; border: 1px solid color-mix(in oklab, var(--warning) 35%, transparent); border-radius: 8px; background: color-mix(in oklab, var(--warning) 8%, transparent); color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.5; }
+.scan-rule-notice strong { color: var(--text); }
+.scan-rule-notice a { color: var(--accent); font-weight: 600; }
+.rules-section { display: grid; gap: 14px; margin-bottom: 24px; }
+.rules-row-actions form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
+.rules-row-actions .link-button { min-height: 0; padding: 0; border: 0; color: var(--accent); background: none; font-size: var(--fs-xs); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.rules-row-actions .link-button:hover { text-decoration: underline; background: none; }
+.rules-batch-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .missing-policy { display: grid; gap: 14px; margin-bottom: 24px; }
 .missing-policy-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; }
 .missing-policy-form select { min-width: 14rem; }

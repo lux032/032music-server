@@ -45,6 +45,7 @@ type ScanJob struct {
 	DiscoveredFiles     int64  `json:"discoveredFiles"`
 	ProcessedFiles      int64  `json:"processedFiles"`
 	SkippedFiles        int64  `json:"skippedFiles"`
+	RuleSkippedFiles    int64  `json:"ruleSkippedFiles"`
 	FailedFiles         int64  `json:"failedFiles"`
 	MissingFiles        int64  `json:"missingFiles"`
 	CurrentRelativePath string `json:"currentRelativePath"`
@@ -305,7 +306,11 @@ func (s *Store) StartScanJob(ctx context.Context, id, discovered int64) error {
 }
 
 func (s *Store) UpdateScanJob(ctx context.Context, id, processed, skipped, failed int64, current string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE scan_jobs SET processed_files=?,skipped_files=?,failed_files=?,current_relative_path=? WHERE id=?`, processed, skipped, failed, current, id)
+	return s.UpdateScanJobProgress(ctx, id, processed, skipped, 0, failed, current)
+}
+
+func (s *Store) UpdateScanJobProgress(ctx context.Context, id, processed, skipped, ruleSkipped, failed int64, current string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE scan_jobs SET processed_files=?,skipped_files=?,rule_skipped_files=?,failed_files=?,current_relative_path=? WHERE id=?`, processed, skipped, ruleSkipped, failed, current, id)
 	return err
 }
 
@@ -322,7 +327,7 @@ func (s *Store) FinishScanJob(ctx context.Context, id int64, status string, miss
 func (s *Store) LatestScanJob(ctx context.Context) (ScanJob, error) {
 	var j ScanJob
 	var current, message, created, started, finished sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,library_id,scan_type,status,discovered_files,processed_files,skipped_files,failed_files,missing_files,current_relative_path,error_message,created_at,started_at,finished_at FROM scan_jobs ORDER BY id DESC LIMIT 1`).Scan(&j.ID, &j.LibraryID, &j.ScanType, &j.Status, &j.DiscoveredFiles, &j.ProcessedFiles, &j.SkippedFiles, &j.FailedFiles, &j.MissingFiles, &current, &message, &created, &started, &finished)
+	err := s.db.QueryRowContext(ctx, `SELECT id,library_id,scan_type,status,discovered_files,processed_files,skipped_files,rule_skipped_files,failed_files,missing_files,current_relative_path,error_message,created_at,started_at,finished_at FROM scan_jobs ORDER BY id DESC LIMIT 1`).Scan(&j.ID, &j.LibraryID, &j.ScanType, &j.Status, &j.DiscoveredFiles, &j.ProcessedFiles, &j.SkippedFiles, &j.RuleSkippedFiles, &j.FailedFiles, &j.MissingFiles, &current, &message, &created, &started, &finished)
 	if err != nil {
 		return j, err
 	}
@@ -334,28 +339,55 @@ func (s *Store) LatestScanJob(ctx context.Context) (ScanJob, error) {
 	return j, nil
 }
 
+// ImportResult reports the per-track outcome of ImportTrackBatchDetailed.
+// RuleSkipped is true when an active album_key_rules(action='delete') rule
+// suppressed importing the track (with Err == nil).
+type ImportResult struct {
+	RuleSkipped bool
+	Err         error
+}
+
 type importBatchState struct {
 	artists       map[string]int64
 	touchedAlbums map[int64]struct{}
 }
 
 func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
-	errs, err := s.ImportTrackBatch(ctx, []ImportInput{input})
+	results, err := s.ImportTrackBatchDetailed(ctx, []ImportInput{input})
 	if err != nil {
 		return err
 	}
-	if len(errs) > 0 {
-		return errs[0]
+	if len(results) > 0 {
+		return results[0].Err
 	}
 	return nil
 }
 
 // ImportTrackBatch imports a batch of scanned tracks in one write transaction
-// acquired upfront via beginWrite. Each track is isolated with a SAVEPOINT so
-// a single failure rolls back only that track; canonical artist lookups are
-// cached across successful tracks in the batch, and file-sourced album release
-// group refreshes run once per affected album at the end of the batch.
+// and returns per-item errors (compatible wrapper over ImportTrackBatchDetailed).
 func (s *Store) ImportTrackBatch(ctx context.Context, inputs []ImportInput) ([]error, error) {
+	results, err := s.ImportTrackBatchDetailed(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	errs := make([]error, len(results))
+	for i, r := range results {
+		errs[i] = r.Err
+	}
+	return errs, nil
+}
+
+// ImportTrackBatchDetailed imports a batch of scanned tracks in one write
+// transaction acquired upfront via beginWrite. Each track is isolated with a
+// SAVEPOINT so a single failure rolls back only that track; canonical artist
+// lookups are cached across successful tracks in the batch, and file-sourced
+// album release group refreshes run once per affected album at the end of the
+// batch. Tracks suppressed by an active album delete rule return
+// ImportResult{RuleSkipped: true} without modifying any library rows.
+func (s *Store) ImportTrackBatchDetailed(ctx context.Context, inputs []ImportInput) ([]ImportResult, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
@@ -369,14 +401,14 @@ func (s *Store) ImportTrackBatch(ctx context.Context, inputs []ImportInput) ([]e
 		artists:       make(map[string]int64, len(inputs)*2),
 		touchedAlbums: make(map[int64]struct{}, len(inputs)),
 	}
-	errs := make([]error, len(inputs))
+	results := make([]ImportResult, len(inputs))
 	for i, input := range inputs {
 		if _, err = tx.ExecContext(ctx, `SAVEPOINT import_track`); err != nil {
 			return nil, err
 		}
 		trackArtists := make(map[string]int64)
 		trackAlbums := make(map[int64]struct{}, 2)
-		trackErr := importTrackTx(ctx, tx, input, batch.artists, trackArtists, trackAlbums)
+		ruleSkipped, trackErr := importTrackTx(ctx, tx, input, batch.artists, trackArtists, trackAlbums)
 		if trackErr != nil {
 			if _, rbErr := tx.ExecContext(ctx, `ROLLBACK TO import_track`); rbErr != nil {
 				return nil, rbErr
@@ -384,12 +416,13 @@ func (s *Store) ImportTrackBatch(ctx context.Context, inputs []ImportInput) ([]e
 			if _, relErr := tx.ExecContext(ctx, `RELEASE import_track`); relErr != nil {
 				return nil, relErr
 			}
-			errs[i] = trackErr
+			results[i] = ImportResult{Err: trackErr}
 			continue
 		}
 		if _, err = tx.ExecContext(ctx, `RELEASE import_track`); err != nil {
 			return nil, err
 		}
+		results[i] = ImportResult{RuleSkipped: ruleSkipped}
 		for k, id := range trackArtists {
 			batch.artists[k] = id
 		}
@@ -410,14 +443,14 @@ func (s *Store) ImportTrackBatch(ctx context.Context, inputs []ImportInput) ([]e
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return errs, nil
+	return results, nil
 }
 
-func importTrackTx(ctx context.Context, tx *sql.Tx, input ImportInput, batchArtists, trackArtists map[string]int64, trackAlbums map[int64]struct{}) error {
+func importTrackTx(ctx context.Context, tx *sql.Tx, input ImportInput, batchArtists, trackArtists map[string]int64, trackAlbums map[int64]struct{}) (bool, error) {
 	input.Metadata.Artists = metadata.ArtistNames(input.Metadata.Raw, input.Metadata.Artists)
 	input.Metadata.AlbumArtists = metadata.AlbumArtistNames(input.Metadata.Raw, input.Metadata.AlbumArtists)
 	m := input.Metadata
-	groupDir := albumFolder(input.RelativePath)
+	groupDir := AlbumFolder(input.RelativePath)
 	groupKey := metadata.Normalize(groupDir) + "|" + metadata.Normalize(m.Album) + "|" + strconv.Itoa(m.Year)
 	discCount := m.DiscTotal
 	if discCount < m.DiscNumber {
@@ -442,29 +475,29 @@ func importTrackTx(ctx context.Context, tx *sql.Tx, input ImportInput, batchArti
 	// either points at the merged album or marks the files as removed.
 	rule, hasRule, err := lookupAlbumKeyRule(ctx, tx, input.LibraryID, groupKey)
 	if err != nil {
-		return fmt.Errorf("album key rule: %w", err)
+		return false, fmt.Errorf("album key rule: %w", err)
 	}
 	if hasRule && rule.action == "delete" {
-		return nil
+		return true, nil
 	}
 	var albumID int64
 	if hasRule && rule.action == "merge" {
 		if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE id=?`, rule.target).Scan(&albumID); err != nil {
-			return fmt.Errorf("merged album %d: %w", rule.target, err)
+			return false, fmt.Errorf("merged album %d: %w", rule.target, err)
 		}
 	} else if albumID, err = upsertScannedAlbum(ctx, tx, input.LibraryID, groupKey, m, discCount, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country, batchArtists, trackArtists); err != nil {
-		return err
+		return false, err
 	}
 
 	// Set artist reading_name from sort tags (only when single artist to avoid misattribution)
 	if m.AlbumArtistSort != "" && len(m.AlbumArtists) == 1 {
 		ids, idErr := ensureArtistsCached(ctx, tx, m.AlbumArtists, batchArtists, trackArtists)
 		if idErr != nil {
-			return idErr
+			return false, idErr
 		}
 		if len(ids) == 1 {
 			if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.AlbumArtistSort, ids[0]); err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
@@ -472,11 +505,11 @@ func importTrackTx(ctx context.Context, tx *sql.Tx, input ImportInput, batchArti
 		trackArtistIDs, taErr := ensureArtistsCached(ctx, tx, m.Artists, batchArtists, trackArtists)
 		if taErr == nil && len(trackArtistIDs) == 1 {
 			if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.ArtistSort, trackArtistIDs[0]); err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
-	return importTrackIntoAlbum(ctx, tx, input, albumID, batchArtists, trackArtists, trackAlbums)
+	return false, importTrackIntoAlbum(ctx, tx, input, albumID, batchArtists, trackArtists, trackAlbums)
 }
 
 // upsertScannedAlbum creates or refreshes the album for a grouping key and
@@ -1680,7 +1713,10 @@ func formatBytes(value int64) string {
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(value)/float64(div), "KMGTPE"[exp])
 }
-func albumFolder(relative string) string {
+// AlbumFolder returns the slash-normalized album directory for a relative audio
+// file path, collapsing multi-disc leaf folders (CD1, Disc 2, Disk 3, ...) to
+// their parent album folder.
+func AlbumFolder(relative string) string {
 	dir := filepath.ToSlash(filepath.Dir(relative))
 	base := strings.ToLower(filepath.Base(dir))
 	for _, prefix := range []string{"cd", "disc", "disk"} {
@@ -1694,4 +1730,5 @@ func albumFolder(relative string) string {
 	}
 	return dir
 }
+func albumFolder(relative string) string { return AlbumFolder(relative) }
 func ScanTimestamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }

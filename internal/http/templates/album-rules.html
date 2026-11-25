@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  {{template "head" .}}
+  <title>专辑规则 · 032</title>
+</head>
+<body class="roon-shell" data-nav="{{.Nav}}">
+  {{template "sidebar" .}}
+  {{template "nowplaying" .}}
+  <main id="app-main" class="admin-wrap browser-main feature-main missing-main">
+    <header class="admin-header browser-header">
+      <div>
+        <h1>专辑屏蔽与合并规则</h1>
+        <p class="result-count">共 {{.Total}} 条规则（屏蔽 {{len .DeleteRules}} · 合并 {{len .MergeRules}}）。删除或合并专辑后会记住对应路径键，避免重扫还原；可在此随时查看并解除。</p>
+      </div>
+    </header>
+    {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
+
+    <section class="card feature-card rules-section" aria-label="已屏蔽专辑规则">
+      <div class="card-head">
+        <div>
+          <p class="card-kicker kicker">删除屏蔽规则</p>
+          <h2>已屏蔽入库的专辑（{{len .DeleteRules}}）</h2>
+          <p class="result-count">磁盘目录清空后，正常扫描会自动清理过期的屏蔽规则。如果同名目录里放进了新专辑或想恢复入库，点击解除规则并增量扫描即可。</p>
+        </div>
+      </div>
+
+      {{if .DeleteRules}}
+      <form id="batch-delete-rules-form" method="post" action="/admin/library/rules/delete">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+      </form>
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">选择</th>
+              <th scope="col">来源专辑 / 规则键</th>
+              <th scope="col">类型</th>
+              <th scope="col">创建时间</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .DeleteRules}}
+            <tr>
+              <td><input type="checkbox" form="batch-delete-rules-form" name="rule" value="{{.Value}}" aria-label="选择屏蔽规则 {{.GroupingKey}}"></td>
+              <td class="missing-copy">
+                <strong>{{if .SourceTitle}}{{.SourceTitle}}{{else}}（未命名专辑）{{end}}</strong>
+                <code>{{.GroupingKey}}</code>
+              </td>
+              <td><span class="status-badge warning">屏蔽入库</span></td>
+              <td>{{formatAdminTime .CreatedAt}}</td>
+              <td class="rules-row-actions">
+                <form method="post" action="/admin/library/rules/delete">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="rule" value="{{.Value}}">
+                  <button type="submit" name="rescan" value="1" class="secondary-button">解除并扫描</button>
+                  <button type="submit" class="link-button">仅解除</button>
+                </form>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      <div class="rules-batch-actions">
+        <button type="submit" form="batch-delete-rules-form" name="rescan" value="1">解除勾选并立即增量扫描</button>
+        <button type="submit" form="batch-delete-rules-form" class="secondary-button">仅解除勾选</button>
+      </div>
+      {{else}}
+      <div class="zero-state"><strong>没有屏蔽规则</strong><span>当前没有任何被删除屏蔽的专辑路径。</span></div>
+      {{end}}
+    </section>
+
+    <section class="card feature-card rules-section" aria-label="已合并专辑规则">
+      <div class="card-head">
+        <div>
+          <p class="card-kicker kicker">合并重定向规则</p>
+          <h2>已合并重定向的专辑（{{len .MergeRules}}）</h2>
+          <p class="result-count">解除合并规则只会停止后续扫描将该路径键自动重定向到目标专辑，不会删除目标专辑里已经合并的曲目；如需按原目录重新分拆，解除后执行完整重扫即可。</p>
+        </div>
+      </div>
+
+      {{if .MergeRules}}
+      <form id="batch-merge-rules-form" method="post" action="/admin/library/rules/delete">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+      </form>
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">选择</th>
+              <th scope="col">源专辑 / 规则键</th>
+              <th scope="col">目标专辑</th>
+              <th scope="col">创建时间</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .MergeRules}}
+            <tr>
+              <td><input type="checkbox" form="batch-merge-rules-form" name="rule" value="{{.Value}}" aria-label="选择合并规则 {{.GroupingKey}}"></td>
+              <td class="missing-copy">
+                <strong>{{if .SourceTitle}}{{.SourceTitle}}{{else}}（未命名专辑）{{end}}</strong>
+                <code>{{.GroupingKey}}</code>
+              </td>
+              <td>
+                {{if .TargetAlbumID}}
+                <a href="/admin/albums/{{.TargetAlbumID}}">{{if .TargetAlbumTitle}}{{.TargetAlbumTitle}}{{else}}专辑 #{{.TargetAlbumID}}{{end}}</a>
+                {{else}}
+                <span class="muted">（目标已不存在）</span>
+                {{end}}
+              </td>
+              <td>{{formatAdminTime .CreatedAt}}</td>
+              <td class="rules-row-actions">
+                <form method="post" action="/admin/library/rules/delete">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="rule" value="{{.Value}}">
+                  <button type="submit" class="secondary-button">解除规则</button>
+                </form>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      <div class="rules-batch-actions">
+        <button type="submit" form="batch-merge-rules-form" class="secondary-button">解除勾选的合并规则</button>
+      </div>
+      {{else}}
+      <div class="zero-state"><strong>没有合并规则</strong><span>当前没有保存的专辑合并重定向规则。</span></div>
+      {{end}}
+    </section>
+  </main>
+</body>
+</html>

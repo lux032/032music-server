@@ -8,6 +8,24 @@
         "value": "inter",
         "createdAt": "2026-11-25T04:53:26.576Z",
         "reason": "DESIGN.md Inter-plus-CJK Rule pins self-hosted Inter in --font-ui"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "internal/http/templates/album-rules.html"
+        ],
+        "createdAt": "2026-11-25T08:05:12.355Z",
+        "reason": "agent triage: external CSS tokens.css/base.css sets h1=--fs-title (1.75-2.15rem) vs body=--fs-md (0.9375rem), 1.87-2.29x ratio"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "internal/http/templates/dashboard.html"
+        ],
+        "createdAt": "2026-11-25T08:05:12.367Z",
+        "reason": "agent triage: external CSS tokens.css/base.css sets h1=--fs-title (1.75-2.15rem) vs body=--fs-md (0.9375rem), 1.87-2.29x ratio"
       }
     ]
   }
