@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -178,6 +179,84 @@ func (s *Store) LibraryByRoot(ctx context.Context, root string) (Library, error)
 	return value, nil
 }
 
+type ScanFileSnapshot struct {
+	AudioFileID       int64
+	FileSize          int64
+	ModifiedAtNS      int64
+	AudioProbeVersion int
+	HasExternalLRC    bool
+	Status            string
+	HasDuration       bool
+}
+
+type ExternalLRCUpdate struct {
+	AudioFileID    int64
+	HasExternalLRC bool
+}
+
+// LoadScanFileSnapshot loads all existing audio file metadata for a library in
+// one query so incremental scans classify unchanged files in memory instead of
+// issuing per-file SELECT/UPDATE round-trips.
+func (s *Store) LoadScanFileSnapshot(ctx context.Context, libraryID int64) (map[string]ScanFileSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT af.id,af.relative_path,af.file_size,af.modified_at_ns,af.audio_probe_version,af.has_external_lrc,af.status,(t.duration_ms IS NOT NULL) FROM audio_files af LEFT JOIN tracks t ON t.id=af.track_id WHERE af.library_id=?`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]ScanFileSnapshot)
+	for rows.Next() {
+		var rel string
+		var snap ScanFileSnapshot
+		var hasLRC, hasDur int
+		if err = rows.Scan(&snap.AudioFileID, &rel, &snap.FileSize, &snap.ModifiedAtNS, &snap.AudioProbeVersion, &hasLRC, &snap.Status, &hasDur); err != nil {
+			return nil, err
+		}
+		snap.HasExternalLRC = hasLRC != 0
+		snap.HasDuration = hasDur != 0
+		out[rel] = snap
+	}
+	return out, rows.Err()
+}
+
+// BatchUpdateExternalLRC updates has_external_lrc in bounded chunks for
+// unchanged audio files whose sibling .lrc state changed.
+func (s *Store) BatchUpdateExternalLRC(ctx context.Context, updates []ExternalLRCUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	var enableIDs, disableIDs []int64
+	for _, u := range updates {
+		if u.HasExternalLRC {
+			enableIDs = append(enableIDs, u.AudioFileID)
+		} else {
+			disableIDs = append(disableIDs, u.AudioFileID)
+		}
+	}
+	apply := func(ids []int64, val int) error {
+		for start := 0; start < len(ids); start += purgeChunk {
+			chunk := ids[start:min(start+purgeChunk, len(ids))]
+			tx, err := s.beginWrite(ctx)
+			if err != nil {
+				return err
+			}
+			placeholders, args := inClause(chunk)
+			execArgs := append([]any{val}, args...)
+			if _, err = tx.ExecContext(ctx, `UPDATE audio_files SET has_external_lrc=? WHERE id IN (`+placeholders+`)`, execArgs...); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := apply(enableIDs, 1); err != nil {
+		return err
+	}
+	return apply(disableIDs, 0)
+}
+
 func (s *Store) AudioFileUnchanged(ctx context.Context, libraryID int64, relativePath string, size, modified int64) (bool, error) {
 	var unchanged bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM audio_files af JOIN tracks t ON t.id=af.track_id WHERE af.library_id=? AND af.relative_path=? AND af.file_size=? AND af.modified_at_ns=? AND af.status='available' AND t.duration_ms IS NOT NULL)`, libraryID, relativePath, size, modified).Scan(&unchanged)
@@ -255,14 +334,88 @@ func (s *Store) LatestScanJob(ctx context.Context) (ScanJob, error) {
 	return j, nil
 }
 
+type importBatchState struct {
+	artists       map[string]int64
+	touchedAlbums map[int64]struct{}
+}
+
 func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
-	input.Metadata.Artists = metadata.ArtistNames(input.Metadata.Raw, input.Metadata.Artists)
-	input.Metadata.AlbumArtists = metadata.AlbumArtistNames(input.Metadata.Raw, input.Metadata.AlbumArtists)
-	tx, err := s.db.BeginTx(ctx, nil)
+	errs, err := s.ImportTrackBatch(ctx, []ImportInput{input})
 	if err != nil {
 		return err
 	}
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+
+// ImportTrackBatch imports a batch of scanned tracks in one write transaction
+// acquired upfront via beginWrite. Each track is isolated with a SAVEPOINT so
+// a single failure rolls back only that track; canonical artist lookups are
+// cached across successful tracks in the batch, and file-sourced album release
+// group refreshes run once per affected album at the end of the batch.
+func (s *Store) ImportTrackBatch(ctx context.Context, inputs []ImportInput) ([]error, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer tx.Rollback()
+
+	batch := &importBatchState{
+		artists:       make(map[string]int64, len(inputs)*2),
+		touchedAlbums: make(map[int64]struct{}, len(inputs)),
+	}
+	errs := make([]error, len(inputs))
+	for i, input := range inputs {
+		if _, err = tx.ExecContext(ctx, `SAVEPOINT import_track`); err != nil {
+			return nil, err
+		}
+		trackArtists := make(map[string]int64)
+		trackAlbums := make(map[int64]struct{}, 2)
+		trackErr := importTrackTx(ctx, tx, input, batch.artists, trackArtists, trackAlbums)
+		if trackErr != nil {
+			if _, rbErr := tx.ExecContext(ctx, `ROLLBACK TO import_track`); rbErr != nil {
+				return nil, rbErr
+			}
+			if _, relErr := tx.ExecContext(ctx, `RELEASE import_track`); relErr != nil {
+				return nil, relErr
+			}
+			errs[i] = trackErr
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, `RELEASE import_track`); err != nil {
+			return nil, err
+		}
+		for k, id := range trackArtists {
+			batch.artists[k] = id
+		}
+		for albumID := range trackAlbums {
+			batch.touchedAlbums[albumID] = struct{}{}
+		}
+	}
+
+	if len(batch.touchedAlbums) > 0 {
+		albumIDs := make([]int64, 0, len(batch.touchedAlbums))
+		for albumID := range batch.touchedAlbums {
+			albumIDs = append(albumIDs, albumID)
+		}
+		if err = refreshAlbumFileReleaseGroupsByIDs(ctx, tx, albumIDs); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return errs, nil
+}
+
+func importTrackTx(ctx context.Context, tx *sql.Tx, input ImportInput, batchArtists, trackArtists map[string]int64, trackAlbums map[int64]struct{}) error {
+	input.Metadata.Artists = metadata.ArtistNames(input.Metadata.Raw, input.Metadata.Artists)
+	input.Metadata.AlbumArtists = metadata.AlbumArtistNames(input.Metadata.Raw, input.Metadata.AlbumArtists)
 	m := input.Metadata
 	groupDir := albumFolder(input.RelativePath)
 	groupKey := metadata.Normalize(groupDir) + "|" + metadata.Normalize(m.Album) + "|" + strconv.Itoa(m.Year)
@@ -299,13 +452,13 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 		if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE id=?`, rule.target).Scan(&albumID); err != nil {
 			return fmt.Errorf("merged album %d: %w", rule.target, err)
 		}
-	} else if albumID, err = upsertScannedAlbum(ctx, tx, input.LibraryID, groupKey, m, discCount, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country); err != nil {
+	} else if albumID, err = upsertScannedAlbum(ctx, tx, input.LibraryID, groupKey, m, discCount, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country, batchArtists, trackArtists); err != nil {
 		return err
 	}
 
 	// Set artist reading_name from sort tags (only when single artist to avoid misattribution)
 	if m.AlbumArtistSort != "" && len(m.AlbumArtists) == 1 {
-		ids, idErr := ensureArtists(ctx, tx, m.AlbumArtists)
+		ids, idErr := ensureArtistsCached(ctx, tx, m.AlbumArtists, batchArtists, trackArtists)
 		if idErr != nil {
 			return idErr
 		}
@@ -316,19 +469,19 @@ func (s *Store) ImportTrack(ctx context.Context, input ImportInput) error {
 		}
 	}
 	if m.ArtistSort != "" && len(m.Artists) == 1 {
-		trackArtistIDs, taErr := ensureArtists(ctx, tx, m.Artists)
+		trackArtistIDs, taErr := ensureArtistsCached(ctx, tx, m.Artists, batchArtists, trackArtists)
 		if taErr == nil && len(trackArtistIDs) == 1 {
 			if _, err = tx.ExecContext(ctx, `UPDATE artists SET reading_name=? WHERE id=? AND reading_name IS NULL`, m.ArtistSort, trackArtistIDs[0]); err != nil {
 				return err
 			}
 		}
 	}
-	return importTrackIntoAlbum(ctx, tx, input, albumID)
+	return importTrackIntoAlbum(ctx, tx, input, albumID, batchArtists, trackArtists, trackAlbums)
 }
 
 // upsertScannedAlbum creates or refreshes the album for a grouping key and
 // rewrites its album artists from the file tags.
-func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupKey string, m metadata.AudioMetadata, discCount int, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country string) (int64, error) {
+func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupKey string, m metadata.AudioMetadata, discCount int, performedBy, albumType, albumTypeSource, version, releaseDate, originalDate, label, catalog, country string, batchArtists, trackArtists map[string]int64) (int64, error) {
 	// Tag-missing values normally keep the previously stored one (COALESCE),
 	// but a stored value still containing NUL/C0 control characters (D-9) is
 	// known-dirty and is replaced even by NULL: keeping it would pin the
@@ -346,7 +499,7 @@ func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupK
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE library_id=? AND grouping_key=?`, libraryID, groupKey).Scan(&albumID); err != nil {
 		return 0, err
 	}
-	albumArtistIDs, err := ensureArtists(ctx, tx, m.AlbumArtists)
+	albumArtistIDs, err := ensureArtistsCached(ctx, tx, m.AlbumArtists, batchArtists, trackArtists)
 	if err != nil {
 		return 0, err
 	}
@@ -366,8 +519,8 @@ func upsertScannedAlbum(ctx context.Context, tx *sql.Tx, libraryID int64, groupK
 }
 
 // importTrackIntoAlbum writes the track, its file row and its relations into
-// the resolved album and commits tx.
-func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, albumID int64) error {
+// the resolved album within the caller's transaction (without committing tx).
+func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, albumID int64, batchArtists, trackArtists map[string]int64, trackAlbums map[int64]struct{}) error {
 	m := input.Metadata
 	var err error
 
@@ -412,7 +565,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		return err
 	}
 	// Primary performing artists
-	artistIDs, err := ensureArtists(ctx, tx, m.Artists)
+	artistIDs, err := ensureArtistsCached(ctx, tx, m.Artists, batchArtists, trackArtists)
 	if err != nil {
 		return err
 	}
@@ -455,7 +608,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	}
 	recordRoleIdentities := func(role string, roleIDs []int64, rawNames []string, rawProven bool, mbids []string, hasTag bool) error {
 		if !m.UnsafeIdentity && len(roleIDs) > 0 && rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
-			rawIDs, rErr := ensureArtists(ctx, tx, rawNames)
+			rawIDs, rErr := ensureArtistsCached(ctx, tx, rawNames, batchArtists, trackArtists)
 			if rErr != nil {
 				return rErr
 			}
@@ -501,7 +654,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		if namesErr != nil {
 			return namesErr
 		}
-		creditIDs, cErr := ensureArtists(ctx, tx, creditNames)
+		creditIDs, cErr := ensureArtistsCached(ctx, tx, creditNames, batchArtists, trackArtists)
 		if cErr != nil {
 			return cErr
 		}
@@ -547,7 +700,7 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			continue
 		}
 		involvedSeen[duplicateKey] = struct{}{}
-		ids, involvedErr := ensureArtists(ctx, tx, []string{name})
+		ids, involvedErr := ensureArtistsCached(ctx, tx, []string{name}, batchArtists, trackArtists)
 		if involvedErr != nil {
 			return involvedErr
 		}
@@ -587,13 +740,12 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			}
 		}
 	}
-	if err = replaceFileReleaseGroups(ctx, tx, audioID, albumID, m.Raw); err != nil {
+	if err = replaceFileReleaseGroupsDeferred(ctx, tx, audioID, m.Raw); err != nil {
 		return err
 	}
+	trackAlbums[albumID] = struct{}{}
 	if previousAlbumID != 0 && previousAlbumID != albumID {
-		if err = refreshAlbumFileReleaseGroups(ctx, tx, previousAlbumID); err != nil {
-			return err
-		}
+		trackAlbums[previousAlbumID] = struct{}{}
 	}
 
 	if input.Artwork != nil {
@@ -640,15 +792,31 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func ensureArtists(ctx context.Context, tx *sql.Tx, names []string) ([]int64, error) {
+	return ensureArtistsCached(ctx, tx, names, nil, nil)
+}
+
+func ensureArtistsCached(ctx context.Context, tx *sql.Tx, names []string, batchArtists, trackArtists map[string]int64) ([]int64, error) {
 	ids := make([]int64, 0, len(names))
 	for _, name := range names {
 		key := metadata.Normalize(name)
 		if key == "" {
 			continue
+		}
+		if batchArtists != nil {
+			if id, ok := batchArtists[key]; ok {
+				ids = append(ids, id)
+				continue
+			}
+		}
+		if trackArtists != nil {
+			if id, ok := trackArtists[key]; ok {
+				ids = append(ids, id)
+				continue
+			}
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES(?,?,?) ON CONFLICT(identity_key) DO NOTHING`, name, key, key)
 		if err != nil {
@@ -661,6 +829,9 @@ func ensureArtists(ctx context.Context, tx *sql.Tx, names []string) ([]int64, er
 		id, err = canonicalArtistID(ctx, tx, id)
 		if err != nil {
 			return nil, err
+		}
+		if trackArtists != nil {
+			trackArtists[key] = id
 		}
 		ids = append(ids, id)
 	}
@@ -698,11 +869,22 @@ func (s *Store) CountAvailableAudioFiles(ctx context.Context, libraryID int64) (
 }
 
 func (s *Store) MarkMissing(ctx context.Context, libraryID int64, scanStarted string) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	var hasStale bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM audio_files WHERE library_id=? AND (last_scanned_at IS NULL OR last_scanned_at < ?) AND status='available')`, libraryID, scanStarted).Scan(&hasStale); err != nil {
+		return 0, err
+	}
+	if !hasStale {
+		return 0, nil
+	}
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	affectedAlbums, err := queryTxIDs(ctx, tx, `SELECT DISTINCT t.album_id FROM audio_files af JOIN tracks t ON t.id=af.track_id WHERE af.library_id=? AND (af.last_scanned_at IS NULL OR af.last_scanned_at < ?) AND af.status='available'`, libraryID, scanStarted)
+	if err != nil {
+		return 0, err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE audio_files SET status='missing',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE library_id=? AND (last_scanned_at IS NULL OR last_scanned_at < ?) AND status='available'`, libraryID, scanStarted)
 	if err != nil {
 		return 0, err
@@ -711,10 +893,71 @@ func (s *Store) MarkMissing(ctx context.Context, libraryID int64, scanStarted st
 	if err != nil {
 		return 0, err
 	}
-	if err = refreshAllAlbumReleaseGroups(ctx, tx); err != nil {
-		return 0, err
+	if n > 0 && len(affectedAlbums) > 0 {
+		if err = refreshAlbumFileReleaseGroupsByIDs(ctx, tx, affectedAlbums); err != nil {
+			return 0, err
+		}
 	}
 	return n, tx.Commit()
+}
+
+// MarkMissingByIDs marks the specified available audio_files rows missing in
+// bounded chunks and refreshes file-sourced album_release_groups only for the
+// owning albums. An empty id list returns (0, nil) without acquiring a write
+// lock.
+func (s *Store) MarkMissingByIDs(ctx context.Context, libraryID int64, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			unique = append(unique, id)
+		}
+	}
+	if len(unique) == 0 {
+		return 0, nil
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var total int64
+	affectedAlbums := make([]int64, 0)
+	for start := 0; start < len(unique); start += purgeChunk {
+		chunk := unique[start:min(start+purgeChunk, len(unique))]
+		placeholders, chunkArgs := inClause(chunk)
+		args := append([]any{libraryID}, chunkArgs...)
+		albums, qErr := queryTxIDs(ctx, tx, `SELECT DISTINCT t.album_id FROM audio_files af JOIN tracks t ON t.id=af.track_id WHERE af.library_id=? AND af.status='available' AND af.id IN (`+placeholders+`)`, args...)
+		if qErr != nil {
+			return 0, qErr
+		}
+		affectedAlbums = append(affectedAlbums, albums...)
+		res, execErr := tx.ExecContext(ctx, `UPDATE audio_files SET status='missing',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE library_id=? AND status='available' AND id IN (`+placeholders+`)`, args...)
+		if execErr != nil {
+			return 0, execErr
+		}
+		n, raErr := res.RowsAffected()
+		if raErr != nil {
+			return 0, raErr
+		}
+		total += n
+	}
+	if total > 0 && len(affectedAlbums) > 0 {
+		if err = refreshAlbumFileReleaseGroupsByIDs(ctx, tx, affectedAlbums); err != nil {
+			return 0, err
+		}
+	}
+	return total, tx.Commit()
 }
 
 // CleanupOrphans removes albums/artists/genres that lost all references.

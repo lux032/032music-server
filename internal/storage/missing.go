@@ -63,7 +63,7 @@ func (s *Store) ListMissingFiles(ctx context.Context, limit, offset int) ([]Miss
 
 // cleanupOrphansSQL 删除失去全部引用的专辑、歌手与流派（CleanupOrphans 与
 // PurgeMissing 共用）。
-const cleanupOrphansSQL = `DELETE FROM albums WHERE NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=albums.id); DELETE FROM artists WHERE merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=artists.id) AND NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=artists.id) AND NOT EXISTS(SELECT 1 FROM track_primary_artist_base b WHERE b.artist_id=artists.id) AND NOT EXISTS(SELECT 1 FROM track_primary_artist_state st,json_each(st.artists_json) j WHERE j.value=artists.id) AND NOT EXISTS(SELECT 1 FROM track_primary_artist_operations op,json_each(op.before_json) j WHERE j.value=artists.id) AND NOT EXISTS(SELECT 1 FROM track_primary_artist_operations op,json_each(op.after_json) j WHERE j.value=artists.id); DELETE FROM genres WHERE NOT EXISTS(SELECT 1 FROM track_genres tg WHERE tg.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides tgo WHERE tgo.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM album_genre_overrides ago WHERE ago.genre_id=genres.id);`
+const cleanupOrphansSQL = `DELETE FROM albums WHERE NOT EXISTS(SELECT 1 FROM tracks t WHERE t.album_id=albums.id); WITH protected_json_artists(artist_id) AS MATERIALIZED (SELECT DISTINCT CAST(j.value AS INTEGER) FROM track_primary_artist_state st, json_each(st.artists_json) j WHERE j.value IS NOT NULL UNION SELECT DISTINCT CAST(j.value AS INTEGER) FROM track_primary_artist_operations op, json_each(op.before_json) j WHERE j.value IS NOT NULL UNION SELECT DISTINCT CAST(j.value AS INTEGER) FROM track_primary_artist_operations op, json_each(op.after_json) j WHERE j.value IS NOT NULL) DELETE FROM artists WHERE merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=artists.id) AND NOT EXISTS(SELECT 1 FROM track_artists ta WHERE ta.artist_id=artists.id) AND NOT EXISTS(SELECT 1 FROM track_primary_artist_base b WHERE b.artist_id=artists.id) AND artists.id NOT IN (SELECT artist_id FROM protected_json_artists); DELETE FROM genres WHERE NOT EXISTS(SELECT 1 FROM track_genres tg WHERE tg.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM track_genre_overrides tgo WHERE tgo.genre_id=genres.id) AND NOT EXISTS(SELECT 1 FROM album_genre_overrides ago WHERE ago.genre_id=genres.id);`
 
 // purgeChunk 限制单条语句的绑定参数个数。
 const purgeChunk = 500
@@ -83,15 +83,11 @@ const purgeChunk = 500
 // custom-images GC 回收。
 func (s *Store) PurgeMissing(ctx context.Context, libraryID int64, ids []int64) (PurgeResult, error) {
 	var result PurgeResult
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
-	// L1: take the writer lock before any read in this transaction.
-	if _, err = tx.ExecContext(ctx, `UPDATE audio_files SET id=id WHERE 0`); err != nil {
-		return result, err
-	}
 
 	where := []string{"status='missing'"}
 	args := []any{}
@@ -120,20 +116,35 @@ func (s *Store) PurgeMissing(ctx context.Context, libraryID int64, ids []int64) 
 	}
 
 	trackSet := map[int64]bool{}
-	var trackIDs []int64
+	albumSet := map[int64]bool{}
+	var trackIDs, affectedAlbumIDs []int64
 	for start := 0; start < len(fileIDs); start += purgeChunk {
 		chunk := fileIDs[start:min(start+purgeChunk, len(fileIDs))]
 		placeholders, chunkArgs := inClause(chunk)
-		owners, e := queryTxIDs(ctx, tx, `SELECT DISTINCT track_id FROM audio_files WHERE track_id IS NOT NULL AND id IN (`+placeholders+`)`, chunkArgs...)
+		rows, e := tx.QueryContext(ctx, `SELECT DISTINCT af.track_id,COALESCE(t.album_id,0) FROM audio_files af LEFT JOIN tracks t ON t.id=af.track_id WHERE af.track_id IS NOT NULL AND af.id IN (`+placeholders+`)`, chunkArgs...)
 		if e != nil {
 			return result, e
 		}
-		for _, id := range owners {
-			if !trackSet[id] {
-				trackSet[id] = true
-				trackIDs = append(trackIDs, id)
+		for rows.Next() {
+			var trackID, albumID int64
+			if e = rows.Scan(&trackID, &albumID); e != nil {
+				rows.Close()
+				return result, e
+			}
+			if !trackSet[trackID] {
+				trackSet[trackID] = true
+				trackIDs = append(trackIDs, trackID)
+			}
+			if albumID > 0 && !albumSet[albumID] {
+				albumSet[albumID] = true
+				affectedAlbumIDs = append(affectedAlbumIDs, albumID)
 			}
 		}
+		if e = rows.Err(); e != nil {
+			rows.Close()
+			return result, e
+		}
+		rows.Close()
 		res, e := tx.ExecContext(ctx, `DELETE FROM audio_files WHERE id IN (`+placeholders+`)`, chunkArgs...)
 		if e != nil {
 			return result, e
@@ -177,8 +188,20 @@ func (s *Store) PurgeMissing(ctx context.Context, libraryID int64, ids []int64) 
 		}
 		result.Albums, result.Artists = albumsBefore-albumsAfter, artistsBefore-artistsAfter
 	}
-	if err = refreshAllAlbumReleaseGroups(ctx, tx); err != nil {
-		return PurgeResult{}, err
+	if len(affectedAlbumIDs) > 0 {
+		var surviving []int64
+		for start := 0; start < len(affectedAlbumIDs); start += purgeChunk {
+			chunk := affectedAlbumIDs[start:min(start+purgeChunk, len(affectedAlbumIDs))]
+			placeholders, chunkArgs := inClause(chunk)
+			found, e := queryTxIDs(ctx, tx, `SELECT id FROM albums WHERE id IN (`+placeholders+`)`, chunkArgs...)
+			if e != nil {
+				return PurgeResult{}, e
+			}
+			surviving = append(surviving, found...)
+		}
+		if err = refreshAlbumFileReleaseGroupsByIDs(ctx, tx, surviving); err != nil {
+			return PurgeResult{}, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return PurgeResult{}, err

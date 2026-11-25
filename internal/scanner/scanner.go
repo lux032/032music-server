@@ -10,6 +10,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -24,8 +25,14 @@ import (
 // scanProgressFlushInterval bounds how often per-file progress is written to
 // the scan_jobs table; one UPDATE per file is far too chatty on large
 // libraries.
-const scanProgressFlushInterval = time.Second
-const scanProgressFlushEvery = 100
+const (
+	scanProgressFlushInterval = time.Second
+	scanProgressFlushEvery    = 100
+	scanBatchSize             = 50
+	scanBatchFlushInterval    = 250 * time.Millisecond
+	scanMinWorkers            = 2
+	scanMaxWorkers            = 4
+)
 
 // missingGuardRatio is the safety threshold for S1: if a scan would mark more
 // than this fraction of previously available files as missing, the library
@@ -39,6 +46,7 @@ type Manager struct {
 	logger                *slog.Logger
 	library               storage.Library
 	artworkDirectory      string
+	workers               int
 	mu                    sync.Mutex
 	running               bool
 	onComplete            func()
@@ -48,6 +56,23 @@ type Manager struct {
 	purgePolicy           func(context.Context) string
 	restoreScanProtection string
 	wg                    sync.WaitGroup
+}
+
+func (m *Manager) workerCount() int {
+	m.mu.Lock()
+	w := m.workers
+	m.mu.Unlock()
+	if w > 0 {
+		return w
+	}
+	n := runtime.NumCPU()
+	if n < scanMinWorkers {
+		return scanMinWorkers
+	}
+	if n > scanMaxWorkers {
+		return scanMaxWorkers
+	}
+	return n
 }
 
 // SetPurgeMissingPolicy 设置缺失文件清理策略的来源（管理页覆盖优先，否则取
@@ -209,9 +234,43 @@ func (m *Manager) start(ctx context.Context, scanType string, identity, legacyCr
 	return jobID, nil
 }
 
+type discoveredFile struct {
+	path      string
+	rel       string
+	size      int64
+	modTimeNS int64
+	statErr   error
+}
+
+type discoveredLibrary struct {
+	files    []discoveredFile
+	lrcPaths map[string]struct{}
+}
+
+type preparedImport struct {
+	index   int
+	rel     string
+	input   storage.ImportInput
+	errCode string
+	err     error
+}
+
+type scanArtworkCache struct {
+	mu          sync.Mutex
+	folder      map[string]*storage.ArtworkInput
+	knownHashes map[string]string
+	dirReady    bool
+}
+
+func newScanArtworkCache() *scanArtworkCache {
+	return &scanArtworkCache{
+		folder:      make(map[string]*storage.ArtworkInput),
+		knownHashes: make(map[string]string),
+	}
+}
+
 func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyCreators bool) bool {
-	started := storage.ScanTimestamp()
-	paths, err := m.discover()
+	discovered, err := m.discover()
 	if err != nil {
 		m.fail(ctx, jobID, err)
 		return false
@@ -220,7 +279,7 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 	// zero files while the library previously had available files means the
 	// volume is unmounted or misconfigured — not that the user deleted their
 	// entire collection.
-	if len(paths) == 0 {
+	if len(discovered.files) == 0 {
 		available, countErr := m.store.CountAvailableAudioFiles(ctx, m.library.ID)
 		if countErr != nil {
 			m.fail(ctx, jobID, countErr)
@@ -231,89 +290,96 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 			return false
 		}
 	}
-	if err = m.store.StartScanJob(ctx, jobID, int64(len(paths))); err != nil {
+	if err = m.store.StartScanJob(ctx, jobID, int64(len(discovered.files))); err != nil {
 		m.fail(ctx, jobID, err)
 		return false
 	}
+	snapshot, err := m.store.LoadScanFileSnapshot(ctx, m.library.ID)
+	if err != nil {
+		m.fail(ctx, jobID, err)
+		return false
+	}
+
 	var processed, skipped, failed int64
 	lastFlush := time.Now()
 	sinceFlush := 0
-	folderArtwork := map[string]*storage.ArtworkInput{}
-	cancelled := false
-	for _, path := range paths {
-		if ctx.Err() != nil {
-			cancelled = true
-			break
-		}
-		rel, relErr := filepath.Rel(m.library.RootPath, path)
-		if relErr != nil {
-			failed++
-			continue
-		}
-		rel = filepath.ToSlash(rel)
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			failed++
-			m.recordError(ctx, jobID, rel, "stat_failed", statErr)
-			continue
-		}
-		unchanged, _ := m.store.AudioFileUnchanged(ctx, m.library.ID, rel, info.Size(), info.ModTime().UnixNano())
-		if scanType == "incremental" && unchanged {
-			lrc := externalLRC(path)
-			probeFailed := false
-			needed, e := m.store.AudioProbeNeeded(ctx, m.library.ID, rel)
-			if e != nil {
-				probeFailed = true
-				m.recordError(ctx, jobID, rel, "probe_check_failed", e)
-			} else if needed {
-				update := m.updateAudioProbe
-				if update == nil {
-					update = m.store.UpdateAudioProbe
-				}
-				if e = update(ctx, m.library.ID, rel, m.probe(path, strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")), lrc); e != nil {
-					probeFailed = true
-					m.recordError(ctx, jobID, rel, "probe_failed", e)
-				}
-			}
-			// Even a failed probe must touch the file to prevent MarkMissing from hiding it.
-			if e = m.store.TouchAudioFile(ctx, m.library.ID, rel, lrc); e != nil {
-				probeFailed = true
-				m.recordError(ctx, jobID, rel, "touch_failed", e)
-			}
-			if probeFailed {
-				failed++
-			} else {
-				skipped++
-			}
-		} else {
-			readMetadata := m.readMetadata
-			if readMetadata == nil {
-				readMetadata = metadata.Read
-			}
-			meta, readErr := readMetadata(path)
-			if readErr != nil {
-				failed++
-				m.recordError(ctx, jobID, rel, "metadata_failed", readErr)
-			} else {
-				art, artErr := m.cacheArtwork(path, meta, folderArtwork)
-				if artErr != nil {
-					m.logger.Warn("cache artwork failed", "path", rel, "error", artErr)
-				}
-				if importErr := m.store.ImportTrack(ctx, storage.ImportInput{LibraryID: m.library.ID, RelativePath: rel, FileSize: info.Size(), ModifiedAtNS: info.ModTime().UnixNano(), Metadata: meta, Artwork: art, AudioProps: m.probe(path, meta.Container), HasExternalLRC: externalLRC(path), LegacyCreatorConversion: legacyCreators}); importErr != nil {
-					failed++
-					m.recordError(ctx, jobID, rel, "import_failed", importErr)
-				} else {
-					processed++
-				}
-			}
-		}
+	flushProgress := func(current string) {
 		sinceFlush++
 		if sinceFlush >= scanProgressFlushEvery || time.Since(lastFlush) >= scanProgressFlushInterval {
-			_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, rel)
+			_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, current)
 			sinceFlush = 0
 			lastFlush = time.Now()
 		}
 	}
+
+	seenRel := make(map[string]struct{}, len(discovered.files))
+	toImport := make([]discoveredFile, 0)
+	lrcUpdates := make([]storage.ExternalLRCUpdate, 0)
+	cancelled := false
+
+	for _, df := range discovered.files {
+		if ctx.Err() != nil {
+			cancelled = true
+			break
+		}
+		if df.statErr != nil {
+			failed++
+			if df.rel != "" {
+				m.recordError(ctx, jobID, df.rel, "stat_failed", df.statErr)
+			}
+			flushProgress(df.rel)
+			continue
+		}
+		snap, exists := snapshot[df.rel]
+		unchanged := scanType == "incremental" && exists && snap.Status == "available" && snap.HasDuration && snap.FileSize == df.size && snap.ModifiedAtNS == df.modTimeNS
+		if unchanged {
+			// Unchanged available files always remain seen (even if probe
+			// backfill fails) so MarkMissingByIDs never hides them.
+			seenRel[df.rel] = struct{}{}
+			lrc := externalLRCIfPresent(df.path, discovered.lrcPaths)
+			if snap.AudioProbeVersion < storage.AudioProbeVersion {
+				update := m.updateAudioProbe
+				if update == nil {
+					update = m.store.UpdateAudioProbe
+				}
+				if e := update(ctx, m.library.ID, df.rel, m.probe(df.path, strings.TrimPrefix(strings.ToLower(filepath.Ext(df.path)), ".")), lrc); e != nil {
+					failed++
+					m.recordError(ctx, jobID, df.rel, "probe_failed", e)
+					if lrc != snap.HasExternalLRC {
+						lrcUpdates = append(lrcUpdates, storage.ExternalLRCUpdate{AudioFileID: snap.AudioFileID, HasExternalLRC: lrc})
+					}
+				} else {
+					skipped++
+				}
+			} else {
+				if lrc != snap.HasExternalLRC {
+					lrcUpdates = append(lrcUpdates, storage.ExternalLRCUpdate{AudioFileID: snap.AudioFileID, HasExternalLRC: lrc})
+				}
+				skipped++
+			}
+			flushProgress(df.rel)
+			continue
+		}
+		toImport = append(toImport, df)
+	}
+
+	if !cancelled && len(lrcUpdates) > 0 {
+		if err = m.store.BatchUpdateExternalLRC(ctx, lrcUpdates); err != nil {
+			if ctx.Err() != nil {
+				cancelled = true
+			} else {
+				m.logger.Warn("batch update external lrc failed", "count", len(lrcUpdates), "error", err)
+			}
+		}
+	}
+
+	if !cancelled && len(toImport) > 0 {
+		pipeCancelled := m.runImportPipeline(ctx, jobID, toImport, discovered.lrcPaths, legacyCreators, seenRel, &processed, &failed, flushProgress)
+		if pipeCancelled {
+			cancelled = true
+		}
+	}
+
 	_ = m.store.UpdateScanJob(ctx, jobID, processed, skipped, failed, "")
 	if cancelled {
 		// A partial scan must never feed MarkMissing/CleanupOrphans: every
@@ -329,29 +395,41 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 		m.fail(ctx, jobID, err)
 		return false
 	}
-	if available > 0 && float64(len(paths)) < float64(available)*(1-missingGuardRatio) {
-		m.fail(ctx, jobID, fmt.Errorf("scan discovered %d files but the library has %d available files (>%d%% would be marked missing); refusing reconciliation (is %s fully mounted?)", len(paths), available, int(missingGuardRatio*100), m.library.RootPath))
+	if available > 0 && float64(len(discovered.files)) < float64(available)*(1-missingGuardRatio) {
+		m.fail(ctx, jobID, fmt.Errorf("scan discovered %d files but the library has %d available files (>%d%% would be marked missing); refusing reconciliation (is %s fully mounted?)", len(discovered.files), available, int(missingGuardRatio*100), m.library.RootPath))
 		return false
 	}
 
-	missing, err := m.store.MarkMissing(ctx, m.library.ID, started)
+	var missingIDs []int64
+	for rel, snap := range snapshot {
+		if snap.Status == "available" {
+			if _, ok := seenRel[rel]; !ok {
+				missingIDs = append(missingIDs, snap.AudioFileID)
+			}
+		}
+	}
+	missing, err := m.store.MarkMissingByIDs(ctx, m.library.ID, missingIDs)
 	if err != nil {
 		m.fail(ctx, jobID, err)
 		return false
 	}
 	// 只有通过上面的 S1 保护（未取消、未疑似掉盘）后才会走到这里，因此
 	// 永久删除不会在挂载失效时把整个曲库清空。
+	var purgedFiles int64
 	if m.shouldPurge(ctx, scanType) {
 		purged, purgeErr := m.store.PurgeMissing(ctx, m.library.ID, nil)
 		if purgeErr != nil {
 			m.logger.Error("purge missing files", "jobId", jobID, "error", purgeErr)
 		} else if purged.Files > 0 {
+			purgedFiles = purged.Files
 			m.logger.Info("purged missing files", "jobId", jobID, "files", purged.Files, "tracks", purged.Tracks, "albums", purged.Albums, "artists", purged.Artists)
 		}
 	}
-	if err = m.store.CleanupOrphans(ctx); err != nil {
-		m.fail(ctx, jobID, err)
-		return false
+	if processed > 0 || missing > 0 || purgedFiles > 0 {
+		if err = m.store.CleanupOrphans(ctx); err != nil {
+			m.fail(ctx, jobID, err)
+			return false
+		}
 	}
 	if _, refreshErr := m.store.RefreshAlbumWorks(ctx, false); refreshErr != nil {
 		m.logger.Error("refresh album works", "error", refreshErr)
@@ -359,12 +437,217 @@ func (m *Manager) run(ctx context.Context, jobID int64, scanType string, legacyC
 	if err = m.store.FinishScanJob(ctx, jobID, "completed", missing, ""); err != nil {
 		m.logger.Error("finish scan job", "error", err)
 	}
-	m.logger.Info("library scan completed", "jobId", jobID, "discovered", len(paths), "processed", processed, "skipped", skipped, "failed", failed, "missing", missing)
+	m.logger.Info("library scan completed", "jobId", jobID, "discovered", len(discovered.files), "processed", processed, "skipped", skipped, "failed", failed, "missing", missing)
 	return true
 }
 
-func (m *Manager) discover() ([]string, error) {
-	var paths []string
+func (m *Manager) runImportPipeline(
+	ctx context.Context,
+	jobID int64,
+	toImport []discoveredFile,
+	lrcPaths map[string]struct{},
+	legacyCreators bool,
+	seenRel map[string]struct{},
+	processed, failed *int64,
+	flushProgress func(current string),
+) bool {
+	readMetadata := m.readMetadata
+	if readMetadata == nil {
+		readMetadata = metadata.Read
+	}
+	workers := m.workerCount()
+	if workers > len(toImport) {
+		workers = len(toImport)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	type importJob struct {
+		index int
+		file  discoveredFile
+	}
+
+	pipeCtx, pipeCancel := context.WithCancel(ctx)
+	defer pipeCancel()
+
+	artCache := newScanArtworkCache()
+	jobs := make(chan importJob)
+	results := make(chan preparedImport, workers*4)
+
+	var workerWG sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			for job := range jobs {
+				if pipeCtx.Err() != nil {
+					return
+				}
+				meta, readErr := readMetadata(job.file.path)
+				var res preparedImport
+				if readErr != nil {
+					res = preparedImport{index: job.index, rel: job.file.rel, errCode: "metadata_failed", err: readErr}
+				} else {
+					art, artErr := m.cacheArtworkConcurrent(job.file.path, meta, artCache)
+					if artErr != nil {
+						m.logger.Warn("cache artwork failed", "path", job.file.rel, "error", artErr)
+					}
+					res = preparedImport{
+						index: job.index,
+						rel:   job.file.rel,
+						input: storage.ImportInput{
+							LibraryID:               m.library.ID,
+							RelativePath:            job.file.rel,
+							FileSize:                job.file.size,
+							ModifiedAtNS:            job.file.modTimeNS,
+							Metadata:                meta,
+							Artwork:                 art,
+							AudioProps:              m.probe(job.file.path, meta.Container),
+							HasExternalLRC:          externalLRCIfPresent(job.file.path, lrcPaths),
+							LegacyCreatorConversion: legacyCreators,
+						},
+					}
+				}
+				select {
+				case results <- res:
+				case <-pipeCtx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for idx, df := range toImport {
+			select {
+			case jobs <- importJob{index: idx, file: df}:
+			case <-pipeCtx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		workerWG.Wait()
+		close(results)
+	}()
+
+	batch := make([]preparedImport, 0, scanBatchSize)
+	cancelled := false
+	flushBatch := func() {
+		if len(batch) == 0 {
+			return
+		}
+		inputs := make([]storage.ImportInput, len(batch))
+		for i := range batch {
+			inputs[i] = batch[i].input
+		}
+		errs, txErr := m.store.ImportTrackBatch(ctx, inputs)
+		if txErr != nil {
+			if ctx.Err() != nil {
+				cancelled = true
+				pipeCancel()
+				batch = batch[:0]
+				return
+			}
+			for _, item := range batch {
+				*failed++
+				m.recordError(ctx, jobID, item.rel, "import_failed", txErr)
+				flushProgress(item.rel)
+			}
+			batch = batch[:0]
+			return
+		}
+		for i, item := range batch {
+			if errs[i] != nil {
+				*failed++
+				m.recordError(ctx, jobID, item.rel, "import_failed", errs[i])
+			} else {
+				*processed++
+				seenRel[item.rel] = struct{}{}
+			}
+			flushProgress(item.rel)
+		}
+		batch = batch[:0]
+	}
+
+	// Preserve deterministic discovery order when committing batches so
+	// album-level tag precedence matches serial scanning exactly.
+	pending := make(map[int]preparedImport, workers*4)
+	nextIdx := 0
+	ticker := time.NewTicker(scanBatchFlushInterval)
+	defer ticker.Stop()
+
+	drainOrdered := func() {
+		for {
+			item, ok := pending[nextIdx]
+			if !ok {
+				return
+			}
+			delete(pending, nextIdx)
+			nextIdx++
+			if item.err != nil {
+				flushBatch()
+				if cancelled {
+					return
+				}
+				*failed++
+				m.recordError(ctx, jobID, item.rel, item.errCode, item.err)
+				flushProgress(item.rel)
+				continue
+			}
+			batch = append(batch, item)
+			if len(batch) >= scanBatchSize {
+				flushBatch()
+				if cancelled {
+					return
+				}
+			}
+		}
+	}
+
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			cancelled = true
+			pipeCancel()
+			break loop
+		case <-ticker.C:
+			flushBatch()
+			if cancelled {
+				break loop
+			}
+		case res, ok := <-results:
+			if !ok {
+				break loop
+			}
+			pending[res.index] = res
+			drainOrdered()
+			if cancelled {
+				break loop
+			}
+		}
+	}
+
+	if cancelled {
+		for range results {
+		}
+		workerWG.Wait()
+		return true
+	}
+	drainOrdered()
+	flushBatch()
+	workerWG.Wait()
+	return cancelled || ctx.Err() != nil
+}
+
+func (m *Manager) discover() (discoveredLibrary, error) {
+	result := discoveredLibrary{
+		lrcPaths: make(map[string]struct{}),
+	}
 	err := filepath.WalkDir(m.library.RootPath, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			// A single unreadable entry (permissions, dangling mount) must
@@ -384,30 +667,48 @@ func (m *Manager) discover() ([]string, error) {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
+		if strings.EqualFold(filepath.Ext(path), ".lrc") {
+			result.lrcPaths[strings.ToLower(path)] = struct{}{}
+			return nil
+		}
 		if metadata.IsSupported(path) {
-			paths = append(paths, path)
+			rel, relErr := filepath.Rel(m.library.RootPath, path)
+			if relErr != nil {
+				result.files = append(result.files, discoveredFile{path: path, statErr: relErr})
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				result.files = append(result.files, discoveredFile{path: path, rel: rel, statErr: infoErr})
+				return nil
+			}
+			result.files = append(result.files, discoveredFile{
+				path:      path,
+				rel:       rel,
+				size:      info.Size(),
+				modTimeNS: info.ModTime().UnixNano(),
+			})
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("discover music files: %w", err)
+		return discoveredLibrary{}, fmt.Errorf("discover music files: %w", err)
 	}
-	return paths, nil
+	return result, nil
 }
 
-// cacheArtwork resolves the artwork for one audio file. folderArtwork caches
-// folder-level covers (cover.jpg etc.) per directory so an album folder with
-// N tracks reads and hashes its cover once instead of N times. Entries are
-// only cached for successful folder lookups; embedded artwork is always
-// per-file.
-func (m *Manager) cacheArtwork(audioPath string, meta metadata.AudioMetadata, folderArtwork map[string]*storage.ArtworkInput) (*storage.ArtworkInput, error) {
+// cacheArtworkConcurrent resolves artwork safely across concurrent scanner
+// workers, deduplicating folder-cover reads per directory and artwork cache
+// disk writes by content hash.
+func (m *Manager) cacheArtworkConcurrent(audioPath string, meta metadata.AudioMetadata, cache *scanArtworkCache) (*storage.ArtworkInput, error) {
 	data, mimeType, sourceType, sourcePath := meta.Artwork, meta.ArtworkMIME, "embedded", audioPath
 	if len(data) == 0 {
 		directory := filepath.Dir(audioPath)
-		if cached, ok := folderArtwork[directory]; ok {
-			if cached == nil {
-				return nil, nil
-			}
+		cache.mu.Lock()
+		cached, ok := cache.folder[directory]
+		cache.mu.Unlock()
+		if ok {
 			return cached, nil
 		}
 		for _, name := range []string{"cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.png", "front.jpg", "front.png"} {
@@ -422,35 +723,69 @@ func (m *Manager) cacheArtwork(audioPath string, meta metadata.AudioMetadata, fo
 			}
 		}
 		if len(data) == 0 {
-			folderArtwork[directory] = nil
+			cache.mu.Lock()
+			cache.folder[directory] = nil
+			cache.mu.Unlock()
 			return nil, nil
 		}
-		artwork, err := m.writeArtwork(data, mimeType, sourceType, sourcePath)
+		artwork, err := m.writeArtworkCached(data, mimeType, sourceType, sourcePath, cache)
 		if err != nil {
 			return nil, err
 		}
-		folderArtwork[directory] = artwork
+		cache.mu.Lock()
+		cache.folder[directory] = artwork
+		cache.mu.Unlock()
 		return artwork, nil
 	}
-	return m.writeArtwork(data, mimeType, sourceType, sourcePath)
+	return m.writeArtworkCached(data, mimeType, sourceType, sourcePath, cache)
 }
 
-func (m *Manager) writeArtwork(data []byte, mimeType, sourceType, sourcePath string) (*storage.ArtworkInput, error) {
+func (m *Manager) writeArtworkCached(data []byte, mimeType, sourceType, sourcePath string, cache *scanArtworkCache) (*storage.ArtworkInput, error) {
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
 	hashBytes := sha256.Sum256(data)
 	hash := hex.EncodeToString(hashBytes[:])
 	ext := extension(mimeType)
-	if err := os.MkdirAll(m.artworkDirectory, 0o750); err != nil {
-		return nil, err
+	key := hash + ext
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cachePath, ok := cache.knownHashes[key]; ok {
+		return &storage.ArtworkInput{Hash: hash, MIMEType: mimeType, CachePath: cachePath, SourceType: sourceType, SourcePath: sourcePath, ByteSize: int64(len(data))}, nil
 	}
-	cachePath := filepath.Join(m.artworkDirectory, hash+ext)
+	if !cache.dirReady {
+		if err := os.MkdirAll(m.artworkDirectory, 0o750); err != nil {
+			return nil, err
+		}
+		cache.dirReady = true
+	}
+	cachePath := filepath.Join(m.artworkDirectory, key)
 	if _, err := os.Stat(cachePath); errors.Is(err, os.ErrNotExist) {
-		if err = os.WriteFile(cachePath, data, 0o640); err != nil {
+		tmp, err := os.CreateTemp(m.artworkDirectory, ".artwork-*")
+		if err != nil {
+			return nil, err
+		}
+		tmpName := tmp.Name()
+		if _, err = tmp.Write(data); err != nil {
+			tmp.Close()
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
+		if err = tmp.Close(); err != nil {
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
+		if err = os.Chmod(tmpName, 0o640); err != nil {
+			_ = os.Remove(tmpName)
+			return nil, err
+		}
+		if err = os.Rename(tmpName, cachePath); err != nil {
+			_ = os.Remove(tmpName)
 			return nil, err
 		}
 	}
+	cache.knownHashes[key] = cachePath
 	return &storage.ArtworkInput{Hash: hash, MIMEType: mimeType, CachePath: cachePath, SourceType: sourceType, SourcePath: sourcePath, ByteSize: int64(len(data))}, nil
 }
 
@@ -475,6 +810,16 @@ func extension(mimeType string) string {
 	default:
 		return ".img"
 	}
+}
+
+func externalLRCIfPresent(audioPath string, lrcPaths map[string]struct{}) bool {
+	if len(lrcPaths) == 0 {
+		return false
+	}
+	if _, ok := lrcPaths[strings.ToLower(lyrics.DetectLRCPath(audioPath))]; !ok {
+		return false
+	}
+	return externalLRC(audioPath)
 }
 
 func externalLRC(path string) bool {

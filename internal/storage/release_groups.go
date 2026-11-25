@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/lux032/032music-server/internal/metadata"
 )
@@ -47,7 +48,7 @@ func refreshAlbumFileReleaseGroups(ctx context.Context, tx *sql.Tx, albumID int6
 	return resolveAlbumReleaseGroups(ctx, tx, albumID)
 }
 
-func replaceFileReleaseGroups(ctx context.Context, tx *sql.Tx, audioID, albumID int64, raw map[string][]string) error {
+func replaceFileReleaseGroupsDeferred(ctx context.Context, tx *sql.Tx, audioID int64, raw map[string][]string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM audio_file_release_groups WHERE audio_file_id=?`, audioID); err != nil {
 		return err
 	}
@@ -68,7 +69,38 @@ func replaceFileReleaseGroups(ctx context.Context, tx *sql.Tx, audioID, albumID 
 			return err
 		}
 	}
+	return nil
+}
+
+func replaceFileReleaseGroups(ctx context.Context, tx *sql.Tx, audioID, albumID int64, raw map[string][]string) error {
+	if err := replaceFileReleaseGroupsDeferred(ctx, tx, audioID, raw); err != nil {
+		return err
+	}
 	return refreshAlbumFileReleaseGroups(ctx, tx, albumID)
+}
+
+func refreshAlbumFileReleaseGroupsByIDs(ctx context.Context, tx *sql.Tx, albumIDs []int64) error {
+	if len(albumIDs) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(albumIDs))
+	unique := make([]int64, 0, len(albumIDs))
+	for _, id := range albumIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			unique = append(unique, id)
+		}
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+	for _, id := range unique {
+		if err := refreshAlbumFileReleaseGroups(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AlbumReleaseGroup returns ErrIdentityNotReady before a successful rebuild,

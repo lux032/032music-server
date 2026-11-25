@@ -520,9 +520,43 @@ func (s *Store) RemoveWorkAlbum(ctx context.Context, workID, albumID int64) erro
 	return tx.Commit()
 }
 
+const refreshAlbumWorksListSQL = `WITH
+	first_audio AS MATERIALIZED (
+		SELECT t.album_id, MIN(af.id) AS min_af_id
+		FROM tracks t
+		JOIN audio_files af ON af.track_id=t.id
+		GROUP BY t.album_id
+	),
+	va_albums AS MATERIALIZED (
+		SELECT DISTINCT aa.album_id
+		FROM album_artists aa
+		JOIN artists ar ON ar.id=aa.artist_id
+		WHERE LOWER(COALESCE(ar.user_display_name,ar.display_name))='various artists'
+	),
+	comp_albums AS MATERIALIZED (
+		SELECT DISTINCT t.album_id
+		FROM audio_file_tags tag
+		JOIN audio_files af ON af.id=tag.audio_file_id
+		JOIN tracks t ON t.id=af.track_id
+		WHERE UPPER(tag.field_name) IN ('COMPILATION','TCMP') AND tag.value='1'
+	)
+SELECT
+	a.id,
+	COALESCE(a.user_title,a.title),
+	COALESCE(a.work_fingerprint,''),
+	COALESCE(af.relative_path,''),
+	(COALESCE(a.user_is_compilation,a.is_compilation,0)=1 OR va.album_id IS NOT NULL),
+	(comp.album_id IS NOT NULL)
+FROM albums a
+LEFT JOIN first_audio fa ON fa.album_id=a.id
+LEFT JOIN audio_files af ON af.id=fa.min_af_id
+LEFT JOIN va_albums va ON va.album_id=a.id
+LEFT JOIN comp_albums comp ON comp.album_id=a.id
+ORDER BY a.id`
+
 func (s *Store) RefreshAlbumWorks(ctx context.Context, force bool) (RefreshStats, error) {
 	var stats RefreshStats
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE(a.work_fingerprint,''),COALESCE((SELECT af.relative_path FROM tracks t JOIN audio_files af ON af.track_id=t.id WHERE t.album_id=a.id ORDER BY af.id LIMIT 1),''),(COALESCE(a.user_is_compilation,a.is_compilation,0)=1 OR EXISTS(SELECT 1 FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id AND LOWER(COALESCE(ar.user_display_name,ar.display_name))='various artists')),EXISTS(SELECT 1 FROM tracks t JOIN audio_files af ON af.track_id=t.id JOIN audio_file_tags tag ON tag.audio_file_id=af.id WHERE t.album_id=a.id AND UPPER(tag.field_name) IN ('COMPILATION','TCMP') AND tag.value='1') FROM albums a ORDER BY a.id`)
+	rows, err := s.db.QueryContext(ctx, refreshAlbumWorksListSQL)
 	if err != nil {
 		return stats, err
 	}
@@ -560,7 +594,7 @@ albumLoop:
 		}
 		var e error
 		if tx == nil {
-			tx, e = s.db.BeginTx(ctx, nil)
+			tx, e = s.beginWrite(ctx)
 			if e != nil {
 				return stats, e
 			}
