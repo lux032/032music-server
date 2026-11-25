@@ -387,11 +387,11 @@ func (s *Service) calibrationTarget(ctx context.Context, now time.Time) (int, er
 	eligible, at := s.eligible, s.eligibleAt
 	s.mu.Unlock()
 	if at.IsZero() || now.Sub(at) > 5*time.Minute {
-		stats, err := s.store.AudioAnalysisStats(ctx, "", now)
+		count, err := s.store.AudioEligibleTrackCount(ctx)
 		if err != nil {
 			return 0, err
 		}
-		eligible = stats.Eligible
+		eligible = count
 		s.mu.Lock()
 		s.eligible, s.eligibleAt = eligible, now
 		s.mu.Unlock()

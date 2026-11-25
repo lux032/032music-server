@@ -115,18 +115,61 @@ type AudioAnalysisFailure struct {
 // AnalysisTimestamp 把时间格式化为与 strftime('%Y-%m-%dT%H:%M:%fZ') 一致、可按字符串比较的形式。
 func AnalysisTimestamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
-const audioCandidateCTE = `WITH cand AS (
-	SELECT t.id AS track_id, af.id AS file_id, af.relative_path AS rel,
-		af.id || ':' || af.file_size || ':' || af.modified_at_ns AS fp,
-		COALESCE(t.duration_ms, 0) AS dur, COALESCE(af.channels, 0) AS ch,
-		COALESCE(t.user_title, t.title) AS title
-	FROM tracks t
-	JOIN audio_files af ON af.id = (SELECT MIN(a2.id) FROM audio_files a2 WHERE a2.track_id = t.id AND a2.status = 'available')
+// audioAvailFilesCTE 利用部分覆盖索引 idx_audio_files_available_track(track_id, id)
+// 为每首存在可用音频文件的曲目一次性选出主文件（最小 id），避免逐曲执行相关子查询。
+const audioAvailFilesCTE = `WITH avail AS (
+	SELECT track_id, MIN(id) AS file_id
+	FROM audio_files
+	WHERE status = 'available' AND track_id IS NOT NULL
+	GROUP BY track_id
 )`
 
-// 失败记录对当前候选生效：同指纹、同版本，且永久失败或仍在退避期。参数：version, now。
-const audioFailureBlocks = `EXISTS (SELECT 1 FROM audio_analysis_failures x WHERE x.track_id = c.track_id
-	AND x.file_fingerprint = c.fp AND x.analysis_version = ? AND (x.permanent = 1 OR x.next_retry_at > ?))`
+const audioFileFingerprintExpr = `(af.id || ':' || af.file_size || ':' || af.modified_at_ns)`
+
+const nextAudioAnalysisCandidateQuery = `SELECT t.id, af.id, af.relative_path,
+		` + audioFileFingerprintExpr + `,
+		COALESCE(t.duration_ms, 0), COALESCE(af.channels, 0), COALESCE(t.user_title, t.title)
+	FROM tracks t
+	CROSS JOIN audio_files af
+		ON af.id = (SELECT MIN(a2.id) FROM audio_files a2 WHERE a2.track_id = t.id AND a2.status = 'available')
+	LEFT JOIN track_audio_features f ON f.track_id = t.id
+	WHERE (f.track_id IS NULL OR f.analysis_version <> ? OR f.file_fingerprint <> ` + audioFileFingerprintExpr + `)
+	AND NOT EXISTS (SELECT 1 FROM audio_analysis_failures x WHERE x.track_id = t.id
+		AND x.file_fingerprint = ` + audioFileFingerprintExpr + ` AND x.analysis_version = ? AND (x.permanent = 1 OR x.next_retry_at > ?))
+	ORDER BY t.id DESC LIMIT 1`
+
+const nextAudioCalibrationCandidateQuery = audioAvailFilesCTE + `,
+	cal AS MATERIALIZED (
+		SELECT a.track_id, a.file_id FROM avail a
+		LEFT JOIN audio_analysis_failures pf
+			ON pf.track_id = a.track_id AND pf.analysis_version = ? AND pf.permanent = 1
+		LEFT JOIN audio_files paf
+			ON pf.track_id IS NOT NULL AND paf.id = a.file_id
+		WHERE pf.track_id IS NULL
+			OR pf.file_fingerprint <> (paf.id || ':' || paf.file_size || ':' || paf.modified_at_ns)
+		ORDER BY (a.track_id * 2654435761) % 4294967296, a.track_id LIMIT ?
+	)
+	SELECT c.track_id, af.id, af.relative_path,
+		` + audioFileFingerprintExpr + `,
+		COALESCE(t.duration_ms, 0), COALESCE(af.channels, 0), COALESCE(t.user_title, t.title)
+	FROM cal c
+	JOIN tracks t ON t.id = c.track_id
+	JOIN audio_files af ON af.id = c.file_id
+	LEFT JOIN track_audio_features f ON f.track_id = c.track_id
+	WHERE NOT (f.track_id IS NOT NULL AND f.file_fingerprint = ` + audioFileFingerprintExpr + ` AND f.analysis_version = ? AND f.mode = 'full')
+	AND NOT EXISTS (SELECT 1 FROM audio_analysis_failures x WHERE x.track_id = c.track_id
+		AND x.file_fingerprint = ` + audioFileFingerprintExpr + ` AND x.analysis_version = ? AND (x.permanent = 1 OR x.next_retry_at > ?))
+	ORDER BY c.track_id LIMIT 1`
+
+const audioAnalysisFailuresQuery = `SELECT x.track_id, COALESCE(t.user_title, t.title), af.relative_path,
+		x.attempts, x.permanent, x.last_error, x.next_retry_at, x.updated_at
+	FROM audio_analysis_failures x
+	JOIN tracks t ON t.id = x.track_id
+	JOIN audio_files af
+		ON af.id = (SELECT MIN(a2.id) FROM audio_files a2 WHERE a2.track_id = x.track_id AND a2.status = 'available')
+	WHERE x.analysis_version = ?
+		AND x.file_fingerprint = ` + audioFileFingerprintExpr + `
+	ORDER BY x.updated_at DESC, x.track_id LIMIT ?`
 
 // AudioAnalysisSettings 读取设置；没有行时返回默认值（关闭）。
 func (s *Store) AudioAnalysisSettings(ctx context.Context) (AudioAnalysisSettings, error) {
@@ -183,33 +226,20 @@ func scanCandidate(row *sql.Row) (AudioAnalysisCandidate, bool, error) {
 
 // NextAudioAnalysisCandidate 返回下一首需要（fast 模式）分析的曲目，新入库的优先。
 func (s *Store) NextAudioAnalysisCandidate(ctx context.Context, version string, now time.Time) (AudioAnalysisCandidate, bool, error) {
-	return scanCandidate(s.db.QueryRowContext(ctx, audioCandidateCTE+`
-		SELECT c.track_id, c.file_id, c.rel, c.fp, c.dur, c.ch, c.title FROM cand c
-		LEFT JOIN track_audio_features f ON f.track_id = c.track_id
-		WHERE (f.track_id IS NULL OR f.file_fingerprint <> c.fp OR f.analysis_version <> ?)
-		AND NOT `+audioFailureBlocks+`
-		ORDER BY c.track_id DESC LIMIT 1`, version, version, AnalysisTimestamp(now)))
+	return scanCandidate(s.db.QueryRowContext(ctx, nextAudioAnalysisCandidateQuery, version, version, AnalysisTimestamp(now)))
 }
-
-// calibrationOrder 是校准样本的确定性伪随机顺序（Knuth 乘法哈希），避免只抽到同一批专辑。
-const calibrationOrder = `ORDER BY (c.track_id * 2654435761) % 4294967296, c.track_id`
 
 // NextAudioCalibrationCandidate 返回校准集（按伪随机顺序的前 target 首，不含永久失败）中
 // 还没有当前版本 full 模式结果的下一首。
 func (s *Store) NextAudioCalibrationCandidate(ctx context.Context, version string, target int, now time.Time) (AudioAnalysisCandidate, bool, error) {
-	ts := AnalysisTimestamp(now)
-	return scanCandidate(s.db.QueryRowContext(ctx, audioCandidateCTE+`,
-	cal AS (
-		SELECT c.* FROM cand c
-		WHERE NOT EXISTS (SELECT 1 FROM audio_analysis_failures x WHERE x.track_id = c.track_id
-			AND x.file_fingerprint = c.fp AND x.analysis_version = ? AND x.permanent = 1)
-		`+calibrationOrder+` LIMIT ?
-	)
-	SELECT c.track_id, c.file_id, c.rel, c.fp, c.dur, c.ch, c.title FROM cal c
-	LEFT JOIN track_audio_features f ON f.track_id = c.track_id
-	WHERE NOT (f.track_id IS NOT NULL AND f.file_fingerprint = c.fp AND f.analysis_version = ? AND f.mode = 'full')
-	AND NOT `+audioFailureBlocks+`
-	ORDER BY c.track_id LIMIT 1`, version, target, version, version, ts))
+	return scanCandidate(s.db.QueryRowContext(ctx, nextAudioCalibrationCandidateQuery, version, target, version, version, AnalysisTimestamp(now)))
+}
+
+// AudioEligibleTrackCount 返回当前曲库中拥有可用音频文件的曲目总数（仅扫描覆盖索引，不关联特征或失败表）。
+func (s *Store) AudioEligibleTrackCount(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT track_id) FROM audio_files WHERE status = 'available' AND track_id IS NOT NULL`).Scan(&n)
+	return n, err
 }
 
 // SaveTrackAudioFeatures 写入（覆盖）一首曲目的分析结果，并清除其失败记录。
@@ -217,7 +247,7 @@ func (s *Store) SaveTrackAudioFeatures(ctx context.Context, f TrackAudioFeatures
 	if f.Mode != "fast" && f.Mode != "full" {
 		return fmt.Errorf("invalid analysis mode %q", f.Mode)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -336,10 +366,7 @@ func (s *Store) ClearAudioAnalysisFailures(ctx context.Context) (int64, error) {
 
 // AudioAnalysisFailures 列出当前版本、当前文件仍生效的失败（最近的在前）。
 func (s *Store) AudioAnalysisFailures(ctx context.Context, version string, limit int) ([]AudioAnalysisFailure, error) {
-	rows, err := s.db.QueryContext(ctx, audioCandidateCTE+`
-		SELECT c.track_id, c.title, c.rel, x.attempts, x.permanent, x.last_error, x.next_retry_at, x.updated_at
-		FROM audio_analysis_failures x JOIN cand c ON c.track_id = x.track_id AND c.fp = x.file_fingerprint
-		WHERE x.analysis_version = ? ORDER BY x.updated_at DESC, x.track_id LIMIT ?`, version, limit)
+	rows, err := s.db.QueryContext(ctx, audioAnalysisFailuresQuery, version, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -361,16 +388,17 @@ func (s *Store) AudioAnalysisFailures(ctx context.Context, version string, limit
 func (s *Store) AudioAnalysisStats(ctx context.Context, version string, now time.Time) (AudioAnalysisStats, error) {
 	var st AudioAnalysisStats
 	ts := AnalysisTimestamp(now)
-	err := s.db.QueryRowContext(ctx, audioCandidateCTE+`
+	err := s.db.QueryRowContext(ctx, audioAvailFilesCTE+`
 		SELECT COUNT(*),
 			COALESCE(SUM(CASE WHEN f.track_id IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN f.track_id IS NOT NULL AND f.mode = 'full' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN f.track_id IS NOT NULL AND f.arousal IS NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN f.track_id IS NULL AND x.permanent = 0 AND x.next_retry_at > ? THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN f.track_id IS NULL AND x.permanent = 1 THEN 1 ELSE 0 END), 0)
-		FROM cand c
-		LEFT JOIN track_audio_features f ON f.track_id = c.track_id AND f.file_fingerprint = c.fp AND f.analysis_version = ?
-		LEFT JOIN audio_analysis_failures x ON x.track_id = c.track_id AND x.file_fingerprint = c.fp AND x.analysis_version = ?`,
+		FROM avail a
+		JOIN audio_files af ON af.id = a.file_id
+		LEFT JOIN track_audio_features f ON f.track_id = a.track_id AND f.file_fingerprint = `+audioFileFingerprintExpr+` AND f.analysis_version = ?
+		LEFT JOIN audio_analysis_failures x ON x.track_id = a.track_id AND x.file_fingerprint = `+audioFileFingerprintExpr+` AND x.analysis_version = ?`,
 		ts, version, version).Scan(&st.Eligible, &st.Analyzed, &st.Calibrated, &st.MissingAV, &st.RetryPending, &st.PermanentFailures)
 	if err != nil {
 		return st, err
@@ -419,7 +447,7 @@ func (s *Store) SaveAudioAVModel(ctx context.Context, m AudioAVModel) (int64, er
 	if m.Features == nil {
 		features = []byte("[]")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}

@@ -200,8 +200,22 @@ func (s *Store) ArtistsForMatching(ctx context.Context) ([]ArtistMatchInput, err
 	return s.artistsForMatching(ctx, 0)
 }
 
+func buildArtistsForMatchingQuery(single bool) string {
+	query := `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),'' FROM artists ar WHERE ar.merged_into_artist_id IS NULL`
+	if single {
+		query += ` AND ar.id=?`
+	}
+	return query + ` ORDER BY ar.id`
+}
+
 func (s *Store) artistsForMatching(ctx context.Context, id int64) ([]ArtistMatchInput, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ar.id,COALESCE(ar.user_display_name,ar.display_name),'' FROM artists ar WHERE ar.merged_into_artist_id IS NULL AND (?=0 OR ar.id=?) ORDER BY ar.id`, id, id)
+	var rows *sql.Rows
+	var err error
+	if id > 0 {
+		rows, err = s.db.QueryContext(ctx, buildArtistsForMatchingQuery(true), id)
+	} else {
+		rows, err = s.db.QueryContext(ctx, buildArtistsForMatchingQuery(false))
+	}
 	if err != nil {
 		return nil, err
 	}

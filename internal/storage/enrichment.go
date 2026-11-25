@@ -262,6 +262,14 @@ func (s *Store) PutHTTPResponseCache(ctx context.Context, value HTTPResponseCach
 	return err
 }
 
+func buildAlbumsForEnrichmentQuery(force bool) string {
+	query := `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE((SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),''),COALESCE(a.user_catalog_number,a.catalog_number,''),COALESCE(a.user_release_date,a.release_date,''),(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id) FROM albums a`
+	if !force {
+		query += ` WHERE NOT EXISTS(SELECT 1 FROM album_external_profiles p WHERE p.album_id=a.id AND p.source=?)`
+	}
+	return query + ` ORDER BY a.id LIMIT ?`
+}
+
 func (s *Store) AlbumsForEnrichment(ctx context.Context, source string, force bool, limit int) ([]AlbumEnrichmentTarget, error) {
 	if limit <= 0 {
 		limit = 100
@@ -269,7 +277,12 @@ func (s *Store) AlbumsForEnrichment(ctx context.Context, source string, force bo
 	if limit > 1000 {
 		limit = 1000
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,COALESCE(a.user_title,a.title),COALESCE((SELECT GROUP_CONCAT(COALESCE(ar.user_display_name,ar.display_name),', ') FROM album_artists aa JOIN artists ar ON ar.id=aa.artist_id WHERE aa.album_id=a.id),''),COALESCE(a.user_catalog_number,a.catalog_number,''),COALESCE(a.user_release_date,a.release_date,''),(SELECT COUNT(*) FROM tracks t WHERE t.album_id=a.id) FROM albums a WHERE ? OR NOT EXISTS(SELECT 1 FROM album_external_profiles p WHERE p.album_id=a.id AND p.source=?) ORDER BY a.id LIMIT ?`, boolInt(force), source, limit)
+	var args []any
+	if !force {
+		args = append(args, source)
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, buildAlbumsForEnrichmentQuery(force), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,18 +298,35 @@ func (s *Store) AlbumsForEnrichment(ctx context.Context, source string, force bo
 	return values, rows.Err()
 }
 
+func buildWorksForEnrichmentQuery(force, hasTarget, hasLimit bool) string {
+	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0),COALESCE(p.external_id,''),COALESCE(p.type,''),COALESCE(p.raw_json,'{}') FROM works w LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source=? WHERE (EXISTS(SELECT 1 FROM album_works aw WHERE aw.work_id=w.id) OR EXISTS(SELECT 1 FROM work_tracks wt WHERE wt.work_id=w.id))`
+	if !force {
+		query += ` AND ((p.work_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM enrichment_provenance ep WHERE ep.entity_type='work' AND ep.entity_id=w.id AND ep.field_name='type_correction_skipped' AND ep.source='bangumi') AND CASE WHEN json_valid(p.raw_json) THEN (json_extract(p.raw_json,'$.type') IS NULL AND json_extract(p.raw_json,'$.id') IS NOT NULL OR json_extract(p.raw_json,'$.type')=4 AND w.type<>'game' OR json_extract(p.raw_json,'$.type')=2 AND (json_extract(p.raw_json,'$.platform') IS NULL OR w.type<>CASE WHEN json_extract(p.raw_json,'$.platform') LIKE '%剧场版%' OR json_extract(p.raw_json,'$.platform') LIKE '%劇場版%' THEN 'movie' ELSE 'anime' END)) ELSE 0 END) OR (p.work_id IS NULL AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
+	}
+	if hasTarget {
+		query += ` AND w.id=?`
+	}
+	query += ` ORDER BY w.id`
+	if hasLimit {
+		query += ` LIMIT ?`
+	}
+	return query
+}
+
 // WorksForEnrichment schedules only referenced works; an unlinked manual work
 // is not automatically enriched until associated with a track or album.
 func (s *Store) WorksForEnrichment(ctx context.Context, source string, force bool, limit int, targetID ...int64) ([]WorkEnrichmentTarget, error) {
-	query := `SELECT w.id,w.title,COALESCE(w.translated_title,''),w.type,COALESCE(w.year,0),COALESCE(p.external_id,''),COALESCE(p.type,''),COALESCE(p.raw_json,'{}') FROM works w LEFT JOIN work_external_profiles p ON p.work_id=w.id AND p.source=? WHERE (EXISTS(SELECT 1 FROM album_works aw WHERE aw.work_id=w.id) OR EXISTS(SELECT 1 FROM work_tracks wt WHERE wt.work_id=w.id)) AND (? OR (p.work_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM enrichment_provenance ep WHERE ep.entity_type='work' AND ep.entity_id=w.id AND ep.field_name='type_correction_skipped' AND ep.source='bangumi') AND CASE WHEN json_valid(p.raw_json) THEN (json_extract(p.raw_json,'$.type') IS NULL AND json_extract(p.raw_json,'$.id') IS NOT NULL OR json_extract(p.raw_json,'$.type')=4 AND w.type<>'game' OR json_extract(p.raw_json,'$.type')=2 AND (json_extract(p.raw_json,'$.platform') IS NULL OR w.type<>CASE WHEN json_extract(p.raw_json,'$.platform') LIKE '%剧场版%' OR json_extract(p.raw_json,'$.platform') LIKE '%劇場版%' THEN 'movie' ELSE 'anime' END)) ELSE 0 END) OR (p.work_id IS NULL AND NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=? AND c.status='confirmed') AND (EXISTS(SELECT 1 FROM work_enrichment_retries r WHERE r.work_id=w.id AND r.source=?) OR (NOT EXISTS(SELECT 1 FROM work_match_candidates c WHERE c.work_id=w.id AND c.source=?) AND NOT EXISTS(SELECT 1 FROM work_enrichment_misses m WHERE m.work_id=w.id AND m.source=?)))))`
-	args := []any{source, boolInt(force), source, source, source, source}
-	if len(targetID) > 0 && targetID[0] > 0 {
-		query += ` AND w.id=?`
+	hasTarget := len(targetID) > 0 && targetID[0] > 0
+	hasLimit := limit > 0
+	query := buildWorksForEnrichmentQuery(force, hasTarget, hasLimit)
+	args := []any{source}
+	if !force {
+		args = append(args, source, source, source, source)
+	}
+	if hasTarget {
 		args = append(args, targetID[0])
 	}
-	query += ` ORDER BY w.id`
-	if limit > 0 {
-		query += ` LIMIT ?`
+	if hasLimit {
 		args = append(args, limit)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)

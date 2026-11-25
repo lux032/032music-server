@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -61,12 +60,12 @@ const MaxArtistBiographyBackfillAutoResumeRounds = 3
 
 // 歌手（performer）判定谓词与 ListArtistOptions(role="performer") 同口径：
 // 专辑歌手或曲目 primary 演唱关系；artists.artist_type 是外部元数据字段，
-// 绝不用作歌手判定。
-const artistBiographyPerformerPredicate = `(EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=a.id) OR a.id IN (SELECT artist_id FROM track_artists WHERE role='primary'))`
+// 绝不用作歌手判定。使用 EXISTS 直接命中 idx_track_artists_role(role, artist_id, track_id)。
+const artistBiographyPerformerPredicate = `(EXISTS(SELECT 1 FROM album_artists aa WHERE aa.artist_id=a.id) OR EXISTS(SELECT 1 FROM track_artists ta WHERE ta.role='primary' AND ta.artist_id=a.id))`
 
 // 候选缺口谓词（M4）：本行无人工简介，且本人与合并来源（同
 // ArtistBiographies 的一跳继承口径）都没有可用的 found 版本行。
-const artistBiographyGapPredicate = `COALESCE(a.user_biography,'')='' AND NOT EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=a.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id)) AND b.status='found' AND b.biography<>'')`
+const artistBiographyGapPredicate = `COALESCE(a.user_biography,'')='' AND NOT (EXISTS(SELECT 1 FROM artist_biographies b WHERE b.artist_id=a.id AND b.status='found' AND b.biography<>'') OR EXISTS(SELECT 1 FROM artists ma JOIN artist_biographies b ON b.artist_id=ma.id WHERE ma.merged_into_artist_id=a.id AND b.status='found' AND b.biography<>''))`
 
 // ArtistBiographyBackfillAutoResumeEligible 报告暂停中的补全任务是否可由
 // 限流自动恢复倒计时继续：必须带有限流截止时间且暂停原因不是人工/存储决定。
@@ -173,17 +172,99 @@ func artistBiographyDisplayableSQL(alias string, settings BiographySettings) (st
 			langs = append(langs, tl)
 		}
 	}
-	langJSON, _ := json.Marshal(langs)
+	var langPred string
+	var langArgs []any
+	if len(langs) == 0 {
+		langPred = "0"
+	} else {
+		langPred = "b.language IN (" + sqlPlaceholders(len(langs)) + ")"
+		langArgs = make([]any, len(langs))
+		for i, lang := range langs {
+			langArgs[i] = lang
+		}
+	}
 	bioMatch := `b.status='found' AND b.biography<>'' AND (` +
 		`(COALESCE(` + alias + `.preferred_biography_source,'')<>'' AND b.source=` + alias + `.preferred_biography_source AND b.language=COALESCE(` + alias + `.preferred_biography_language,''))` +
 		` OR (?=1 AND b.source='ai_translated' AND b.language=?)` +
 		` OR (b.source='ai_web' AND b.language=?)` +
-		` OR (b.source IN ('wikipedia','lastfm') AND b.language IN (SELECT value FROM json_each(?)))` +
+		` OR (b.source IN ('wikipedia','lastfm') AND ` + langPred + `)` +
 		`)`
 	cond := `(EXISTS(SELECT 1 FROM artist_biographies b WHERE b.artist_id=` + alias + `.id AND ` + bioMatch + `) OR EXISTS(SELECT 1 FROM artists ma JOIN artist_biographies b ON b.artist_id=ma.id WHERE ma.merged_into_artist_id=` + alias + `.id AND ` + bioMatch + `))`
 	aiEnabled := boolInt(settings.AITranslateEnabled)
-	langStr := string(langJSON)
-	return cond, []any{aiEnabled, targetTag, targetTag, langStr, aiEnabled, targetTag, targetTag, langStr}
+	branchArgs := make([]any, 0, 3+len(langArgs))
+	branchArgs = append(branchArgs, aiEnabled, targetTag, targetTag)
+	branchArgs = append(branchArgs, langArgs...)
+	args := make([]any, 0, len(branchArgs)*2)
+	args = append(args, branchArgs...)
+	args = append(args, branchArgs...)
+	return cond, args
+}
+
+const artistBiographyRetranslateCandidatesSQL = `SELECT a.id,COALESCE(a.user_display_name,a.display_name)
+	FROM artists a
+	WHERE a.merged_into_artist_id IS NULL
+		AND ` + artistBiographyPerformerPredicate + `
+		AND COALESCE(a.user_biography,'')=''
+		AND (
+			EXISTS(SELECT 1 FROM artist_biographies b WHERE b.artist_id=a.id AND b.status='found' AND b.source IN ('wikipedia','lastfm') AND b.biography<>'')
+			OR EXISTS(SELECT 1 FROM artists ma JOIN artist_biographies b ON b.artist_id=ma.id WHERE ma.merged_into_artist_id=a.id AND b.status='found' AND b.source IN ('wikipedia','lastfm') AND b.biography<>'')
+		)
+	ORDER BY a.id`
+
+type retranslateSourceBio struct {
+	Source    string
+	Language  string
+	Biography string
+}
+
+// retranslateSourceBiographiesByArtistIDs 按与 ArtistBiographies 一致的一跳合并继承口径，
+// 分块批量加载候选歌手的 wikipedia/lastfm 有效简介，消除 retranslate 模式的 N+1 查询。
+func (s *Store) retranslateSourceBiographiesByArtistIDs(ctx context.Context, artistIDs []int64) (map[int64][]retranslateSourceBio, error) {
+	byOwner := make(map[int64][]retranslateSourceBio, len(artistIDs))
+	if len(artistIDs) == 0 {
+		return byOwner, nil
+	}
+	const chunkSize = 400
+	for start := 0; start < len(artistIDs); start += chunkSize {
+		end := min(start+chunkSize, len(artistIDs))
+		chunk := artistIDs[start:end]
+		ph := sqlPlaceholders(len(chunk))
+		args := make([]any, 0, len(chunk)*2)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT owner_id, source, language, biography FROM (
+			SELECT b.artist_id AS owner_id, b.source, b.language, b.biography, b.fetched_at
+			FROM artist_biographies b
+			WHERE b.artist_id IN (`+ph+`) AND b.status='found' AND b.source IN ('wikipedia','lastfm') AND b.biography<>''
+			UNION ALL
+			SELECT ma.merged_into_artist_id AS owner_id, b.source, b.language, b.biography, b.fetched_at
+			FROM artists ma
+			JOIN artist_biographies b ON b.artist_id = ma.id
+			WHERE ma.merged_into_artist_id IN (`+ph+`) AND b.status='found' AND b.source IN ('wikipedia','lastfm') AND b.biography<>''
+		) ORDER BY fetched_at DESC`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var ownerID int64
+			var item retranslateSourceBio
+			if err := rows.Scan(&ownerID, &item.Source, &item.Language, &item.Biography); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			byOwner[ownerID] = append(byOwner[ownerID], item)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return byOwner, nil
 }
 
 // ArtistBiographyBackfillCandidatesForMode 按模式返回待处理歌手列表，始终跳过已合并与有人工简介的歌手。
@@ -194,7 +275,7 @@ func (s *Store) ArtistBiographyBackfillCandidatesForMode(ctx context.Context, mo
 	}
 	var query string
 	if mode == "retranslate" {
-		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' AND EXISTS(SELECT 1 FROM artist_biographies b WHERE (b.artist_id=a.id OR b.artist_id IN (SELECT ma.id FROM artists ma WHERE ma.merged_into_artist_id=a.id)) AND b.source IN ('wikipedia','lastfm') AND b.status='found' AND b.biography<>'') ORDER BY a.id`
+		query = artistBiographyRetranslateCandidatesSQL
 	} else {
 		query = `SELECT a.id,COALESCE(a.user_display_name,a.display_name) FROM artists a WHERE a.merged_into_artist_id IS NULL AND ` + artistBiographyPerformerPredicate + ` AND COALESCE(a.user_biography,'')='' ORDER BY a.id`
 	}
@@ -216,41 +297,45 @@ func (s *Store) ArtistBiographyBackfillCandidatesForMode(ctx context.Context, mo
 		return nil, err
 	}
 	rows.Close()
-	if mode != "retranslate" {
+	if mode != "retranslate" || len(raw) == 0 {
 		return raw, nil
 	}
 	targetTag := normalizeTargetLanguage(targetLanguage)
 	targetShort := normalizeLanguage(targetTag)
+	// Traditional Chinese targets should never skip zhwiki rows that may be Simplified.
+	if targetTag == "zh-Hant" || targetShort == "" {
+		return raw, nil
+	}
+	ids := make([]int64, len(raw))
+	for i, cand := range raw {
+		ids[i] = cand.ID
+	}
+	biosByArtist, err := s.retranslateSourceBiographiesByArtistIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	var filtered []ArtistBiographyBackfillCandidate
 	for _, cand := range raw {
-		// Traditional Chinese targets should never skip zhwiki rows that may be Simplified.
-		if targetTag != "zh-Hant" && targetShort != "" {
-			bios, bErr := s.ArtistBiographies(ctx, cand.ID)
-			if bErr == nil {
-				var bestScore, nativeScore float64
-				var bestSource, bestLang, nativeSource string
-				for _, b := range bios {
-					if b.Source != "wikipedia" && b.Source != "lastfm" {
-						continue
-					}
-					sc := storageBiographyInfoScore(b.Source, b.Biography)
-					if sc <= 0 {
-						continue
-					}
-					if b.Language == targetShort && sc > nativeScore {
-						nativeScore = sc
-						nativeSource = b.Source
-					}
-					if sc > bestScore {
-						bestScore = sc
-						bestSource = b.Source
-						bestLang = b.Language
-					}
-				}
-				if nativeScore > 0 && bestScore > 0 && ((bestLang == targetShort && bestSource == nativeSource) || (nativeScore >= 300.0 && nativeScore >= bestScore*0.70)) {
-					continue
-				}
+		bios := biosByArtist[cand.ID]
+		var bestScore, nativeScore float64
+		var bestSource, bestLang, nativeSource string
+		for _, b := range bios {
+			sc := storageBiographyInfoScore(b.Source, b.Biography)
+			if sc <= 0 {
+				continue
 			}
+			if b.Language == targetShort && sc > nativeScore {
+				nativeScore = sc
+				nativeSource = b.Source
+			}
+			if sc > bestScore {
+				bestScore = sc
+				bestSource = b.Source
+				bestLang = b.Language
+			}
+		}
+		if nativeScore > 0 && bestScore > 0 && ((bestLang == targetShort && bestSource == nativeSource) || (nativeScore >= 300.0 && nativeScore >= bestScore*0.70)) {
+			continue
 		}
 		filtered = append(filtered, cand)
 	}

@@ -214,14 +214,7 @@ func (s *Store) ReserveArtistImageWebRequest(ctx context.Context, c ArtistImageB
 	return n == 1, tx.Commit()
 }
 
-// ArtistImageBackfillCacheScanForMode returns backfill candidates and their
-// current cache paths according to mode:
-//   - "matched": confirmed external profile artists only (legacy B+2 scope)
-//   - "all" / "web_fallback": all unmerged artists without custom images,
-//     skipping those still within negative-cache cooldown
-//   - "rescan_all": all unmerged artists without custom images, ignoring cooldown
-func (s *Store) ArtistImageBackfillCacheScanForMode(ctx context.Context, mode string) ([]ArtistImageBackfillCacheRow, error) {
-	mode = NormalizeArtistImageBackfillMode(mode)
+func buildArtistImageBackfillCacheScanQuery(mode string, webFallbackEnabled bool) string {
 	var extraFilter string
 	if mode == "matched" {
 		extraFilter = ` AND EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=a.id)`
@@ -232,14 +225,29 @@ func (s *Store) ArtistImageBackfillCacheScanForMode(ctx context.Context, mode st
 		cooldownClause += ` AND NOT EXISTS(
 			SELECT 1 FROM artist_image_attempts att
 			WHERE att.artist_id=a.id AND att.cooldown_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')`
-		if mode == "web_fallback" {
+		if mode == "web_fallback" || webFallbackEnabled {
 			cooldownClause += ` AND att.tier_reached='web_fallback'`
-		} else {
-			cooldownClause += ` AND (att.tier_reached='web_fallback' OR (SELECT web_fallback_enabled FROM artist_image_settings WHERE id=1)=0)`
 		}
 		cooldownClause += ")"
 	}
-	query := `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id LIMIT 1),(SELECT c.cache_path FROM artists ma JOIN artist_image_cache c ON c.artist_id=ma.id WHERE ma.merged_into_artist_id=a.id ORDER BY c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)` + extraFilter + cooldownClause + ` ORDER BY a.id`
+	return `SELECT a.id,COALESCE(a.user_display_name,a.display_name),COALESCE((SELECT c.cache_path FROM artist_image_cache c WHERE c.artist_id=a.id LIMIT 1),(SELECT c.cache_path FROM artists ma JOIN artist_image_cache c ON c.artist_id=ma.id WHERE ma.merged_into_artist_id=a.id ORDER BY c.fetched_at DESC LIMIT 1),'') FROM artists a WHERE a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)` + extraFilter + cooldownClause + ` ORDER BY a.id`
+}
+
+// ArtistImageBackfillCacheScanForMode returns backfill candidates and their
+// current cache paths according to mode:
+//   - "matched": confirmed external profile artists only (legacy B+2 scope)
+//   - "all" / "web_fallback": all unmerged artists without custom images,
+//     skipping those still within negative-cache cooldown
+//   - "rescan_all": all unmerged artists without custom images, ignoring cooldown
+func (s *Store) ArtistImageBackfillCacheScanForMode(ctx context.Context, mode string) ([]ArtistImageBackfillCacheRow, error) {
+	mode = NormalizeArtistImageBackfillMode(mode)
+	webFallbackEnabled := false
+	if mode != "rescan_all" && mode != "web_fallback" {
+		if settings, err := s.ArtistImageSettings(ctx); err == nil {
+			webFallbackEnabled = settings.WebFallbackEnabled
+		}
+	}
+	query := buildArtistImageBackfillCacheScanQuery(mode, webFallbackEnabled)
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err

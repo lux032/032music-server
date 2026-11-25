@@ -114,22 +114,169 @@ const taggingStampSQL = `COALESCE(t.user_title, t.title) || '|' || ` + taggingTr
 		(SELECT COUNT(*) || ':' || COALESCE(MAX(wt.created_at), '') FROM work_tracks wt WHERE wt.track_id = t.id) || '|' ||
 		(SELECT COUNT(*) || ':' || COALESCE(MAX(aw.updated_at), '') FROM album_works aw WHERE aw.album_id = t.album_id)`
 
-// taggingBase 列出可打标的曲目（有可用音频文件）及其 source_stamp（见 taggingStampSQL）；
-// stamp 变化即需要重新检查（输入哈希不变时只更新 stamp，不调用模型）。
-// ready：声学分析开启时，需要已有声学特征（且该版本有回归模型时唤醒度已回填），或声学分析已永久失败；
-// 声学分析未开启时直接 ready（只用元数据和歌词）。参数：audioActive(0/1)。
-const taggingBase = `WITH base AS (
+// taggingReadyExprSQL 判定单曲是否满足声学就绪条件（参数：audioActive 0/1）。
+// 声学分析开启时，需要已有声学特征（且该版本有回归模型时唤醒度已回填），或声学分析已永久失败；
+// 声学分析未开启时直接 ready（只用元数据和歌词）。
+const taggingReadyExprSQL = `(? = 0
+	OR (f.track_id IS NOT NULL AND NOT (f.arousal IS NULL AND EXISTS (SELECT 1 FROM audio_av_models av WHERE av.analysis_version = f.analysis_version AND av.active = 1)))
+	OR EXISTS (SELECT 1 FROM audio_analysis_failures afx WHERE afx.track_id = t.id AND afx.permanent = 1))`
+
+// taggingBaseSetCTEs 以按表一次 GROUP BY 预聚合的方式构造与 taggingStampSQL 逐字节一致的
+// source_stamp 所需依赖表，避免在全库扫描或统计时对每首曲目执行 9 个相关子查询。
+const taggingBaseSetCTEs = `avail_af AS (
+	SELECT track_id,
+		COALESCE(MAX(modified_at_ns), 0) || ':' || COALESCE(SUM(file_size), 0) || ':' || COALESCE(MAX(has_external_lrc), 0) AS af_sig
+	FROM audio_files
+	WHERE status = 'available'
+	GROUP BY track_id
+),
+alb_cnt AS (
+	SELECT album_id, COUNT(*) AS cnt
+	FROM tracks
+	GROUP BY album_id
+),
+trk_art AS (
+	SELECT ta.track_id,
+		GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ' ORDER BY ta.position, ar.id) AS names
+	FROM track_artists ta
+	JOIN artists ar ON ar.id = ta.artist_id
+	WHERE ta.role = 'primary'
+	GROUP BY ta.track_id
+),
+alb_art AS (
+	SELECT aa.album_id,
+		GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ' ORDER BY aa.position, ar.id) AS ord_names,
+		GROUP_CONCAT(COALESCE(ar.user_display_name, ar.display_name), ', ' ORDER BY aa.artist_id, aa.position) AS pk_names
+	FROM album_artists aa
+	JOIN artists ar ON ar.id = aa.artist_id
+	GROUP BY aa.album_id
+),
+trk_genre_ov AS (
+	SELECT ox.track_id,
+		GROUP_CONCAT(gx.name, ',' ORDER BY ox.position, gx.id) AS names
+	FROM track_genre_overrides ox
+	JOIN genres gx ON gx.id = ox.genre_id
+	GROUP BY ox.track_id
+),
+trk_genre AS (
+	SELECT rx.track_id,
+		GROUP_CONCAT(gx.name, ',' ORDER BY rx.position, gx.id) AS names
+	FROM track_genres rx
+	JOIN genres gx ON gx.id = rx.genre_id
+	GROUP BY rx.track_id
+),
+wt_sig AS (
+	SELECT track_id, COUNT(*) || ':' || COALESCE(MAX(created_at), '') AS sig
+	FROM work_tracks
+	GROUP BY track_id
+),
+aw_sig AS (
+	SELECT album_id, COUNT(*) || ':' || COALESCE(MAX(updated_at), '') AS sig
+	FROM album_works
+	GROUP BY album_id
+)`
+
+// taggingSetStampExprSQL 使用 taggingBaseSetCTEs 中的预聚合列拼出与 taggingStampSQL 逐字节一致的 stamp。
+const taggingSetStampExprSQL = `COALESCE(t.user_title, t.title) || '|' ||
+	COALESCE(ta.names, aa.ord_names, a.user_performed_by, a.performed_by, 'Unknown Artist') || '|' ||
+	COALESCE(a.user_title, a.title) || '|' ||
+	COALESCE(a.user_performed_by, a.performed_by, aa.pk_names, '') || '|' ||
+	COALESCE(a.user_release_year, a.release_year, 0) || '|' ||
+	ac.cnt || '|' ||
+	(COALESCE(t.duration_ms, 0) / 1000) || '|' || ` + effectiveTrackTypeSQL + ` || '|' ||
+	COALESCE(gov.names, gr.names, '') || '|' ||
+	COALESCE(t.user_composer, t.composer, '') || '|' || COALESCE(t.lyricist, '') || '|' || COALESCE(t.arranger, '') || '|' || LENGTH(COALESCE(t.lyrics, '')) || '|' ||
+	af.af_sig || '|' ||
+	COALESCE(f.analysis_version || ':' || f.file_fingerprint || ':' || COALESCE(printf('%.2f/%.2f', f.arousal, f.valence), '-'), 'noaudio') || '|' ||
+	COALESCE(wt.sig, '0:') || '|' ||
+	COALESCE(aw.sig, '0:')`
+
+// taggingBaseSetSQL 列出全部可打标曲目及其 source_stamp 与 ready 标记（参数：audioActive 0/1）。
+const taggingBaseSetSQL = `WITH ` + taggingBaseSetCTEs + `,
+base AS (
 	SELECT t.id AS track_id, t.added_at AS added_at,
-		` + taggingStampSQL + ` AS stamp,
-		CASE WHEN ? = 0
-			OR (f.track_id IS NOT NULL AND NOT (f.arousal IS NULL AND EXISTS (SELECT 1 FROM audio_av_models m WHERE m.analysis_version = f.analysis_version AND m.active = 1)))
-			OR EXISTS (SELECT 1 FROM audio_analysis_failures x WHERE x.track_id = t.id AND x.permanent = 1)
-		THEN 1 ELSE 0 END AS ready
+		` + taggingSetStampExprSQL + ` AS stamp,
+		CASE WHEN ` + taggingReadyExprSQL + ` THEN 1 ELSE 0 END AS ready
 	FROM tracks t
+	JOIN avail_af af ON af.track_id = t.id
+	JOIN albums a ON a.id = t.album_id
+	JOIN alb_cnt ac ON ac.album_id = a.id
+	LEFT JOIN track_audio_features f ON f.track_id = t.id
+	LEFT JOIN trk_art ta ON ta.track_id = t.id
+	LEFT JOIN alb_art aa ON aa.album_id = a.id
+	LEFT JOIN trk_genre_ov gov ON gov.track_id = t.id
+	LEFT JOIN trk_genre gr ON gr.track_id = t.id
+	LEFT JOIN wt_sig wt ON wt.track_id = t.id
+	LEFT JOIN aw_sig aw ON aw.album_id = t.album_id
+)`
+
+// taggingTaggedBaseSetSQL 仅对已存在 track_tag_meta 的曲目构造集合化 stamp 与 ready 标记（参数：audioActive 0/1）。
+const taggingTaggedBaseSetSQL = `WITH ` + taggingBaseSetCTEs + `,
+base AS (
+	SELECT t.id AS track_id, t.added_at AS added_at,
+		` + taggingSetStampExprSQL + ` AS stamp,
+		CASE WHEN ` + taggingReadyExprSQL + ` THEN 1 ELSE 0 END AS ready,
+		m.source_stamp AS meta_stamp,
+		m.vocab_version AS vocab_version,
+		m.prompt_version AS prompt_version
+	FROM track_tag_meta m
+	JOIN tracks t ON t.id = m.track_id
+	JOIN avail_af af ON af.track_id = t.id
+	JOIN albums a ON a.id = t.album_id
+	JOIN alb_cnt ac ON ac.album_id = a.id
+	LEFT JOIN track_audio_features f ON f.track_id = t.id
+	LEFT JOIN trk_art ta ON ta.track_id = t.id
+	LEFT JOIN alb_art aa ON aa.album_id = a.id
+	LEFT JOIN trk_genre_ov gov ON gov.track_id = t.id
+	LEFT JOIN trk_genre gr ON gr.track_id = t.id
+	LEFT JOIN wt_sig wt ON wt.track_id = t.id
+	LEFT JOIN aw_sig aw ON aw.album_id = t.album_id
+)`
+
+func buildFreshTaggingCandidatesQuery(excl string) string {
+	return `WITH picked AS MATERIALIZED (
+		SELECT t.id AS track_id, t.added_at AS added_at
+		FROM tracks t
+		CROSS JOIN albums a ON a.id = t.album_id
+		LEFT JOIN track_tag_meta m ON m.track_id = t.id
+		LEFT JOIN track_audio_features f ON f.track_id = t.id
+		LEFT JOIN ai_tagging_failures x ON x.track_id = t.id AND (x.permanent = 1 OR x.next_retry_at > ?)
+		WHERE m.track_id IS NULL
+			AND EXISTS (SELECT 1 FROM audio_files af WHERE af.track_id = t.id AND af.status = 'available')
+			AND ` + taggingReadyExprSQL + `
+			AND (x.track_id IS NULL OR x.source_stamp <> (` + taggingStampSQL + `))` + excl + `
+		ORDER BY t.added_at DESC, t.id DESC
+		LIMIT ?
+	)
+	SELECT p.track_id, ` + taggingStampSQL + ` AS stamp
+	FROM picked p
+	JOIN tracks t ON t.id = p.track_id
 	JOIN albums a ON a.id = t.album_id
 	LEFT JOIN track_audio_features f ON f.track_id = t.id
-	WHERE EXISTS (SELECT 1 FROM audio_files af WHERE af.track_id = t.id AND af.status = 'available')
-)`
+	ORDER BY p.added_at DESC, p.track_id DESC`
+}
+
+func buildAllVersionStaleTaggingCandidatesQuery(excl string) string {
+	return `WITH picked AS MATERIALIZED (
+		SELECT t.id AS track_id, t.added_at AS added_at
+		FROM tracks t
+		CROSS JOIN track_tag_meta m ON m.track_id = t.id
+		CROSS JOIN albums a ON a.id = t.album_id
+		LEFT JOIN track_audio_features f ON f.track_id = t.id
+		LEFT JOIN ai_tagging_failures x ON x.track_id = t.id AND (x.permanent = 1 OR x.next_retry_at > ?)
+		WHERE EXISTS (SELECT 1 FROM audio_files af WHERE af.track_id = t.id AND af.status = 'available')
+			AND ` + taggingReadyExprSQL + `
+			AND (x.track_id IS NULL OR x.source_stamp <> (` + taggingStampSQL + `))` + excl + `
+		ORDER BY t.added_at DESC, t.id DESC
+		LIMIT ?
+	)
+	SELECT p.track_id, ` + taggingStampSQL + ` AS stamp
+	FROM picked p
+	JOIN tracks t ON t.id = p.track_id
+	JOIN albums a ON a.id = t.album_id
+	LEFT JOIN track_audio_features f ON f.track_id = t.id
+	ORDER BY p.added_at DESC, p.track_id DESC`
+}
 
 // TaggingCandidate 是一首待打标曲目。Fresh 表示从未打过标。
 type TaggingCandidate struct {
@@ -141,35 +288,96 @@ type TaggingCandidate struct {
 // NextTaggingCandidates 返回最多 limit 首需要（重新）打标的曲目：从未打标的优先（新入库的在前），
 // 其次是 stamp 或词表/提示词版本变化的。exclude 为正在处理中的曲目。
 func (s *Store) NextTaggingCandidates(ctx context.Context, audioActive bool, vocab, prompt int, now time.Time, exclude []int64, limit int) ([]TaggingCandidate, error) {
-	args := []any{boolInt(audioActive), vocab, prompt, AnalysisTimestamp(now)}
-	excl := ""
-	if len(exclude) > 0 {
-		excl = " AND b.track_id NOT IN (" + sqlPlaceholders(len(exclude)) + ")"
-		for _, id := range exclude {
-			args = append(args, id)
-		}
+	if limit <= 0 {
+		return nil, nil
 	}
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, taggingBase+`
-		SELECT b.track_id, b.stamp, m.track_id IS NULL FROM base b
-		LEFT JOIN track_tag_meta m ON m.track_id = b.track_id
-		WHERE b.ready = 1
-		AND (m.track_id IS NULL OR m.source_stamp <> b.stamp OR m.vocab_version <> ? OR m.prompt_version <> ?)
-		AND NOT EXISTS (SELECT 1 FROM ai_tagging_failures x WHERE x.track_id = b.track_id AND x.source_stamp = b.stamp
-			AND (x.permanent = 1 OR x.next_retry_at > ?))`+excl+`
-		ORDER BY (m.track_id IS NULL) DESC, b.added_at DESC, b.track_id DESC LIMIT ?`, args...)
+	ts := AnalysisTimestamp(now)
+	audioFlag := boolInt(audioActive)
+	exclTrack := ""
+	exclBase := ""
+	if len(exclude) > 0 {
+		ph := sqlPlaceholders(len(exclude))
+		exclTrack = " AND t.id NOT IN (" + ph + ")"
+		exclBase = " AND b.track_id NOT IN (" + ph + ")"
+	}
+
+	// Phase 1: 未打标新曲优先，走 idx_tracks_added_id 索引早停，跳过未命中曲目的 stamp 计算。
+	phase1Args := make([]any, 0, 3+len(exclude))
+	phase1Args = append(phase1Args, ts, audioFlag)
+	for _, id := range exclude {
+		phase1Args = append(phase1Args, id)
+	}
+	phase1Args = append(phase1Args, limit)
+	rows, err := s.db.QueryContext(ctx, buildFreshTaggingCandidatesQuery(exclTrack), phase1Args...)
+	if err != nil {
+		return nil, err
+	}
+	var out []TaggingCandidate
+	for rows.Next() {
+		var c TaggingCandidate
+		if err := rows.Scan(&c.TrackID, &c.Stamp); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		c.Fresh = true
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if len(out) >= limit {
+		return out, nil
+	}
+
+	// Phase 2: 已打标曲目（版本变化或 stamp 变化）。若尚无已打标记录则直接返回。
+	var hasAny, hasCurrentVersion int
+	if err := s.db.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM track_tag_meta),
+		EXISTS(SELECT 1 FROM track_tag_meta WHERE vocab_version = ? AND prompt_version = ?)`,
+		vocab, prompt).Scan(&hasAny, &hasCurrentVersion); err != nil {
+		return nil, err
+	}
+	if hasAny == 0 {
+		return out, nil
+	}
+
+	rem := limit - len(out)
+	if hasCurrentVersion == 0 {
+		// 全量版本升级快速路径：所有已打标曲目均为旧版本，直接按 idx_tracks_added_id 早停。
+		fastArgs := make([]any, 0, 3+len(exclude))
+		fastArgs = append(fastArgs, ts, audioFlag)
+		for _, id := range exclude {
+			fastArgs = append(fastArgs, id)
+		}
+		fastArgs = append(fastArgs, rem)
+		rows, err = s.db.QueryContext(ctx, buildAllVersionStaleTaggingCandidatesQuery(exclTrack), fastArgs...)
+	} else {
+		phase2Args := make([]any, 0, 5+len(exclude))
+		phase2Args = append(phase2Args, audioFlag, vocab, prompt, ts)
+		for _, id := range exclude {
+			phase2Args = append(phase2Args, id)
+		}
+		phase2Args = append(phase2Args, rem)
+		rows, err = s.db.QueryContext(ctx, taggingTaggedBaseSetSQL+`
+			SELECT b.track_id, b.stamp FROM base b
+			WHERE b.ready = 1
+			AND (b.meta_stamp <> b.stamp OR b.vocab_version <> ? OR b.prompt_version <> ?)
+			AND NOT EXISTS (SELECT 1 FROM ai_tagging_failures x WHERE x.track_id = b.track_id AND x.source_stamp = b.stamp
+				AND (x.permanent = 1 OR x.next_retry_at > ?))`+exclBase+`
+			ORDER BY b.added_at DESC, b.track_id DESC LIMIT ?`, phase2Args...)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []TaggingCandidate
 	for rows.Next() {
 		var c TaggingCandidate
-		var fresh int
-		if err := rows.Scan(&c.TrackID, &c.Stamp, &fresh); err != nil {
+		if err := rows.Scan(&c.TrackID, &c.Stamp); err != nil {
 			return nil, err
 		}
-		c.Fresh = fresh != 0
+		c.Fresh = false
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -207,7 +415,12 @@ func (s *Store) NextReviewCandidates(ctx context.Context, now time.Time, exclude
 // TrackTaggingStamp 返回一首曲目当前的 source_stamp。
 func (s *Store) TrackTaggingStamp(ctx context.Context, trackID int64) (string, bool, error) {
 	var stamp string
-	err := s.db.QueryRowContext(ctx, taggingBase+` SELECT stamp FROM base WHERE track_id = ?`, 0, trackID).Scan(&stamp)
+	err := s.db.QueryRowContext(ctx, `SELECT `+taggingStampSQL+`
+		FROM tracks t
+		JOIN albums a ON a.id = t.album_id
+		LEFT JOIN track_audio_features f ON f.track_id = t.id
+		WHERE t.id = ?
+		AND EXISTS (SELECT 1 FROM audio_files af WHERE af.track_id = t.id AND af.status = 'available')`, trackID).Scan(&stamp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -371,7 +584,7 @@ func (s *Store) TrackTagMeta(ctx context.Context, trackID int64) (TrackTagMeta, 
 
 // SaveTrackTagResult 原子写入一首曲目的打标结果：替换 llm/audio 来源的标签（保留 user），更新状态并清除失败记录。
 func (s *Store) SaveTrackTagResult(ctx context.Context, m TrackTagMeta, llm, audio []TrackTag) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -426,7 +639,7 @@ func (s *Store) TouchTrackTagStamp(ctx context.Context, trackID int64, stamp str
 
 // ResetTrackTagging 删除一首曲目的打标状态与失败记录，使其重新排队（保留人工修正）。
 func (s *Store) ResetTrackTagging(ctx context.Context, trackID int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -504,9 +717,14 @@ type AITaggingFailure struct {
 // RecordTaggingFailure 记录失败并计算下次重试时间（10 分钟、1 小时、6 小时、24 小时）；
 // 达到 permanentAfter 次后标记为永久失败（stamp 变化前不再重试）。
 func (s *Store) RecordTaggingFailure(ctx context.Context, trackID int64, stamp, message string, now time.Time, permanentAfter int) (int, bool, error) {
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
 	attempts := 0
 	var prevStamp string
-	err := s.db.QueryRowContext(ctx, `SELECT attempts, source_stamp FROM ai_tagging_failures WHERE track_id = ?`, trackID).Scan(&attempts, &prevStamp)
+	err = tx.QueryRowContext(ctx, `SELECT attempts, source_stamp FROM ai_tagging_failures WHERE track_id = ?`, trackID).Scan(&attempts, &prevStamp)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
 	}
@@ -520,12 +738,17 @@ func (s *Store) RecordTaggingFailure(ctx context.Context, trackID int64, stamp, 
 	if r := []rune(message); len(r) > 500 {
 		message = string(r[:500])
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO ai_tagging_failures(track_id, source_stamp, attempts, permanent, last_error, next_retry_at, updated_at)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO ai_tagging_failures(track_id, source_stamp, attempts, permanent, last_error, next_retry_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(track_id) DO UPDATE SET source_stamp = excluded.source_stamp, attempts = excluded.attempts, permanent = excluded.permanent,
 			last_error = excluded.last_error, next_retry_at = excluded.next_retry_at, updated_at = excluded.updated_at`,
-		trackID, stamp, attempts, boolInt(permanent), message, AnalysisTimestamp(next), AnalysisTimestamp(now))
-	return attempts, permanent, err
+		trackID, stamp, attempts, boolInt(permanent), message, AnalysisTimestamp(next), AnalysisTimestamp(now)); err != nil {
+		return 0, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return attempts, permanent, nil
 }
 
 // ClearTaggingFailures 删除全部失败记录（“全部重试”）。
@@ -634,7 +857,7 @@ type TaggingStats struct {
 func (s *Store) TaggingStats(ctx context.Context, audioActive bool, vocab, prompt int, now time.Time) (TaggingStats, error) {
 	var st TaggingStats
 	ts := AnalysisTimestamp(now)
-	err := s.db.QueryRowContext(ctx, taggingBase+`
+	err := s.db.QueryRowContext(ctx, taggingBaseSetSQL+`
 		SELECT COUNT(*),
 			COALESCE(SUM(CASE WHEN m.track_id IS NOT NULL AND m.source_stamp = b.stamp AND m.vocab_version = ? AND m.prompt_version = ? THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN m.track_id IS NOT NULL AND NOT (m.source_stamp = b.stamp AND m.vocab_version = ? AND m.prompt_version = ?) THEN 1 ELSE 0 END), 0),
@@ -677,6 +900,43 @@ type RecentTagResult struct {
 	Tags        []TrackTag // 生效标签（user 优先于 llm）
 }
 
+func (s *Store) trackTagsByTrackIDs(ctx context.Context, trackIDs []int64) (map[int64][]TrackTag, error) {
+	byTrack := make(map[int64][]TrackTag, len(trackIDs))
+	if len(trackIDs) == 0 {
+		return byTrack, nil
+	}
+	const chunkSize = 500
+	for start := 0; start < len(trackIDs); start += chunkSize {
+		end := min(start+chunkSize, len(trackIDs))
+		chunk := trackIDs[start:end]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT track_id, kind, tag, weight, confidence, source FROM track_tags
+			WHERE track_id IN (`+sqlPlaceholders(len(chunk))+`)
+			ORDER BY track_id, CASE source WHEN 'user' THEN 0 WHEN 'llm' THEN 1 ELSE 2 END, kind, weight DESC, confidence DESC, tag`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var trackID int64
+			var t TrackTag
+			if err := rows.Scan(&trackID, &t.Kind, &t.Tag, &t.Weight, &t.Confidence, &t.Source); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			byTrack[trackID] = append(byTrack[trackID], t)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return byTrack, nil
+}
+
 func (s *Store) RecentTagResults(ctx context.Context, limit int) ([]RecentTagResult, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.track_id, COALESCE(t.user_title, t.title), `+taggingTrackArtistSQL+`, m.model, m.reviewed_by, m.needs_review, m.tagged_at
 		FROM track_tag_meta m JOIN tracks t ON t.id = m.track_id JOIN albums a ON a.id = t.album_id ORDER BY m.tagged_at DESC, m.track_id DESC LIMIT ?`, limit)
@@ -684,6 +944,7 @@ func (s *Store) RecentTagResults(ctx context.Context, limit int) ([]RecentTagRes
 		return nil, err
 	}
 	var out []RecentTagResult
+	var trackIDs []int64
 	for rows.Next() {
 		var r RecentTagResult
 		var review int
@@ -693,17 +954,18 @@ func (s *Store) RecentTagResults(ctx context.Context, limit int) ([]RecentTagRes
 		}
 		r.NeedsReview = review != 0
 		out = append(out, r)
+		trackIDs = append(trackIDs, r.TrackID)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	byTrack, err := s.trackTagsByTrackIDs(ctx, trackIDs)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
-		tags, err := s.TrackTags(ctx, out[i].TrackID)
-		if err != nil {
-			return nil, err
-		}
-		out[i].Tags = EffectiveTags(tags)
+		out[i].Tags = EffectiveTags(byTrack[out[i].TrackID])
 	}
 	return out, nil
 }
@@ -753,7 +1015,7 @@ type AISampleItem struct {
 
 // CreateAISampleRun 新建抽样（删除旧的抽样），按伪随机顺序选出 size 首曲目（有声学特征的优先）。
 func (s *Store) CreateAISampleRun(ctx context.Context, size int, primary, review string, seed int64) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
