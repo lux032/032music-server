@@ -176,9 +176,9 @@ import { updateTrackRowsUI } from './player-bar.js';
       if (pending) { button.dataset.wasDisabled = button.disabled ? '1' : '0'; button.disabled = true; }
       else if (button.dataset.wasDisabled !== '1') button.disabled = false;
     });
-    // Icon-only buttons keep their icon; replacing textContent would destroy the
-    // <svg> for good (the label restore only puts back text).
-    if (submitter instanceof HTMLButtonElement && !submitter.querySelector('svg')) {
+    // Icon-only buttons and switch toggles keep their inner markup; replacing
+    // textContent would destroy <svg> or <span class="sr-only"> labels.
+    if (submitter instanceof HTMLButtonElement && !submitter.querySelector('svg') && submitter.getAttribute('role') !== 'switch' && !submitter.classList.contains('toggle-submit')) {
       if (pending) { submitter.dataset.originalText = submitter.textContent; submitter.textContent = submitter.dataset.pendingText || '保存中…'; }
       else if (submitter.dataset.originalText) { submitter.textContent = submitter.dataset.originalText; delete submitter.dataset.originalText; }
     }

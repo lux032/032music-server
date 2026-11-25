@@ -144,13 +144,38 @@ func TestLastFMLoveSyncAdminFlow(t *testing.T) {
 		t.Fatalf("not cancelled: %+v", run)
 	}
 
-	// Turning the switch off is a separate action and leaves the queue alone.
-	response = lovePost(t, handler, cookie, "/admin/settings/lastfm-scrobble/love-sync", url.Values{"csrfToken": {csrf}})
+	// Turning the switch off via sync_loves=0 (the UI hidden input) disables it
+	// and leaves the queue alone, even after the account is disconnected.
+	response = lovePost(t, handler, cookie, "/admin/settings/lastfm-scrobble/love-sync", url.Values{"csrfToken": {csrf}, "sync_loves": {"0"}})
 	if response.Code != http.StatusSeeOther {
-		t.Fatalf("disable: %d", response.Code)
+		t.Fatalf("disable with 0: %d", response.Code)
+	}
+	if location, _ := url.Parse(response.Header().Get("Location")); !strings.Contains(location.Query().Get("notice"), "已关闭") {
+		t.Fatalf("disable notice = %q", response.Header().Get("Location"))
 	}
 	if settings, _ = store.LastFMScrobbleSettings(ctx); settings.SyncLoves {
-		t.Fatal("switch still on")
+		t.Fatal("switch still on after sync_loves=0")
+	}
+
+	// Omitting sync_loves also turns it off (and still works when disconnected).
+	_ = lovePost(t, handler, cookie, "/admin/settings/lastfm-scrobble/love-sync", url.Values{"csrfToken": {csrf}, "sync_loves": {"1"}})
+	if err := store.ClearLastFMSession(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	response = lovePost(t, handler, cookie, "/admin/settings/lastfm-scrobble/love-sync", url.Values{"csrfToken": {csrf}, "sync_loves": {"0"}})
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("disable while disconnected: %d", response.Code)
+	}
+	if settings, _ = store.LastFMScrobbleSettings(ctx); settings.SyncLoves {
+		t.Fatal("switch still on while disconnected")
+	}
+	_ = lovePost(t, handler, cookie, "/admin/settings/lastfm-scrobble/love-sync", url.Values{"csrfToken": {csrf}, "sync_loves": {"1"}})
+	response = lovePost(t, handler, cookie, "/admin/settings/lastfm-scrobble/love-sync", url.Values{"csrfToken": {csrf}})
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("disable with empty: %d", response.Code)
+	}
+	if settings, _ = store.LastFMScrobbleSettings(ctx); settings.SyncLoves {
+		t.Fatal("switch still on after empty sync_loves")
 	}
 }
 

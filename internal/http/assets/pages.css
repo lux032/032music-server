@@ -4426,10 +4426,10 @@ label.inline-check { display: inline-flex; align-items: center; gap: 7px; }
 }
 :where(.switch, .switch-row) input[type="checkbox"]:not([required]):checked, input[type="checkbox"].toggle:checked, .toggle-submit[aria-checked="true"] { background: var(--accent); }
 :where(.switch, .switch-row) input[type="checkbox"]:not([required]):checked::after, input[type="checkbox"].toggle:checked::after, .toggle-submit[aria-checked="true"]::after { transform: translateX(18px); }
-:where(.switch, .switch-row) input[type="checkbox"]:disabled, input[type="checkbox"].toggle:disabled { opacity: .5; cursor: not-allowed; }
+:where(.switch, .switch-row) input[type="checkbox"]:disabled, input[type="checkbox"].toggle:disabled, .toggle-submit:disabled { opacity: .5; cursor: not-allowed; }
 
-.toggle-submit:hover { background: var(--fill-hover); }
-.toggle-submit[aria-checked="true"]:hover { background: var(--accent-hover); }
+.toggle-submit:not(:disabled):hover { background: var(--fill-hover); }
+.toggle-submit[aria-checked="true"]:not(:disabled):hover { background: var(--accent-hover); }
 
 .section-head { display: flex; align-items: center; gap: 10px 14px; margin-bottom: 16px; min-width: 0; }
 .section-head h2, .section-head h3 { margin: 0; font-weight: 600; letter-spacing: 0; line-height: 1.25; }

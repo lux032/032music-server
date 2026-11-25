@@ -134,7 +134,8 @@ func (a *App) handleSaveLastFMLoveSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", 403)
 		return
 	}
-	enabled := r.FormValue("sync_loves") != ""
+	rawSync := strings.TrimSpace(r.FormValue("sync_loves"))
+	enabled := rawSync == "1" || strings.EqualFold(rawSync, "true") || strings.EqualFold(rawSync, "on")
 	if err := a.store.SetLastFMLoveSync(r.Context(), enabled); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
