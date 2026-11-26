@@ -105,4 +105,34 @@ func TestMigration091ArtistImageAuditAndWebSearch(t *testing.T) {
 			t.Fatalf("migrated run = %+v", run)
 		}
 	})
+
+	t.Run("upgrade 091 to 092 preserves pending candidates with empty search state", func(t *testing.T) {
+		s, err := Open(filepath.Join(t.TempDir(), "upgrade092.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		if err := s.MigrateUpTo(ctx, 91); err != nil {
+			t.Fatalf("migrate up to 91: %v", err)
+		}
+		res, err := s.db.ExecContext(ctx, `INSERT INTO artists(display_name,sort_name,identity_key) VALUES('Audit Artist','audit artist','audit-artist')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		artistID, _ := res.LastInsertId()
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO artist_image_candidates(artist_id,source,image_url,confidence,kind,issue_type,confidence_score) VALUES(?,'ai_audit','audit://old','high','audit_review','album_cover',95)`, artistID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Migrate(ctx); err != nil {
+			t.Fatalf("upgrade to 092 failed: %v", err)
+		}
+		checkSchema(t, s)
+		cands, err := s.PendingArtistImageCandidates(ctx, 10)
+		if err != nil || len(cands) != 1 {
+			t.Fatalf("PendingArtistImageCandidates = (%+v, %v)", cands, err)
+		}
+		if cands[0].WebSearchState != "" || cands[0].WebSearchNote != "" || cands[0].WebSearchedAt != "" {
+			t.Fatalf("unexpected default search state after 092: %+v", cands[0])
+		}
+	})
 }

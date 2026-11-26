@@ -534,4 +534,243 @@ func TestEndToEndTavilyMultiKeyAndFullAvatarAuditIntegration(t *testing.T) {
 	if urlsAfter[garbageID] != wantRestoredURL {
 		t.Fatalf("GarbageArtist URL after revert = %q, want %q", urlsAfter[garbageID], wantRestoredURL)
 	}
+
+	// Verify WrongArtist (high-conf, actually ran Tavily) received not_found_auto,
+	// whereas SuspiciousArtist (medium-conf, did not consume web search) stayed empty.
+	cands, err := s.PendingArtistImageCandidates(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candByArtist := map[int64]storage.ArtistImageCandidate{}
+	for _, c := range cands {
+		candByArtist[c.ArtistID] = c
+	}
+	if candByArtist[wrongID].WebSearchState != "not_found_auto" {
+		t.Fatalf("WrongArtist WebSearchState = %q, want not_found_auto", candByArtist[wrongID].WebSearchState)
+	}
+	if candByArtist[suspiciousID].WebSearchState != "" {
+		t.Fatalf("SuspiciousArtist WebSearchState = %q, want empty", candByArtist[suspiciousID].WebSearchState)
+	}
+}
+
+func TestArtistImageSearchQueueAndBatchReviewHTTP(t *testing.T) {
+	app, s, handler, _, cookie, _ := rateLimitTestApp(t)
+	ctx := context.Background()
+	reg := websearch.NewRegistry()
+	app.SetWebSearchRegistry(reg)
+	app.enrichment.SetWebSearchRegistry(reg)
+
+	// Stub Tavily returning empty results + dummy LLM settings so queued searches
+	// complete cleanly with not_found_manual.
+	tavilySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+	}))
+	defer tavilySrv.Close()
+	reg.SetEndpointsForTest(tavilySrv.URL, tavilySrv.URL, tavilySrv.Client(), nil)
+
+	if err := s.SaveAISettings(ctx, storage.AISettings{
+		BaseURL: "https://llm.example/v1", APIKey: "sk-queue", Model: "gpt-6-luna", RequestsPerMinute: 600, Concurrency: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveWebSearchSettings(ctx, storage.WebSearchSettings{
+		Provider:   storage.WebSearchProviderTavily,
+		TavilyKeys: []string{"tvly-queue-test-key"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.EnsureLibrary(ctx, "BatchLib", "/batch-music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.LibraryByRoot(ctx, "/batch-music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgDir := t.TempDir()
+	seed := func(rel, name, hash string) int64 {
+		if err := s.ImportTrack(ctx, storage.ImportInput{
+			LibraryID: lib.ID, RelativePath: rel, FileSize: 100, ModifiedAtNS: 1,
+			Metadata: metadata.AudioMetadata{Title: "T-" + name, Album: "A-" + name, Artists: []string{name}, AlbumArtists: []string{name}, DiscNumber: 1, TrackNumber: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		list, err := s.ArtistsForMatching(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var aid int64
+		for _, a := range list {
+			if a.Name == name {
+				aid = a.ID
+			}
+		}
+		p := filepath.Join(imgDir, hash+".png")
+		if err := os.WriteFile(p, makeTestPNGBytes(t, 280, 280, color.RGBA{R: 120, G: 80, B: 200, A: 255}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SaveArtistImage(ctx, storage.ArtistImageInput{
+			ArtistID: aid, Source: "deezer", RemoteURL: "https://img.example/" + hash + ".png",
+			Hash: hash, MIMEType: "image/png", CachePath: p, ByteSize: 100,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return aid
+	}
+
+	a1 := seed("b/1.flac", "QueueArtistOne", "hashqueue001")
+	a2 := seed("b/2.flac", "QueueArtistTwo", "hashqueue002")
+	a3 := seed("b/3.flac", "BatchKeepArtist", "hashqueue003")
+	a4 := seed("b/4.flac", "BatchClearArtist", "hashqueue004")
+
+	addCard := func(aid int64, wsState, wsNote string) int64 {
+		id, err := s.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+			ArtistID:        aid,
+			Source:          "ai_audit",
+			ImageURL:        "https://img.example/old-" + strconv.FormatInt(aid, 10) + ".png",
+			Confidence:      "medium",
+			ConfidenceScore: 72,
+			Kind:            "audit_review",
+			IssueType:       "album_cover",
+			Reason:          "疑似专辑封面",
+			WebSearchState:  wsState,
+			WebSearchNote:   wsNote,
+		})
+		if err != nil || id == 0 {
+			t.Fatalf("UpsertArtistImageCandidate(%d) = (%d, %v)", aid, id, err)
+		}
+		return id
+	}
+	c1 := addCard(a1, "", "")
+	c2 := addCard(a2, "not_found_auto", "全量审查已自动联网找图，未找到合适新图")
+	c3 := addCard(a3, "", "")
+	c4 := addCard(a4, "not_found_manual", "手动联网找图未找到更合适的候选头像")
+
+	// 1. SSR page renders filter chips, batch toolbar, auto/manual no-result badges.
+	body := adminGetBody(t, handler, cookie, "/admin/matches?tab=avatars")
+	for _, want := range []string{
+		"data-avatar-workbench",
+		"仅选未搜过",
+		"加入联网找图队列",
+		"批量保留原图",
+		"批量清空头像",
+		"自动已搜无果",
+		"手动已搜无果",
+		"重新搜图",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("avatars tab missing %q", want)
+		}
+	}
+
+	// 2. CSRF protection on queue JSON endpoints.
+	badReq := httptest.NewRequest(http.MethodPost, "/admin/matches/images/search-queue/enqueue", strings.NewReader(`{"candidateIds":[1]}`))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.AddCookie(cookie)
+	badRec := httptest.NewRecorder()
+	handler.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusForbidden {
+		t.Fatalf("enqueue without CSRF code = %d, want 403", badRec.Code)
+	}
+
+	// 3. Enqueue c1 and c2 via JSON + X-CSRF-Token header, poll until completed.
+	sess, ok := app.sessions.get(&http.Request{Header: http.Header{"Cookie": {cookie.String()}}})
+	if !ok {
+		t.Fatal("missing test session")
+	}
+	enqBody, _ := json.Marshal(map[string]any{"candidateIds": []int64{c1, c2}})
+	enqReq := httptest.NewRequest(http.MethodPost, "/admin/matches/images/search-queue/enqueue", strings.NewReader(string(enqBody)))
+	enqReq.Header.Set("Content-Type", "application/json")
+	enqReq.Header.Set("X-CSRF-Token", sess.CSRFToken)
+	enqReq.AddCookie(cookie)
+	enqRec := httptest.NewRecorder()
+	handler.ServeHTTP(enqRec, enqReq)
+	if enqRec.Code != http.StatusOK {
+		t.Fatalf("enqueue code = %d body=%s", enqRec.Code, enqRec.Body.String())
+	}
+	var enqResp struct {
+		Added int `json:"added"`
+		Queue struct {
+			Status string `json:"status"`
+			Total  int    `json:"total"`
+		} `json:"queue"`
+	}
+	if err := json.Unmarshal(enqRec.Body.Bytes(), &enqResp); err != nil {
+		t.Fatal(err)
+	}
+	if enqResp.Added != 2 || enqResp.Queue.Total != 2 {
+		t.Fatalf("enqueue resp = %+v", enqResp)
+	}
+
+	deadline := time.Now().Add(8 * time.Second)
+	var finalStatus string
+	var finalNotFound int
+	for time.Now().Before(deadline) {
+		pReq := httptest.NewRequest(http.MethodGet, "/admin/matches/images/search-queue.json", nil)
+		pReq.AddCookie(cookie)
+		pRec := httptest.NewRecorder()
+		handler.ServeHTTP(pRec, pReq)
+		if pRec.Code != http.StatusOK {
+			t.Fatalf("poll queue code = %d", pRec.Code)
+		}
+		var doc struct {
+			Queue struct {
+				Status   string `json:"status"`
+				NotFound int    `json:"notFound"`
+			} `json:"queue"`
+		}
+		if err := json.Unmarshal(pRec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		finalStatus = doc.Queue.Status
+		finalNotFound = doc.Queue.NotFound
+		if finalStatus == "completed" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if finalStatus != "completed" || finalNotFound != 2 {
+		t.Fatalf("final queue status=%q notFound=%d, want completed/2", finalStatus, finalNotFound)
+	}
+	gotC1, err := s.ArtistImageCandidateByID(ctx, c1)
+	if err != nil || gotC1.WebSearchState != "not_found_manual" {
+		t.Fatalf("c1 after manual queue search = %+v err=%v", gotC1, err)
+	}
+
+	// Dismiss finished queue banner.
+	disReq := httptest.NewRequest(http.MethodPost, "/admin/matches/images/search-queue/dismiss", strings.NewReader(`{}`))
+	disReq.Header.Set("Content-Type", "application/json")
+	disReq.Header.Set("X-CSRF-Token", sess.CSRFToken)
+	disReq.AddCookie(cookie)
+	disRec := httptest.NewRecorder()
+	handler.ServeHTTP(disRec, disReq)
+	if disRec.Code != http.StatusOK || !strings.Contains(disRec.Body.String(), `"status":"idle"`) {
+		t.Fatalf("dismiss resp = %d %s", disRec.Code, disRec.Body.String())
+	}
+
+	// 4. Batch keep c3 and batch clear c4 via form posts.
+	keepRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-keep", url.Values{
+		"candidateIds": {strconv.FormatInt(c3, 10)},
+	})
+	if keepRec.Code != http.StatusSeeOther {
+		t.Fatalf("batch-keep code = %d", keepRec.Code)
+	}
+	rev3, ok3, err := s.ArtistImageReviewByArtist(ctx, a3)
+	if err != nil || !ok3 || rev3.Verdict != "keep" || rev3.ImageHash != "hashqueue003" {
+		t.Fatalf("BatchKeepArtist review = (%+v, %v, %v)", rev3, ok3, err)
+	}
+
+	clearRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-clear", url.Values{
+		"candidateIds": {strconv.FormatInt(c4, 10)},
+	})
+	if clearRec.Code != http.StatusSeeOther {
+		t.Fatalf("batch-clear code = %d", clearRec.Code)
+	}
+	if _, _, _, pErr := s.ArtistImagePath(ctx, a4); pErr == nil {
+		t.Fatal("expected BatchClearArtist cache to be cleared")
+	}
+	actions, err := s.RecentArtistImageAuditActions(ctx, 10)
+	if err != nil || len(actions) == 0 || actions[0].ArtistID != a4 {
+		t.Fatalf("expected undo snapshot for BatchClearArtist, got %+v err=%v", actions, err)
+	}
 }

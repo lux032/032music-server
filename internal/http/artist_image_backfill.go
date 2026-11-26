@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,11 +60,109 @@ type artistImageBackfillView struct {
 	PendingCount       int
 	PendingCandidates  []storage.ArtistImageCandidate
 	RecentAuditActions []storage.ArtistImageAuditAction
+	SearchQueue        enrichment.ArtistImageSearchQueueSnapshot
 	WebSearchReady     bool
 	WebSearchSummary   string
 	Settings           *storage.ArtistImageSettings
 	Active             *artistImageRunView
 	Last               *artistImageRunView
+}
+
+func (v artistImageBackfillView) QueuePos(candidateID int64) int {
+	if v.SearchQueue.Status != "running" || len(v.SearchQueue.QueuedPositions) == 0 {
+		return 0
+	}
+	return v.SearchQueue.QueuedPositions[candidateID]
+}
+
+func (v artistImageBackfillView) IsQueueCurrent(candidateID int64) bool {
+	return v.SearchQueue.Status == "running" && v.SearchQueue.CurrentID == candidateID
+}
+
+func (v artistImageBackfillView) IsQueuedWaiting(candidateID int64) bool {
+	return v.SearchQueue.Status == "running" && v.QueuePos(candidateID) > 0 && v.SearchQueue.CurrentID != candidateID
+}
+
+func (v artistImageBackfillView) CandidateEffectiveState(c storage.ArtistImageCandidate) string {
+	if c.Kind != "audit_review" {
+		return "replacement"
+	}
+	if v.IsQueueCurrent(c.ID) {
+		return "running"
+	}
+	if v.IsQueuedWaiting(c.ID) {
+		return "queued"
+	}
+	if c.WebSearchState != "" {
+		return c.WebSearchState
+	}
+	return "idle"
+}
+
+func (v artistImageBackfillView) UnsearchedCount() int {
+	n := 0
+	for _, c := range v.PendingCandidates {
+		if v.CandidateEffectiveState(c) == "idle" {
+			n++
+		}
+	}
+	return n
+}
+
+func (v artistImageBackfillView) QueuedCount() int {
+	n := 0
+	for _, c := range v.PendingCandidates {
+		st := v.CandidateEffectiveState(c)
+		if st == "queued" || st == "running" {
+			n++
+		}
+	}
+	return n
+}
+
+func (v artistImageBackfillView) NotFoundCount() int {
+	n := 0
+	for _, c := range v.PendingCandidates {
+		st := v.CandidateEffectiveState(c)
+		if st == "not_found_auto" || st == "not_found_manual" {
+			n++
+		}
+	}
+	return n
+}
+
+func (v artistImageBackfillView) ReplacementCount() int {
+	n := 0
+	for _, c := range v.PendingCandidates {
+		if c.Kind != "audit_review" {
+			n++
+		}
+	}
+	return n
+}
+
+func (v artistImageBackfillView) FailedCount() int {
+	n := 0
+	for _, c := range v.PendingCandidates {
+		if v.CandidateEffectiveState(c) == "failed" {
+			n++
+		}
+	}
+	return n
+}
+
+func (v artistImageBackfillView) QueueProgressPercent() int {
+	if v.SearchQueue.Total <= 0 {
+		return 0
+	}
+	pct := v.SearchQueue.Completed * 100 / v.SearchQueue.Total
+	if pct > 100 {
+		return 100
+	}
+	if pct < 0 {
+		return 0
+	}
+	return pct
 }
 
 func (a *App) artistImageRunError(w http.ResponseWriter, err error) {
@@ -266,6 +367,9 @@ func (a *App) handleKeepArtistImageCandidate(w http.ResponseWriter, r *http.Requ
 	}
 	id := parseInt64(r.PathValue("id"))
 	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	if a.enrichment != nil {
+		a.enrichment.RemoveArtistImageCandidateSearch(id)
+	}
 	if err := a.store.KeepArtistImageCandidate(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "待审项不存在", http.StatusNotFound)
@@ -285,6 +389,9 @@ func (a *App) handleClearArtistImageCandidate(w http.ResponseWriter, r *http.Req
 	}
 	id := parseInt64(r.PathValue("id"))
 	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	if a.enrichment != nil {
+		a.enrichment.RemoveArtistImageCandidateSearch(id)
+	}
 	if err := a.store.ClearArtistImageCandidate(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "待审项不存在", http.StatusNotFound)
@@ -312,26 +419,205 @@ func (a *App) handleSearchForAuditCandidate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	id := parseInt64(r.PathValue("id"))
-	cand, err := a.store.ArtistImageCandidateByID(r.Context(), id)
-	if errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "待审项不存在", http.StatusNotFound)
-		return
-	}
+	added, _, err := a.enrichment.EnqueueArtistImageCandidateSearches(r.Context(), []int64{id})
 	if err != nil {
-		a.logger.Error("load audit candidate for search", "candidateId", id, "error", err)
-		http.Error(w, "读取待审项失败", http.StatusInternalServerError)
+		a.logger.Error("enqueue audit candidate search", "candidateId", id, "error", err)
+		redirectWithNotice(w, r, returnTo, "加入联网找图队列失败，请稍后重试")
 		return
 	}
-	found, ok, searchErr := a.enrichment.SearchArtistImageCandidateNow(r.Context(), cand.ArtistID)
-	if searchErr != nil {
-		redirectWithNotice(w, r, returnTo, "联网找新图失败："+enrichment.RedactSourceError(searchErr).Error())
+	if added == 0 {
+		redirectWithNotice(w, r, returnTo, "该待审项已在找图队列中或已处理")
 		return
 	}
-	if !ok || found.ID == 0 {
-		redirectWithNotice(w, r, returnTo, "联网未找到更合适的候选头像")
+	redirectWithNotice(w, r, returnTo, "已加入手动联网找图队列，进度将在顶部实时更新")
+}
+
+func parseCandidateIDList(r *http.Request) []int64 {
+	var ids []int64
+	seen := map[int64]bool{}
+	add := func(id int64) {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if strings.HasPrefix(ct, "application/json") {
+		var body struct {
+			CandidateID  int64   `json:"candidateId"`
+			CandidateIDs []int64 `json:"candidateIds"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err == nil {
+			add(body.CandidateID)
+			for _, id := range body.CandidateIDs {
+				add(id)
+			}
+		}
+		return ids
+	}
+	_ = r.ParseForm()
+	for _, raw := range r.Form["candidateId"] {
+		add(parseInt64(raw))
+	}
+	for _, raw := range r.Form["candidateIds"] {
+		for _, part := range strings.Split(raw, ",") {
+			add(parseInt64(strings.TrimSpace(part)))
+		}
+	}
+	return ids
+}
+
+func (a *App) validQueueCSRF(r *http.Request) bool {
+	return a.validCSRFHeader(r) || a.validCSRF(r)
+}
+
+func (a *App) handleArtistImageSearchQueueStatus(w http.ResponseWriter, _ *http.Request) {
+	if a.enrichment == nil {
+		writeArtistJSON(w, map[string]any{"queue": enrichment.ArtistImageSearchQueueSnapshot{Status: "idle"}})
 		return
 	}
-	redirectWithNotice(w, r, returnTo, "已联网搜到新候选头像，请在列表顶部对比并采纳")
+	writeArtistJSON(w, map[string]any{"queue": a.enrichment.ArtistImageSearchQueueSnapshot()})
+}
+
+func (a *App) handleEnqueueArtistImageSearchQueue(w http.ResponseWriter, r *http.Request) {
+	if !a.validQueueCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.enrichment == nil {
+		http.Error(w, "任务服务不可用", http.StatusServiceUnavailable)
+		return
+	}
+	ids := parseCandidateIDList(r)
+	added, snap, err := a.enrichment.EnqueueArtistImageCandidateSearches(r.Context(), ids)
+	if err != nil {
+		a.logger.Error("enqueue artist image search queue", "error", err)
+		http.Error(w, "加入找图队列失败", http.StatusInternalServerError)
+		return
+	}
+	writeArtistJSON(w, map[string]any{"added": added, "queue": snap})
+}
+
+func (a *App) handleRemoveArtistImageSearchQueue(w http.ResponseWriter, r *http.Request) {
+	if !a.validQueueCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.enrichment == nil {
+		http.Error(w, "任务服务不可用", http.StatusServiceUnavailable)
+		return
+	}
+	ids := parseCandidateIDList(r)
+	removed := false
+	var snap enrichment.ArtistImageSearchQueueSnapshot
+	for _, id := range ids {
+		if ok, s := a.enrichment.RemoveArtistImageCandidateSearch(id); ok {
+			removed = true
+			snap = s
+		}
+	}
+	if !removed {
+		snap = a.enrichment.ArtistImageSearchQueueSnapshot()
+	}
+	writeArtistJSON(w, map[string]any{"removed": removed, "queue": snap})
+}
+
+func (a *App) handleStopArtistImageSearchQueue(w http.ResponseWriter, r *http.Request) {
+	if !a.validQueueCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.enrichment == nil {
+		http.Error(w, "任务服务不可用", http.StatusServiceUnavailable)
+		return
+	}
+	snap := a.enrichment.StopArtistImageCandidateSearchQueue()
+	writeArtistJSON(w, map[string]any{"queue": snap})
+}
+
+func (a *App) handleDismissArtistImageSearchQueue(w http.ResponseWriter, r *http.Request) {
+	if !a.validQueueCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if a.enrichment == nil {
+		http.Error(w, "任务服务不可用", http.StatusServiceUnavailable)
+		return
+	}
+	snap := a.enrichment.DismissArtistImageCandidateSearchQueue()
+	writeArtistJSON(w, map[string]any{"queue": snap})
+}
+
+func (a *App) handleBatchKeepArtistImageCandidates(w http.ResponseWriter, r *http.Request) {
+	if !a.validQueueCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	ids := parseCandidateIDList(r)
+	processed, skipped := 0, 0
+	for _, id := range ids {
+		if a.enrichment != nil {
+			a.enrichment.RemoveArtistImageCandidateSearch(id)
+		}
+		if err := a.store.KeepArtistImageCandidate(r.Context(), id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				skipped++
+				continue
+			}
+			a.logger.Error("batch keep artist image candidate", "candidateId", id, "error", err)
+			skipped++
+			continue
+		}
+		processed++
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeArtistJSON(w, map[string]any{"processed": processed, "skipped": skipped})
+		return
+	}
+	if processed == 0 {
+		redirectWithNotice(w, r, returnTo, "未选中可保留的待审项")
+		return
+	}
+	redirectWithNotice(w, r, returnTo, fmt.Sprintf("已批量确认保留 %d 位艺术家原图，后续普通全量审查将跳过", processed))
+}
+
+func (a *App) handleBatchClearArtistImageCandidates(w http.ResponseWriter, r *http.Request) {
+	if !a.validQueueCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	ids := parseCandidateIDList(r)
+	processed, skipped := 0, 0
+	for _, id := range ids {
+		if a.enrichment != nil {
+			a.enrichment.RemoveArtistImageCandidateSearch(id)
+		}
+		if err := a.store.ClearArtistImageCandidate(r.Context(), id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, storage.ErrArtistImageBackfillState) {
+				skipped++
+				continue
+			}
+			a.logger.Error("batch clear artist image candidate", "candidateId", id, "error", err)
+			skipped++
+			continue
+		}
+		processed++
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeArtistJSON(w, map[string]any{"processed": processed, "skipped": skipped})
+		return
+	}
+	if processed == 0 {
+		redirectWithNotice(w, r, returnTo, "未清空任何头像（可能已处理或存在自定义头像）")
+		return
+	}
+	msg := fmt.Sprintf("已批量清空 %d 位艺术家缓存头像（可在任务页撤销恢复）", processed)
+	if skipped > 0 {
+		msg = fmt.Sprintf("已批量清空 %d 位艺术家缓存头像，跳过 %d 位（自定义头像或已处理）", processed, skipped)
+	}
+	redirectWithNotice(w, r, returnTo, msg)
 }
 
 func (a *App) handleRevertArtistImageAuditAction(w http.ResponseWriter, r *http.Request) {

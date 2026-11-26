@@ -528,7 +528,7 @@
     </section>
 
     <!-- Tab 3: 待审头像 -->
-    <section class="match-panel" id="match-panel-avatars" role="tabpanel" data-match-panel="avatars"{{if ne .MatchTab "avatars"}} hidden{{end}}>
+    <section class="match-panel" id="match-panel-avatars" role="tabpanel" data-match-panel="avatars" data-avatar-workbench data-icons-href="{{assetIconsSVG}}" data-csrf-token="{{.CSRFToken}}"{{if ne .MatchTab "avatars"}} hidden{{end}}>
       <div class="match-section-hint">
         <div>
           <h2>待审核候选头像（{{.ImageBackfill.PendingCount}}）</h2>
@@ -541,14 +541,109 @@
           <button type="button" class="secondary-button compact-button" data-match-tab="tasks">启动头像补全 →</button>
         </div>
       </div>
+      {{$sq := .ImageBackfill.SearchQueue}}
+      <div class="avatar-queue-strip{{if eq $sq.Status "completed"}} is-done{{else if eq $sq.Status "stopped"}} is-stopped{{end}}" data-avatar-queue-strip data-queue-status="{{$sq.Status}}"{{if or (eq $sq.Status "") (eq $sq.Status "idle")}} hidden{{end}} role="status" aria-live="polite">
+        <div class="avatar-queue-head">
+          <div class="avatar-queue-title">
+            <span class="avatar-queue-dot{{if eq $sq.Status "running"}} is-pulsing{{else if eq $sq.Status "completed"}} is-done{{else if eq $sq.Status "stopped"}} is-stopped{{end}}" data-aq-dot aria-hidden="true"></span>
+            <strong>手动联网找新图队列</strong>
+            <span class="run-status {{if eq $sq.Status "running"}}status-running{{else if eq $sq.Status "completed"}}status-completed{{else}}status-paused{{end}}" data-aq-status>{{if eq $sq.Status "running"}}进行中{{else if eq $sq.Status "completed"}}已完成{{else if eq $sq.Status "stopped"}}已停止{{else}}空闲{{end}}</span>
+          </div>
+          <div class="avatar-queue-actions" data-aq-actions>
+            {{if eq $sq.Status "running"}}
+            <button type="button" class="secondary-button compact-button" data-aq-stop>停止队列</button>
+            {{else}}
+            {{if gt $sq.Found 0}}
+            <button type="button" class="compact-button" data-aq-refresh>刷新查看新图对比（{{$sq.Found}}）</button>
+            {{end}}
+            <button type="button" class="match-ghost-btn compact-button" data-aq-dismiss>收起</button>
+            {{end}}
+          </div>
+        </div>
+        <div class="progress match-progress"><span data-aq-progress style="width:{{.ImageBackfill.QueueProgressPercent}}%"></span></div>
+        <div class="avatar-queue-meta">
+          <span data-aq-counts>进度 {{$sq.Completed}} / {{$sq.Total}}{{if gt $sq.Waiting 0}} · 排队中 {{$sq.Waiting}}{{end}} · 找到新图 {{$sq.Found}} · 无结果 {{$sq.NotFound}} · 失败 {{$sq.Failed}}</span>
+          <span class="avatar-queue-current" data-aq-current>{{if and (eq $sq.Status "running") $sq.CurrentArtist}}正在搜图：{{$sq.CurrentArtist}}{{else if eq $sq.Status "completed"}}{{if gt $sq.Found 0}}已找到 {{$sq.Found}} 张新候选，点击上方按钮刷新查看对比{{else}}本批搜索已完成，无结果卡片已持久化标记{{end}}{{else if eq $sq.Status "stopped"}}已停止剩余排队项{{end}}</span>
+        </div>
+      </div>
+
       {{if gt .ImageBackfill.PendingCount (len .ImageBackfill.PendingCandidates)}}
       <p class="field-hint match-sub-hint">显示最近 {{len .ImageBackfill.PendingCandidates}} 条，处理后可查看其余候选。</p>
       {{end}}
       {{if .ImageBackfill.PendingCandidates}}
-      <div class="match-avatar-grid">
+      <div class="avatar-workbench-bar" data-avatar-toolbar>
+        <div class="avatar-filter-row">
+          <div class="match-filter-chips" role="tablist" aria-label="按搜索状态筛选">
+            <button type="button" class="match-chip active" data-avatar-filter="all" role="tab" aria-selected="true">全部 <span class="match-chip-num" data-avatar-count="all">{{len .ImageBackfill.PendingCandidates}}</span></button>
+            <button type="button" class="match-chip" data-avatar-filter="unsearched" role="tab" aria-selected="false">未搜过 <span class="match-chip-num" data-avatar-count="unsearched">{{.ImageBackfill.UnsearchedCount}}</span></button>
+            <button type="button" class="match-chip" data-avatar-filter="queued" role="tab" aria-selected="false">排队 / 搜图中 <span class="match-chip-num" data-avatar-count="queued">{{.ImageBackfill.QueuedCount}}</span></button>
+            <button type="button" class="match-chip" data-avatar-filter="not_found" role="tab" aria-selected="false">已搜无果 <span class="match-chip-num" data-avatar-count="not_found">{{.ImageBackfill.NotFoundCount}}</span></button>
+            <button type="button" class="match-chip" data-avatar-filter="replacement" role="tab" aria-selected="false">新图待对比 <span class="match-chip-num" data-avatar-count="replacement">{{.ImageBackfill.ReplacementCount}}</span></button>
+            <button type="button" class="match-chip" data-avatar-filter="failed" role="tab" aria-selected="false">搜图失败 <span class="match-chip-num" data-avatar-count="failed">{{.ImageBackfill.FailedCount}}</span></button>
+          </div>
+          <div class="avatar-search-wrap">
+            <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search"></use></svg>
+            <input type="search" class="avatar-search-input" data-avatar-search-input placeholder="筛选艺术家名…" aria-label="按艺术家名筛选">
+          </div>
+        </div>
+        <div class="avatar-batch-row">
+          <div class="avatar-select-controls">
+            <label class="avatar-master-check">
+              <input type="checkbox" class="avatar-checkbox" data-avatar-select-master>
+              <span data-avatar-selected-label>已选 0 项</span>
+            </label>
+            <button type="button" class="secondary-button compact-button" data-avatar-select-unsearched>仅选未搜过 (<span data-avatar-unsearched-btn-count>{{.ImageBackfill.UnsearchedCount}}</span>)</button>
+            <button type="button" class="secondary-button compact-button" data-avatar-select-all>全选本页可搜</button>
+            <button type="button" class="match-ghost-btn compact-button" data-avatar-select-clear hidden>取消选择</button>
+          </div>
+          <div class="avatar-batch-actions">
+            <button type="button" class="compact-button" data-avatar-batch-search disabled>
+              <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-globe"></use></svg>
+              <span data-avatar-batch-search-label>加入联网找图队列</span>
+            </button>
+            <form method="post" action="/admin/matches/images/candidates/batch-keep" class="avatar-batch-form" data-avatar-batch-form="keep">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <input type="hidden" name="candidateIds" value="">
+              <button type="submit" class="secondary-button compact-button" data-avatar-batch-keep data-pending-text="保存中…" disabled>批量保留原图</button>
+            </form>
+            <form method="post" action="/admin/matches/images/candidates/batch-clear" class="avatar-batch-form match-inline-confirm-form" data-avatar-batch-form="clear">
+              <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <input type="hidden" name="candidateIds" value="">
+              <button type="submit" class="secondary-button compact-button" data-avatar-batch-clear data-inline-confirm="确认批量清空头像" data-pending-text="清空中…" disabled>批量清空头像</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="match-avatar-grid" data-avatar-grid>
         {{range .ImageBackfill.PendingCandidates}}
-        <article class="match-avatar-card">
+        {{$effState := $.ImageBackfill.CandidateEffectiveState .}}
+        {{$qPos := $.ImageBackfill.QueuePos .ID}}
+        {{$baseState := .WebSearchState}}
+        {{if eq $baseState ""}}{{$baseState = "idle"}}{{end}}
+        <article class="match-avatar-card{{if eq $effState "queued"}} is-queued{{else if eq $effState "running"}} is-running{{else if eq .Kind "replacement"}} is-replacement{{end}}" data-avatar-card data-candidate-id="{{.ID}}" data-artist-name="{{.ArtistName}}" data-candidate-kind="{{.Kind}}" data-search-state="{{$effState}}" data-base-search-state="{{$baseState}}" data-base-search-note="{{.WebSearchNote}}">
           {{if eq .Kind "audit_review"}}
+          <div class="avatar-card-top">
+            <label class="avatar-card-check{{if or (eq $effState "queued") (eq $effState "running")}} is-disabled{{end}}" data-avatar-check-wrap>
+              <input type="checkbox" class="avatar-checkbox" data-avatar-select="{{.ID}}"{{if or (eq $effState "queued") (eq $effState "running")}} disabled{{end}}>
+              <span data-avatar-check-text>{{if or (eq $effState "queued") (eq $effState "running")}}队列锁定{{else}}选择{{end}}</span>
+            </label>
+            <span class="avatar-badge-slot" data-avatar-badge-slot>
+              {{if eq $effState "running"}}
+              <span class="avatar-status-badge badge-running" title="正在联网检索并由 AI 校验新头像"><svg class="icon is-spinning" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-spinner"></use></svg> 搜图中</span>
+              {{else if eq $effState "queued"}}
+              <span class="avatar-status-badge badge-queued" title="已加入手动联网找图队列，当前排队第 {{$qPos}} 位"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-history"></use></svg> 排队中 #{{$qPos}}<button type="button" class="avatar-badge-rm" data-avatar-dequeue="{{.ID}}" aria-label="移出队列" title="移出队列"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-close"></use></svg></button></span>
+              {{else if eq $effState "not_found_auto"}}
+              <span class="avatar-status-badge badge-not-found-auto" title="{{if .WebSearchNote}}{{.WebSearchNote}}{{else}}全量审查已自动联网找图，未找到合适新图{{end}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search-off"></use></svg> 自动已搜无果</span>
+              {{else if eq $effState "not_found_manual"}}
+              <span class="avatar-status-badge badge-not-found-manual" title="{{if .WebSearchNote}}{{.WebSearchNote}}{{else}}手动联网找图未找到更合适的候选头像{{end}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search-off"></use></svg> 手动已搜无果</span>
+              {{else if eq $effState "failed"}}
+              <span class="avatar-status-badge badge-failed" title="{{.WebSearchNote}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg> 搜图失败</span>
+              {{end}}
+            </span>
+          </div>
           <div class="artist-image-candidate-summary">
             <img class="artist-image-candidate-preview" src="{{if .CurrentImageURL}}{{.CurrentImageURL}}{{else}}/admin/matches/images/candidates/{{.ID}}/preview{{end}}" alt="{{.ArtistName}}的当前头像" loading="lazy">
             <div class="match-avatar-meta">
@@ -557,24 +652,47 @@
             </div>
           </div>
           {{if .Reason}}<p class="match-avatar-reason">{{.Reason}}</p>{{end}}
+          <div class="avatar-note-slot" data-avatar-note-slot>
+            {{if eq $effState "not_found_manual"}}
+            <div class="avatar-search-note is-warning"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search-off"></use></svg><span>{{if .WebSearchNote}}{{.WebSearchNote}}{{else}}手动联网找图未找到更合适的候选头像{{end}}</span></div>
+            {{else if eq $effState "not_found_auto"}}
+            <div class="avatar-search-note"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-search-off"></use></svg><span>{{if .WebSearchNote}}{{.WebSearchNote}}{{else}}全量审查已自动联网找图，未找到合适新图{{end}}</span></div>
+            {{else if eq $effState "failed"}}
+            <div class="avatar-search-note is-danger"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg><span>{{if .WebSearchNote}}{{.WebSearchNote}}{{else}}联网搜图失败，可点击重试{{end}}</span></div>
+            {{end}}
+          </div>
           <div class="match-avatar-actions">
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/keep">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
-              <button class="secondary-button compact-button" data-pending-text="保存中…">保留原图</button>
+              <button class="secondary-button compact-button" data-avatar-keep-btn data-pending-text="保存中…"{{if eq $effState "running"}} disabled{{end}}>保留原图</button>
             </form>
-            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/search">
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/search" data-avatar-search-form="{{.ID}}">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
-              <button class="primary-button compact-button" data-pending-text="搜图中…">联网找新图</button>
+              {{if eq $effState "running"}}
+              <button type="button" class="primary-button compact-button" data-avatar-search-btn disabled><svg class="icon is-spinning" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-spinner"></use></svg> 搜图中…</button>
+              {{else if eq $effState "queued"}}
+              <button type="button" class="secondary-button compact-button" data-avatar-search-btn data-avatar-dequeue="{{.ID}}"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-history"></use></svg> 移出队列 (#{{$qPos}})</button>
+              {{else if or (eq $effState "not_found_auto") (eq $effState "not_found_manual") (eq $effState "failed")}}
+              <button type="submit" class="secondary-button compact-button" data-avatar-search-btn data-pending-text="入队中…"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-refresh"></use></svg> 重新搜图</button>
+              {{else}}
+              <button type="submit" class="primary-button compact-button" data-avatar-search-btn data-pending-text="入队中…">联网找新图</button>
+              {{end}}
             </form>
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/clear">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
-              <button class="secondary-button compact-button" data-pending-text="清空中…">清空头像</button>
+              <button class="secondary-button compact-button" data-avatar-clear-btn data-pending-text="清空中…"{{if eq $effState "running"}} disabled{{end}}>清空头像</button>
             </form>
           </div>
           {{else}}
+          <div class="avatar-card-top">
+            <span class="avatar-card-check is-disabled">{{if .CurrentImageURL}}新旧图对比{{else}}新候选图{{end}}</span>
+            <span class="avatar-badge-slot">
+              <span class="avatar-status-badge badge-found"><svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-sparkle"></use></svg> 已找到新图</span>
+            </span>
+          </div>
           <div class="artist-image-candidate-summary">
             {{if .CurrentImageURL}}
             <div class="match-avatar-compare">
@@ -604,6 +722,18 @@
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
               <button class="primary-button compact-button" data-pending-text="采纳中…">{{if .CurrentImageURL}}采纳替换{{else}}采纳并缓存{{end}}</button>
             </form>
+            {{if .CurrentImageURL}}
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/keep">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <button class="secondary-button compact-button" data-pending-text="保存中…">保留原图</button>
+            </form>
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/clear">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <button class="secondary-button compact-button" data-pending-text="清空中…">清空头像</button>
+            </form>
+            {{end}}
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
@@ -613,6 +743,10 @@
           {{end}}
         </article>
         {{end}}
+        <div class="zero-state" data-avatar-filter-empty hidden>
+          <strong>当前筛选条件下没有待审头像</strong>
+          <span>可切换上方状态胶囊或清空关键词查看其余待审项。</span>
+        </div>
       </div>
       {{else}}
       <div class="zero-state">

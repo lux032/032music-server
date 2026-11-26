@@ -1,0 +1,1677 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="032 Music Server 待审头像多选批量联网找图队列与状态标记交互原型">
+  <title>待审头像多选与联网找图队列（交互原型） · 032 Music</title>
+  <style>
+    @font-face {
+      font-family: Inter;
+      src: url('../internal/http/assets/inter-latin.woff2') format('woff2');
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f9;
+      --bg-soft: #f0f0f4;
+      --bg-panel: #ffffff;
+      --surface: #ffffff;
+      --surface-hover: #eaeaf0;
+      --surface-sunken: #e6e6ec;
+      --fill: #e8e8ee;
+      --fill-hover: #dcdce5;
+      --line: #e2e2e9;
+      --line-strong: #cfcfd9;
+      --text: #111113;
+      --text-secondary: #4c4c57;
+      --muted: #6c6c78;
+      --text-on-accent: #ffffff;
+      --text-on-danger: #ffffff;
+      --accent: #5b47e0;
+      --accent-hover: #4a36d0;
+      --accent-active: #3d2db0;
+      --accent-soft: rgba(91, 71, 224, 0.09);
+      --accent-soft-strong: rgba(91, 71, 224, 0.16);
+      --accent-line: rgba(91, 71, 224, 0.36);
+      --accent-strong-text: #4a36d0;
+      --danger: #c42b44;
+      --danger-soft: rgba(196, 43, 68, 0.09);
+      --danger-line: rgba(196, 43, 68, 0.34);
+      --success: #16794c;
+      --success-soft: rgba(22, 121, 76, 0.10);
+      --success-line: rgba(22, 121, 76, 0.34);
+      --warning: #9a5b00;
+      --warning-soft: rgba(154, 91, 0, 0.10);
+      --warning-line: rgba(154, 91, 0, 0.34);
+      --shadow-pop: 0 16px 40px rgba(17, 17, 19, 0.16);
+
+      --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+      --fs-xs: 0.76rem;
+      --fs-sm: 0.85rem;
+      --fs-md: 0.9375rem;
+      --fs-title: 1.72rem;
+      --r-sm: 6px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --r-pill: 999px;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f0f13;
+      --bg-soft: #131319;
+      --bg-panel: #15151b;
+      --surface: #15151b;
+      --surface-hover: #1f1f27;
+      --surface-sunken: #1b1b22;
+      --fill: #1f1f27;
+      --fill-hover: #282833;
+      --line: #24242d;
+      --line-strong: #353542;
+      --text: #f3f2f7;
+      --text-secondary: #a9a7b6;
+      --muted: #828094;
+      --text-on-accent: #120d2e;
+      --text-on-danger: #2a0710;
+      --accent: #8d7dff;
+      --accent-hover: #a194ff;
+      --accent-active: #b6abff;
+      --accent-soft: rgba(141, 125, 255, 0.14);
+      --accent-soft-strong: rgba(141, 125, 255, 0.24);
+      --accent-line: rgba(141, 125, 255, 0.48);
+      --accent-strong-text: #b4aaff;
+      --danger: #ff7a85;
+      --danger-soft: rgba(255, 122, 133, 0.13);
+      --danger-line: rgba(255, 122, 133, 0.38);
+      --success: #5fd38d;
+      --success-soft: rgba(95, 211, 141, 0.13);
+      --success-line: rgba(95, 211, 141, 0.38);
+      --warning: #f2b84b;
+      --warning-soft: rgba(242, 184, 75, 0.13);
+      --warning-line: rgba(242, 184, 75, 0.38);
+      --shadow-pop: 0 18px 44px rgba(0, 0, 0, 0.62);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    ::selection { background: var(--accent-soft-strong); color: var(--text); }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: var(--fs-md);
+      line-height: 1.55;
+      font-synthesis: none;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, p { margin: 0; }
+    a { color: inherit; text-decoration: none; text-underline-offset: 3px; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    input { caret-color: var(--accent); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .icon-sm { width: 13px; height: 13px; }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.84); }
+    }
+    .is-spinning { animation: spin 0.9s linear infinite; }
+    .is-pulsing { animation: pulse-dot 1.4s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      .is-spinning, .is-pulsing { animation: none; }
+    }
+
+    /* ---- Shell ---- */
+    .shell {
+      max-width: 1620px;
+      margin: 0 auto;
+      padding: 20px clamp(16px, 2.4vw, 36px) 84px;
+    }
+
+    /* ---- Prototype Controls Bar ---- */
+    .proto-bar {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
+      margin-bottom: 18px; padding: 9px 14px;
+      border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+      background: var(--bg-soft); font-size: var(--fs-xs); color: var(--text-secondary);
+    }
+    .proto-bar-label { font-weight: 700; color: var(--text); }
+    .proto-sep { width: 1px; height: 16px; background: var(--line-strong); }
+    .proto-mode-group {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px; border-radius: var(--r-pill); background: var(--surface); border: 1px solid var(--line);
+    }
+    .proto-mode-btn {
+      border: 0; border-radius: var(--r-pill); padding: 4px 10px;
+      background: transparent; color: var(--text-secondary);
+      font-size: 0.74rem; font-weight: 600;
+      transition: background 0.16s var(--ease), color 0.16s var(--ease);
+    }
+    .proto-mode-btn:hover { color: var(--text); }
+    .proto-mode-btn.active { background: var(--accent-soft); color: var(--accent-strong-text); }
+    .proto-spacer { flex: 1; }
+
+    /* ---- Buttons (One Violet Rule + Filled Control Rule) ---- */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 0; border-radius: var(--r-pill); padding: 0.46rem 0.9rem;
+      font-size: 0.8rem; font-weight: 600; line-height: 1.2; white-space: nowrap;
+      transition: background 0.15s var(--ease), color 0.15s var(--ease), transform 0.1s var(--ease), opacity 0.15s var(--ease);
+    }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: var(--text-on-accent); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-secondary { background: var(--fill); color: var(--text); }
+    .btn-secondary:hover:not(:disabled) { background: var(--fill-hover); }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover:not(:disabled) { background: var(--fill); color: var(--text); }
+    .btn-danger { background: var(--danger); color: var(--text-on-danger); }
+    .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+    .btn-compact { min-height: 32px; padding: 0.36rem 0.72rem; font-size: var(--fs-xs); }
+
+    /* ---- Page Header ---- */
+    .page-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .page-title h1 { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
+    .page-title p { margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Active Full-Library Run Strip (faithful context from live screenshot) ---- */
+    .run-strip {
+      margin-bottom: 14px; padding: 13px 16px;
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); display: grid; gap: 9px;
+    }
+    .run-strip.is-accent { border-color: var(--accent-line); }
+    .run-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .run-strip-title { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); font-weight: 600; flex-wrap: wrap; }
+    .run-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+    .run-dot.is-done { background: var(--success); }
+    .run-dot.is-stopped { background: var(--warning); }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 9px; border-radius: var(--r-pill);
+      font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+      background: var(--fill); color: var(--text-secondary);
+    }
+    .status-pill.is-running { background: var(--accent-soft); color: var(--accent-strong-text); border: 1px solid var(--accent-line); }
+    .status-pill.is-done { background: var(--success-soft); color: var(--success); border: 1px solid var(--success-line); }
+    .status-pill.is-stopped { background: var(--warning-soft); color: var(--warning); border: 1px solid var(--warning-line); }
+    .progress-track { height: 5px; border-radius: var(--r-pill); background: var(--surface-sunken); overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.25s var(--ease), background 0.2s var(--ease); }
+    .progress-fill.is-done { background: var(--success); }
+    .progress-fill.is-stopped { background: var(--warning); }
+    .run-strip-meta {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap;
+      font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums;
+    }
+    .run-current-line { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+    .run-current-line strong { color: var(--text); font-weight: 600; }
+
+    /* ---- Admin Tabs ---- */
+    .admin-tabs {
+      display: flex; align-items: center; gap: 4px; overflow-x: auto;
+      border-bottom: 1px solid var(--line); margin-bottom: 16px;
+    }
+    .admin-tab {
+      position: relative; display: inline-flex; align-items: center; gap: 7px;
+      border: 0; background: transparent; padding: 10px 14px;
+      color: var(--muted); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap;
+    }
+    .admin-tab:hover { color: var(--text); }
+    .admin-tab.active { color: var(--text); }
+    .admin-tab.active::after {
+      content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
+      height: 2px; border-radius: 2px; background: var(--accent);
+    }
+    .tab-count {
+      min-width: 20px; height: 19px; padding: 0 6px; border-radius: var(--r-pill);
+      background: var(--fill); color: var(--text-secondary);
+      font-size: 0.72rem; font-weight: 700; display: inline-grid; place-items: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .admin-tab.active .tab-count { background: var(--accent-soft); color: var(--accent-strong-text); }
+    .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+    /* ---- Section Hint Bar ---- */
+    .match-section-hint {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap;
+      margin-bottom: 12px; padding: 13px 16px;
+      border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface);
+    }
+    .match-section-hint h2 { font-size: 1rem; font-weight: 700; }
+    .match-section-hint p { margin-top: 3px; font-size: var(--fs-xs); color: var(--muted); }
+    .match-hint-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Manual Search Queue Panel (NEW) ---- */
+    .search-queue-strip {
+      margin-bottom: 12px; padding: 13px 16px;
+      border: 1px solid var(--accent-line); border-radius: var(--r-lg);
+      background: color-mix(in oklab, var(--accent) 5%, var(--surface));
+      display: grid; gap: 9px;
+      transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+    }
+    .search-queue-strip.is-done {
+      border-color: var(--success-line);
+      background: color-mix(in oklab, var(--success) 5%, var(--surface));
+    }
+    .search-queue-strip.is-stopped {
+      border-color: var(--line-strong);
+      background: var(--surface);
+    }
+    .search-queue-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Filter + Batch Selection Toolbar (NEW) ---- */
+    .avatar-workbench-bar {
+      display: grid; gap: 10px;
+      margin-bottom: 14px; padding: 11px 14px;
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface);
+    }
+    .avatar-filter-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap;
+    }
+    .filter-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .match-chip {
+      display: inline-flex; align-items: center; gap: 5px; height: 30px;
+      border: 0; border-radius: var(--r-pill); padding: 0 11px;
+      background: var(--fill); color: var(--text-secondary);
+      font-size: var(--fs-xs); font-weight: 500;
+      transition: background 0.15s var(--ease), color 0.15s var(--ease);
+    }
+    .match-chip:hover { background: var(--fill-hover); color: var(--text); }
+    .match-chip.active { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+    .match-chip-num { opacity: 0.82; font-variant-numeric: tabular-nums; }
+    .search-wrap { position: relative; display: flex; align-items: center; flex: 0 1 240px; min-width: 180px; }
+    .search-wrap .icon { position: absolute; left: 11px; color: var(--muted); pointer-events: none; }
+    .search-input {
+      width: 100%; height: 32px; border: 1px solid transparent; border-radius: var(--r-pill);
+      background: var(--fill); padding: 0 12px 0 32px; font-size: var(--fs-xs); color: var(--text);
+    }
+    .search-input::placeholder { color: var(--text-secondary); opacity: 0.88; }
+    .search-input:hover:not(:focus) { background: var(--fill-hover); }
+    .search-input:focus { background: var(--bg-soft); border-color: var(--accent); outline: none; }
+
+    .avatar-batch-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap;
+      padding-top: 10px; border-top: 1px solid var(--line);
+    }
+    .avatar-select-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .master-check-label {
+      display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+      font-size: var(--fs-xs); font-weight: 600; color: var(--text);
+      padding: 4px 8px 4px 2px; border-radius: var(--r-sm);
+      user-select: none;
+    }
+    .avatar-checkbox {
+      width: 16px; height: 16px; min-width: 16px; margin: 0;
+      accent-color: var(--accent); cursor: pointer;
+    }
+    .avatar-batch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .batch-confirm-group { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* ---- Pending Avatars Grid ---- */
+    .match-avatar-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 296px), 1fr));
+      gap: 14px;
+    }
+    .match-avatar-card {
+      position: relative;
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      background: var(--surface); padding: 14px 15px 15px;
+      display: flex; flex-direction: column; gap: 10px; min-width: 0;
+      transition: border-color 0.16s var(--ease), background 0.16s var(--ease), opacity 0.2s var(--ease), transform 0.2s var(--ease);
+    }
+    .match-avatar-card:hover { border-color: var(--line-strong); }
+    .match-avatar-card.is-selected {
+      border-color: var(--accent);
+      background: color-mix(in oklab, var(--accent) 6%, var(--surface));
+    }
+    .match-avatar-card.is-queued {
+      border-color: var(--accent-line);
+    }
+    .match-avatar-card.is-running {
+      border-color: var(--accent);
+      background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+    }
+    .match-avatar-card.is-replacement {
+      border-color: var(--success-line);
+    }
+    .match-avatar-card.is-leaving {
+      opacity: 0; transform: translateY(-6px) scale(0.985); pointer-events: none;
+    }
+
+    /* Card top utility bar: checkbox + status icon badge */
+    .avatar-card-top {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      min-height: 24px;
+    }
+    .card-check-wrap {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      font-size: 0.72rem; color: var(--muted); user-select: none;
+    }
+    .card-check-wrap:hover { color: var(--text-secondary); }
+    .card-check-wrap.is-disabled { opacity: 0.42; cursor: not-allowed; }
+
+    /* Status icon badges on cards */
+    .card-status-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: var(--r-pill);
+      font-size: 0.71rem; font-weight: 650; line-height: 1.35; white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .badge-queued {
+      background: var(--accent-soft); color: var(--accent-strong-text);
+      border: 1px solid var(--accent-line);
+    }
+    .badge-running {
+      background: var(--accent); color: var(--text-on-accent);
+    }
+    .badge-not-found-auto {
+      background: var(--fill); color: var(--text-secondary);
+      border: 1px solid var(--line-strong);
+    }
+    .badge-not-found-manual {
+      background: var(--warning-soft); color: var(--warning);
+      border: 1px solid var(--warning-line);
+    }
+    .badge-failed {
+      background: var(--danger-soft); color: var(--danger);
+      border: 1px solid var(--danger-line);
+    }
+    .badge-found {
+      background: var(--success-soft); color: var(--success);
+      border: 1px solid var(--success-line);
+    }
+    .badge-unsearched {
+      background: transparent; color: var(--muted);
+      font-weight: 500; padding-right: 2px;
+    }
+    .badge-rm-btn {
+      display: inline-grid; place-items: center;
+      width: 16px; height: 16px; margin-left: 2px; margin-right: -3px; padding: 0;
+      border: 0; border-radius: 50%; background: transparent; color: inherit;
+    }
+    .badge-rm-btn:hover { background: var(--accent-soft-strong); }
+
+    /* Card summary (exact match to production card) */
+    .artist-image-candidate-summary {
+      display: flex; align-items: center; gap: 12px; min-width: 0;
+    }
+    .artist-image-candidate-preview {
+      width: 52px; height: 52px; border-radius: 50%; object-fit: cover; flex: none;
+      border: 1px solid var(--line-strong); background: var(--surface-sunken);
+    }
+    .match-avatar-meta { min-width: 0; flex: 1; display: grid; gap: 3px; }
+    .match-avatar-meta strong {
+      display: block; font-size: 0.92rem; font-weight: 700; color: var(--accent-strong-text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .match-avatar-meta small {
+      display: block; font-size: var(--fs-xs); color: var(--muted); line-height: 1.4;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Comparison layout when a replacement candidate is found */
+    .match-avatar-compare {
+      display: inline-flex; align-items: center; gap: 7px; flex: none;
+    }
+    .match-avatar-compare-item { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .match-avatar-compare-item .artist-image-candidate-preview { width: 48px; height: 48px; }
+    .match-avatar-compare-item figcaption { font-size: 0.68rem; color: var(--muted); }
+    .match-avatar-compare-arrow { color: var(--muted); font-size: var(--fs-sm); margin-bottom: 14px; }
+
+    .match-avatar-reason {
+      margin: 0; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.52; flex: 1;
+    }
+    .avatar-search-note {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 9px; border-radius: var(--r-sm);
+      background: var(--bg-soft); border: 1px solid var(--line);
+      font-size: 0.72rem; color: var(--muted); line-height: 1.4;
+    }
+    .avatar-search-note.is-warning {
+      background: var(--warning-soft); border-color: var(--warning-line); color: var(--warning);
+    }
+    .avatar-search-note.is-danger {
+      background: var(--danger-soft); border-color: var(--danger-line); color: var(--danger);
+    }
+    .match-avatar-url {
+      margin: 0; font-size: 0.73rem; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .match-avatar-url a { color: var(--accent-strong-text); text-decoration: underline; }
+
+    .match-avatar-actions {
+      display: flex; gap: 7px; padding-top: 9px; border-top: 1px solid var(--line);
+    }
+    .match-avatar-actions .btn { flex: 1; min-width: 0; padding-left: 8px; padding-right: 8px; }
+
+    /* ---- Zero State ---- */
+    .zero-state {
+      grid-column: 1 / -1;
+      padding: 36px 20px; text-align: center;
+      border: 1px dashed var(--line-strong); border-radius: var(--r-lg);
+      background: var(--surface); display: grid; gap: 6px; justify-items: center;
+    }
+    .zero-state strong { font-size: 0.94rem; }
+    .zero-state span { font-size: var(--fs-xs); color: var(--muted); max-width: 52ch; }
+
+    /* ---- Toast ---- */
+    .toast-host {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      z-index: 80; pointer-events: none; max-width: calc(100vw - 32px);
+    }
+    .toast {
+      pointer-events: auto; display: inline-flex; align-items: center; gap: 10px;
+      padding: 10px 16px; border-radius: var(--r-pill);
+      background: var(--text); color: var(--bg);
+      font-size: var(--fs-xs); font-weight: 600; box-shadow: var(--shadow-pop);
+      opacity: 0; transform: translateY(10px);
+      transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+    }
+    .toast.is-open { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 720px) {
+      .avatar-batch-row { align-items: stretch; }
+      .avatar-batch-actions { width: 100%; }
+      .avatar-batch-actions .btn { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Inline SVG Sprite (single consistent 1.85px stroke family) -->
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="m20 20-3.5-3.5"></path>
+    </symbol>
+    <symbol id="i-search-off" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="m20 20-3.5-3.5"></path>
+      <path d="M8.5 8.5 13.5 13.5"></path>
+    </symbol>
+    <symbol id="i-queue" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M12 7v5l3 2"></path>
+    </symbol>
+    <symbol id="i-spinner" viewBox="0 0 24 24">
+      <path d="M21 12a9 9 0 1 1-3.2-6.9"></path>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <path d="M20 6 9 17l-5-5"></path>
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M12 8v5"></path>
+      <circle cx="12" cy="16.5" r="0.6" fill="currentColor"></circle>
+    </symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M3.6 9h16.8M3.6 15h16.8"></path>
+      <path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path>
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 24 24">
+      <path d="M18 6 6 18M6 6l12 12"></path>
+    </symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24">
+      <path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6-5.6-1.9 5.6-1.9z"></path>
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M20 11a8 8 0 1 0 2 5.3"></path>
+      <path d="M20 4v7h-7"></path>
+    </symbol>
+  </svg>
+
+  <main class="shell">
+    <!-- Prototype Controls Bar -->
+    <div class="proto-bar" role="region" aria-label="原型演示控制栏">
+      <span class="proto-bar-label">交互原型预览</span>
+      <span class="proto-sep" aria-hidden="true"></span>
+      <span>预设场景：</span>
+      <div class="proto-mode-group" role="group" aria-label="切换预设场景">
+        <button type="button" class="proto-mode-btn active" data-preset="live">1. 对应当前截图（17 位）</button>
+        <button type="button" class="proto-mode-btn" data-preset="running">2. 批量队列运行中</button>
+        <button type="button" class="proto-mode-btn" data-preset="all-states">3. 全部状态总览</button>
+      </div>
+      <span class="proto-sep" aria-hidden="true"></span>
+      <span>模拟速度：</span>
+      <div class="proto-mode-group" role="group" aria-label="切换模拟速度">
+        <button type="button" class="proto-mode-btn active" data-speed="1600">正常 1.6s</button>
+        <button type="button" class="proto-mode-btn" data-speed="650">快速 0.65s</button>
+      </div>
+      <span class="proto-spacer"></span>
+      <button type="button" class="btn btn-secondary btn-compact" id="toggle-theme">切换浅色主题</button>
+      <button type="button" class="btn btn-ghost btn-compact" id="reset-demo">重置演示</button>
+    </div>
+
+    <!-- Page Header -->
+    <header class="page-header">
+      <div class="page-title">
+        <h1>艺术家与身份审核</h1>
+        <p>以 MusicBrainz / Last.fm 为来源扫描艺术家身份，低于自动确认阈值的候选在这里人工审核。</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn btn-primary btn-compact" disabled>扫描未检查的艺术家</button>
+        <button type="button" class="btn btn-secondary btn-compact" disabled>全局补全扫描</button>
+        <button type="button" class="btn btn-secondary btn-compact" disabled>AI 预审</button>
+      </div>
+    </header>
+
+    <!-- Active Full-Library Run Strip (Background Context) -->
+    <section class="run-strip" aria-label="后台全量头像补全任务">
+      <div class="run-strip-head">
+        <div class="run-strip-title">
+          <span class="run-dot is-pulsing" aria-hidden="true"></span>
+          <span>头像补全任务 #13 · 全量 AI 审查与替换</span>
+          <span class="status-pill is-running">进行中</span>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn btn-secondary btn-compact" disabled>暂停</button>
+          <button type="button" class="btn btn-secondary btn-compact" disabled>停止</button>
+        </div>
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width: 4.3%"></div></div>
+      <div class="run-strip-meta">
+        <span>处理 201 / 4669 · 已缓存 3 · 已保留 95 · 已替换 10 · 已清理 8 · 无地址 34 · 跳过 0 · 失败 0 · 送审 51</span>
+        <span class="run-current-line">当前：<strong>HoneyWorks</strong></span>
+      </div>
+    </section>
+
+    <!-- Admin Tabs -->
+    <nav class="admin-tabs" aria-label="艺术家审核分栏">
+      <button type="button" class="admin-tab">待审身份 <span class="tab-count">0</span></button>
+      <button type="button" class="admin-tab">复合署名 <span class="tab-count">0</span></button>
+      <button type="button" class="admin-tab active" aria-current="page">待审头像 <span class="tab-count" id="tab-avatar-count">17</span></button>
+      <button type="button" class="admin-tab">中文别名补全</button>
+      <button type="button" class="admin-tab">合并历史与回退</button>
+      <button type="button" class="admin-tab">任务与补全 <span class="tab-dot" aria-hidden="true"></span></button>
+    </nav>
+
+    <!-- Tab 3: 待审头像 -->
+    <section aria-label="待审核候选头像">
+      <div class="match-section-hint">
+        <div>
+          <h2>待审核候选头像（<span id="section-avatar-count" class="tabular">17</span>）</h2>
+          <p class="tabular">已确认身份的艺术家 4234 位 · 本地有效头像 2505 · 待补 1729。高置信度头像自动入库，需人工复核的候选列于此。</p>
+        </div>
+        <div class="match-hint-actions">
+          <button type="button" class="btn btn-secondary btn-compact">图源与 AI 设置</button>
+          <button type="button" class="btn btn-secondary btn-compact">启动头像补全 →</button>
+        </div>
+      </div>
+
+      <!-- Manual Web Search Queue Progress Strip (appears when active or recently finished) -->
+      <div class="search-queue-strip" id="queue-strip" hidden role="status" aria-live="polite">
+        <div class="run-strip-head">
+          <div class="run-strip-title">
+            <span class="run-dot" id="queue-dot" aria-hidden="true"></span>
+            <span>手动联网找新图队列</span>
+            <span class="status-pill is-running" id="queue-status-pill">进行中</span>
+          </div>
+          <div class="search-queue-actions" id="queue-actions"></div>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="queue-progress-fill" style="width: 0%"></div>
+        </div>
+        <div class="run-strip-meta">
+          <span id="queue-counts">进度 0 / 0</span>
+          <span class="run-current-line" id="queue-current"></span>
+        </div>
+      </div>
+
+      <!-- Filter Chips + Multi-Select & Batch Action Bar -->
+      <div class="avatar-workbench-bar">
+        <div class="avatar-filter-row">
+          <div class="filter-chips" id="filter-chips" role="tablist" aria-label="按搜索状态筛选"></div>
+          <div class="search-wrap">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input type="search" class="search-input" id="artist-search" placeholder="筛选艺术家名…" aria-label="按艺术家名筛选">
+          </div>
+        </div>
+
+        <div class="avatar-batch-row">
+          <div class="avatar-select-controls">
+            <label class="master-check-label">
+              <input type="checkbox" class="avatar-checkbox" id="master-checkbox">
+              <span id="selected-label" class="tabular">已选 0 项</span>
+            </label>
+            <button type="button" class="btn btn-secondary btn-compact" id="btn-select-unsearched">
+              仅选未搜过 (<span id="unsearched-count" class="tabular">0</span>)
+            </button>
+            <button type="button" class="btn btn-secondary btn-compact" id="btn-select-all">全选本页可搜</button>
+            <button type="button" class="btn btn-ghost btn-compact" id="btn-clear-select" hidden>取消选择</button>
+          </div>
+
+          <div class="avatar-batch-actions">
+            <button type="button" class="btn btn-primary btn-compact" id="btn-batch-search" disabled>
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-globe"></use></svg>
+              <span id="batch-search-label">加入联网找图队列</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-compact" id="btn-batch-keep" disabled>批量保留原图</button>
+            <span class="batch-confirm-group" id="batch-clear-group">
+              <button type="button" class="btn btn-secondary btn-compact" id="btn-batch-clear" disabled>批量清空头像</button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pending Avatar Cards Grid -->
+      <div class="match-avatar-grid" id="avatar-grid"></div>
+    </section>
+  </main>
+
+  <div class="toast-host" aria-live="polite">
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // Offline crisp SVG thumbnails: album-cover style (old) vs portrait style (new candidate)
+      function makeCoverSVG(label, bg1, bg2, accent) {
+        const safe = label.slice(0, 4).replace(/[<>&"]/g, '');
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+          <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bg1}"/><stop offset="100%" stop-color="${bg2}"/></linearGradient></defs>
+          <rect width="96" height="96" fill="url(#g)"/>
+          <rect x="10" y="10" width="76" height="76" rx="4" fill="none" stroke="${accent}" stroke-opacity="0.55" stroke-width="2"/>
+          <rect x="14" y="58" width="68" height="22" rx="3" fill="#000" fill-opacity="0.52"/>
+          <text x="48" y="73" text-anchor="middle" fill="#fff" font-size="11" font-family="sans-serif" font-weight="700">${safe}</text>
+          <circle cx="48" cy="36" r="14" fill="${accent}" fill-opacity="0.35"/>
+          <path d="M39 42 L48 25 L57 42 Z" fill="${accent}" fill-opacity="0.85"/>
+        </svg>`;
+        return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      }
+
+      function makePortraitSVG(bg, tone, hair) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+          <rect width="96" height="96" fill="${bg}"/>
+          <circle cx="48" cy="37" r="17" fill="${tone}"/>
+          <path d="M31 35 C31 19 65 19 65 35 C63 26 33 26 31 35 Z" fill="${hair}"/>
+          <path d="M21 88 C24 64 36 58 48 58 C60 58 72 64 75 88 Z" fill="${hair}" fill-opacity="0.9"/>
+          <circle cx="42" cy="37" r="1.8" fill="#1e1c26"/><circle cx="54" cy="37" r="1.8" fill="#1e1c26"/>
+        </svg>`;
+        return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      }
+
+      const BASE_CARDS = [
+        {
+          id: 101, artistId: 1001, name: '柊キライ', issue: '专辑封面', conf: 72, size: '300×300',
+          reason: '这是带有明显封面式构图的动漫插画，未能确认是柊キライ的本人肖像或官方艺人头像；更像作品封面，建议人工复核。',
+          oldImg: makeCoverSVG('KIRAI', '#2c1f35', '#15121d', '#f0748b'),
+          newImg: makePortraitSVG('#232036', '#f2d5c4', '#2a223d'),
+          searchState: 'idle', searchNote: '', searchTime: '',
+          simOutcome: 'found', simSource: 'ai_web', simPage: 'https://www.youtube.com/@hiiragikirai',
+          simNewReason: '匹配 YouTube 官方音乐人频道头像，画质清晰（800×800），VLM 质检通过（91%）。'
+        },
+        {
+          id: 102, artistId: 1002, name: '伊根', issue: '专辑封面', conf: 96, size: '300×300',
+          reason: '这是带有设计图案与文字标识的方形封面图，并非艺术家肖像或团体形象。',
+          oldImg: makeCoverSVG('INE', '#2c2b30', '#18181d', '#d8d8e6'),
+          newImg: makePortraitSVG('#1f2633', '#edd3c2', '#1d222b'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:11',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 103, artistId: 1003, name: 'MARETU', issue: '专辑封面', conf: 98, size: '300×300',
+          reason: '这是带有专辑标题文字与封面设计的作品封面，并非 MARETU 的艺人头像。',
+          oldImg: makeCoverSVG('MARETU', '#a31621', '#38090e', '#ffccd2'),
+          newImg: makePortraitSVG('#221a24', '#ece8f0', '#16141a'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:11',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 104, artistId: 1004, name: 'てにをは', issue: '专辑封面', conf: 72, size: '300×300',
+          reason: '青髪キャラクターのイラストで、作家本人の肖像や公式アーティスト写真とは確認できず、作品ジャケット画像の可能性が高いです。',
+          oldImg: makeCoverSVG('TENI', '#17375e', '#101d30', '#69c0ff'),
+          newImg: makePortraitSVG('#1c2a3a', '#f3dac8', '#253952'),
+          searchState: 'idle', searchNote: '', searchTime: '',
+          simOutcome: 'found', simSource: 'ai_web', simPage: 'https://open.spotify.com/artist/teniwoha',
+          simNewReason: '匹配 Spotify 官方音乐人主页头像，确认为てにをは官方形象（640×640，置信度 88%）。'
+        },
+        {
+          id: 105, artistId: 1005, name: '煮ル果実', issue: '专辑封面', conf: 72, size: '320×320',
+          reason: '方形超现实插画更像作品封面，而非可辨认的艺人肖像或官方角色视觉图。',
+          oldImg: makeCoverSVG('NIL', '#25363a', '#141a1d', '#76d6c7'),
+          newImg: makePortraitSVG('#232531', '#efd4c2', '#31263d'),
+          searchState: 'idle', searchNote: '', searchTime: '',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 106, artistId: 1006, name: 'Benjamin Frnkln', issue: '专辑封面', conf: 99, size: '300×300',
+          reason: '图片是法语理财书籍封面，并非艺人头像或团体形象。',
+          oldImg: makeCoverSVG('BOOK', '#3b372c', '#1c1a15', '#e4d5a8'),
+          newImg: makePortraitSVG('#242228', '#d9b59c', '#201c1a'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:12',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 107, artistId: 1007, name: 'NiiNo', issue: '专辑封面', conf: 99, size: '1000×1000',
+          reason: '图片是标有“MOGUAI & NIINO”及曲名“SPICES”的发行封面，不是艺人头像。',
+          oldImg: makeCoverSVG('SPICE', '#7a1919', '#290b0b', '#ff8e72'),
+          newImg: makePortraitSVG('#241f2d', '#e5c1a8', '#211c28'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:12',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 108, artistId: 1008, name: 'Ayako', issue: '专辑封面', conf: 98, size: '1000×1000',
+          reason: '图片带有“MEET Ayako”等封面式文字排版，属于宣传/封面图而非干净的艺人头像。',
+          oldImg: makeCoverSVG('MEET', '#4f4c24', '#1f1f14', '#e5df7e'),
+          newImg: makePortraitSVG('#272330', '#f4d9c9', '#382a2e'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:12',
+          simOutcome: 'found', simSource: 'ai_web', simPage: 'https://music.apple.com/artist/ayako',
+          simNewReason: '重新检索命中 Apple Music 音乐人肖像（600×600），面部清晰无文字叠加。'
+        },
+        {
+          id: 109, artistId: 1009, name: 'ELEMENTAS', issue: '画质/构图欠佳', conf: 76, size: '100×133',
+          reason: '图片尺寸很小且人物面部模糊难以辨认，作为艺人头像可读性较差。',
+          oldImg: makeCoverSVG('100px', '#163847', '#0e1d26', '#67d1e8'),
+          newImg: makePortraitSVG('#1b2a34', '#edd2bf', '#1f2530'),
+          searchState: 'idle', searchNote: '', searchTime: '',
+          simOutcome: 'found', simSource: 'ai_web', simPage: 'https://vgmdb.net/artist/elementas',
+          simNewReason: '匹配 VGMdb 作曲家主页高清人物照（640×640），清晰度大幅提升。'
+        },
+        {
+          id: 110, artistId: 1010, name: 'あきやまうに', issue: '疑似非本人', conf: 62, size: '240×240',
+          reason: '图片是紫发动漫角色头像，未见其与音乐人あきやまうに存在明确关联；不像本人肖像或官方艺人视觉图。',
+          oldImg: makeCoverSVG('UNI', '#38215c', '#181226', '#c59bff'),
+          newImg: makePortraitSVG('#221f33', '#f2d9c9', '#3a2d4f'),
+          searchState: 'idle', searchNote: '', searchTime: '',
+          simOutcome: 'failed', simError: 'Tavily 抓取来源页超时（10s），可重试'
+        },
+        {
+          id: 111, artistId: 1011, name: 'Syrufit', issue: '专辑封面', conf: 94, size: '300×300',
+          reason: '这是带有装饰性文字的动漫风格发行封面图，而非艺术家头像或团体形象。',
+          oldImg: makeCoverSVG('SYRU', '#291c3d', '#14111f', '#b490ff'),
+          newImg: makePortraitSVG('#231e30', '#ebd0bf', '#272038'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:13',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 112, artistId: 1012, name: 'mirto', issue: '专辑封面', conf: 97, size: '300×300',
+          reason: '图片明显是带有歌曲标题与制作信息的封面图，不是艺人头像。',
+          oldImg: makeCoverSVG('MIRTO', '#1b3b2c', '#0e1d16', '#72d9a8'),
+          newImg: makePortraitSVG('#1c2a24', '#edd2be', '#25332b'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:13',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 113, artistId: 1013, name: 'Kuroa*', issue: '专辑封面', conf: 98, size: '300×300',
+          reason: '图片明显是带有标题文字的专辑封面插画，并非艺人头像。',
+          oldImg: makeCoverSVG('KUROA', '#4b2a2f', '#1c1215', '#ff9db0'),
+          newImg: makePortraitSVG('#2a2026', '#f5dccb', '#3b242c'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:13',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 114, artistId: 1014, name: 'リズナ', issue: '专辑封面', conf: 98, size: '300×300',
+          reason: '图片明显是带有“Best Part”标题的专辑封面设计，并非艺人リズナ的肖像或官方形象。',
+          oldImg: makeCoverSVG('BEST', '#473026', '#1c1512', '#f7b288'),
+          newImg: makePortraitSVG('#2b2320', '#f3d8c6', '#3a2b24'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:13',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 115, artistId: 1015, name: 'Last Note.', issue: '专辑封面', conf: 97, size: '300×300',
+          reason: '图片明显是带有专辑文字的插画封面，并非艺术家头像。',
+          oldImg: makeCoverSVG('LAST', '#4f381b', '#1f180e', '#f5c76b'),
+          newImg: makePortraitSVG('#2a241d', '#efd4c0', '#382c20'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:13',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 116, artistId: 1016, name: 'トーマ', issue: '专辑封面', conf: 76, size: '256×256',
+          reason: '这是一幅黑白风格插画，像专辑封面图，不是可辨认的艺人肖像或团体形象。',
+          oldImg: makeCoverSVG('TOHMA', '#2f2f36', '#17171b', '#d0d0dc'),
+          newImg: makePortraitSVG('#24242b', '#ead1c2', '#1c1c22'),
+          searchState: 'idle', searchNote: '', searchTime: '',
+          simOutcome: 'not_found'
+        },
+        {
+          id: 117, artistId: 1017, name: 'n-buna', issue: '专辑封面', conf: 94, size: '300×267',
+          reason: '图片明显是带有插画与文字排版的专辑封面，并非 n-buna 的艺术家头像。',
+          oldImg: makeCoverSVG('NBUNA', '#26324d', '#121826', '#9ab4ff'),
+          newImg: makePortraitSVG('#1f2636', '#f2d9c9', '#252f42'),
+          searchState: 'not_found_auto', searchNote: '全量审查任务 #13 已自动联网找图，未找到合适新图', searchTime: '09:14',
+          simOutcome: 'found', simSource: 'ai_web', simPage: 'https://yorushika.com/profile',
+          simNewReason: '匹配官方资料页人像图（640×640），VLM 确认是清晰艺术家肖像。'
+        }
+      ];
+
+      let cards = [];
+      let selectedIds = new Set();
+      let activeFilter = 'all';
+      let searchQuery = '';
+      let simSpeedMs = 1600;
+      let batchClearArmed = false;
+
+      // Simulated backend manual search queue state
+      const queue = {
+        status: 'idle', // idle | running | completed | stopped
+        pendingIds: [],
+        currentId: null,
+        total: 0,
+        completed: 0,
+        found: 0,
+        notFound: 0,
+        failed: 0,
+        timer: null
+      };
+
+      let toastTimer = null;
+      function showToast(msg) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.classList.add('is-open');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => el.classList.remove('is-open'), 2800);
+      }
+
+      function nowHHMM() {
+        const d = new Date();
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      }
+
+      function cloneCards() {
+        return BASE_CARDS.map((c) => ({ ...c, kind: 'audit_review' }));
+      }
+
+      function clearQueueTimer() {
+        if (queue.timer) {
+          clearTimeout(queue.timer);
+          queue.timer = null;
+        }
+      }
+
+      function resetQueue() {
+        clearQueueTimer();
+        queue.status = 'idle';
+        queue.pendingIds = [];
+        queue.currentId = null;
+        queue.total = 0;
+        queue.completed = 0;
+        queue.found = 0;
+        queue.notFound = 0;
+        queue.failed = 0;
+      }
+
+      function cardById(id) {
+        return cards.find((c) => c.id === id);
+      }
+
+      function isCardInQueue(card) {
+        return card.searchState === 'queued' || card.searchState === 'running';
+      }
+
+      function isCardSelectable(card) {
+        return card.kind === 'audit_review' && !isCardInQueue(card);
+      }
+
+      function matchesFilter(card) {
+        if (searchQuery && !card.name.toLowerCase().includes(searchQuery)) return false;
+        switch (activeFilter) {
+          case 'unsearched':
+            return card.kind === 'audit_review' && card.searchState === 'idle';
+          case 'queued':
+            return card.kind === 'audit_review' && (card.searchState === 'queued' || card.searchState === 'running');
+          case 'not_found':
+            return card.kind === 'audit_review' && (card.searchState === 'not_found_auto' || card.searchState === 'not_found_manual');
+          case 'replacement':
+            return card.kind === 'replacement';
+          case 'failed':
+            return card.kind === 'audit_review' && card.searchState === 'failed';
+          default:
+            return true;
+        }
+      }
+
+      function filterCounts() {
+        const counts = { all: cards.length, unsearched: 0, queued: 0, not_found: 0, replacement: 0, failed: 0 };
+        for (const c of cards) {
+          if (c.kind === 'replacement') { counts.replacement++; continue; }
+          if (c.searchState === 'idle') counts.unsearched++;
+          else if (c.searchState === 'queued' || c.searchState === 'running') counts.queued++;
+          else if (c.searchState === 'not_found_auto' || c.searchState === 'not_found_manual') counts.not_found++;
+          else if (c.searchState === 'failed') counts.failed++;
+        }
+        return counts;
+      }
+
+      function queueIndexOf(cardId) {
+        if (queue.currentId === cardId) return 1;
+        const idx = queue.pendingIds.indexOf(cardId);
+        if (idx === -1) return 0;
+        return (queue.currentId ? 2 : 1) + idx;
+      }
+
+      function enqueueCards(ids) {
+        const added = [];
+        for (const id of ids) {
+          const c = cardById(id);
+          if (!c || c.kind !== 'audit_review' || isCardInQueue(c)) continue;
+          c.searchState = 'queued';
+          c.searchNote = '';
+          queue.pendingIds.push(id);
+          selectedIds.delete(id);
+          added.push(c);
+        }
+        if (added.length === 0) return;
+
+        if (queue.status === 'running') {
+          queue.total += added.length;
+          showToast(`已追加 ${added.length} 位艺术家到找图队列末尾`);
+        } else {
+          queue.status = 'running';
+          queue.total = added.length;
+          queue.completed = 0;
+          queue.found = 0;
+          queue.notFound = 0;
+          queue.failed = 0;
+          showToast(added.length === 1
+            ? `已将「${added[0].name}」加入联网找图队列`
+            : `已将 ${added.length} 位艺术家加入联网找图队列`);
+        }
+        batchClearArmed = false;
+        render();
+        pumpQueue();
+      }
+
+      function removeFromQueue(cardId) {
+        const idx = queue.pendingIds.indexOf(cardId);
+        if (idx === -1) return;
+        queue.pendingIds.splice(idx, 1);
+        queue.total = Math.max(queue.completed + (queue.currentId ? 1 : 0) + queue.pendingIds.length, 0);
+        const c = cardById(cardId);
+        if (c && c.searchState === 'queued') {
+          c.searchState = c.prevStateBeforeQueue || 'idle';
+        }
+        showToast(`已将「${c ? c.name : ''}」移出排队`);
+        render();
+      }
+
+      function stopQueue() {
+        if (queue.status !== 'running') return;
+        for (const id of queue.pendingIds) {
+          const c = cardById(id);
+          if (c && c.searchState === 'queued') {
+            c.searchState = c.prevStateBeforeQueue || 'idle';
+          }
+        }
+        const dropped = queue.pendingIds.length;
+        queue.pendingIds = [];
+        queue.total = queue.completed + (queue.currentId ? 1 : 0);
+        if (!queue.currentId) {
+          queue.status = 'stopped';
+        } else {
+          // Let current item finish, then mark stopped
+          queue.stopAfterCurrent = true;
+        }
+        showToast(dropped > 0 ? `已取消剩余 ${dropped} 项排队，当前项完成后停止` : '正在停止队列…');
+        render();
+      }
+
+      function pumpQueue() {
+        if (queue.currentId !== null || queue.status !== 'running') return;
+        if (queue.pendingIds.length === 0) {
+          queue.status = queue.stopAfterCurrent ? 'stopped' : 'completed';
+          queue.stopAfterCurrent = false;
+          render();
+          if (queue.found > 0) {
+            showToast(`找图队列完成：找到 ${queue.found} 张新候选图，无结果 ${queue.notFound} 位`);
+          } else {
+            showToast(`找图队列完成：无结果 ${queue.notFound} 位，失败 ${queue.failed} 位`);
+          }
+          return;
+        }
+        const nextId = queue.pendingIds.shift();
+        const card = cardById(nextId);
+        if (!card || card.kind !== 'audit_review') {
+          pumpQueue();
+          return;
+        }
+        queue.currentId = nextId;
+        card.searchState = 'running';
+        render();
+
+        clearQueueTimer();
+        queue.timer = setTimeout(() => {
+          const current = cardById(nextId);
+          queue.currentId = null;
+          queue.completed++;
+          if (current && current.kind === 'audit_review') {
+            const t = nowHHMM();
+            if (current.simOutcome === 'found') {
+              current.kind = 'replacement';
+              current.searchState = 'found';
+              current.searchTime = t;
+              current.searchNote = `${t} 手动联网已找到新候选头像`;
+              queue.found++;
+            } else if (current.simOutcome === 'failed') {
+              current.searchState = 'failed';
+              current.searchTime = t;
+              current.searchNote = current.simError || '联网请求超时，可重试';
+              queue.failed++;
+            } else {
+              current.searchState = 'not_found_manual';
+              current.searchTime = t;
+              current.searchNote = `${t} 手动联网找图未找到更合适的候选头像`;
+              queue.notFound++;
+            }
+          }
+          if (queue.stopAfterCurrent) {
+            queue.stopAfterCurrent = false;
+            queue.status = 'stopped';
+            render();
+            showToast('队列已停止');
+            return;
+          }
+          render();
+          pumpQueue();
+        }, simSpeedMs);
+      }
+
+      function resolveCard(cardId, actionText) {
+        const card = cardById(cardId);
+        if (!card) return;
+        const el = document.querySelector(`[data-card-id="${cardId}"]`);
+        selectedIds.delete(cardId);
+        if (el) el.classList.add('is-leaving');
+        setTimeout(() => {
+          cards = cards.filter((c) => c.id !== cardId);
+          render();
+          showToast(actionText);
+        }, 160);
+      }
+
+      function resolveBatch(ids, actionLabel) {
+        const idSet = new Set(ids);
+        let count = 0;
+        for (const id of ids) {
+          const c = cardById(id);
+          if (c && isCardSelectable(c)) count++;
+        }
+        if (count === 0) return;
+        cards = cards.filter((c) => !idSet.has(c.id));
+        selectedIds.clear();
+        batchClearArmed = false;
+        render();
+        showToast(`${actionLabel} ${count} 位艺术家（支持在「任务与补全」一键撤销）`);
+      }
+
+      // ---- Rendering ----
+      function renderQueueStrip() {
+        const strip = document.getElementById('queue-strip');
+        if (queue.status === 'idle') {
+          strip.hidden = true;
+          return;
+        }
+        strip.hidden = false;
+        strip.classList.toggle('is-done', queue.status === 'completed');
+        strip.classList.toggle('is-stopped', queue.status === 'stopped');
+
+        const dot = document.getElementById('queue-dot');
+        dot.className = 'run-dot' + (queue.status === 'running' ? ' is-pulsing' : queue.status === 'completed' ? ' is-done' : ' is-stopped');
+
+        const pill = document.getElementById('queue-status-pill');
+        pill.className = 'status-pill ' + (queue.status === 'running' ? 'is-running' : queue.status === 'completed' ? 'is-done' : 'is-stopped');
+        pill.textContent = queue.status === 'running' ? '进行中' : queue.status === 'completed' ? '已完成' : '已停止';
+
+        const pct = queue.total > 0 ? Math.min(100, Math.round((queue.completed / queue.total) * 100)) : 0;
+        const fill = document.getElementById('queue-progress-fill');
+        fill.style.width = `${pct}%`;
+        fill.className = 'progress-fill' + (queue.status === 'completed' ? ' is-done' : queue.status === 'stopped' ? ' is-stopped' : '');
+
+        const waiting = queue.pendingIds.length;
+        const countsEl = document.getElementById('queue-counts');
+        countsEl.textContent = `进度 ${queue.completed} / ${queue.total}${waiting > 0 ? ` · 排队中 ${waiting}` : ''} · 找到新图 ${queue.found} · 无结果 ${queue.notFound} · 失败 ${queue.failed}`;
+
+        const curEl = document.getElementById('queue-current');
+        if (queue.currentId) {
+          const cur = cardById(queue.currentId);
+          curEl.innerHTML = `<svg class="icon icon-sm is-spinning" aria-hidden="true"><use href="#i-spinner"></use></svg> 正在搜图：<strong>${escapeHTML(cur ? cur.name : '')}</strong>`;
+        } else if (queue.status === 'completed') {
+          curEl.textContent = queue.found > 0 ? '新候选已原地转为对比卡，可直接采纳' : '本批搜索已完成，无结果卡片已添加标记';
+        } else {
+          curEl.textContent = '已停止剩余排队项';
+        }
+
+        const actionsEl = document.getElementById('queue-actions');
+        if (queue.status === 'running') {
+          actionsEl.innerHTML = `<button type="button" class="btn btn-secondary btn-compact" data-queue-stop>停止队列</button>`;
+        } else {
+          const jumpBtn = queue.found > 0
+            ? `<button type="button" class="btn btn-primary btn-compact" data-jump-filter="replacement">查看新图对比 (${queue.found})</button>`
+            : '';
+          actionsEl.innerHTML = `${jumpBtn}<button type="button" class="btn btn-ghost btn-compact" data-queue-dismiss>收起</button>`;
+        }
+      }
+
+      function renderFilterChips() {
+        const counts = filterCounts();
+        const defs = [
+          ['all', '全部', counts.all],
+          ['unsearched', '未搜过', counts.unsearched],
+          ['queued', '排队 / 搜图中', counts.queued],
+          ['not_found', '已搜无果', counts.not_found],
+          ['replacement', '新图待对比', counts.replacement],
+          ['failed', '搜图失败', counts.failed]
+        ];
+        const wrap = document.getElementById('filter-chips');
+        wrap.innerHTML = defs.map(([key, label, num]) => {
+          const active = activeFilter === key ? ' active' : '';
+          return `<button type="button" class="match-chip${active}" data-filter="${key}" role="tab" aria-selected="${activeFilter === key}">
+            ${label} <span class="match-chip-num">${num}</span>
+          </button>`;
+        }).join('');
+
+        document.getElementById('tab-avatar-count').textContent = String(counts.all);
+        document.getElementById('section-avatar-count').textContent = String(counts.all);
+        document.getElementById('unsearched-count').textContent = String(counts.unsearched);
+      }
+
+      function renderBatchBar(visibleCards) {
+        const selectableVisible = visibleCards.filter(isCardSelectable);
+        // Drop any selected IDs that are no longer selectable
+        for (const id of Array.from(selectedIds)) {
+          const c = cardById(id);
+          if (!c || !isCardSelectable(c)) selectedIds.delete(id);
+        }
+        const selectedCount = selectedIds.size;
+        const visibleSelectedCount = selectableVisible.filter((c) => selectedIds.has(c.id)).length;
+
+        const master = document.getElementById('master-checkbox');
+        master.disabled = selectableVisible.length === 0;
+        master.checked = selectableVisible.length > 0 && visibleSelectedCount === selectableVisible.length;
+        master.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < selectableVisible.length;
+
+        document.getElementById('selected-label').textContent = `已选 ${selectedCount} 项`;
+        document.getElementById('btn-clear-select').hidden = selectedCount === 0;
+
+        const unsearchedVisible = visibleCards.filter((c) => c.kind === 'audit_review' && c.searchState === 'idle');
+        document.getElementById('btn-select-unsearched').disabled = unsearchedVisible.length === 0;
+        document.getElementById('btn-select-all').disabled = selectableVisible.length === 0;
+
+        const searchBtn = document.getElementById('btn-batch-search');
+        searchBtn.disabled = selectedCount === 0;
+        document.getElementById('batch-search-label').textContent = selectedCount > 0
+          ? (queue.status === 'running' ? `追加到找图队列 (${selectedCount})` : `加入联网找图队列 (${selectedCount})`)
+          : '加入联网找图队列';
+
+        const keepBtn = document.getElementById('btn-batch-keep');
+        keepBtn.disabled = selectedCount === 0;
+        keepBtn.textContent = selectedCount > 0 ? `批量保留原图 (${selectedCount})` : '批量保留原图';
+
+        const clearGroup = document.getElementById('batch-clear-group');
+        if (selectedCount === 0) batchClearArmed = false;
+        if (batchClearArmed && selectedCount > 0) {
+          clearGroup.innerHTML = `
+            <button type="button" class="btn btn-danger btn-compact" data-batch-clear-confirm>确认清空 ${selectedCount} 位头像</button>
+            <button type="button" class="btn btn-ghost btn-compact" data-batch-clear-cancel>取消</button>
+          `;
+        } else {
+          clearGroup.innerHTML = `<button type="button" class="btn btn-secondary btn-compact" id="btn-batch-clear"${selectedCount === 0 ? ' disabled' : ''}>${selectedCount > 0 ? `批量清空头像 (${selectedCount})` : '批量清空头像'}</button>`;
+        }
+      }
+
+      function renderStatusBadge(card) {
+        if (card.kind === 'replacement') {
+          return `<span class="card-status-badge badge-found" title="${escapeHTML(card.searchNote || '已找到新候选头像')}">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sparkle"></use></svg>
+            已找到新图
+          </span>`;
+        }
+        switch (card.searchState) {
+          case 'queued': {
+            const pos = queueIndexOf(card.id);
+            return `<span class="card-status-badge badge-queued" title="已加入手动联网找图队列，当前排队第 ${pos} 位">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-queue"></use></svg>
+              排队中 #${pos}
+              <button type="button" class="badge-rm-btn" data-dequeue="${card.id}" aria-label="移出队列" title="移出队列">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </span>`;
+          }
+          case 'running':
+            return `<span class="card-status-badge badge-running" title="正在联网检索并由 AI 校验新头像">
+              <svg class="icon icon-sm is-spinning" aria-hidden="true"><use href="#i-spinner"></use></svg>
+              搜图中
+            </span>`;
+          case 'not_found_auto':
+            return `<span class="card-status-badge badge-not-found-auto" title="${escapeHTML(card.searchNote)}">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search-off"></use></svg>
+              自动已搜无果
+            </span>`;
+          case 'not_found_manual':
+            return `<span class="card-status-badge badge-not-found-manual" title="${escapeHTML(card.searchNote)}">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search-off"></use></svg>
+              手动已搜无果
+            </span>`;
+          case 'failed':
+            return `<span class="card-status-badge badge-failed" title="${escapeHTML(card.searchNote)}">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-alert"></use></svg>
+              搜图失败
+            </span>`;
+          default:
+            return '';
+        }
+      }
+
+      function renderCard(card) {
+        const selected = selectedIds.has(card.id);
+        const inQueue = isCardInQueue(card);
+        const cls = ['match-avatar-card'];
+        if (selected) cls.push('is-selected');
+        if (card.searchState === 'queued') cls.push('is-queued');
+        if (card.searchState === 'running') cls.push('is-running');
+        if (card.kind === 'replacement') cls.push('is-replacement');
+
+        if (card.kind === 'replacement') {
+          return `<article class="${cls.join(' ')}" data-card-id="${card.id}">
+            <div class="avatar-card-top">
+              <span class="card-check-wrap is-disabled">新旧图对比</span>
+              ${renderStatusBadge(card)}
+            </div>
+            <div class="artist-image-candidate-summary">
+              <div class="match-avatar-compare">
+                <figure class="match-avatar-compare-item">
+                  <img class="artist-image-candidate-preview" src="${card.oldImg}" alt="${escapeHTML(card.name)}的当前旧头像">
+                  <figcaption>当前旧图</figcaption>
+                </figure>
+                <span class="match-avatar-compare-arrow" aria-hidden="true">→</span>
+                <figure class="match-avatar-compare-item">
+                  <img class="artist-image-candidate-preview" src="${card.newImg}" alt="${escapeHTML(card.name)}的新候选头像">
+                  <figcaption>新候选图</figcaption>
+                </figure>
+              </div>
+              <div class="match-avatar-meta">
+                <strong><a href="#artist-${card.artistId}">${escapeHTML(card.name)}</a></strong>
+                <small>${escapeHTML(card.simSource || 'ai_web')} · 高置信 · ${escapeHTML(card.issue)}</small>
+              </div>
+            </div>
+            <p class="match-avatar-reason">${escapeHTML(card.simNewReason || card.reason)}</p>
+            ${card.simPage ? `<p class="match-avatar-url"><a href="${escapeHTML(card.simPage)}" target="_blank" rel="noopener noreferrer">来源页：${escapeHTML(card.simPage)}</a></p>` : ''}
+            <div class="match-avatar-actions">
+              <button type="button" class="btn btn-primary btn-compact" data-card-approve="${card.id}">采纳替换</button>
+              <button type="button" class="btn btn-secondary btn-compact" data-card-keep="${card.id}">保留原图</button>
+              <button type="button" class="btn btn-secondary btn-compact" data-card-clear="${card.id}">清空头像</button>
+            </div>
+          </article>`;
+        }
+
+        const alreadySearched = card.searchState === 'not_found_auto' || card.searchState === 'not_found_manual' || card.searchState === 'failed';
+        let noteHTML = '';
+        if (card.searchState === 'not_found_manual') {
+          noteHTML = `<div class="avatar-search-note is-warning">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search-off"></use></svg>
+            <span>${escapeHTML(card.searchNote)}</span>
+          </div>`;
+        } else if (card.searchState === 'not_found_auto') {
+          noteHTML = `<div class="avatar-search-note">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search-off"></use></svg>
+            <span>${escapeHTML(card.searchNote)}</span>
+          </div>`;
+        } else if (card.searchState === 'failed') {
+          noteHTML = `<div class="avatar-search-note is-danger">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-alert"></use></svg>
+            <span>${escapeHTML(card.searchNote)}</span>
+          </div>`;
+        }
+
+        let midBtnHTML = '';
+        if (card.searchState === 'queued') {
+          const pos = queueIndexOf(card.id);
+          midBtnHTML = `<button type="button" class="btn btn-secondary btn-compact" data-dequeue="${card.id}">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-queue"></use></svg>移出队列 (#${pos})
+          </button>`;
+        } else if (card.searchState === 'running') {
+          midBtnHTML = `<button type="button" class="btn btn-primary btn-compact" disabled>
+            <svg class="icon icon-sm is-spinning" aria-hidden="true"><use href="#i-spinner"></use></svg>搜图中…
+          </button>`;
+        } else if (alreadySearched) {
+          midBtnHTML = `<button type="button" class="btn btn-secondary btn-compact" data-card-search="${card.id}">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"></use></svg>重新搜图
+          </button>`;
+        } else {
+          midBtnHTML = `<button type="button" class="btn btn-primary btn-compact" data-card-search="${card.id}">联网找新图</button>`;
+        }
+
+        return `<article class="${cls.join(' ')}" data-card-id="${card.id}">
+          <div class="avatar-card-top">
+            <label class="card-check-wrap${inQueue ? ' is-disabled' : ''}">
+              <input type="checkbox" class="avatar-checkbox" data-select-card="${card.id}"${selected ? ' checked' : ''}${inQueue ? ' disabled' : ''}>
+              <span>${selected ? '已选择' : inQueue ? '队列锁定' : '选择'}</span>
+            </label>
+            ${renderStatusBadge(card)}
+          </div>
+          <div class="artist-image-candidate-summary">
+            <img class="artist-image-candidate-preview" src="${card.oldImg}" alt="${escapeHTML(card.name)}的当前头像">
+            <div class="match-avatar-meta">
+              <strong><a href="#artist-${card.artistId}">${escapeHTML(card.name)}</a></strong>
+              <small>AI 审查疑点 · ${escapeHTML(card.issue)} · 置信度 ${card.conf}% · ${escapeHTML(card.size)}</small>
+            </div>
+          </div>
+          <p class="match-avatar-reason">${escapeHTML(card.reason)}</p>
+          ${noteHTML}
+          <div class="match-avatar-actions">
+            <button type="button" class="btn btn-secondary btn-compact" data-card-keep="${card.id}"${card.searchState === 'running' ? ' disabled' : ''}>保留原图</button>
+            ${midBtnHTML}
+            <button type="button" class="btn btn-secondary btn-compact" data-card-clear="${card.id}"${card.searchState === 'running' ? ' disabled' : ''}>清空头像</button>
+          </div>
+        </article>`;
+      }
+
+      function render() {
+        renderQueueStrip();
+        renderFilterChips();
+        const visible = cards.filter(matchesFilter);
+        renderBatchBar(visible);
+
+        const grid = document.getElementById('avatar-grid');
+        if (visible.length === 0) {
+          grid.innerHTML = `<div class="zero-state">
+            <strong>当前筛选条件下没有待审头像</strong>
+            <span>可切换上方状态胶囊或清空关键词查看其余待审项。</span>
+          </div>`;
+          return;
+        }
+        grid.innerHTML = visible.map(renderCard).join('');
+      }
+
+      function escapeHTML(str) {
+        return String(str || '').replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+      }
+
+      // ---- Presets ----
+      function applyPreset(name) {
+        resetQueue();
+        selectedIds.clear();
+        activeFilter = 'all';
+        searchQuery = '';
+        batchClearArmed = false;
+        document.getElementById('artist-search').value = '';
+        cards = cloneCards();
+
+        if (name === 'running') {
+          // Pre-seed 1 finished replacement + 1 manual not-found + 4 actively queued/running
+          const c1 = cardById(101);
+          c1.kind = 'replacement';
+          c1.searchState = 'found';
+          c1.searchTime = '09:15';
+          c1.searchNote = '09:15 手动联网已找到新候选头像';
+
+          const c5 = cardById(105);
+          c5.searchState = 'not_found_manual';
+          c5.searchTime = '09:15';
+          c5.searchNote = '09:15 手动联网找图未找到更合适的候选头像';
+
+          queue.status = 'running';
+          queue.total = 6;
+          queue.completed = 2;
+          queue.found = 1;
+          queue.notFound = 1;
+          queue.failed = 0;
+
+          for (const id of [104, 109, 110, 116]) {
+            const c = cardById(id);
+            c.prevStateBeforeQueue = c.searchState;
+            c.searchState = 'queued';
+            queue.pendingIds.push(id);
+          }
+          render();
+          pumpQueue();
+          return;
+        }
+
+        if (name === 'all-states') {
+          // Display every single state cleanly at once (paused simulation for inspection)
+          const c101 = cardById(101);
+          c101.kind = 'replacement';
+          c101.searchState = 'found';
+          c101.searchNote = '09:15 手动联网已找到新候选头像';
+
+          const c104 = cardById(104);
+          c104.searchState = 'running';
+          queue.currentId = 104;
+
+          const c105 = cardById(105);
+          c105.searchState = 'queued';
+          const c109 = cardById(109);
+          c109.searchState = 'queued';
+          queue.pendingIds = [105, 109];
+          queue.status = 'running';
+          queue.total = 6;
+          queue.completed = 3;
+          queue.found = 1;
+          queue.notFound = 1;
+          queue.failed = 1;
+
+          const c110 = cardById(110);
+          c110.searchState = 'failed';
+          c110.searchNote = 'Tavily 抓取来源页超时（10s），可重试';
+
+          const c116 = cardById(116);
+          c116.searchState = 'not_found_manual';
+          c116.searchNote = '09:14 手动联网找图未找到更合适的候选头像';
+
+          selectedIds.add(102);
+          selectedIds.add(103);
+          render();
+          return;
+        }
+
+        render();
+      }
+
+      // ---- Event Wiring ----
+      document.addEventListener('click', (e) => {
+        const target = e.target instanceof Element ? e.target : null;
+        if (!target) return;
+
+        const presetBtn = target.closest('[data-preset]');
+        if (presetBtn) {
+          document.querySelectorAll('[data-preset]').forEach((b) => b.classList.toggle('active', b === presetBtn));
+          applyPreset(presetBtn.dataset.preset);
+          return;
+        }
+
+        const speedBtn = target.closest('[data-speed]');
+        if (speedBtn) {
+          document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('active', b === speedBtn));
+          simSpeedMs = Number(speedBtn.dataset.speed) || 1600;
+          showToast(`模拟搜图速度已切换为 ${(simSpeedMs / 1000).toFixed(2)}s / 项`);
+          return;
+        }
+
+        if (target.closest('#toggle-theme')) {
+          const root = document.documentElement;
+          const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+          root.setAttribute('data-theme', next);
+          document.getElementById('toggle-theme').textContent = next === 'dark' ? '切换浅色主题' : '切换深色主题';
+          return;
+        }
+
+        if (target.closest('#reset-demo')) {
+          const active = document.querySelector('[data-preset].active');
+          applyPreset(active ? active.dataset.preset : 'live');
+          showToast('已重置原型数据');
+          return;
+        }
+
+        const filterBtn = target.closest('[data-filter]');
+        if (filterBtn) {
+          activeFilter = filterBtn.dataset.filter;
+          render();
+          return;
+        }
+
+        const jumpBtn = target.closest('[data-jump-filter]');
+        if (jumpBtn) {
+          activeFilter = jumpBtn.dataset.jumpFilter;
+          render();
+          return;
+        }
+
+        if (target.closest('[data-queue-stop]')) {
+          stopQueue();
+          return;
+        }
+
+        if (target.closest('[data-queue-dismiss]')) {
+          resetQueue();
+          render();
+          return;
+        }
+
+        if (target.closest('#btn-select-unsearched')) {
+          const visible = cards.filter(matchesFilter);
+          for (const c of visible) {
+            if (c.kind === 'audit_review' && c.searchState === 'idle') selectedIds.add(c.id);
+          }
+          render();
+          return;
+        }
+
+        if (target.closest('#btn-select-all')) {
+          const visible = cards.filter(matchesFilter);
+          for (const c of visible) {
+            if (isCardSelectable(c)) selectedIds.add(c.id);
+          }
+          render();
+          return;
+        }
+
+        if (target.closest('#btn-clear-select')) {
+          selectedIds.clear();
+          batchClearArmed = false;
+          render();
+          return;
+        }
+
+        if (target.closest('#btn-batch-search')) {
+          const ids = Array.from(selectedIds);
+          for (const id of ids) {
+            const c = cardById(id);
+            if (c) c.prevStateBeforeQueue = c.searchState;
+          }
+          enqueueCards(ids);
+          return;
+        }
+
+        if (target.closest('#btn-batch-keep')) {
+          resolveBatch(Array.from(selectedIds), '已批量保留原图');
+          return;
+        }
+
+        if (target.closest('#btn-batch-clear')) {
+          batchClearArmed = true;
+          render();
+          return;
+        }
+
+        if (target.closest('[data-batch-clear-cancel]')) {
+          batchClearArmed = false;
+          render();
+          return;
+        }
+
+        if (target.closest('[data-batch-clear-confirm]')) {
+          resolveBatch(Array.from(selectedIds), '已批量清空头像');
+          return;
+        }
+
+        const dequeueBtn = target.closest('[data-dequeue]');
+        if (dequeueBtn) {
+          removeFromQueue(Number(dequeueBtn.dataset.dequeue));
+          return;
+        }
+
+        const searchBtn = target.closest('[data-card-search]');
+        if (searchBtn) {
+          const id = Number(searchBtn.dataset.cardSearch);
+          const c = cardById(id);
+          if (c) c.prevStateBeforeQueue = c.searchState;
+          enqueueCards([id]);
+          return;
+        }
+
+        const keepBtn = target.closest('[data-card-keep]');
+        if (keepBtn) {
+          const id = Number(keepBtn.dataset.cardKeep);
+          const c = cardById(id);
+          resolveCard(id, `已确认保留「${c ? c.name : ''}」的原图`);
+          return;
+        }
+
+        const clearBtn = target.closest('[data-card-clear]');
+        if (clearBtn) {
+          const id = Number(clearBtn.dataset.cardClear);
+          const c = cardById(id);
+          resolveCard(id, `已清空「${c ? c.name : ''}」的缓存头像（可在任务页撤销）`);
+          return;
+        }
+
+        const approveBtn = target.closest('[data-card-approve]');
+        if (approveBtn) {
+          const id = Number(approveBtn.dataset.cardApprove);
+          const c = cardById(id);
+          resolveCard(id, `已采纳并替换「${c ? c.name : ''}」的新头像`);
+          return;
+        }
+      });
+
+      document.addEventListener('change', (e) => {
+        const el = e.target;
+        if (!(el instanceof HTMLInputElement)) return;
+        if (el.id === 'master-checkbox') {
+          const visible = cards.filter(matchesFilter).filter(isCardSelectable);
+          if (el.checked) {
+            for (const c of visible) selectedIds.add(c.id);
+          } else {
+            for (const c of visible) selectedIds.delete(c.id);
+          }
+          batchClearArmed = false;
+          render();
+          return;
+        }
+        if (el.dataset.selectCard) {
+          const id = Number(el.dataset.selectCard);
+          if (el.checked) selectedIds.add(id);
+          else selectedIds.delete(id);
+          batchClearArmed = false;
+          render();
+        }
+      });
+
+      document.getElementById('artist-search').addEventListener('input', (e) => {
+        searchQuery = String(e.target.value || '').trim().toLowerCase();
+        render();
+      });
+
+      applyPreset('live');
+    })();
+  </script>
+</body>
+</html>

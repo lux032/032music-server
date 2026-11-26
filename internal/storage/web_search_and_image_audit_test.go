@@ -261,3 +261,97 @@ func TestArtistImageAuditReplaceClearRevertAndCacheURLVersioning(t *testing.T) {
 		t.Fatalf("expected ErrArtistImageBackfillState when custom image present, got %v", err)
 	}
 }
+
+func TestArtistImageCandidateSearchStateAndResolveReplacement(t *testing.T) {
+	f := newBackfillFixture(t)
+	ctx := f.ctx
+	f.importArtistTrack(t, "q/1.flac", "AuditQueueArtist")
+	artistID := f.artistID(t, "AuditQueueArtist")
+
+	// Seed an existing cached avatar so KeepArtistImageCandidate can pin it.
+	imgPath := filepath.Join(t.TempDir(), "old.jpg")
+	if err := os.WriteFile(imgPath, []byte("old-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SaveArtistImage(ctx, ArtistImageInput{
+		ArtistID: artistID, Source: "deezer", RemoteURL: "https://old.example/cover.jpg",
+		Hash: "oldhash092", MIMEType: "image/jpeg", CachePath: imgPath, ByteSize: 9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upsert an audit_review card marked not_found_auto.
+	auditID, err := f.store.UpsertArtistImageCandidate(ctx, ArtistImageCandidate{
+		ArtistID:        artistID,
+		Source:          "ai_audit",
+		ImageURL:        "https://old.example/cover.jpg",
+		Confidence:      "high",
+		ConfidenceScore: 95,
+		Kind:            "audit_review",
+		IssueType:       "album_cover",
+		Reason:          "专辑封面",
+		WebSearchState:  "not_found_auto",
+		WebSearchNote:   "全量审查已自动联网找图，未找到合适新图",
+	})
+	if err != nil || auditID <= 0 {
+		t.Fatalf("UpsertArtistImageCandidate = (%d, %v)", auditID, err)
+	}
+	got, err := f.store.ArtistImageCandidateByID(ctx, auditID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebSearchState != "not_found_auto" || got.WebSearchNote == "" || got.WebSearchedAt == "" {
+		t.Fatalf("initial search state = %+v", got)
+	}
+
+	// Update search state to not_found_manual.
+	ts, err := f.store.UpdateArtistImageCandidateSearchState(ctx, auditID, "not_found_manual", "手动联网找图未找到更合适的候选头像")
+	if err != nil || ts == "" {
+		t.Fatalf("UpdateArtistImageCandidateSearchState = (%q, %v)", ts, err)
+	}
+	got, _ = f.store.ArtistImageCandidateByID(ctx, auditID)
+	if got.WebSearchState != "not_found_manual" || got.WebSearchedAt != ts {
+		t.Fatalf("updated search state = %+v", got)
+	}
+
+	// Atomically resolve audit_review into replacement card.
+	newID, err := f.store.ResolveAuditCandidateWithReplacement(ctx, auditID, ArtistImageCandidate{
+		Source:          "ai_web",
+		ImageURL:        "https://new.example/portrait.jpg",
+		PageURL:         "https://artist.example/profile",
+		Title:           "Official Profile",
+		Confidence:      "high",
+		ConfidenceScore: 92,
+		Reason:          "清晰本人肖像",
+		Width:           640,
+		Height:          640,
+	})
+	if err != nil || newID <= 0 || newID == auditID {
+		t.Fatalf("ResolveAuditCandidateWithReplacement = (%d, %v)", newID, err)
+	}
+	pending, err := f.store.PendingArtistImageCandidates(ctx, 10)
+	if err != nil || len(pending) != 1 || pending[0].ID != newID {
+		t.Fatalf("expected only replacement card pending, got %+v err=%v", pending, err)
+	}
+	if pending[0].Kind != "replacement" || pending[0].IssueType != "album_cover" {
+		t.Fatalf("replacement card metadata = %+v", pending[0])
+	}
+	oldRow, _ := f.store.ArtistImageCandidateByID(ctx, auditID)
+	if oldRow.Status != "rejected" {
+		t.Fatalf("originating audit card status = %q, want rejected", oldRow.Status)
+	}
+
+	// Keeping existing avatar from a replacement card must blacklist the rejected
+	// replacement URL and pin the existing avatar hash as keep.
+	if err := f.store.KeepArtistImageCandidate(ctx, newID); err != nil {
+		t.Fatalf("KeepArtistImageCandidate on replacement: %v", err)
+	}
+	rej, err := f.store.ArtistImageRejections(ctx, artistID)
+	if err != nil || !rej.URLs["https://new.example/portrait.jpg"] {
+		t.Fatalf("expected replacement URL blacklisted after keep, got %+v err=%v", rej, err)
+	}
+	rev, ok, err := f.store.ArtistImageReviewByArtist(ctx, artistID)
+	if err != nil || !ok || rev.ImageHash != "oldhash092" || rev.Verdict != "keep" {
+		t.Fatalf("review after keep = (%+v, %v, %v)", rev, ok, err)
+	}
+}

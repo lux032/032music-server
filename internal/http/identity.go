@@ -1094,6 +1094,11 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.logger.Error("matches pending artist image candidates", "error", candErr)
 	}
+	if a.enrichment != nil {
+		data.ImageBackfill.SearchQueue = a.enrichment.ArtistImageSearchQueueSnapshot()
+	} else {
+		data.ImageBackfill.SearchQueue = enrichment.ArtistImageSearchQueueSnapshot{Status: "idle"}
+	}
 	// 歌手简介补全区块：统计只读 DB；失败只记日志，页面其余部分照常渲染。
 	if a.enrichment != nil {
 		if missing, total, statsErr := a.enrichment.ArtistBiographyBackfillStats(r.Context()); statsErr == nil {

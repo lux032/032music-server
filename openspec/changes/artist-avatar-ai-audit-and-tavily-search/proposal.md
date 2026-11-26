@@ -15,6 +15,7 @@
   - 扩展现有持久化头像任务框架，新增全量审查模式（`audit_all` 与强制重审模式 `audit_force`）：对全库无自定义头像的艺人，缺图走补全、有缓存图则先经本地损坏校验再调用全局多模态主模型/视觉模型做结构化审查，输出 `verdict`（`keep`/`replace`）、`issueType`（`none`/`garbage`/`album_cover`/`low_quality`/`wrong_subject`）、`confidence`（0–100）与中文理由。
   - 高置信判定不合格（`confidence >= 85`）时，自动将旧图 `remote_url` 与 `content_hash` 纳入排除集并执行多源重抓（Tier 1 → Tier 2 → Tier 3），**重抓获得的全部候选图（含结构化图源）均经 VLM 质量复核**；获得高置信合格新图时自动落库替换、拉黑旧图并写入撤销快照；仅获中置信候选时保留旧图并在「待审头像」呈现「旧图 vs 新图」对比卡片。
   - 高置信判错但全源无合适替代图时按差异化策略处理：明确垃圾图（`garbage`）自动清空旧缓存（含合并源艺人继承缓存）并记录撤销快照；其余类型（`album_cover` / `low_quality` / `wrong_subject`）先保留旧图并推送至「待审头像」供人工处理。中/低置信疑点旧图默认不自动消耗联网额度，保留旧图并送待审，提供按需搜图/保留/清空操作。
+  - 完善「待审头像」审核与联网找图工作台体验（迁移 `092_artist_image_candidate_search_state.sql`）：为 `artist_image_candidates` 持久化联网搜索状态标记（区分未搜过 / 自动审查已搜无果 / 手动已搜无果 / 搜图失败与原因时间）；新增独立于全量任务的后端串行异步手动找图队列（支持多选批量入队、运行中追加、单条移出、一键停止与前端 2 秒原地轮询更新），卡片实时展示排队中/搜图中/已搜无果/已找到新图等图标标识；联网找到新候选图后自动收口原疑点卡并转为单张「新旧图对比」卡；配套状态筛选胶囊、「仅选未搜过」快捷勾选及批量保留原图/批量清空头像（带二次确认与撤销快照）。
   - 新增自动替换与自动清理记录的一键撤销能力（复原 `artist_image_cache` 对应行，含合并继承归属），补充自动缓存头像 URL 的 `?v=<content_hash>` 缓存版本参数使替换后前端即时生效，修正 `llm.go` 对不接受 `temperature: 0` 新型 GPT 模型的自动兼容重试，并取消 VLM 审查遇 `400` 时的静默放行。
 
 ## Capabilities
@@ -30,8 +31,8 @@
 
 ## Impact
 
-- **存储与迁移**：`internal/storage/migrations/091_artist_image_audit_and_web_search.sql`（新增）、`internal/storage/web_search.go`（新增）、`internal/storage/artist_image_comprehensive.go`、`internal/storage/artist_image_backfill.go`、`internal/storage/track_extras.go`、`internal/storage/backup_restore.go`。
+- **存储与迁移**：`internal/storage/migrations/091_artist_image_audit_and_web_search.sql`（新增）、`internal/storage/migrations/092_artist_image_candidate_search_state.sql`（新增）、`internal/storage/web_search.go`（新增）、`internal/storage/artist_image_comprehensive.go`、`internal/storage/artist_image_backfill.go`、`internal/storage/track_extras.go`、`internal/storage/backup_restore.go`。
 - **联网搜索层**：`internal/websearch/`（重构并新增 Tavily 客户端、共享 KeyRing 轮询池与路由）、`internal/artistaliases/`、`internal/aireview/`、`internal/enrichment/artist_biography_ai.go`、`internal/enrichment/artist_image_ai.go`。
-- **LLM 与头像审查流水线**：`internal/tagging/llm.go`、`internal/enrichment/artist_image_ai.go`、`internal/enrichment/artist_image_backfill.go`、`internal/enrichment/manager.go`、`cmd/server/main.go`。
-- **HTTP 与管理后台 UI**：`internal/http/ai_settings.go`、`internal/http/artist_image_backfill.go`、`internal/http/artist_aliases.go`、`internal/http/app.go`、`internal/http/templates/ai-settings.html`、`internal/http/templates/match-review.html`、`internal/http/templates/artist-aliases.html`、`internal/http/assets/admin.js`。
+- **LLM 与头像审查流水线**：`internal/tagging/llm.go`、`internal/enrichment/artist_image_ai.go`、`internal/enrichment/artist_image_backfill.go`、`internal/enrichment/artist_image_search_queue.go`（新增）、`internal/enrichment/manager.go`、`cmd/server/main.go`。
+- **HTTP 与管理后台 UI**：`internal/http/ai_settings.go`、`internal/http/artist_image_backfill.go`、`internal/http/artist_aliases.go`、`internal/http/identity.go`、`internal/http/app.go`、`internal/http/templates/ai-settings.html`、`internal/http/templates/match-review.html`、`internal/http/templates/artist-aliases.html`、`internal/http/assets/admin.js`、`internal/http/assets/pages.css`、`internal/http/assets/icons.svg`。
 - **外部依赖**：无新增 Go 第三方库依赖，使用标准库 `net/http` 调用 Tavily REST API（`https://api.tavily.com/search`、`/extract`），兼容现有代理配置。

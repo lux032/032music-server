@@ -765,6 +765,7 @@ func (m *Manager) replaceAuditedArtistAvatar(
 	}
 
 	// Tier 3: shared web search + DOM extraction + text LLM + strict VLM.
+	webSearched := false
 	if bestHigh == nil {
 		if ready, _ := m.canRunArtistImageWebFallback(ctx, imgSettings); ready {
 			reserved, reserveErr := m.store.ReserveArtistImageWebRequest(ctx, checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
@@ -775,6 +776,7 @@ func (m *Manager) replaceAuditedArtistAvatar(
 				return "failed", reserveErr.Error(), nil
 			}
 			if reserved {
+				webSearched = true
 				officialURLs, _ := m.store.ArtistConfirmedPageURLs(ctx, artistID)
 				found, ok, webErr := m.discoverArtistImageFromWebWithExclusions(ctx, artistID, officialURLs, imgSettings, exclusions, true)
 				if webErr != nil {
@@ -894,6 +896,12 @@ func (m *Manager) replaceAuditedArtistAvatar(
 
 	// Non-garbage (album_cover / low_quality / wrong_subject) with no better
 	// replacement: keep existing image and surface in pending review queue.
+	wsState := ""
+	wsNote := ""
+	if webSearched {
+		wsState = "not_found_auto"
+		wsNote = "全量审查已自动联网找图，未找到合适新图"
+	}
 	id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
 		ArtistID:        artistID,
 		Source:          "ai_audit",
@@ -903,6 +911,8 @@ func (m *Manager) replaceAuditedArtistAvatar(
 		Kind:            "audit_review",
 		IssueType:       audit.IssueType,
 		Reason:          audit.Reason,
+		WebSearchState:  wsState,
+		WebSearchNote:   wsNote,
 		Width:           audit.Width,
 		Height:          audit.Height,
 	})
@@ -1064,6 +1074,55 @@ func (m *Manager) ApproveArtistImageCandidate(ctx context.Context, candidateID i
 		MIMEType:  mimeType,
 		CachePath: cachePath,
 	})
+}
+
+// SearchArtistImageCandidateForAudit runs an on-demand Tier 3 web+AI lookup for
+// an existing pending audit_review card, atomically collapsing the audit card
+// into a side-by-side replacement card when a valid candidate is found.
+func (m *Manager) SearchArtistImageCandidateForAudit(ctx context.Context, auditCand storage.ArtistImageCandidate) (storage.ArtistImageCandidate, bool, error) {
+	if _, err := m.store.ArtistImageBackfillSubjectForMode(ctx, auditCand.ArtistID, "all"); err != nil {
+		return storage.ArtistImageCandidate{}, false, err
+	}
+	settings, err := m.store.ArtistImageSettings(ctx)
+	if err != nil {
+		return storage.ArtistImageCandidate{}, false, err
+	}
+	exclusions, _ := m.store.ArtistImageRejections(ctx, auditCand.ArtistID)
+	if eff, effErr := m.store.ArtistEffectiveImageCache(ctx, auditCand.ArtistID); effErr == nil {
+		if u := strings.TrimSpace(eff.RemoteURL); u != "" {
+			exclusions.URLs[u] = true
+		}
+		if h := strings.TrimSpace(eff.ContentHash); h != "" {
+			exclusions.Hashes[h] = true
+		}
+	}
+	officialURLs, _ := m.store.ArtistConfirmedPageURLs(ctx, auditCand.ArtistID)
+	found, ok, err := m.discoverArtistImageFromWebWithExclusions(ctx, auditCand.ArtistID, officialURLs, settings, exclusions, settings.VisionEnabled)
+	if err != nil || !ok {
+		return storage.ArtistImageCandidate{}, false, err
+	}
+	m.cacheCandidatePreviewBytes(found.ImageURL, found.Ext, found.Data)
+	cand := storage.ArtistImageCandidate{
+		ArtistID:        auditCand.ArtistID,
+		Source:          found.Source,
+		ImageURL:        found.ImageURL,
+		PageURL:         found.PageURL,
+		Title:           found.Title,
+		Confidence:      found.Confidence,
+		ConfidenceScore: found.VLMConfidence,
+		Kind:            "replacement",
+		IssueType:       auditCand.IssueType,
+		Reason:          found.Reason,
+		Width:           found.Width,
+		Height:          found.Height,
+	}
+	id, err := m.store.ResolveAuditCandidateWithReplacement(ctx, auditCand.ID, cand)
+	if err != nil || id == 0 {
+		return storage.ArtistImageCandidate{}, false, err
+	}
+	cand.ID = id
+	cand.Status = "pending"
+	return cand, true, nil
 }
 
 // SearchArtistImageCandidateNow triggers an on-demand Tier 3 web+AI avatar

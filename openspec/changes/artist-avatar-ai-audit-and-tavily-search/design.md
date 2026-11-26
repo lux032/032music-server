@@ -137,6 +137,27 @@
   - 当收到 `HTTP 400` 且错误消息提及 `temperature`（如 `unsupported value` / `temperature`）时，自动去掉 `temperature` 字段重试一次（并在该 `ChatClient` 实例按 `model` 缓存「跳过 temperature」标记，避免后续每次请求都白白多打一次 400）。
   - 同步优化 VLM 视觉质检：在审查模式与重抓验收中取消 400 静默返回 `valid=true` 的逻辑，改为显式返回错误让上层记为 `failed`。
 
+### 决策 5：待审头像联网状态持久化与独立后端异步批量找图队列（迁移 `092_artist_image_candidate_search_state.sql`）
+
+- **数据表扩展（增量迁移 `092`，严禁修改已发版的 `091`）**：
+  ```sql
+  ALTER TABLE artist_image_candidates ADD COLUMN web_search_state TEXT NOT NULL DEFAULT '' CHECK (web_search_state IN ('', 'not_found_auto', 'not_found_manual', 'failed'));
+  ALTER TABLE artist_image_candidates ADD COLUMN web_search_note TEXT NOT NULL DEFAULT '';
+  ALTER TABLE artist_image_candidates ADD COLUMN web_searched_at TEXT;
+  ```
+- **自动审查与手动找图状态落库**：
+  - 在 `replaceAuditedArtistAvatar` 阶段，仅当高置信疑点确实实际执行了 Tier 3 联网搜索（通过配置检查且成功预扣预算）但未命中合格替代图时，写入 `audit_review` 候选记录并设置 `web_search_state = 'not_found_auto'`、`web_search_note = '全量审查已自动联网找图，未找到合适新图'`、`web_searched_at = now`；若因单轮预算耗尽或未配联网而跳过 Tier 3，则保持 `web_search_state = ''`，避免误标。
+  - 手动联网搜图无结果时，更新对应 `audit_review` 行：`web_search_state = 'not_found_manual'`、`web_search_note = '手动联网找图未找到更合适的候选头像'`、`web_searched_at = now`；搜图出错时写入 `web_search_state = 'failed'` 及脱敏原因。
+  - 手动联网搜图找到新候选图时，通过单事务 `ResolveAuditCandidateWithReplacement` 写入新 `replacement` 候选（保留原 `issue_type` 与理由上下文）并同步关闭原 `audit_review` 候选（置为 `rejected`），避免同一艺人在「待审头像」重复出现两张卡片；若新候选 URL 命中既有已拒绝记录导致未写入，则回滚并按 `not_found_manual` 标记原疑点卡。
+- **后端串行异步找图队列（`internal/enrichment/artist_image_search_queue.go`）**：
+  - 由 `enrichment.Manager` 持有独立内存队列（并发度固定为 1，通过 `m.goBackground` 托管并响应 `m.baseCtx` 停机退出），与 `artist_image_backfill_runs` 完全解耦且不受 `max_web_requests_per_run` 限制，确保在后台全量审查运行期间可平稳并行且不争抢过高并发。
+  - 支持批量入队（按候选 ID 去重并过滤非 `pending` / 非 `audit_review` 项，运行中再次提交自动追加到队尾并累加 `total`）、移出单个待排队项、停止队列（清空未开始项并等待当前项完成后置为 `stopped`）、收起已完成摘要（复位 `idle`）及只读状态快照（含 `queuedPositions` 供每张卡片显示 `排队中 #N` 与 `搜图中` 图标）。
+  - 管理路由：`GET /admin/matches/images/search-queue.json`（列入 `quietAccessLogPath`）、`POST /admin/matches/images/search-queue/enqueue`、`POST /admin/matches/images/search-queue/remove`、`POST /admin/matches/images/search-queue/stop`、`POST /admin/matches/images/search-queue/dismiss`，以及批量审核端点 `POST /admin/matches/images/candidates/batch-keep` 与 `POST /admin/matches/images/candidates/batch-clear`；既有 `POST /admin/matches/images/candidates/{id}/search` 保持向后兼容（AJAX/JSON 或表单提交均可入队并返回/跳转）。
+- **管理后台「待审头像」工作台交互（对齐 `prototypes/avatar-review-queue.html`）**：
+  - 顶部队列进度条实时 2 秒轮询，原地更新进度条、统计数字、当前搜图艺人以及每张卡片右上角状态图标徽章（排队中 `#N` 带单条移出 `×` / 搜图中旋转图标 / 自动已搜无果 / 手动已搜无果 / 搜图失败 / 已找到新图），不强制整页刷新以保护当前勾选态。
+  - 网格上方提供状态筛选胶囊（`全部 / 未搜过 / 排队/搜图中 / 已搜无果 / 新图待对比 / 搜图失败`）、艺术家名实时过滤、一键「仅选未搜过」「全选本页可搜」「加入联网找图队列」「批量保留原图」「批量清空头像（二次确认）」。
+  - `replacement` 对比卡片同步提供 `采纳替换 / 保留原图 / 清空头像 / 忽略` 操作，其中 `KeepArtistImageCandidate` 对 `replacement` 卡片会同时拉黑被拒新图 URL 并关闭同艺人其他待审项。
+
 ## Risks / Trade-offs
 
 - **[全量审查对大曲库消耗较多 VLM token 与搜索额度]** → 默认 `audit_all` 严格按 `(artist_id, content_hash)` 幂等跳过已审通过项；中低置信旧图默认不自动消耗联网搜索额度；保留 `单轮联网上限` 配置与全局 RPM 限流器，且支持随时暂停/继续并断点续跑。

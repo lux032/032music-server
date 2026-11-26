@@ -1159,6 +1159,681 @@ document.addEventListener('submit', async (event) => {
   });
 })();
 
+// ----------------------------------------- Pending Avatars Multi-Select & Async Search Queue
+// Manages client-side status filtering, multi-select batch keep/clear/search,
+// and live 2-second polling of /admin/matches/images/search-queue.json without
+// disturbing active checkbox selections. All DOM updates use textContent and
+// explicit element construction (zero innerHTML).
+(function () {
+  'use strict';
+  if (window.__032_avatar_queue_initialized) return;
+  window.__032_avatar_queue_initialized = true;
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const selectedIds = new Set();
+  let activeFilter = 'all';
+  let searchQuery = '';
+  let pollTimer = null;
+  let pollController = null;
+  let lastQueueSnapshot = null;
+
+  function workbench() {
+    return document.querySelector('[data-avatar-workbench]');
+  }
+
+  function csrfToken(root) {
+    return root?.dataset.csrfToken || document.querySelector('meta[name="csrf-token"]')?.content || '';
+  }
+
+  function iconUse(root, iconId, extraClass) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', extraClass ? `icon ${extraClass}` : 'icon');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS(SVG_NS, 'use');
+    const base = root?.dataset.iconsHref || '/admin/assets/icons.svg';
+    use.setAttribute('href', `${base}#${iconId}`);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function reloadMatchesPage() {
+    if (typeof window.__032BrowseNavigate === 'function') {
+      window.__032BrowseNavigate(window.location.href, true);
+    } else {
+      window.location.reload();
+    }
+  }
+
+  function showAvatarNotice(message) {
+    if (!message) return;
+    let toast = document.querySelector('.client-toast[data-avatar-toast]');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'client-toast';
+      toast.setAttribute('data-avatar-toast', '1');
+      toast.setAttribute('role', 'status');
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.hidden = false;
+    clearTimeout(toast.__timer);
+    toast.__timer = setTimeout(() => { toast.hidden = true; }, 2800);
+  }
+
+  function allCards(root) {
+    return Array.from(root.querySelectorAll('[data-avatar-card]'));
+  }
+
+  function isCardSelectable(card) {
+    if (card.dataset.candidateKind !== 'audit_review') return false;
+    const st = card.dataset.searchState || 'idle';
+    return st !== 'queued' && st !== 'running' && st !== 'found';
+  }
+
+  function cardMatchesFilter(card) {
+    if (searchQuery) {
+      const name = (card.dataset.artistName || '').toLowerCase();
+      if (!name.includes(searchQuery)) return false;
+    }
+    const kind = card.dataset.candidateKind || 'replacement';
+    const st = card.dataset.searchState || 'idle';
+    switch (activeFilter) {
+      case 'unsearched':
+        return kind === 'audit_review' && st === 'idle';
+      case 'queued':
+        return kind === 'audit_review' && (st === 'queued' || st === 'running');
+      case 'not_found':
+        return kind === 'audit_review' && (st === 'not_found_auto' || st === 'not_found_manual');
+      case 'replacement':
+        return kind === 'replacement' || st === 'found';
+      case 'failed':
+        return kind === 'audit_review' && st === 'failed';
+      default:
+        return true;
+    }
+  }
+
+  function updateFilterAndToolbar(root) {
+    if (!root) return;
+    const cards = allCards(root);
+    const counts = { all: cards.length, unsearched: 0, queued: 0, not_found: 0, replacement: 0, failed: 0 };
+    let visibleCount = 0;
+    const visibleSelectable = [];
+
+    for (const card of cards) {
+      const kind = card.dataset.candidateKind || 'replacement';
+      const st = card.dataset.searchState || 'idle';
+      if (kind === 'replacement' || st === 'found') counts.replacement += 1;
+      else if (st === 'idle') counts.unsearched += 1;
+      else if (st === 'queued' || st === 'running') counts.queued += 1;
+      else if (st === 'not_found_auto' || st === 'not_found_manual') counts.not_found += 1;
+      else if (st === 'failed') counts.failed += 1;
+
+      const visible = cardMatchesFilter(card);
+      card.hidden = !visible;
+      if (visible) {
+        visibleCount += 1;
+        if (isCardSelectable(card)) visibleSelectable.push(card);
+      }
+
+      const id = card.dataset.candidateId;
+      if (!isCardSelectable(card) && selectedIds.has(id)) {
+        selectedIds.delete(id);
+      }
+      const selected = selectedIds.has(id);
+      card.classList.toggle('is-selected', selected);
+      const cb = card.querySelector('[data-avatar-select]');
+      if (cb instanceof HTMLInputElement) {
+        cb.disabled = !isCardSelectable(card);
+        cb.checked = selected;
+      }
+      const checkWrap = card.querySelector('[data-avatar-check-wrap]');
+      if (checkWrap) checkWrap.classList.toggle('is-disabled', !isCardSelectable(card));
+      const checkText = card.querySelector('[data-avatar-check-text]');
+      if (checkText) {
+        if (!isCardSelectable(card)) {
+          checkText.textContent = st === 'found' ? '已找到新图' : '队列锁定';
+        } else {
+          checkText.textContent = selected ? '已选择' : '选择';
+        }
+      }
+    }
+
+    for (const [key, val] of Object.entries(counts)) {
+      const el = root.querySelector(`[data-avatar-count="${key}"]`);
+      if (el) el.textContent = String(val);
+    }
+    root.querySelectorAll('[data-avatar-filter]').forEach((chip) => {
+      const on = chip.dataset.avatarFilter === activeFilter;
+      chip.classList.toggle('active', on);
+      chip.setAttribute('aria-selected', String(on));
+    });
+    const empty = root.querySelector('[data-avatar-filter-empty]');
+    if (empty) empty.hidden = cards.length === 0 || visibleCount > 0;
+
+    const unsearchedBtnCount = root.querySelector('[data-avatar-unsearched-btn-count]');
+    if (unsearchedBtnCount) unsearchedBtnCount.textContent = String(counts.unsearched);
+
+    // Prune selections for cards no longer in DOM
+    const existingIds = new Set(cards.map((c) => c.dataset.candidateId));
+    for (const id of Array.from(selectedIds)) {
+      if (!existingIds.has(id)) selectedIds.delete(id);
+    }
+
+    const totalSelected = selectedIds.size;
+    const visibleSelected = visibleSelectable.filter((c) => selectedIds.has(c.dataset.candidateId)).length;
+    const master = root.querySelector('[data-avatar-select-master]');
+    if (master instanceof HTMLInputElement) {
+      master.disabled = visibleSelectable.length === 0;
+      master.checked = visibleSelectable.length > 0 && visibleSelected === visibleSelectable.length;
+      master.indeterminate = visibleSelected > 0 && visibleSelected < visibleSelectable.length;
+    }
+    const selLabel = root.querySelector('[data-avatar-selected-label]');
+    if (selLabel) selLabel.textContent = `已选 ${totalSelected} 项`;
+    const clearSelBtn = root.querySelector('[data-avatar-select-clear]');
+    if (clearSelBtn) clearSelBtn.hidden = totalSelected === 0;
+
+    const selUnsearchedBtn = root.querySelector('[data-avatar-select-unsearched]');
+    if (selUnsearchedBtn) {
+      const visibleUnsearched = visibleSelectable.filter((c) => (c.dataset.searchState || 'idle') === 'idle').length;
+      selUnsearchedBtn.disabled = visibleUnsearched === 0;
+    }
+    const selAllBtn = root.querySelector('[data-avatar-select-all]');
+    if (selAllBtn) selAllBtn.disabled = visibleSelectable.length === 0;
+
+    const queueRunning = lastQueueSnapshot?.status === 'running';
+    const batchSearchBtn = root.querySelector('[data-avatar-batch-search]');
+    const batchSearchLabel = root.querySelector('[data-avatar-batch-search-label]');
+    if (batchSearchBtn) batchSearchBtn.disabled = totalSelected === 0;
+    if (batchSearchLabel) {
+      batchSearchLabel.textContent = totalSelected > 0
+        ? (queueRunning ? `追加到找图队列 (${totalSelected})` : `加入联网找图队列 (${totalSelected})`)
+        : '加入联网找图队列';
+    }
+
+    const batchKeepBtn = root.querySelector('[data-avatar-batch-keep]');
+    if (batchKeepBtn) {
+      batchKeepBtn.disabled = totalSelected === 0;
+      batchKeepBtn.textContent = totalSelected > 0 ? `批量保留原图 (${totalSelected})` : '批量保留原图';
+    }
+    const batchClearBtn = root.querySelector('[data-avatar-batch-clear]');
+    if (batchClearBtn) {
+      batchClearBtn.disabled = totalSelected === 0;
+      batchClearBtn.setAttribute('data-inline-confirm', `确认清空 ${totalSelected} 位头像`);
+      if (batchClearBtn.getAttribute('data-confirm-armed') === '1') {
+        batchClearBtn.removeAttribute('data-confirm-armed');
+        batchClearBtn.closest('form')?.querySelector('.match-inline-confirm-cancel')?.remove();
+      }
+      batchClearBtn.textContent = totalSelected > 0 ? `批量清空头像 (${totalSelected})` : '批量清空头像';
+    }
+  }
+
+  function renderCardVisualState(root, card, state, queuePos, note) {
+    if (card.dataset.candidateKind !== 'audit_review') return;
+    card.dataset.searchState = state;
+    card.classList.toggle('is-queued', state === 'queued');
+    card.classList.toggle('is-running', state === 'running');
+    card.classList.toggle('is-replacement', state === 'found');
+
+    const badgeSlot = card.querySelector('[data-avatar-badge-slot]');
+    if (badgeSlot) {
+      badgeSlot.replaceChildren();
+      if (state === 'running') {
+        const badge = document.createElement('span');
+        badge.className = 'avatar-status-badge badge-running';
+        badge.title = '正在联网检索并由 AI 校验新头像';
+        badge.append(iconUse(root, 'icon-spinner', 'is-spinning'), document.createTextNode(' 搜图中'));
+        badgeSlot.appendChild(badge);
+      } else if (state === 'queued') {
+        const badge = document.createElement('span');
+        badge.className = 'avatar-status-badge badge-queued';
+        badge.title = `已加入手动联网找图队列，当前排队第 ${queuePos} 位`;
+        badge.append(iconUse(root, 'icon-history'), document.createTextNode(` 排队中 #${queuePos}`));
+        const rmBtn = document.createElement('button');
+        rmBtn.type = 'button';
+        rmBtn.className = 'avatar-badge-rm';
+        rmBtn.setAttribute('data-avatar-dequeue', card.dataset.candidateId);
+        rmBtn.setAttribute('aria-label', '移出队列');
+        rmBtn.title = '移出队列';
+        rmBtn.appendChild(iconUse(root, 'icon-close'));
+        badge.appendChild(rmBtn);
+        badgeSlot.appendChild(badge);
+      } else if (state === 'not_found_auto') {
+        const badge = document.createElement('span');
+        badge.className = 'avatar-status-badge badge-not-found-auto';
+        badge.title = note || '全量审查已自动联网找图，未找到合适新图';
+        badge.append(iconUse(root, 'icon-search-off'), document.createTextNode(' 自动已搜无果'));
+        badgeSlot.appendChild(badge);
+      } else if (state === 'not_found_manual') {
+        const badge = document.createElement('span');
+        badge.className = 'avatar-status-badge badge-not-found-manual';
+        badge.title = note || '手动联网找图未找到更合适的候选头像';
+        badge.append(iconUse(root, 'icon-search-off'), document.createTextNode(' 手动已搜无果'));
+        badgeSlot.appendChild(badge);
+      } else if (state === 'failed') {
+        const badge = document.createElement('span');
+        badge.className = 'avatar-status-badge badge-failed';
+        badge.title = note || '联网搜图失败，可重试';
+        badge.append(iconUse(root, 'icon-alert-circle'), document.createTextNode(' 搜图失败'));
+        badgeSlot.appendChild(badge);
+      } else if (state === 'found') {
+        const badge = document.createElement('span');
+        badge.className = 'avatar-status-badge badge-found';
+        badge.title = '已找到新候选头像，刷新查看对比';
+        badge.append(iconUse(root, 'icon-sparkle'), document.createTextNode(' 已找到新图'));
+        badgeSlot.appendChild(badge);
+      }
+    }
+
+    const noteSlot = card.querySelector('[data-avatar-note-slot]');
+    if (noteSlot) {
+      noteSlot.replaceChildren();
+      if (state === 'not_found_manual' || state === 'not_found_auto' || state === 'failed') {
+        const box = document.createElement('div');
+        box.className = 'avatar-search-note' + (state === 'not_found_manual' ? ' is-warning' : state === 'failed' ? ' is-danger' : '');
+        const span = document.createElement('span');
+        span.textContent = note || (state === 'failed' ? '联网搜图失败，可点击重试' : state === 'not_found_auto' ? '全量审查已自动联网找图，未找到合适新图' : '手动联网找图未找到更合适的候选头像');
+        box.append(iconUse(root, state === 'failed' ? 'icon-alert-circle' : 'icon-search-off'), span);
+        noteSlot.appendChild(box);
+      }
+    }
+
+    const keepBtn = card.querySelector('[data-avatar-keep-btn]');
+    const clearBtn = card.querySelector('[data-avatar-clear-btn]');
+    if (keepBtn) keepBtn.disabled = state === 'running' || state === 'found';
+    if (clearBtn) clearBtn.disabled = state === 'running' || state === 'found';
+
+    const searchBtn = card.querySelector('[data-avatar-search-btn]');
+    if (searchBtn) {
+      searchBtn.removeAttribute('data-avatar-dequeue');
+      searchBtn.removeAttribute('data-aq-refresh');
+      searchBtn.replaceChildren();
+      if (state === 'running') {
+        searchBtn.type = 'button';
+        searchBtn.className = 'primary-button compact-button';
+        searchBtn.disabled = true;
+        searchBtn.append(iconUse(root, 'icon-spinner', 'is-spinning'), document.createTextNode(' 搜图中…'));
+      } else if (state === 'queued') {
+        searchBtn.type = 'button';
+        searchBtn.className = 'secondary-button compact-button';
+        searchBtn.disabled = false;
+        searchBtn.setAttribute('data-avatar-dequeue', card.dataset.candidateId);
+        searchBtn.append(iconUse(root, 'icon-history'), document.createTextNode(` 移出队列 (#${queuePos})`));
+      } else if (state === 'found') {
+        searchBtn.type = 'button';
+        searchBtn.className = 'primary-button compact-button';
+        searchBtn.disabled = false;
+        searchBtn.setAttribute('data-aq-refresh', '1');
+        searchBtn.append(iconUse(root, 'icon-sparkle'), document.createTextNode(' 查看新旧对比'));
+      } else if (state === 'not_found_auto' || state === 'not_found_manual' || state === 'failed') {
+        searchBtn.type = 'submit';
+        searchBtn.className = 'secondary-button compact-button';
+        searchBtn.disabled = false;
+        searchBtn.append(iconUse(root, 'icon-refresh'), document.createTextNode(' 重新搜图'));
+      } else {
+        searchBtn.type = 'submit';
+        searchBtn.className = 'primary-button compact-button';
+        searchBtn.disabled = false;
+        searchBtn.textContent = '联网找新图';
+      }
+    }
+  }
+
+  function applyQueueSnapshot(root, snap) {
+    if (!root || !snap) return;
+    lastQueueSnapshot = snap;
+    const strip = root.querySelector('[data-avatar-queue-strip]');
+    const status = snap.status || 'idle';
+    if (strip) {
+      strip.hidden = status === 'idle' || status === '';
+      strip.dataset.queueStatus = status;
+      strip.classList.toggle('is-done', status === 'completed');
+      strip.classList.toggle('is-stopped', status === 'stopped');
+
+      const dot = strip.querySelector('[data-aq-dot]');
+      if (dot) {
+        dot.className = 'avatar-queue-dot' + (status === 'running' ? ' is-pulsing' : status === 'completed' ? ' is-done' : status === 'stopped' ? ' is-stopped' : '');
+      }
+      const stEl = strip.querySelector('[data-aq-status]');
+      if (stEl) {
+        stEl.className = 'run-status ' + (status === 'running' ? 'status-running' : status === 'completed' ? 'status-completed' : 'status-paused');
+        stEl.textContent = status === 'running' ? '进行中' : status === 'completed' ? '已完成' : status === 'stopped' ? '已停止' : '空闲';
+      }
+      const prog = strip.querySelector('[data-aq-progress]');
+      if (prog) {
+        const pct = snap.total > 0 ? Math.min(100, Math.round((snap.completed / snap.total) * 100)) : 0;
+        prog.style.width = `${pct}%`;
+      }
+      const countsEl = strip.querySelector('[data-aq-counts]');
+      if (countsEl) {
+        const waitPart = snap.waiting > 0 ? ` · 排队中 ${snap.waiting}` : '';
+        countsEl.textContent = `进度 ${snap.completed} / ${snap.total}${waitPart} · 找到新图 ${snap.found} · 无结果 ${snap.notFound} · 失败 ${snap.failed}`;
+      }
+      const curEl = strip.querySelector('[data-aq-current]');
+      if (curEl) {
+        curEl.replaceChildren();
+        if (status === 'running' && snap.currentArtist) {
+          curEl.append(iconUse(root, 'icon-spinner', 'is-spinning'), document.createTextNode(` 正在搜图：${snap.currentArtist}`));
+        } else if (status === 'completed') {
+          curEl.textContent = snap.found > 0
+            ? `已找到 ${snap.found} 张新候选，点击上方按钮刷新查看对比`
+            : '本批搜索已完成，无结果卡片已持久化标记';
+        } else if (status === 'stopped') {
+          curEl.textContent = '已停止剩余排队项';
+        }
+      }
+      const actionsEl = strip.querySelector('[data-aq-actions]');
+      if (actionsEl) {
+        actionsEl.replaceChildren();
+        if (status === 'running') {
+          if (snap.found > 0) {
+            const refBtn = document.createElement('button');
+            refBtn.type = 'button';
+            refBtn.className = 'compact-button';
+            refBtn.setAttribute('data-aq-refresh', '1');
+            refBtn.textContent = `刷新查看新图（${snap.found}）`;
+            actionsEl.appendChild(refBtn);
+          }
+          const stopBtn = document.createElement('button');
+          stopBtn.type = 'button';
+          stopBtn.className = 'secondary-button compact-button';
+          stopBtn.setAttribute('data-aq-stop', '1');
+          stopBtn.textContent = '停止队列';
+          actionsEl.appendChild(stopBtn);
+        } else if (status === 'completed' || status === 'stopped') {
+          if (snap.found > 0) {
+            const refBtn = document.createElement('button');
+            refBtn.type = 'button';
+            refBtn.className = 'compact-button';
+            refBtn.setAttribute('data-aq-refresh', '1');
+            refBtn.textContent = `刷新查看新图对比（${snap.found}）`;
+            actionsEl.appendChild(refBtn);
+          }
+          const dismissBtn = document.createElement('button');
+          dismissBtn.type = 'button';
+          dismissBtn.className = 'match-ghost-btn compact-button';
+          dismissBtn.setAttribute('data-aq-dismiss', '1');
+          dismissBtn.textContent = '收起';
+          actionsEl.appendChild(dismissBtn);
+        }
+      }
+    }
+
+    // Apply outcomes & live queue positions to cards currently on screen
+    const outcomesByID = new Map();
+    if (Array.isArray(snap.completedResults)) {
+      for (const r of snap.completedResults) {
+        outcomesByID.set(String(r.candidateId), r);
+      }
+    }
+    const positions = snap.queuedPositions || {};
+    for (const card of allCards(root)) {
+      if (card.dataset.candidateKind !== 'audit_review') continue;
+      const cid = card.dataset.candidateId;
+      const outcome = outcomesByID.get(cid);
+      if (outcome) {
+        if (outcome.outcome === 'not_found') {
+          card.dataset.baseSearchState = 'not_found_manual';
+          card.dataset.baseSearchNote = outcome.note || '手动联网找图未找到更合适的候选头像';
+        } else if (outcome.outcome === 'failed') {
+          card.dataset.baseSearchState = 'failed';
+          card.dataset.baseSearchNote = outcome.note || '联网搜图失败，可点击重试';
+        }
+      }
+
+      if (status === 'running' && String(snap.currentId || '') === cid) {
+        renderCardVisualState(root, card, 'running', 1, '');
+      } else if (status === 'running' && positions[cid] > 0) {
+        renderCardVisualState(root, card, 'queued', positions[cid], '');
+      } else if (outcome && outcome.outcome === 'found') {
+        renderCardVisualState(root, card, 'found', 0, outcome.note || '');
+      } else {
+        renderCardVisualState(root, card, card.dataset.baseSearchState || 'idle', 0, card.dataset.baseSearchNote || '');
+      }
+    }
+
+    updateFilterAndToolbar(root);
+    scheduleQueuePoll(status === 'running');
+  }
+
+  function stopQueuePoll() {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    if (pollController) { pollController.abort(); pollController = null; }
+  }
+
+  function scheduleQueuePoll(active) {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    if (!active || document.hidden || !workbench()) return;
+    pollTimer = setTimeout(pollQueueNow, 2000);
+  }
+
+  async function pollQueueNow() {
+    const root = workbench();
+    if (!root || document.hidden) return;
+    pollController?.abort();
+    const ctrl = new AbortController();
+    pollController = ctrl;
+    try {
+      const resp = await fetch('/admin/matches/images/search-queue.json', {
+        credentials: 'same-origin',
+        signal: ctrl.signal,
+      });
+      if (!resp.ok || ctrl.signal.aborted) return;
+      const data = await resp.json();
+      if (data && data.queue && workbench() === root) {
+        applyQueueSnapshot(root, data.queue);
+      }
+    } catch (_) {
+      if (!ctrl.signal.aborted && lastQueueSnapshot?.status === 'running') {
+        scheduleQueuePoll(true);
+      }
+    }
+  }
+
+  async function postQueueAPI(root, url, payload) {
+    const resp = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken(root),
+      },
+      body: JSON.stringify(payload || {}),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json();
+  }
+
+  function initAvatarWorkbench() {
+    stopQueuePoll();
+    selectedIds.clear();
+    activeFilter = 'all';
+    searchQuery = '';
+    lastQueueSnapshot = null;
+    const root = workbench();
+    if (!root) return;
+    const strip = root.querySelector('[data-avatar-queue-strip]');
+    const initialStatus = strip?.dataset.queueStatus || 'idle';
+    updateFilterAndToolbar(root);
+    if (initialStatus === 'running') {
+      pollQueueNow();
+    }
+  }
+
+  document.addEventListener('click', async (e) => {
+    if (!(e.target instanceof Element)) return;
+    const root = workbench();
+    if (!root || !root.contains(e.target)) return;
+
+    const filterBtn = e.target.closest('[data-avatar-filter]');
+    if (filterBtn) {
+      activeFilter = filterBtn.dataset.avatarFilter || 'all';
+      updateFilterAndToolbar(root);
+      return;
+    }
+
+    if (e.target.closest('[data-avatar-select-unsearched]')) {
+      for (const card of allCards(root)) {
+        if (!card.hidden && isCardSelectable(card) && (card.dataset.searchState || 'idle') === 'idle') {
+          selectedIds.add(card.dataset.candidateId);
+        }
+      }
+      updateFilterAndToolbar(root);
+      return;
+    }
+
+    if (e.target.closest('[data-avatar-select-all]')) {
+      for (const card of allCards(root)) {
+        if (!card.hidden && isCardSelectable(card)) {
+          selectedIds.add(card.dataset.candidateId);
+        }
+      }
+      updateFilterAndToolbar(root);
+      return;
+    }
+
+    if (e.target.closest('[data-avatar-select-clear]')) {
+      selectedIds.clear();
+      updateFilterAndToolbar(root);
+      return;
+    }
+
+    if (e.target.closest('[data-avatar-batch-search]')) {
+      const ids = Array.from(selectedIds).map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0);
+      if (ids.length === 0) return;
+      try {
+        const res = await postQueueAPI(root, '/admin/matches/images/search-queue/enqueue', { candidateIds: ids });
+        for (const id of ids) selectedIds.delete(String(id));
+        if (res.queue) applyQueueSnapshot(root, res.queue);
+        showAvatarNotice(res.added > 0 ? `已将 ${res.added} 位艺术家加入联网找图队列` : '选中项已在队列中或已处理');
+      } catch (_) {
+        showAvatarNotice('加入联网找图队列失败，请稍后重试');
+      }
+      return;
+    }
+
+    const dequeueBtn = e.target.closest('[data-avatar-dequeue]');
+    if (dequeueBtn) {
+      const cid = Number(dequeueBtn.getAttribute('data-avatar-dequeue'));
+      if (!cid) return;
+      try {
+        const res = await postQueueAPI(root, '/admin/matches/images/search-queue/remove', { candidateId: cid });
+        if (res.queue) applyQueueSnapshot(root, res.queue);
+        if (res.removed) showAvatarNotice('已从找图队列移出');
+      } catch (_) {
+        showAvatarNotice('移出队列失败，请稍后重试');
+      }
+      return;
+    }
+
+    if (e.target.closest('[data-aq-stop]')) {
+      try {
+        const res = await postQueueAPI(root, '/admin/matches/images/search-queue/stop', {});
+        if (res.queue) applyQueueSnapshot(root, res.queue);
+        showAvatarNotice('已停止剩余排队项');
+      } catch (_) {
+        showAvatarNotice('停止队列失败，请稍后重试');
+      }
+      return;
+    }
+
+    if (e.target.closest('[data-aq-dismiss]')) {
+      try {
+        const res = await postQueueAPI(root, '/admin/matches/images/search-queue/dismiss', {});
+        if (res.queue) applyQueueSnapshot(root, res.queue);
+      } catch (_) {
+        showAvatarNotice('收起失败，请稍后重试');
+      }
+      return;
+    }
+
+    if (e.target.closest('[data-aq-refresh]')) {
+      reloadMatchesPage();
+    }
+  });
+
+  document.addEventListener('submit', async (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    const root = workbench();
+    if (!root || !root.contains(form)) return;
+
+    // Intercept single-card "联网找新图 / 重新搜图" to enqueue without page reload
+    if (form.hasAttribute('data-avatar-search-form')) {
+      e.preventDefault();
+      const cid = Number(form.getAttribute('data-avatar-search-form'));
+      if (!cid) return;
+      try {
+        const res = await postQueueAPI(root, '/admin/matches/images/search-queue/enqueue', { candidateIds: [cid] });
+        selectedIds.delete(String(cid));
+        if (res.queue) applyQueueSnapshot(root, res.queue);
+        showAvatarNotice(res.added > 0 ? '已加入手动联网找图队列' : '该待审项已在队列中');
+      } catch (_) {
+        showAvatarNotice('加入联网找图队列失败，请稍后重试');
+      }
+      return;
+    }
+
+    // Populate selected candidate IDs for batch keep / batch clear form posts
+    if (form.hasAttribute('data-avatar-batch-form')) {
+      const ids = Array.from(selectedIds);
+      if (ids.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const hidden = form.querySelector('input[name="candidateIds"]');
+      if (hidden instanceof HTMLInputElement) {
+        hidden.value = ids.join(',');
+      }
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    const root = workbench();
+    if (!root || !root.contains(el)) return;
+
+    if (el.hasAttribute('data-avatar-select-master')) {
+      for (const card of allCards(root)) {
+        if (!card.hidden && isCardSelectable(card)) {
+          if (el.checked) selectedIds.add(card.dataset.candidateId);
+          else selectedIds.delete(card.dataset.candidateId);
+        }
+      }
+      updateFilterAndToolbar(root);
+      return;
+    }
+    if (el.hasAttribute('data-avatar-select')) {
+      const id = el.getAttribute('data-avatar-select');
+      if (id) {
+        if (el.checked) selectedIds.add(id);
+        else selectedIds.delete(id);
+      }
+      updateFilterAndToolbar(root);
+    }
+  });
+
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement) || !el.hasAttribute('data-avatar-search-input')) return;
+    const root = workbench();
+    if (!root || !root.contains(el)) return;
+    searchQuery = el.value.trim().toLowerCase();
+    updateFilterAndToolbar(root);
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopQueuePoll();
+    } else if (workbench() && (lastQueueSnapshot?.status === 'running' || workbench().querySelector('[data-avatar-queue-strip]')?.dataset.queueStatus === 'running')) {
+      pollQueueNow();
+    }
+  });
+  document.addEventListener('032:pjax-applied', initAvatarWorkbench);
+  initAvatarWorkbench();
+})();
+
 // Polls /admin/loudness/status every 3 s on /admin/loudness (or 15 s on dashboard).
 (function () {
   'use strict';

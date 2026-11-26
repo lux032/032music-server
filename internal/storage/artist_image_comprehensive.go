@@ -48,6 +48,9 @@ type ArtistImageCandidate struct {
 	Kind            string // "replacement" | "audit_review"
 	IssueType       string
 	ConfidenceScore int
+	WebSearchState  string // "" | "not_found_auto" | "not_found_manual" | "failed"
+	WebSearchNote   string
+	WebSearchedAt   string
 	CurrentImageURL string
 	CreatedAt       string
 	ReviewedAt      string
@@ -1001,6 +1004,15 @@ func (s *Store) UpsertArtistImageBackfillCandidate(ctx context.Context, checkpoi
 	return id, tx.Commit()
 }
 
+func normalizeCandidateWebSearchState(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "not_found_auto", "not_found_manual", "failed":
+		return strings.ToLower(strings.TrimSpace(state))
+	default:
+		return ""
+	}
+}
+
 func upsertArtistImageCandidate(ctx context.Context, db queryRower, c ArtistImageCandidate) (int64, error) {
 	c.Source = strings.TrimSpace(c.Source)
 	c.ImageURL = strings.TrimSpace(c.ImageURL)
@@ -1008,6 +1020,8 @@ func upsertArtistImageCandidate(ctx context.Context, db queryRower, c ArtistImag
 	c.Title = strings.TrimSpace(c.Title)
 	c.Reason = strings.TrimSpace(c.Reason)
 	c.IssueType = strings.TrimSpace(c.IssueType)
+	c.WebSearchState = normalizeCandidateWebSearchState(c.WebSearchState)
+	c.WebSearchNote = strings.TrimSpace(c.WebSearchNote)
 	if c.Kind != "audit_review" {
 		c.Kind = "replacement"
 	}
@@ -1023,19 +1037,96 @@ func upsertArtistImageCandidate(ctx context.Context, db queryRower, c ArtistImag
 	if runes := []rune(c.Reason); len(runes) > 500 {
 		c.Reason = strings.TrimSpace(string(runes[:500]))
 	}
+	if runes := []rune(c.WebSearchNote); len(runes) > 300 {
+		c.WebSearchNote = strings.TrimSpace(string(runes[:300]))
+	}
 	if c.ArtistID <= 0 || c.ImageURL == "" || c.Source == "" {
 		return 0, errors.New("invalid artist image candidate")
 	}
+	var searchedAt any
+	if c.WebSearchState != "" {
+		if ts := strings.TrimSpace(c.WebSearchedAt); ts != "" {
+			searchedAt = ts
+		} else {
+			searchedAt = "NOW"
+		}
+	}
 	var id int64
-	err := db.QueryRowContext(ctx, `INSERT INTO artist_image_candidates(artist_id,source,image_url,page_url,title,confidence,reason,width,height,kind,issue_type,confidence_score)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,image_url) DO UPDATE SET
-		source=excluded.source,page_url=excluded.page_url,title=excluded.title,confidence=excluded.confidence,reason=excluded.reason,width=excluded.width,height=excluded.height,kind=excluded.kind,issue_type=excluded.issue_type,confidence_score=excluded.confidence_score
+	err := db.QueryRowContext(ctx, `INSERT INTO artist_image_candidates(artist_id,source,image_url,page_url,title,confidence,reason,width,height,kind,issue_type,confidence_score,web_search_state,web_search_note,web_searched_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='NOW' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE ? END) ON CONFLICT(artist_id,image_url) DO UPDATE SET
+		source=excluded.source,page_url=excluded.page_url,title=excluded.title,confidence=excluded.confidence,reason=excluded.reason,width=excluded.width,height=excluded.height,kind=excluded.kind,issue_type=excluded.issue_type,confidence_score=excluded.confidence_score,
+		web_search_state=CASE WHEN excluded.web_search_state<>'' THEN excluded.web_search_state ELSE artist_image_candidates.web_search_state END,
+		web_search_note=CASE WHEN excluded.web_search_state<>'' THEN excluded.web_search_note ELSE artist_image_candidates.web_search_note END,
+		web_searched_at=CASE WHEN excluded.web_search_state<>'' THEN excluded.web_searched_at ELSE artist_image_candidates.web_searched_at END
 		WHERE artist_image_candidates.status='pending' RETURNING id`,
-		c.ArtistID, c.Source, c.ImageURL, c.PageURL, c.Title, c.Confidence, c.Reason, c.Width, c.Height, c.Kind, c.IssueType, c.ConfidenceScore).Scan(&id)
+		c.ArtistID, c.Source, c.ImageURL, c.PageURL, c.Title, c.Confidence, c.Reason, c.Width, c.Height, c.Kind, c.IssueType, c.ConfidenceScore, c.WebSearchState, c.WebSearchNote, searchedAt, searchedAt).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return id, err
+}
+
+// UpdateArtistImageCandidateSearchState persists the latest manual/auto web
+// search outcome on a pending candidate card and returns the recorded timestamp.
+func (s *Store) UpdateArtistImageCandidateSearchState(ctx context.Context, candidateID int64, state, note string) (string, error) {
+	state = normalizeCandidateWebSearchState(state)
+	note = strings.TrimSpace(note)
+	if runes := []rune(note); len(runes) > 300 {
+		note = strings.TrimSpace(string(runes[:300]))
+	}
+	var searchedAt string
+	err := s.db.QueryRowContext(ctx, `UPDATE artist_image_candidates
+		SET web_search_state=?,web_search_note=?,
+		    web_searched_at=CASE WHEN ?<>'' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END
+		WHERE id=? AND status='pending'
+		RETURNING COALESCE(web_searched_at,'')`,
+		state, note, state, candidateID).Scan(&searchedAt)
+	return searchedAt, err
+}
+
+// ResolveAuditCandidateWithReplacement atomically inserts a newly discovered
+// replacement candidate and resolves the originating pending audit_review item
+// so the artist appears once as a side-by-side comparison card.
+func (s *Store) ResolveAuditCandidateWithReplacement(ctx context.Context, auditCandidateID int64, replacement ArtistImageCandidate) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_image_candidates SET id=id WHERE 0`); err != nil {
+		return 0, err
+	}
+	var artistID int64
+	var issueType, auditReason string
+	err = tx.QueryRowContext(ctx, `SELECT artist_id,issue_type,reason FROM artist_image_candidates WHERE id=? AND status='pending'`, auditCandidateID).
+		Scan(&artistID, &issueType, &auditReason)
+	if err != nil {
+		return 0, err
+	}
+	replacement.ArtistID = artistID
+	replacement.Kind = "replacement"
+	if strings.TrimSpace(replacement.IssueType) == "" {
+		replacement.IssueType = issueType
+	}
+	if strings.TrimSpace(replacement.Reason) == "" && strings.TrimSpace(auditReason) != "" {
+		replacement.Reason = "原图问题：" + strings.TrimSpace(auditReason)
+	}
+	newID, err := upsertArtistImageCandidate(ctx, tx, replacement)
+	if err != nil {
+		return 0, err
+	}
+	if newID == 0 {
+		return 0, nil
+	}
+	if newID != auditCandidateID {
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_image_candidates SET status='rejected',reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='pending'`, auditCandidateID); err != nil {
+			return 0, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newID, nil
 }
 
 const pendingArtistImageCandidates = ` FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.status='pending' AND a.merged_into_artist_id IS NULL AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id) AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)`
@@ -1050,7 +1141,7 @@ func (s *Store) PendingArtistImageCandidates(ctx context.Context, limit int) ([]
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.artist_id,COALESCE(a.user_display_name,a.display_name),c.source,c.image_url,c.page_url,c.title,c.confidence,c.reason,c.width,c.height,c.status,c.kind,c.issue_type,c.confidence_score,`+artistImageURLSQL("a")+`,c.created_at,COALESCE(c.reviewed_at,'')`+pendingArtistImageCandidates+` ORDER BY c.id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.artist_id,COALESCE(a.user_display_name,a.display_name),c.source,c.image_url,c.page_url,c.title,c.confidence,c.reason,c.width,c.height,c.status,c.kind,c.issue_type,c.confidence_score,c.web_search_state,c.web_search_note,COALESCE(c.web_searched_at,''),`+artistImageURLSQL("a")+`,c.created_at,COALESCE(c.reviewed_at,'')`+pendingArtistImageCandidates+` ORDER BY c.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1058,7 +1149,7 @@ func (s *Store) PendingArtistImageCandidates(ctx context.Context, limit int) ([]
 	var out []ArtistImageCandidate
 	for rows.Next() {
 		var item ArtistImageCandidate
-		if err = rows.Scan(&item.ID, &item.ArtistID, &item.ArtistName, &item.Source, &item.ImageURL, &item.PageURL, &item.Title, &item.Confidence, &item.Reason, &item.Width, &item.Height, &item.Status, &item.Kind, &item.IssueType, &item.ConfidenceScore, &item.CurrentImageURL, &item.CreatedAt, &item.ReviewedAt); err != nil {
+		if err = rows.Scan(&item.ID, &item.ArtistID, &item.ArtistName, &item.Source, &item.ImageURL, &item.PageURL, &item.Title, &item.Confidence, &item.Reason, &item.Width, &item.Height, &item.Status, &item.Kind, &item.IssueType, &item.ConfidenceScore, &item.WebSearchState, &item.WebSearchNote, &item.WebSearchedAt, &item.CurrentImageURL, &item.CreatedAt, &item.ReviewedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -1068,8 +1159,8 @@ func (s *Store) PendingArtistImageCandidates(ctx context.Context, limit int) ([]
 
 func (s *Store) ArtistImageCandidateByID(ctx context.Context, id int64) (ArtistImageCandidate, error) {
 	var item ArtistImageCandidate
-	err := s.db.QueryRowContext(ctx, `SELECT c.id,c.artist_id,COALESCE(a.user_display_name,a.display_name),c.source,c.image_url,c.page_url,c.title,c.confidence,c.reason,c.width,c.height,c.status,c.kind,c.issue_type,c.confidence_score,`+artistImageURLSQL("a")+`,c.created_at,COALESCE(c.reviewed_at,'') FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.id=?`, id).
-		Scan(&item.ID, &item.ArtistID, &item.ArtistName, &item.Source, &item.ImageURL, &item.PageURL, &item.Title, &item.Confidence, &item.Reason, &item.Width, &item.Height, &item.Status, &item.Kind, &item.IssueType, &item.ConfidenceScore, &item.CurrentImageURL, &item.CreatedAt, &item.ReviewedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT c.id,c.artist_id,COALESCE(a.user_display_name,a.display_name),c.source,c.image_url,c.page_url,c.title,c.confidence,c.reason,c.width,c.height,c.status,c.kind,c.issue_type,c.confidence_score,c.web_search_state,c.web_search_note,COALESCE(c.web_searched_at,''),`+artistImageURLSQL("a")+`,c.created_at,COALESCE(c.reviewed_at,'') FROM artist_image_candidates c JOIN artists a ON a.id=c.artist_id WHERE c.id=?`, id).
+		Scan(&item.ID, &item.ArtistID, &item.ArtistName, &item.Source, &item.ImageURL, &item.PageURL, &item.Title, &item.Confidence, &item.Reason, &item.Width, &item.Height, &item.Status, &item.Kind, &item.IssueType, &item.ConfidenceScore, &item.WebSearchState, &item.WebSearchNote, &item.WebSearchedAt, &item.CurrentImageURL, &item.CreatedAt, &item.ReviewedAt)
 	return item, err
 }
 
@@ -1106,8 +1197,10 @@ func (s *Store) ReviewArtistImageCandidate(ctx context.Context, id int64, status
 	return tx.Commit()
 }
 
-// KeepArtistImageCandidate resolves a pending audit_review item by confirming
-// the artist's existing cached avatar as kept so future audit_all runs skip it.
+// KeepArtistImageCandidate resolves a pending audit_review or replacement item
+// by confirming the artist's existing cached avatar as kept so future audit_all
+// runs skip it. When invoked on a replacement card, the rejected replacement
+// URL is blacklisted and any sibling pending cards for the artist are closed.
 func (s *Store) KeepArtistImageCandidate(ctx context.Context, candidateID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1115,7 +1208,16 @@ func (s *Store) KeepArtistImageCandidate(ctx context.Context, candidateID int64)
 	}
 	defer tx.Rollback()
 	var artistID int64
-	if err = tx.QueryRowContext(ctx, `UPDATE artist_image_candidates SET status='rejected',reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='pending' RETURNING artist_id`, candidateID).Scan(&artistID); err != nil {
+	var kind, imageURL string
+	if err = tx.QueryRowContext(ctx, `UPDATE artist_image_candidates SET status='rejected',reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='pending' RETURNING artist_id,kind,image_url`, candidateID).Scan(&artistID, &kind, &imageURL); err != nil {
+		return err
+	}
+	if kind == "replacement" && strings.TrimSpace(imageURL) != "" {
+		if err = insertArtistImageRejectionTx(ctx, tx, artistID, imageURL, "", "manual_kept_existing"); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_image_candidates SET status='rejected',reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE artist_id=? AND id<>? AND status='pending'`, artistID, candidateID); err != nil {
 		return err
 	}
 	if eff, e := queryArtistEffectiveImageCache(ctx, tx, artistID); e == nil && eff.ContentHash != "" {

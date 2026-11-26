@@ -25,3 +25,9 @@
 ## 5. 整库集成与回归验证
 
 - [x] 5.1 编写跨层端到端集成测试，串联 Tavily 多 Key 轮询故障转移 -> `audit_all` 全量历史头像审查（涵盖合格跳过、高置信替换、1.A 垃圾图清空含合并源、非垃圾图保留待审、中低置信不耗搜图、自定义头像保护）-> 缓存 URL `?v=` 刷新 -> 一键撤销复原，并运行全量测试与编译检查确认零回归（`go test ./... && go build ./...`）。
+
+## 6. 待审头像状态标记、多选批处理与异步找图队列
+
+- [x] 6.1 新增迁移 `internal/storage/migrations/092_artist_image_candidate_search_state.sql` 为 `artist_image_candidates` 增加 `web_search_state` / `web_search_note` / `web_searched_at`；扩展 `internal/storage/artist_image_comprehensive.go` 支持读写搜索状态、`UpdateArtistImageCandidateSearchState`、`ResolveAuditCandidateWithReplacement`（单事务收口原疑点卡为新旧对比卡）以及增强 `KeepArtistImageCandidate` 对 `replacement` 卡片的拒绝拉黑与同艺人待审收口；补齐迁移与存储单元测试（`go test ./internal/storage -run "TestMigrate|ArtistImage"`）。
+- [x] 6.2 更新 `internal/enrichment/artist_image_ai.go`（高置信无替代图时按是否实际执行 Tier 3 写入 `not_found_auto`）并新增 `internal/enrichment/artist_image_search_queue.go` 实现独立串行异步找图队列（多选入队/追加、单条移出、停止、收起、状态快照、与全量任务并行且不受单轮联网预算限制、按结果写入 `not_found_manual`/`failed` 或收口为 `replacement` 卡）；补齐队列并发安全与状态流转单测（`go test -race ./internal/enrichment -run "ArtistImage"`）。
+- [x] 6.3 扩展 `internal/http/artist_image_backfill.go`、`internal/http/identity.go`、`internal/http/app.go`、`internal/http/templates/match-review.html`、`internal/http/assets/icons.svg`、`internal/http/assets/pages.css` 与 `internal/http/assets/admin.js`：实现找图队列 JSON/控制端点与批量保留/批量清空端点，按已确认原型 `prototypes/avatar-review-queue.html` 落地状态筛选胶囊、多选工具栏（「仅选未搜过」「全选本页可搜」「加入联网找图队列」「批量保留原图」「批量清空头像」二次确认）、顶部队列进度条 2 秒原地轮询与卡片状态图标徽章（排队中 `#N` / 搜图中 / 自动已搜无果 / 手动已搜无果 / 搜图失败 / 已找到新图）；补齐 HTTP 测试并运行全量验证与 `openspec validate --strict`。
