@@ -189,6 +189,7 @@ func run() error {
 	})
 	app.SetAIReview(aiReviewService)
 	enrichmentManager.SetInlineAIReviewer(aiReviewService.EvaluateInline)
+	enrichmentManager.WakeAutoImageQueue()
 
 	taggingService = tagging.New(db, logger, tagging.Options{
 		AudioActive: func(ctx context.Context) bool {

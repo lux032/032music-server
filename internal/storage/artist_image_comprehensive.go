@@ -28,6 +28,7 @@ type ArtistImageSettings struct {
 	MaxWebRequestsPerRun int
 	NegativeCacheDays    int
 	AuditAutoConfidence  int
+	AutoIngestAIEnabled  bool
 }
 
 // ArtistImageCandidate is a pending or reviewed candidate avatar discovered by
@@ -139,8 +140,8 @@ func IsArtistImageAuditMode(mode string) bool {
 
 func (s *Store) ArtistImageSettings(ctx context.Context) (ArtistImageSettings, error) {
 	var v ArtistImageSettings
-	var bangumi, deezer, wiki, fanart, webFB, webAuto, vision int
-	err := s.db.QueryRowContext(ctx, `SELECT bangumi_enabled,deezer_enabled,wikipedia_enabled,fanart_enabled,fanart_api_key,web_fallback_enabled,web_auto_apply_high,vision_enabled,vision_model,ai_model,max_web_requests_per_run,negative_cache_days,audit_auto_confidence FROM artist_image_settings WHERE id=1`).Scan(
+	var bangumi, deezer, wiki, fanart, webFB, webAuto, vision, autoIngest int
+	err := s.db.QueryRowContext(ctx, `SELECT bangumi_enabled,deezer_enabled,wikipedia_enabled,fanart_enabled,fanart_api_key,web_fallback_enabled,web_auto_apply_high,vision_enabled,vision_model,ai_model,max_web_requests_per_run,negative_cache_days,audit_auto_confidence,auto_ingest_ai_enabled FROM artist_image_settings WHERE id=1`).Scan(
 		&bangumi,
 		&deezer,
 		&wiki,
@@ -154,6 +155,7 @@ func (s *Store) ArtistImageSettings(ctx context.Context) (ArtistImageSettings, e
 		&v.MaxWebRequestsPerRun,
 		&v.NegativeCacheDays,
 		&v.AuditAutoConfidence,
+		&autoIngest,
 	)
 	v.BangumiEnabled = bangumi != 0
 	v.DeezerEnabled = deezer != 0
@@ -162,6 +164,7 @@ func (s *Store) ArtistImageSettings(ctx context.Context) (ArtistImageSettings, e
 	v.WebFallbackEnabled = webFB != 0
 	v.WebAutoApplyHigh = webAuto != 0
 	v.VisionEnabled = vision != 0
+	v.AutoIngestAIEnabled = autoIngest != 0
 	if v.AuditAutoConfidence < 50 || v.AuditAutoConfidence > 100 {
 		v.AuditAutoConfidence = 85
 	}
@@ -187,7 +190,7 @@ func (s *Store) SaveArtistImageSettings(ctx context.Context, v ArtistImageSettin
 	if v.AuditAutoConfidence > 100 {
 		v.AuditAutoConfidence = 100
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE artist_image_settings SET bangumi_enabled=?,deezer_enabled=?,wikipedia_enabled=?,fanart_enabled=?,fanart_api_key=?,web_fallback_enabled=?,web_auto_apply_high=?,vision_enabled=?,vision_model=?,ai_model=?,max_web_requests_per_run=?,negative_cache_days=?,audit_auto_confidence=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`,
+	_, err := s.db.ExecContext(ctx, `UPDATE artist_image_settings SET bangumi_enabled=?,deezer_enabled=?,wikipedia_enabled=?,fanart_enabled=?,fanart_api_key=?,web_fallback_enabled=?,web_auto_apply_high=?,vision_enabled=?,vision_model=?,ai_model=?,max_web_requests_per_run=?,negative_cache_days=?,audit_auto_confidence=?,auto_ingest_ai_enabled=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`,
 		boolInt(v.BangumiEnabled),
 		boolInt(v.DeezerEnabled),
 		boolInt(v.WikipediaEnabled),
@@ -201,6 +204,7 @@ func (s *Store) SaveArtistImageSettings(ctx context.Context, v ArtistImageSettin
 		v.MaxWebRequestsPerRun,
 		v.NegativeCacheDays,
 		v.AuditAutoConfidence,
+		boolInt(v.AutoIngestAIEnabled),
 	)
 	return err
 }
@@ -275,12 +279,31 @@ func requireArtistImageFallbackCheckpoint(ctx context.Context, tx *sql.Tx, c *Ar
 }
 
 func (s *Store) beginArtistImageFallbackWrite(ctx context.Context, c ArtistImageBackfillCheckpoint, artistID int64) (*sql.Tx, error) {
+	return s.beginArtistImageFallbackWriteOpt(ctx, &c, artistID)
+}
+
+func (s *Store) beginArtistImageFallbackWriteOpt(ctx context.Context, c *ArtistImageBackfillCheckpoint, artistID int64) (*sql.Tx, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err = artistImageBackfillWriteLock(ctx, tx); err == nil {
-		err = requireArtistImageFallbackCheckpoint(ctx, tx, &c, artistID)
+	if c != nil {
+		if err = artistImageBackfillWriteLock(ctx, tx); err == nil {
+			err = requireArtistImageFallbackCheckpoint(ctx, tx, c, artistID)
+		}
+	} else {
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_image_cache SET artist_id=artist_id WHERE 0`); err == nil {
+			var eligible bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM artists a WHERE a.id=? AND a.merged_into_artist_id IS NULL
+				AND EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=a.id AND p.source='musicbrainz')
+				AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci WHERE ci.artist_id=a.id)
+				AND NOT EXISTS(SELECT 1 FROM artist_custom_images ci JOIN artists ma ON ma.id=ci.artist_id WHERE ma.merged_into_artist_id=a.id)
+			)`, artistID).Scan(&eligible)
+			if err == nil && !eligible {
+				err = ErrArtistImageBackfillState
+			}
+		}
 	}
 	if err != nil {
 		_ = tx.Rollback()
@@ -570,11 +593,32 @@ func (s *Store) ArtistImageRejections(ctx context.Context, artistID int64) (Arti
 	return out, nil
 }
 
+// RecordArtistImageRejection persists a rejected URL and/or content hash for
+// an artist so subsequent structured or web lookups do not re-download it.
+func (s *Store) RecordArtistImageRejection(ctx context.Context, artistID int64, imageURL, contentHash, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = insertArtistImageRejectionTx(ctx, tx, artistID, imageURL, contentHash, reason); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ReplaceArtistImageByAudit atomically snapshots prior cache rows, replaces
 // artist_image_cache with the audited replacement image, blacklists the old
 // image URL+hash, and records a keep-review for the new image hash.
 func (s *Store) ReplaceArtistImageByAudit(ctx context.Context, checkpoint ArtistImageBackfillCheckpoint, image ArtistImageInput, audit ArtistImageAuditActionInput) (int64, error) {
-	tx, err := s.beginArtistImageFallbackWrite(ctx, checkpoint, image.ArtistID)
+	return s.ReplaceArtistImageByAuditOpt(ctx, &checkpoint, image, audit)
+}
+
+// ReplaceArtistImageByAuditOpt performs the same atomic replacement as
+// ReplaceArtistImageByAudit while allowing a nil checkpoint for the async
+// auto-ingest avatar queue.
+func (s *Store) ReplaceArtistImageByAuditOpt(ctx context.Context, checkpoint *ArtistImageBackfillCheckpoint, image ArtistImageInput, audit ArtistImageAuditActionInput) (int64, error) {
+	tx, err := s.beginArtistImageFallbackWriteOpt(ctx, checkpoint, image.ArtistID)
 	if err != nil {
 		return 0, err
 	}
@@ -651,10 +695,17 @@ func (s *Store) ReplaceArtistImageByAudit(ctx context.Context, checkpoint Artist
 // rows for artistID and its merged-in source artists (1.A garbage policy),
 // blacklists their URL+hash, and records a negative-cache cooldown.
 func (s *Store) ClearArtistImageByAudit(ctx context.Context, checkpoint ArtistImageBackfillCheckpoint, artistID int64, audit ArtistImageAuditActionInput, cooldownDays int) (int64, error) {
+	return s.ClearArtistImageByAuditOpt(ctx, &checkpoint, artistID, audit, cooldownDays)
+}
+
+// ClearArtistImageByAuditOpt performs the same atomic clearance as
+// ClearArtistImageByAudit while allowing a nil checkpoint for the async
+// auto-ingest avatar queue.
+func (s *Store) ClearArtistImageByAuditOpt(ctx context.Context, checkpoint *ArtistImageBackfillCheckpoint, artistID int64, audit ArtistImageAuditActionInput, cooldownDays int) (int64, error) {
 	if cooldownDays < 1 {
 		cooldownDays = 30
 	}
-	tx, err := s.beginArtistImageFallbackWrite(ctx, checkpoint, artistID)
+	tx, err := s.beginArtistImageFallbackWriteOpt(ctx, checkpoint, artistID)
 	if err != nil {
 		return 0, err
 	}
@@ -867,14 +918,20 @@ func (s *Store) RecentArtistImageAuditActions(ctx context.Context, limit int) ([
 // single transaction guarded by unmerged status, absence of custom images, and
 // optional durable run checkpoint.
 func (s *Store) SaveArtistImageBackfillGuarded(ctx context.Context, image ArtistImageInput, c *ArtistImageBackfillCheckpoint) error {
-	return s.saveArtistImageBackfillGuarded(ctx, image, c, 0)
+	return s.saveArtistImageBackfillGuarded(ctx, image, c, 0, nil)
+}
+
+// SaveArtistImageBackfillWithReview atomically caches an approved avatar along
+// with an optional VLM keep-review record so subsequent audit_all runs skip it.
+func (s *Store) SaveArtistImageBackfillWithReview(ctx context.Context, image ArtistImageInput, c *ArtistImageBackfillCheckpoint, review *ArtistImageReview) error {
+	return s.saveArtistImageBackfillGuarded(ctx, image, c, 0, review)
 }
 
 func (s *Store) ApproveArtistImageCandidate(ctx context.Context, id int64, image ArtistImageInput) error {
-	return s.saveArtistImageBackfillGuarded(ctx, image, nil, id)
+	return s.saveArtistImageBackfillGuarded(ctx, image, nil, id, nil)
 }
 
-func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image ArtistImageInput, c *ArtistImageBackfillCheckpoint, candidateID int64) error {
+func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image ArtistImageInput, c *ArtistImageBackfillCheckpoint, candidateID int64, review *ArtistImageReview) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -900,7 +957,7 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 	if err = requireArtistImageFallbackCheckpoint(ctx, tx, c, image.ArtistID); err != nil {
 		return err
 	}
-	if image.Source == "fanart" && candidateID == 0 {
+	if (image.Source == "fanart" || c == nil) && candidateID == 0 {
 		var hasMB bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM artist_external_profiles WHERE artist_id=? AND source='musicbrainz')`, image.ArtistID).Scan(&hasMB); err != nil {
 			return err
@@ -959,6 +1016,12 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 		}); err != nil {
 			return err
 		}
+	} else if review != nil && strings.TrimSpace(review.ImageHash) != "" {
+		rev := *review
+		rev.ArtistID = image.ArtistID
+		if err = upsertArtistImageReviewTx(ctx, tx, rev); err != nil {
+			return err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM artist_image_attempts WHERE artist_id=?`, image.ArtistID); err != nil {
 		return err
@@ -968,10 +1031,16 @@ func (s *Store) saveArtistImageBackfillGuarded(ctx context.Context, image Artist
 
 // RecordArtistImageBackfillMiss records a cooldown for an active backfill item.
 func (s *Store) RecordArtistImageBackfillMiss(ctx context.Context, checkpoint ArtistImageBackfillCheckpoint, artistID int64, tierReached string, cooldownDays int) error {
+	return s.RecordArtistImageMissOpt(ctx, &checkpoint, artistID, tierReached, cooldownDays)
+}
+
+// RecordArtistImageMissOpt records a negative-cache cooldown for an artist,
+// optionally guarded by a durable backfill checkpoint.
+func (s *Store) RecordArtistImageMissOpt(ctx context.Context, checkpoint *ArtistImageBackfillCheckpoint, artistID int64, tierReached string, cooldownDays int) error {
 	if cooldownDays < 1 {
 		cooldownDays = 30
 	}
-	tx, err := s.beginArtistImageFallbackWrite(ctx, checkpoint, artistID)
+	tx, err := s.beginArtistImageFallbackWriteOpt(ctx, checkpoint, artistID)
 	if err != nil {
 		return err
 	}
@@ -992,7 +1061,13 @@ func (s *Store) UpsertArtistImageCandidate(ctx context.Context, c ArtistImageCan
 
 // UpsertArtistImageBackfillCandidate queues a candidate while the item is still eligible.
 func (s *Store) UpsertArtistImageBackfillCandidate(ctx context.Context, checkpoint ArtistImageBackfillCheckpoint, c ArtistImageCandidate) (int64, error) {
-	tx, err := s.beginArtistImageFallbackWrite(ctx, checkpoint, c.ArtistID)
+	return s.UpsertArtistImageCandidateOpt(ctx, &checkpoint, c)
+}
+
+// UpsertArtistImageCandidateOpt queues a review candidate guarded by unmerged +
+// no-custom-image invariants and an optional durable backfill checkpoint.
+func (s *Store) UpsertArtistImageCandidateOpt(ctx context.Context, checkpoint *ArtistImageBackfillCheckpoint, c ArtistImageCandidate) (int64, error) {
+	tx, err := s.beginArtistImageFallbackWriteOpt(ctx, checkpoint, c.ArtistID)
 	if err != nil {
 		return 0, err
 	}

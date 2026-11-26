@@ -744,6 +744,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/matches/images/candidates/{id}/search", a.requireAdmin(http.HandlerFunc(a.handleSearchForAuditCandidate)))
 	mux.Handle("POST /admin/matches/images/candidates/batch-keep", a.requireAdmin(http.HandlerFunc(a.handleBatchKeepArtistImageCandidates)))
 	mux.Handle("POST /admin/matches/images/candidates/batch-clear", a.requireAdmin(http.HandlerFunc(a.handleBatchClearArtistImageCandidates)))
+	mux.Handle("GET /admin/matches/images/auto-queue.json", a.requireAdminJSON(http.HandlerFunc(a.handleArtistImageAutoQueueStatus)))
 	mux.Handle("GET /admin/matches/images/search-queue.json", a.requireAdminJSON(http.HandlerFunc(a.handleArtistImageSearchQueueStatus)))
 	mux.Handle("POST /admin/matches/images/search-queue/enqueue", a.requireAdminJSON(http.HandlerFunc(a.handleEnqueueArtistImageSearchQueue)))
 	mux.Handle("POST /admin/matches/images/search-queue/remove", a.requireAdminJSON(http.HandlerFunc(a.handleRemoveArtistImageSearchQueue)))
@@ -1318,7 +1319,7 @@ func (a *App) logRequests(next http.Handler) http.Handler {
 // quietAccessLogPath keeps high-frequency asset, artwork and polling
 // requests out of the Info log so real events stay visible.
 func quietAccessLogPath(path string) bool {
-	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/events" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/matches/images/search-queue.json" || path == "/admin/matches/biographies/runs/active.json" || path == "/admin/enrichment/runs/active.json" || path == "/admin/ai-review/runs/active.json" {
+	if strings.HasPrefix(path, "/admin/assets/") || strings.HasPrefix(path, "/api/v1/artwork/") || path == "/admin/status" || path == "/api/v1/health" || path == "/api/v1/playback/events" || path == "/admin/matches/runs/active.json" || path == "/admin/matches/images/runs/active.json" || path == "/admin/matches/images/search-queue.json" || path == "/admin/matches/images/auto-queue.json" || path == "/admin/matches/biographies/runs/active.json" || path == "/admin/enrichment/runs/active.json" || path == "/admin/ai-review/runs/active.json" {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/playlists/") && strings.HasSuffix(path, "/artwork") {

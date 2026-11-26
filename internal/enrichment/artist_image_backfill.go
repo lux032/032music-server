@@ -114,20 +114,21 @@ func (m *Manager) ArtistImageBackfillStats(ctx context.Context) (cached, total i
 	return cached, total, err
 }
 
-// EnrichAutoConfirmedArtist fetches a missing avatar (refreshing MusicBrainz/Last.fm
-// relations first, then falling back to enabled Tier 2 structured sources) and
-// refreshes missing biographies for both performers and behind-the-scenes credits.
+// EnrichAutoConfirmedArtist queues the newly confirmed artist for background
+// AI-gated avatar acquisition (or unaudited-avatar review) and refreshes
+// missing biographies for both performers and behind-the-scenes credits.
 // Used after AI auto-confirmation so its behavior matches automatic matching.
 func (m *Manager) EnrichAutoConfirmedArtist(ctx context.Context, artistID int64) {
-	valid, err := m.hasValidArtistImage(ctx, artistID)
-	if err == nil && !valid {
-		imgCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		if imgErr := m.RefreshConfirmedArtistImage(imgCtx, artistID); imgErr != nil && !errors.Is(imgErr, sql.ErrNoRows) {
-			m.logger.Warn("ai artist image refresh failed", "artistId", artistID, "error", RedactSourceError(imgErr))
+	if !m.QueueAutoConfirmedArtistImage(ctx, artistID, "inline_ai") {
+		valid, err := m.hasValidArtistImage(ctx, artistID)
+		if err == nil && !valid {
+			imgCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			if imgErr := m.RefreshConfirmedArtistImage(imgCtx, artistID); imgErr != nil && !errors.Is(imgErr, sql.ErrNoRows) {
+				m.logger.Warn("ai artist image refresh failed", "artistId", artistID, "error", RedactSourceError(imgErr))
+			}
+			cancel()
+			m.cacheAutoMatchedArtistImage(ctx, artistID)
 		}
-		cancel()
-		// If MB/Last.fm had no usable portrait, fall back to enabled structured sources (Fanart/Deezer/Bangumi).
-		m.cacheAutoMatchedArtistImage(ctx, artistID)
 	}
 	m.refreshAutoMatchedArtistBiographies(ctx, artistID)
 }
@@ -375,6 +376,23 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 		return m.processAuditedArtistImageItem(ctx, checkpoint, item.ArtistID, runMode == "audit_force")
 	}
 
+	// When VLM visual verification is enabled, route missing-artist acquisition
+	// through the unified Tier 1 -> Tier 2 -> Tier 3 AI gate so bad structured
+	// avatars (album covers / logos) are blocked before entering cache.
+	if imgSt, stErr := m.store.ArtistImageSettings(ctx); stErr == nil && imgSt.VisionEnabled {
+		webAllowed := runMode == "web_fallback" || storage.IsArtistImageAuditMode(runMode) || imgSt.WebFallbackEnabled
+		cp := checkpoint
+		return m.acquireArtistAvatarWithAIGate(ctx, item.ArtistID, avatarAcquireOptions{
+			Checkpoint:        &cp,
+			RunMode:           runMode,
+			AllowWebFallback:  webAllowed,
+			RespectRunBudget:  true,
+			RequireVLM:        true,
+			RefreshProfiles:   true,
+			RecordMissCooling: true,
+		})
+	}
+
 	// Tier 1: 已确认身份的库存 URL 与 MusicBrainz/Last.fm 刷新
 	profiles, err := m.store.ArtistImageProfileSources(ctx, item.ArtistID)
 	if err != nil {
@@ -451,6 +469,10 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 // cached avatar) and, on high-confidence invalid verdict, Phase 2 (Tier 1-3
 // re-acquisition + VLM verification + replacement or 1.A clearance).
 func (m *Manager) processAuditedArtistImageItem(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, force bool) (outcome, errText string, rate *RateLimitError) {
+	return m.processAuditedArtistImageItemOpt(ctx, &checkpoint, artistID, force, true)
+}
+
+func (m *Manager) processAuditedArtistImageItemOpt(ctx context.Context, checkpoint *storage.ArtistImageBackfillCheckpoint, artistID int64, force bool, respectRunBudget bool) (outcome, errText string, rate *RateLimitError) {
 	imgSettings, err := m.store.ArtistImageSettings(ctx)
 	if err != nil {
 		return "failed", err.Error(), nil
@@ -489,7 +511,7 @@ func (m *Manager) processAuditedArtistImageItem(ctx context.Context, checkpoint 
 			Confidence: audit.Confidence,
 			Reason:     audit.Reason,
 			Model:      audit.Model,
-		}, &checkpoint); saveErr != nil {
+		}, checkpoint); saveErr != nil {
 			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
 				return "skipped", "状态已变化，审查记录未写入", nil
 			}
@@ -502,7 +524,7 @@ func (m *Manager) processAuditedArtistImageItem(ctx context.Context, checkpoint 
 	if audit.Confidence < threshold {
 		// Medium/low confidence suspicion: keep existing image and queue
 		// audit_review without consuming web search quota.
-		id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
+		id, candErr := m.store.UpsertArtistImageCandidateOpt(ctx, checkpoint, storage.ArtistImageCandidate{
 			ArtistID:        artistID,
 			Source:          "ai_audit",
 			ImageURL:        auditReviewCandidateURL(eff),
@@ -526,7 +548,7 @@ func (m *Manager) processAuditedArtistImageItem(ctx context.Context, checkpoint 
 		return "skipped", "该疑点已审核", nil
 	}
 
-	return m.replaceAuditedArtistAvatar(ctx, checkpoint, artistID, eff, audit, imgSettings)
+	return m.replaceAuditedArtistAvatarOpt(ctx, checkpoint, artistID, eff, audit, imgSettings, respectRunBudget)
 }
 
 // processStructuredArtistImageFallback tries the enabled Tier 2 sources in

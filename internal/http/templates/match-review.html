@@ -63,6 +63,10 @@
       </div>
     </header>
     {{if .Notice}}<div class="toast">{{.Notice}}</div>{{end}}
+    <div class="avatar-auto-queue-banner" data-auto-image-queue-banner hidden role="status" aria-live="polite">
+      <span class="match-pulse-dot" aria-hidden="true"></span>
+      <span data-auto-image-queue-text>新确认艺人头像自动质检补全中…</span>
+    </div>
 
     {{if .HasAnyActiveRun}}
     <section class="match-active-strip" aria-label="当前任务">
@@ -992,7 +996,8 @@
             <div class="match-check-grid">
               <label class="match-check-card"><input type="checkbox" name="web_fallback_enabled" value="1"{{if .ImageBackfill.Settings.WebFallbackEnabled}} checked{{end}}> <span><strong>联网搜索 + AI 选图兜底</strong><small>结构化图源缺失时检索候选</small></span></label>
               <label class="match-check-card"><input type="checkbox" name="web_auto_apply_high" value="1"{{if .ImageBackfill.Settings.WebAutoApplyHigh}} checked{{end}}> <span><strong>高置信度结果自动入库</strong><small>中低置信度进入「待审头像」</small></span></label>
-              <label class="match-check-card"><input type="checkbox" name="vision_enabled" value="1"{{if .ImageBackfill.Settings.VisionEnabled}} checked{{end}}> <span><strong>可选 VLM 视觉质检</strong><small>校验人脸构图与清晰度</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="vision_enabled" value="1"{{if .ImageBackfill.Settings.VisionEnabled}} checked{{end}}> <span><strong>可选 VLM 视觉质检</strong><small>校验人脸构图与清晰度（覆盖 Tier 1–3）</small></span></label>
+              <label class="match-check-card"><input type="checkbox" name="auto_ingest_ai_enabled" value="1"{{if .ImageBackfill.Settings.AutoIngestAIEnabled}} checked{{end}}> <span><strong>新确认艺人自动 AI 质检与联网补全</strong><small>确认 MusicBrainz 身份后后台自动质检并联网兜底</small></span></label>
             </div>
           </div>
           <div class="match-dialog-group">

@@ -665,6 +665,14 @@ func (a *App) handleSearchArtistImageCandidate(w http.ResponseWriter, r *http.Re
 	writeArtistJSON(w, map[string]any{"found": ok, "candidate": cand})
 }
 
+func (a *App) handleArtistImageAutoQueueStatus(w http.ResponseWriter, r *http.Request) {
+	if a.enrichment == nil {
+		writeArtistJSON(w, map[string]any{"autoQueue": enrichment.ArtistImageAutoQueueStatus{}})
+		return
+	}
+	writeArtistJSON(w, map[string]any{"autoQueue": a.enrichment.ArtistImageAutoQueueStatus(r.Context())})
+}
+
 func (a *App) handleGetArtistImageSettings(w http.ResponseWriter, r *http.Request) {
 	st, err := a.store.ArtistImageSettings(r.Context())
 	if err != nil {
@@ -686,6 +694,7 @@ func (a *App) handleGetArtistImageSettings(w http.ResponseWriter, r *http.Reques
 		"maxWebRequestsPerRun": st.MaxWebRequestsPerRun,
 		"negativeCacheDays":    st.NegativeCacheDays,
 		"auditAutoConfidence":  st.AuditAutoConfidence,
+		"autoIngestAIEnabled":  st.AutoIngestAIEnabled,
 	})
 }
 
@@ -715,6 +724,7 @@ func (a *App) handleSaveArtistImageSettings(w http.ResponseWriter, r *http.Reque
 	cur.WebFallbackEnabled = parseBool("web_fallback_enabled")
 	cur.WebAutoApplyHigh = parseBool("web_auto_apply_high")
 	cur.VisionEnabled = parseBool("vision_enabled")
+	cur.AutoIngestAIEnabled = parseBool("auto_ingest_ai_enabled")
 	cur.VisionModel = strings.TrimSpace(r.FormValue("vision_model"))
 	cur.AIModel = strings.TrimSpace(r.FormValue("ai_model"))
 	if n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("max_web_requests_per_run"))); err == nil && n >= 0 {
@@ -730,6 +740,9 @@ func (a *App) handleSaveArtistImageSettings(w http.ResponseWriter, r *http.Reque
 		a.logger.Error("save artist image settings", "error", err)
 		http.Error(w, "保存头像补全设置失败", http.StatusInternalServerError)
 		return
+	}
+	if cur.AutoIngestAIEnabled && a.enrichment != nil {
+		a.enrichment.WakeAutoImageQueue()
 	}
 	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "艺术家头像补全设置已保存")
 }

@@ -575,12 +575,16 @@ func (a *App) confirmArtistCandidate(w http.ResponseWriter, r *http.Request, id,
 		return
 	}
 	rateLimitedSource := ""
+	queuedAutoImage := false
 	if a.enrichment != nil {
-		if err := a.enrichment.RefreshConfirmedArtistImage(r.Context(), id); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			if source, ok := enrichment.RateLimitedSourceName(err); ok {
-				rateLimitedSource = source
+		queuedAutoImage = a.enrichment.QueueAutoConfirmedArtistImage(r.Context(), id, "manual_confirm")
+		if !queuedAutoImage {
+			if err := a.enrichment.RefreshConfirmedArtistImage(r.Context(), id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				if source, ok := enrichment.RateLimitedSourceName(err); ok {
+					rateLimitedSource = source
+				}
+				a.logger.Warn("cache confirmed artist image", "artistId", id, "error", enrichment.RedactSourceError(err))
 			}
-			a.logger.Warn("cache confirmed artist image", "artistId", id, "error", enrichment.RedactSourceError(err))
 		}
 		if err := a.enrichment.RefreshArtistBiographies(r.Context(), id, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			if source, ok := enrichment.RateLimitedSourceName(err); ok && rateLimitedSource == "" {
@@ -590,6 +594,9 @@ func (a *App) confirmArtistCandidate(w http.ResponseWriter, r *http.Request, id,
 		}
 	}
 	message := "外部身份已经人工确认"
+	if queuedAutoImage {
+		message = "外部身份已经人工确认，头像将在后台自动质检补全"
+	}
 	if rateLimitedSource != "" {
 		message = fmt.Sprintf("已确认匹配；%s 限流中，头像可稍后在“艺术家匹配与审核”页用“已匹配艺术家头像补全”补齐，简介可稍后手动刷新", rateLimitedSource)
 	}

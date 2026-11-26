@@ -585,6 +585,18 @@ func (m *Manager) replaceAuditedArtistAvatar(
 	audit avatarAuditVerdict,
 	imgSettings storage.ArtistImageSettings,
 ) (outcome, errText string, rate *RateLimitError) {
+	return m.replaceAuditedArtistAvatarOpt(ctx, &checkpoint, artistID, eff, audit, imgSettings, true)
+}
+
+func (m *Manager) replaceAuditedArtistAvatarOpt(
+	ctx context.Context,
+	checkpoint *storage.ArtistImageBackfillCheckpoint,
+	artistID int64,
+	eff storage.ArtistEffectiveCacheRow,
+	audit avatarAuditVerdict,
+	imgSettings storage.ArtistImageSettings,
+	respectRunBudget bool,
+) (outcome, errText string, rate *RateLimitError) {
 	threshold := artistImageAuditThreshold(imgSettings)
 	aiSt, err := m.store.AISettings(ctx)
 	if err != nil {
@@ -662,6 +674,9 @@ func (m *Manager) replaceAuditedArtistAvatar(
 			return nil
 		}
 		if !valid {
+			exclusions.URLs[imgURL] = true
+			exclusions.Hashes[imgHash] = true
+			_ = m.store.RecordArtistImageRejection(ctx, artistID, imgURL, imgHash, "vlm_rejected:"+srcName)
 			return nil
 		}
 		c := &verifiedCand{
@@ -768,12 +783,16 @@ func (m *Manager) replaceAuditedArtistAvatar(
 	webSearched := false
 	if bestHigh == nil {
 		if ready, _ := m.canRunArtistImageWebFallback(ctx, imgSettings); ready {
-			reserved, reserveErr := m.store.ReserveArtistImageWebRequest(ctx, checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
-			if errors.Is(reserveErr, storage.ErrArtistImageBackfillState) {
-				return "skipped", "任务状态已变化", nil
-			}
-			if reserveErr != nil {
-				return "failed", reserveErr.Error(), nil
+			reserved := true
+			if respectRunBudget && checkpoint != nil {
+				var reserveErr error
+				reserved, reserveErr = m.store.ReserveArtistImageWebRequest(ctx, *checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
+				if errors.Is(reserveErr, storage.ErrArtistImageBackfillState) {
+					return "skipped", "任务状态已变化", nil
+				}
+				if reserveErr != nil {
+					return "failed", reserveErr.Error(), nil
+				}
 			}
 			if reserved {
 				webSearched = true
@@ -811,8 +830,12 @@ func (m *Manager) replaceAuditedArtistAvatar(
 		}
 	}
 
+	var runID int64
+	if checkpoint != nil {
+		runID = checkpoint.RunID
+	}
 	auditInput := storage.ArtistImageAuditActionInput{
-		RunID:      checkpoint.RunID,
+		RunID:      runID,
 		IssueType:  audit.IssueType,
 		Confidence: audit.Confidence,
 		Reason:     audit.Reason,
@@ -825,7 +848,7 @@ func (m *Manager) replaceAuditedArtistAvatar(
 		if wErr != nil {
 			return "failed", wErr.Error(), nil
 		}
-		if _, saveErr := m.store.ReplaceArtistImageByAudit(ctx, checkpoint, storage.ArtistImageInput{
+		if _, saveErr := m.store.ReplaceArtistImageByAuditOpt(ctx, checkpoint, storage.ArtistImageInput{
 			ArtistID:  artistID,
 			ByteSize:  int64(len(bestHigh.data)),
 			Source:    bestHigh.source,
@@ -857,7 +880,7 @@ func (m *Manager) replaceAuditedArtistAvatar(
 				reason = "原图问题：" + audit.Reason
 			}
 		}
-		id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
+		id, candErr := m.store.UpsertArtistImageCandidateOpt(ctx, checkpoint, storage.ArtistImageCandidate{
 			ArtistID:        artistID,
 			Source:          chosen.source,
 			ImageURL:        chosen.imageURL,
@@ -885,7 +908,7 @@ func (m *Manager) replaceAuditedArtistAvatar(
 
 	// Outcome 3: No replacement found anywhere — apply confirmed 1.A policy!
 	if audit.IssueType == "garbage" {
-		if _, clearErr := m.store.ClearArtistImageByAudit(ctx, checkpoint, artistID, auditInput, imgSettings.NegativeCacheDays); clearErr != nil {
+		if _, clearErr := m.store.ClearArtistImageByAuditOpt(ctx, checkpoint, artistID, auditInput, imgSettings.NegativeCacheDays); clearErr != nil {
 			if errors.Is(clearErr, storage.ErrArtistImageBackfillState) {
 				return "skipped", "状态已变化，清理被安全拒绝", nil
 			}
@@ -902,7 +925,7 @@ func (m *Manager) replaceAuditedArtistAvatar(
 		wsState = "not_found_auto"
 		wsNote = "全量审查已自动联网找图，未找到合适新图"
 	}
-	id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
+	id, candErr := m.store.UpsertArtistImageCandidateOpt(ctx, checkpoint, storage.ArtistImageCandidate{
 		ArtistID:        artistID,
 		Source:          "ai_audit",
 		ImageURL:        auditReviewCandidateURL(eff),
@@ -926,6 +949,374 @@ func (m *Manager) replaceAuditedArtistAvatar(
 		return "candidate", "", nil
 	}
 	return "skipped", "该疑点已审核", nil
+}
+
+type avatarAcquireOptions struct {
+	Checkpoint        *storage.ArtistImageBackfillCheckpoint
+	RunMode           string
+	AllowWebFallback  bool
+	RespectRunBudget  bool
+	RequireVLM        bool
+	RefreshProfiles   bool
+	RecordMissCooling bool
+}
+
+// acquireArtistAvatarWithAIGate runs the unified Tier 1 -> Tier 2 -> Tier 3
+// acquisition pipeline for a missing artist avatar with mandatory VLM gating
+// whenever RequireVLM is true. Rejected candidates are blacklisted in
+// artist_image_rejections; high-confidence verified portraits are cached along
+// with a keep review; medium-confidence candidates are queued for admin review.
+func (m *Manager) acquireArtistAvatarWithAIGate(
+	ctx context.Context,
+	artistID int64,
+	opts avatarAcquireOptions,
+) (outcome, errText string, rate *RateLimitError) {
+	imgSettings, err := m.store.ArtistImageSettings(ctx)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	anchor, err := m.store.ArtistBiographyAnchor(ctx, artistID)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	exclusions, err := m.store.ArtistImageRejections(ctx, artistID)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	if exclusions.URLs == nil {
+		exclusions.URLs = map[string]bool{}
+	}
+	if exclusions.Hashes == nil {
+		exclusions.Hashes = map[string]bool{}
+	}
+
+	threshold := artistImageAuditThreshold(imgSettings)
+	var aiSt storage.AISettings
+	var chat tagging.Chat
+	var vModel string
+	if opts.RequireVLM {
+		aiSt, err = m.store.AISettings(ctx)
+		if err != nil {
+			return "failed", err.Error(), nil
+		}
+		vModel = resolveArtistImageVisionModel(aiSt, imgSettings)
+		if strings.TrimSpace(aiSt.BaseURL) == "" || strings.TrimSpace(aiSt.APIKey) == "" || vModel == "" {
+			return "failed", "已开启 VLM 视觉质检但未配置 AI 模型服务", nil
+		}
+		chat, err = m.newBiographyChatClient(aiSt)
+		if err != nil {
+			return "failed", RedactSourceError(err).Error(), nil
+		}
+	}
+
+	type gatedCand struct {
+		source    string
+		imageURL  string
+		pageURL   string
+		title     string
+		reason    string
+		confScore int
+		data      []byte
+		hash      string
+		mimeType  string
+		ext       string
+		width     int
+		height    int
+	}
+	var bestMedium *gatedCand
+	triedURLs := map[string]bool{}
+	hadTransientErr := false
+	var vlmFatalErr error
+
+	saveApproved := func(c gatedCand, verifiedByVLM bool) (string, string) {
+		cachePath, wErr := writeCacheFile(m.imageDirectory, c.hash+c.ext, c.data)
+		if wErr != nil {
+			return "failed", wErr.Error()
+		}
+		var rev *storage.ArtistImageReview
+		if verifiedByVLM {
+			rev = &storage.ArtistImageReview{
+				ArtistID:   artistID,
+				ImageHash:  c.hash,
+				Verdict:    "keep",
+				IssueType:  "none",
+				Confidence: c.confScore,
+				Reason:     c.reason,
+				Model:      vModel,
+			}
+		}
+		if saveErr := m.store.SaveArtistImageBackfillWithReview(ctx, storage.ArtistImageInput{
+			ArtistID:  artistID,
+			ByteSize:  int64(len(c.data)),
+			Source:    c.source,
+			RemoteURL: c.imageURL,
+			Hash:      c.hash,
+			MIMEType:  c.mimeType,
+			CachePath: cachePath,
+		}, opts.Checkpoint, rev); saveErr != nil {
+			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
+				return "skipped", "状态已变化，写入被安全拒绝"
+			}
+			return "failed", saveErr.Error()
+		}
+		return "cached", ""
+	}
+
+	considerStructured := func(srcName, imgURL, pageURL, title string, isTier1Profile bool) (done bool, out, eText string, rErr *RateLimitError) {
+		imgURL = strings.TrimSpace(imgURL)
+		if imgURL == "" || triedURLs[imgURL] || exclusions.URLs[imgURL] {
+			return false, "", "", nil
+		}
+		if !isTier1Profile && !validStructuredArtistImageURL(imgURL) {
+			return false, "", "", nil
+		}
+		triedURLs[imgURL] = true
+		data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, imgURL, "artist image")
+		if dlErr != nil {
+			if r := asRateLimited(dlErr); r != nil {
+				return true, "", "", r
+			}
+			hadTransientErr = true
+			return false, "", "", nil
+		}
+		var w, h int
+		if opts.RequireVLM || !isTier1Profile {
+			var ok bool
+			w, h, ok, _ = netfetch.InspectImageQuality(data)
+			if !ok {
+				return false, "", "", nil
+			}
+		}
+		imgHash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if exclusions.Hashes[imgHash] {
+			return false, "", "", nil
+		}
+		if !opts.RequireVLM {
+			o, et := saveApproved(gatedCand{
+				source: srcName, imageURL: imgURL, pageURL: pageURL, title: title,
+				data: data, hash: imgHash, mimeType: mimeType, ext: ext, width: w, height: h,
+			}, false)
+			return true, o, et, nil
+		}
+		valid, vlmConf, vlmReason, vlmErr := m.verifyArtistAvatarWithVLM(ctx, chat, aiSt, imgSettings, anchor, data, mimeType)
+		if vlmErr != nil {
+			if r := asRateLimited(vlmErr); r != nil {
+				return true, "", "", r
+			}
+			vlmFatalErr = vlmErr
+			return true, "failed", RedactSourceError(vlmErr).Error(), nil
+		}
+		if !valid {
+			exclusions.URLs[imgURL] = true
+			exclusions.Hashes[imgHash] = true
+			_ = m.store.RecordArtistImageRejection(ctx, artistID, imgURL, imgHash, "vlm_rejected:"+srcName)
+			m.logger.Info("structured artist image rejected by VLM", "artistId", artistID, "source", srcName, "reason", vlmReason)
+			return false, "", "", nil
+		}
+		cand := gatedCand{
+			source: srcName, imageURL: imgURL, pageURL: pageURL, title: title,
+			reason: vlmReason, confScore: vlmConf, data: data, hash: imgHash,
+			mimeType: mimeType, ext: ext, width: w, height: h,
+		}
+		if vlmConf >= threshold && imgSettings.WebAutoApplyHigh {
+			o, et := saveApproved(cand, true)
+			return true, o, et, nil
+		}
+		if bestMedium == nil || cand.confScore > bestMedium.confScore {
+			bestMedium = &cand
+		}
+		return false, "", "", nil
+	}
+
+	// Tier 1: confirmed external profile stored image URLs (refreshing MB/Last.fm if empty).
+	profiles, err := m.store.ArtistImageProfileSources(ctx, artistID)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	if len(profiles) == 0 && opts.RefreshProfiles {
+		queryErr := m.queryConfirmedArtistImageURL(ctx, artistID, opts.Checkpoint, true)
+		if queryErr != nil {
+			if r := asRateLimited(queryErr); r != nil {
+				return "", "", r
+			}
+			if errors.Is(queryErr, storage.ErrArtistImageBackfillState) {
+				return "skipped", "身份或任务状态已变化，资料未写入", nil
+			}
+			if !errors.Is(queryErr, sql.ErrNoRows) {
+				hadTransientErr = true
+			}
+		} else {
+			profiles, err = m.store.ArtistImageProfileSources(ctx, artistID)
+			if err != nil {
+				return "failed", err.Error(), nil
+			}
+		}
+	}
+	for _, p := range profiles {
+		if m.testImageBackfillHook != nil {
+			m.testImageBackfillHook(artistID)
+		}
+		if done, out, eText, rErr := considerStructured(p.Source, p.RemoteURL, "", "", true); done {
+			return out, eText, rErr
+		}
+	}
+
+	// Tier 2: Fanart -> Deezer -> Bangumi.
+	mbid, mbErr := m.store.ArtistExternalID(ctx, artistID, "musicbrainz")
+	if imgSettings.FanartEnabled && imgSettings.FanartAPIKey != "" && mbErr == nil && mbid != "" {
+		imgURL, lookupErr := m.fanartArtistImage(ctx, mbid, imgSettings.FanartAPIKey)
+		if r := asRateLimited(lookupErr); r != nil {
+			return "", "", r
+		}
+		if lookupErr != nil {
+			hadTransientErr = true
+		} else if done, out, eText, rErr := considerStructured("fanart", imgURL, "", "", false); done {
+			return out, eText, rErr
+		}
+	}
+	if imgSettings.DeezerEnabled {
+		if mbErr == nil && mbid != "" {
+			if raw, pErr := m.store.ArtistExternalProfileRaw(ctx, artistID, "musicbrainz", mbid); pErr == nil && len(raw) > 0 {
+				for _, dzID := range extractStoredDeezerIDs(raw) {
+					imgURL, lookupErr := m.deezerArtistImageByID(ctx, dzID)
+					if r := asRateLimited(lookupErr); r != nil {
+						return "", "", r
+					}
+					if lookupErr != nil {
+						hadTransientErr = true
+						continue
+					}
+					if done, out, eText, rErr := considerStructured("deezer", imgURL, "", "", false); done {
+						return out, eText, rErr
+					}
+				}
+			}
+		}
+		imgURL, pageURL, lookupErr := m.deezerSearchArtistImage(ctx, anchor)
+		if r := asRateLimited(lookupErr); r != nil {
+			return "", "", r
+		}
+		if lookupErr != nil {
+			hadTransientErr = true
+		} else if done, out, eText, rErr := considerStructured("deezer", imgURL, pageURL, "", false); done {
+			return out, eText, rErr
+		}
+	}
+	if imgSettings.BangumiEnabled {
+		imgURL, pageURL, lookupErr := m.bangumiPersonImage(ctx, anchor)
+		if r := asRateLimited(lookupErr); r != nil {
+			return "", "", r
+		}
+		if lookupErr != nil {
+			hadTransientErr = true
+		} else if done, out, eText, rErr := considerStructured("bangumi", imgURL, pageURL, "", false); done {
+			return out, eText, rErr
+		}
+	}
+	if vlmFatalErr != nil {
+		return "failed", RedactSourceError(vlmFatalErr).Error(), nil
+	}
+
+	// Tier 3: shared web search + DOM extraction + text LLM + VLM.
+	tierReached := "structured"
+	if opts.AllowWebFallback {
+		if ready, cfgErr := m.canRunArtistImageWebFallback(ctx, imgSettings); !ready {
+			if opts.RunMode == "web_fallback" && cfgErr != nil {
+				return "failed", cfgErr.Error(), nil
+			}
+		} else {
+			reserved := true
+			if opts.RespectRunBudget && opts.Checkpoint != nil {
+				var reserveErr error
+				reserved, reserveErr = m.store.ReserveArtistImageWebRequest(ctx, *opts.Checkpoint, artistID, imgSettings.MaxWebRequestsPerRun)
+				if errors.Is(reserveErr, storage.ErrArtistImageBackfillState) {
+					return "skipped", "任务状态已变化", nil
+				}
+				if reserveErr != nil {
+					return "failed", reserveErr.Error(), nil
+				}
+			}
+			if !reserved {
+				if bestMedium == nil {
+					return "no_url", "本轮联网搜索预算已用完", nil
+				}
+			} else {
+				tierReached = "web_fallback"
+				officialURLs, _ := m.store.ArtistConfirmedPageURLs(ctx, artistID)
+				found, ok, webErr := m.discoverArtistImageFromWebWithExclusions(ctx, artistID, officialURLs, imgSettings, exclusions, opts.RequireVLM)
+				if webErr != nil {
+					if r := asRateLimited(webErr); r != nil {
+						return "", "", r
+					}
+					return "failed", RedactSourceError(webErr).Error(), nil
+				}
+				if ok {
+					cand := gatedCand{
+						source:    found.Source,
+						imageURL:  found.ImageURL,
+						pageURL:   found.PageURL,
+						title:     found.Title,
+						reason:    found.Reason,
+						confScore: found.VLMConfidence,
+						data:      found.Data,
+						hash:      found.Hash,
+						mimeType:  found.MIMEType,
+						ext:       found.Ext,
+						width:     found.Width,
+						height:    found.Height,
+					}
+					isHigh := found.Confidence == "high" && (!opts.RequireVLM || found.VLMConfidence >= threshold)
+					if isHigh && imgSettings.WebAutoApplyHigh {
+						o, et := saveApproved(cand, opts.RequireVLM)
+						return o, et, nil
+					}
+					if bestMedium == nil || cand.confScore >= bestMedium.confScore {
+						bestMedium = &cand
+					}
+				}
+			}
+		}
+	}
+
+	if bestMedium != nil {
+		m.cacheCandidatePreviewBytes(bestMedium.imageURL, bestMedium.ext, bestMedium.data)
+		id, candErr := m.store.UpsertArtistImageCandidateOpt(ctx, opts.Checkpoint, storage.ArtistImageCandidate{
+			ArtistID:        artistID,
+			Source:          bestMedium.source,
+			ImageURL:        bestMedium.imageURL,
+			PageURL:         bestMedium.pageURL,
+			Title:           bestMedium.title,
+			Confidence:      confidenceLabelFromScore(bestMedium.confScore, threshold),
+			ConfidenceScore: bestMedium.confScore,
+			Kind:            "replacement",
+			Reason:          bestMedium.reason,
+			Width:           bestMedium.width,
+			Height:          bestMedium.height,
+		})
+		if errors.Is(candErr, storage.ErrArtistImageBackfillState) {
+			return "skipped", "任务或艺术家状态已变化", nil
+		}
+		if candErr != nil {
+			return "failed", candErr.Error(), nil
+		}
+		if id != 0 {
+			return "candidate", "", nil
+		}
+		return "skipped", "该候选已审核", nil
+	}
+
+	if hadTransientErr && opts.RunMode == "auto_ingest" {
+		return "failed", "部分头像图源请求异常，等待自动重试", nil
+	}
+	if !hadTransientErr && opts.RecordMissCooling {
+		if missErr := m.store.RecordArtistImageMissOpt(ctx, opts.Checkpoint, artistID, tierReached, imgSettings.NegativeCacheDays); missErr != nil {
+			if errors.Is(missErr, storage.ErrArtistImageBackfillState) {
+				return "skipped", "任务或艺术家状态已变化", nil
+			}
+			return "failed", missErr.Error(), nil
+		}
+	}
+	return "no_url", "", nil
 }
 
 func clipStringSlice(items []string, limit int) []string {

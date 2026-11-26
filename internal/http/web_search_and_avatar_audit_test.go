@@ -774,3 +774,165 @@ func TestArtistImageSearchQueueAndBatchReviewHTTP(t *testing.T) {
 		t.Fatalf("expected undo snapshot for BatchClearArtist, got %+v err=%v", actions, err)
 	}
 }
+
+func TestArtistImageAutoIngestSettingsConfirmAndE2EHTTP(t *testing.T) {
+	app, s, handler, manager, cookie, csrf := rateLimitTestApp(t)
+	ctx := context.Background()
+	reg := websearch.NewRegistry()
+	app.SetWebSearchRegistry(reg)
+	manager.SetWebSearchRegistry(reg)
+	// Keep external metadata sources disabled so RefreshArtistBiographies stays
+	// completely offline during this HTTP E2E test.
+	_ = s.SaveMetadataSourceSetting(ctx, storage.MetadataSourceSetting{Source: "musicbrainz", Enabled: false})
+	_ = s.SaveMetadataSourceSetting(ctx, storage.MetadataSourceSetting{Source: "lastfm", Enabled: false})
+
+	// 1. Admin auth required on auto-queue.json.
+	unauthReq := httptest.NewRequest(http.MethodGet, "/admin/matches/images/auto-queue.json", nil)
+	unauthRec := httptest.NewRecorder()
+	handler.ServeHTTP(unauthRec, unauthReq)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated auto-queue.json code = %d, want 401", unauthRec.Code)
+	}
+
+	// 2. Settings API + SSR page expose auto_ingest_ai_enabled and live banner hook.
+	getStReq := httptest.NewRequest(http.MethodGet, "/admin/settings/artist-images.json", nil)
+	getStReq.AddCookie(cookie)
+	getStRec := httptest.NewRecorder()
+	handler.ServeHTTP(getStRec, getStReq)
+	if getStRec.Code != http.StatusOK || !strings.Contains(getStRec.Body.String(), `"autoIngestAIEnabled":true`) {
+		t.Fatalf("GET artist-image settings = %d %s", getStRec.Code, getStRec.Body.String())
+	}
+	pageBody := adminGetBody(t, handler, cookie, "/admin/matches")
+	for _, want := range []string{`name="auto_ingest_ai_enabled"`, `data-auto-image-queue-banner`} {
+		if !strings.Contains(pageBody, want) {
+			t.Fatalf("/admin/matches missing %q", want)
+		}
+	}
+
+	// Toggle auto_ingest_ai_enabled off then back on via POST.
+	saveOff := postSecurity(t, app, handler, cookie, "/admin/settings/artist-images", url.Values{
+		"web_auto_apply_high": {"1"},
+	})
+	if saveOff.Code != http.StatusSeeOther {
+		t.Fatalf("save settings off code = %d", saveOff.Code)
+	}
+	stOff, _ := s.ArtistImageSettings(ctx)
+	if stOff.AutoIngestAIEnabled {
+		t.Fatal("expected AutoIngestAIEnabled=false after saving without checkbox")
+	}
+
+	// Configure fake LLM + fake Tavily + re-enable auto_ingest_ai_enabled + vision_enabled.
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages json.RawMessage `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		msgStr := string(body.Messages)
+		content := `{"verdict":"keep","issueType":"none","confidence":95,"reason":"合格"}`
+		if strings.Contains(msgStr, "UnauditedHTTP") {
+			content = `{"verdict":"replace","issueType":"garbage","confidence":96,"reason":"明显网站占位 Logo"}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": content}, "finish_reason": "stop"}},
+			"usage":   map[string]any{"prompt_tokens": 60, "completion_tokens": 15},
+		})
+	}))
+	defer llmSrv.Close()
+	tavilySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+	}))
+	defer tavilySrv.Close()
+	reg.SetEndpointsForTest(tavilySrv.URL, tavilySrv.URL, tavilySrv.Client(), nil)
+
+	if err := s.SaveAISettings(ctx, storage.AISettings{
+		BaseURL: llmSrv.URL, APIKey: "sk-http-ingest", Model: "gpt-6-luna", RequestsPerMinute: 600, Concurrency: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveWebSearchSettings(ctx, storage.WebSearchSettings{
+		Provider: storage.WebSearchProviderTavily, TavilyKeys: []string{"tvly-http-ingest-key"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	saveOn := postSecurity(t, app, handler, cookie, "/admin/settings/artist-images", url.Values{
+		"web_fallback_enabled":   {"1"},
+		"web_auto_apply_high":    {"1"},
+		"vision_enabled":         {"1"},
+		"auto_ingest_ai_enabled": {"1"},
+		"audit_auto_confidence":  {"85"},
+	})
+	if saveOn.Code != http.StatusSeeOther {
+		t.Fatalf("save settings on code = %d", saveOn.Code)
+	}
+
+	// 3. Seed an artist with an unaudited garbage cached avatar and a pending MB candidate;
+	// manual HTTP confirm must immediately return async notice and clear the garbage avatar in background!
+	if err := s.EnsureLibrary(ctx, "IngestLib", "/ingest-music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.LibraryByRoot(ctx, "/ingest-music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ImportTrack(ctx, storage.ImportInput{
+		LibraryID: lib.ID, RelativePath: "i/1.flac", FileSize: 100, ModifiedAtNS: 1,
+		Metadata: metadata.AudioMetadata{
+			Title: "Track", Album: "Album", Artists: []string{"LeadIngest"}, AlbumArtists: []string{"LeadIngest"},
+			Composer: "UnauditedHTTP", DiscNumber: 1, TrackNumber: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	artists, _ := s.ArtistsForMatching(ctx)
+	var composerID int64
+	for _, a := range artists {
+		if a.Name == "UnauditedHTTP" {
+			composerID = a.ID
+		}
+	}
+	if composerID == 0 {
+		t.Fatal("UnauditedHTTP composer not found")
+	}
+	oldPath := filepath.Join(t.TempDir(), "old-garbage.png")
+	if err := os.WriteFile(oldPath, makeTestPNGBytes(t, 280, 280, color.RGBA{R: 120, G: 120, B: 120, A: 255}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveArtistImage(ctx, storage.ArtistImageInput{
+		ArtistID: composerID, Source: "deezer", RemoteURL: "https://img.example/old-logo.png",
+		Hash: "httpgarbage093", MIMEType: "image/png", CachePath: oldPath, ByteSize: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceArtistCandidates(ctx, composerID, []storage.ArtistCandidate{{
+		Source: "musicbrainz", ExternalID: "mb-http-comp-1", DisplayName: "UnauditedHTTP", MBID: "mb-http-comp-1", Score: 95,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := s.ArtistCandidates(ctx, composerID)
+	if err != nil || len(cands) == 0 {
+		t.Fatalf("ArtistCandidates = (%+v, %v)", cands, err)
+	}
+
+	confRec := postAdminForm(t, handler, cookie, csrf, fmt.Sprintf("/admin/artists/%d/confirm/%d", composerID, cands[0].ID), nil)
+	if confRec.Code != http.StatusSeeOther {
+		t.Fatalf("confirm code = %d", confRec.Code)
+	}
+	notice := notice303Of(t, confRec)
+	if !strings.Contains(notice, "头像将在后台自动质检补全") {
+		t.Fatalf("confirm notice = %q, want async queue notice", notice)
+	}
+
+	manager.Wait()
+
+	// Garbage avatar should have been audited and cleared (1.A policy) asynchronously!
+	if _, _, _, pErr := s.ArtistImagePath(ctx, composerID); pErr == nil {
+		t.Fatal("expected UnauditedHTTP garbage avatar to be cleared by background auto queue")
+	}
+	aqReq := httptest.NewRequest(http.MethodGet, "/admin/matches/images/auto-queue.json", nil)
+	aqReq.AddCookie(cookie)
+	aqRec := httptest.NewRecorder()
+	handler.ServeHTTP(aqRec, aqReq)
+	if aqRec.Code != http.StatusOK || !strings.Contains(aqRec.Body.String(), `"cleared":1`) {
+		t.Fatalf("auto-queue.json = %d %s, want cleared:1", aqRec.Code, aqRec.Body.String())
+	}
+}

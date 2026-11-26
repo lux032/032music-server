@@ -73,6 +73,7 @@ type Manager struct {
 	imageBackfillCancel  context.CancelFunc
 	imageBackfillDone    chan struct{}
 	imageSearchQueue     *artistImageSearchQueue
+	autoImageQueue       *artistImageAutoQueueState
 	// 歌手简介补全 durable run 与身份匹配/头像补全 run 使用同一把 m.mu 但
 	// 独立字段：三类任务可以并行，带宽共享由现有各来源限流原语（sourcegate
 	// 请求间隔、blockedUntil 共享冷却桶）保证，互不进入对方的等待预算通道。
@@ -142,7 +143,7 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: bangumiEndpoints(sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_BANGUMI_BASE_URL", "https://api.bgm.tv")), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiPace: BangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}, webSearch: websearch.NewRegistry(), imageSearchQueue: newArtistImageSearchQueue()}
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: bangumiEndpoints(sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_BANGUMI_BASE_URL", "https://api.bgm.tv")), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiPace: BangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}, webSearch: websearch.NewRegistry(), imageSearchQueue: newArtistImageSearchQueue(), autoImageQueue: newArtistImageAutoQueueState()}
 	manager.gate = sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": mbIntervalFromEnv(logger), "bangumi": manager.bangumiPace}, Now: func() time.Time { return manager.clockNow() }, Sleep: func(c context.Context, d time.Duration) error { return manager.sleep(c, d) }})
 
 	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {
@@ -170,6 +171,11 @@ func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dat
 		logger.Error("pause interrupted artist biography backfill runs", "error", err)
 	} else if recovered > 0 {
 		logger.Info("recovered interrupted artist biography backfill runs", "count", recovered)
+	}
+	if recovered, err := store.RecoverArtistImageAutoQueue(context.Background()); err != nil {
+		logger.Error("recover interrupted artist image auto queue", "error", err)
+	} else if recovered > 0 {
+		logger.Info("recovered interrupted artist image auto queue", "count", recovered)
 	}
 	return manager
 }

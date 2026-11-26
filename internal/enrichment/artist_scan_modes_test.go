@@ -314,6 +314,7 @@ func TestArtistScanSurfacesCompositeCreditsAndEnrichAutoConfirmedRules(t *testin
 	_ = s.SaveArtistImageSettings(ctx, imgSt)
 
 	manager.EnrichAutoConfirmedArtist(ctx, composerID)
+	manager.Wait()
 	if bgmCalls.Load() != 1 {
 		t.Fatalf("expected Tier 2 Bangumi avatar lookup for AI-confirmed credit artist, calls=%d", bgmCalls.Load())
 	}

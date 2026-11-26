@@ -284,25 +284,50 @@
     clearTimeout(artistTasksTimer);
     artistTasksRequest?.abort();
     const overview = document.querySelector('[data-artist-task-overview]');
-    if (!overview || document.hidden) return;
+    const autoBanner = document.querySelector('[data-auto-image-queue-banner]');
+    if ((!overview && !autoBanner) || document.hidden) return;
     const request = new AbortController();
     artistTasksRequest = request;
     const refresh = async () => {
-      const runs = await Promise.allSettled(artistTaskSources.map(async ([url, label]) => {
-        const response = await fetch(url, { credentials: 'same-origin', signal: request.signal });
-        if (!response.ok) return null;
-        const { run } = await response.json();
-        if (!run || !['running', 'paused', 'queued'].includes(run.status)) return null;
-        const item = document.createElement('li');
-        item.className = 'chip';
-        item.textContent = `${label} #${run.id} · ${RUN_STATUS_LABELS[run.status]}`;
-        return item;
-      }));
+      const autoPromise = fetch('/admin/matches/images/auto-queue.json', { credentials: 'same-origin', signal: request.signal })
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null);
+      const runsPromise = overview
+        ? Promise.allSettled(artistTaskSources.map(async ([url, label]) => {
+            const response = await fetch(url, { credentials: 'same-origin', signal: request.signal });
+            if (!response.ok) return null;
+            const { run } = await response.json();
+            if (!run || !['running', 'paused', 'queued'].includes(run.status)) return null;
+            const item = document.createElement('li');
+            item.className = 'chip';
+            item.textContent = `${label} #${run.id} · ${RUN_STATUS_LABELS[run.status]}`;
+            return item;
+          }))
+        : Promise.resolve([]);
+      const [runs, autoData] = await Promise.all([runsPromise, autoPromise]);
       if (request.signal.aborted) return;
-      const items = runs.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
-      overview.querySelector('[data-artist-task-list]').replaceChildren(...items);
-      overview.hidden = items.length === 0;
-      artistTasksTimer = setTimeout(refresh, 15000);
+      const aq = autoData?.autoQueue;
+      const aqActive = aq ? (Number(aq.pending || 0) + Number(aq.running || 0)) : 0;
+      const aqSummary = aqActive > 0
+        ? `新确认艺人自动补图 · 排队 ${aqActive}${aq.currentArtist ? ` · 当前：${aq.currentArtist}` : ''}${aq.processed > 0 ? ` · 本次已处理 ${aq.processed}` : ''}`
+        : '';
+      if (autoBanner) {
+        autoBanner.hidden = aqActive === 0;
+        const txt = autoBanner.querySelector('[data-auto-image-queue-text]');
+        if (txt && aqSummary) txt.textContent = aqSummary;
+      }
+      if (overview) {
+        const items = runs.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+        if (aqActive > 0) {
+          const aqItem = document.createElement('li');
+          aqItem.className = 'chip';
+          aqItem.textContent = aqSummary;
+          items.push(aqItem);
+        }
+        overview.querySelector('[data-artist-task-list]').replaceChildren(...items);
+        overview.hidden = items.length === 0;
+      }
+      artistTasksTimer = setTimeout(refresh, aqActive > 0 ? 5000 : 15000);
     };
     refresh();
   }

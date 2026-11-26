@@ -150,7 +150,9 @@ func (m *Manager) executeArtistRun(ctx context.Context, runID int64) bool {
 			// 流等待/失败通道（H3），绝不中止匹配。瞬时缺口由 /admin/matches
 			// 的持久化补全任务兜底。
 			if result.AutoMatched && !result.InlineAIConfirmed {
-				m.cacheAutoMatchedArtistImage(ctx, item.ObjectID)
+				if !m.QueueAutoConfirmedArtistImage(ctx, item.ObjectID, "auto_match") {
+					m.cacheAutoMatchedArtistImage(ctx, item.ObjectID)
+				}
 				m.refreshAutoMatchedArtistBiographies(ctx, item.ObjectID)
 			}
 			break
