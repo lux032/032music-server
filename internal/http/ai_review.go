@@ -11,6 +11,7 @@ import (
 	"github.com/lux032/032music-server/internal/aiclient"
 	"github.com/lux032/032music-server/internal/aireview"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 // SetAIReview attaches the AI review service.
@@ -18,6 +19,16 @@ func (a *App) SetAIReview(service *aireview.Service) { a.aiReview = service }
 
 // SetSharedAILimiter attaches the shared provider rate limiter.
 func (a *App) SetSharedAILimiter(limiter *aiclient.Limiter) { a.sharedAILimiter = limiter }
+
+// SetWebSearchRegistry attaches the shared process-wide web search registry.
+func (a *App) SetWebSearchRegistry(reg *websearch.Registry) { a.webSearch = reg }
+
+func (a *App) webSearchRegistry() *websearch.Registry {
+	if a.webSearch == nil {
+		a.webSearch = websearch.NewRegistry()
+	}
+	return a.webSearch
+}
 
 type aiDecisionView struct {
 	ID                  int64

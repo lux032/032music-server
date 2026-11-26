@@ -30,6 +30,7 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
 	"github.com/lux032/032music-server/internal/upnp"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 var version = "dev"
@@ -167,6 +168,9 @@ func run() error {
 		Busy:     audioBusy,
 	})
 	app.SetLoudness(loudnessService)
+	sharedWebSearch := websearch.NewRegistry()
+	app.SetWebSearchRegistry(sharedWebSearch)
+	enrichmentManager.SetWebSearchRegistry(sharedWebSearch)
 	sharedAILimiter := aiclient.NewLimiter(60)
 	if aiSt, aiErr := db.AISettings(context.Background()); aiErr == nil && aiSt.RequestsPerMinute > 0 {
 		sharedAILimiter.SetRate(aiSt.RequestsPerMinute)
@@ -174,7 +178,8 @@ func run() error {
 	app.SetSharedAILimiter(sharedAILimiter)
 	enrichmentManager.SetAILimiter(sharedAILimiter)
 	aiReviewService := aireview.New(db, logger, aireview.Options{
-		Limiter: sharedAILimiter,
+		Limiter:     sharedAILimiter,
+		WebRegistry: sharedWebSearch,
 		OnWorkConfirmed: func(_ context.Context, workID int64) {
 			enrichmentManager.QueueWorkPoster(workID)
 		},
@@ -199,7 +204,10 @@ func run() error {
 		},
 	})
 	app.SetAITagging(taggingService)
-	aliasService, err := artistaliases.New(db, logger, artistaliases.Options{Sources: enrichmentManager.LoadArtistAliasSources})
+	aliasService, err := artistaliases.New(db, logger, artistaliases.Options{
+		Sources:     enrichmentManager.LoadArtistAliasSources,
+		WebRegistry: sharedWebSearch,
+	})
 	if err != nil {
 		return fmt.Errorf("create artist alias service: %w", err)
 	}

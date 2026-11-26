@@ -10,12 +10,18 @@ import (
 )
 
 func TestDeepSeekSearchFetchAndRedactedErrors(t *testing.T) {
+	failAuth := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failAuth {
+			w.WriteHeader(401)
+			_, _ = w.Write([]byte("secret"))
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("missing bearer")
 		}
 		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		switch r.URL.Path {
 		case "/v1/tools/search":
 			if body["need_content"] != true {
@@ -24,12 +30,12 @@ func TestDeepSeekSearchFetchAndRedactedErrors(t *testing.T) {
 			if body["count"] != float64(5) {
 				t.Error(body)
 			}
-			w.Write([]byte(`{"results":[{"url":"https://example.test/a","title":"artist","content":"actual page text","summary":"generated summary"}]}`))
+			_, _ = w.Write([]byte(`{"results":[{"url":"https://example.test/a","title":"artist","content":"actual page text","summary":"generated summary"}]}`))
 		case "/v1/tools/fetch":
-			w.Write([]byte(`{"content":"name 中文名"}`))
+			_, _ = w.Write([]byte(`{"content":"name 中文名"}`))
 		default:
 			w.WriteHeader(401)
-			w.Write([]byte("secret"))
+			_, _ = w.Write([]byte("secret"))
 		}
 	}))
 	defer server.Close()
@@ -42,8 +48,8 @@ func TestDeepSeekSearchFetchAndRedactedErrors(t *testing.T) {
 	if e != nil || body != "name 中文名" {
 		t.Fatal(body, e)
 	}
-	var v any
-	e = c.call(context.Background(), "/bad", nil, &v)
+	failAuth = true
+	_, e = c.Search(context.Background(), "Singer 中文名")
 	if e == nil || strings.Contains(e.Error(), "secret") {
 		t.Fatal(e)
 	}

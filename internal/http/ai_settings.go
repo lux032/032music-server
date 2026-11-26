@@ -11,6 +11,7 @@ import (
 	"github.com/lux032/032music-server/internal/aiclient"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 const aiSettingsPath = "/admin/settings/ai"
@@ -28,6 +29,7 @@ var aiPurposeLabels = map[string]string{
 	"artist_biography_web":       "歌手简介联网概括",
 	"artist_image_web":           "艺术家头像联网选图",
 	"artist_image_vision":        "艺术家头像视觉质检",
+	"artist_image_audit":         "艺术家头像存量 AI 审查",
 	"album_review":               "AI 审核 · 专辑关联",
 	"track_review":               "AI 审核 · 曲目关联",
 	"work_review":                "AI 审核 · 作品对齐",
@@ -53,6 +55,14 @@ type aiSettingsPageData struct {
 	RPM           int
 	Concurrency   int
 
+	// Unified web search settings
+	WebSearchProvider string
+	WebSearchReady    bool
+	WebSearchSummary  string
+	TavilyKeyCount    int
+	TavilyKeyStatuses []websearch.KeyStatus
+	DeepSeekKeySet    bool
+
 	// AI Review module settings
 	Review              storage.AIReviewSettings
 	DeepSeekWebReady    bool
@@ -62,6 +72,58 @@ type aiSettingsPageData struct {
 
 	Usage      []aiUsageRowView
 	UsageTotal string
+}
+
+func (a *App) webSearchStatusSummary(ctx context.Context) (ready bool, summary string, ws storage.WebSearchSettings, statuses []websearch.KeyStatus, deepSeekSet bool) {
+	ws, _ = a.store.WebSearchSettings(ctx)
+	aliasSt, _ := a.store.ArtistAliasSettings(ctx)
+	ai, _ := a.store.AISettings(ctx)
+	statuses = a.webSearchRegistry().TavilyStatuses(ws, ai)
+	dsKey := ws.EffectiveDeepSeekKey(aliasSt, ai)
+	deepSeekSet = dsKey != ""
+	ready = ws.Configured(aliasSt, ai)
+	tavCount := len(ws.TavilyKeys)
+	switch storage.NormalizeWebSearchProvider(ws.Provider) {
+	case storage.WebSearchProviderTavily:
+		if tavCount > 0 {
+			summary = fmt.Sprintf("Tavily（%d 把 Key 轮询）", tavCount)
+		} else {
+			summary = "Tavily（尚未配置 Key）"
+		}
+	case storage.WebSearchProviderDeepSeek:
+		if deepSeekSet {
+			summary = "DeepSeek 联网（已就绪）"
+		} else {
+			summary = "DeepSeek 联网（尚未配置 Key）"
+		}
+	default:
+		switch {
+		case tavCount > 0 && deepSeekSet:
+			summary = fmt.Sprintf("Tavily（%d 把 Key 轮询）+ DeepSeek 自动兜底", tavCount)
+		case tavCount > 0:
+			summary = fmt.Sprintf("Tavily（%d 把 Key 轮询）", tavCount)
+		case deepSeekSet:
+			summary = "DeepSeek 联网（已就绪，未配 Tavily）"
+		default:
+			summary = "尚未配置联网搜索密钥"
+		}
+	}
+	return ready, summary, ws, statuses, deepSeekSet
+}
+
+func tavilyKeyStateLabel(state string) string {
+	switch state {
+	case websearch.KeyStateHealthy:
+		return "正常"
+	case websearch.KeyStateCooldown:
+		return "冷却中"
+	case websearch.KeyStateQuotaExhausted:
+		return "额度耗尽"
+	case websearch.KeyStateInvalid:
+		return "鉴权失效"
+	default:
+		return state
+	}
 }
 
 func (a *App) buildAIUsageView(ctx context.Context) ([]aiUsageRowView, string) {
@@ -115,6 +177,7 @@ func (a *App) handleAISettingsPage(w http.ResponseWriter, r *http.Request) {
 	aliasSt, _ := a.store.ArtistAliasSettings(ctx)
 	trSt, _ := a.store.LyricsTranslationSettings(ctx)
 	usageRows, usageTotal := a.buildAIUsageView(ctx)
+	wsReady, wsSummary, ws, tavStatuses, dsSet := a.webSearchStatusSummary(ctx)
 
 	data := aiSettingsPageData{
 		Chrome:              a.chromeFor(ctx, session, "ai-settings"),
@@ -130,8 +193,14 @@ func (a *App) handleAISettingsPage(w http.ResponseWriter, r *http.Request) {
 		Reasoning:           ai.ReasoningEffort,
 		RPM:                 ai.RequestsPerMinute,
 		Concurrency:         ai.Concurrency,
+		WebSearchProvider:   ws.Provider,
+		WebSearchReady:      wsReady,
+		WebSearchSummary:    wsSummary,
+		TavilyKeyCount:      len(ws.TavilyKeys),
+		TavilyKeyStatuses:   tavStatuses,
+		DeepSeekKeySet:      dsSet,
 		Review:              rev,
-		DeepSeekWebReady:    aliasSt.DeepSeekKey != "" || strings.Contains(strings.ToLower(ai.BaseURL), "api.deepseek.com"),
+		DeepSeekWebReady:    wsReady,
 		ArtistAliasSettings: aliasSt,
 		TaggingEnabled:      ai.TaggingEnabled,
 		TranslationEnabled:  trSt.Enabled,
@@ -222,6 +291,36 @@ func (a *App) handleSaveAISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ws, wsErr := a.store.WebSearchSettings(ctx)
+	if wsErr != nil {
+		http.Error(w, wsErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	wsChanged := false
+	if prov := strings.TrimSpace(r.FormValue("web_search_provider")); prov != "" {
+		ws.Provider = storage.NormalizeWebSearchProvider(prov)
+		wsChanged = true
+	}
+	if r.FormValue("clear_tavily_keys") != "" {
+		ws.TavilyKeys = nil
+		wsChanged = true
+	} else if rawTavily := strings.TrimSpace(r.FormValue("tavily_keys")); rawTavily != "" {
+		parsed := storage.ParseAPIKeyList(rawTavily)
+		if strings.ToLower(strings.TrimSpace(r.FormValue("tavily_keys_mode"))) == "replace" {
+			ws.TavilyKeys = parsed
+		} else {
+			ws.TavilyKeys = storage.DedupeAPIKeys(append(ws.TavilyKeys, parsed...))
+		}
+		wsChanged = true
+	}
+	if r.FormValue("clear_web_deepseek_key") != "" {
+		ws.DeepSeekKey = ""
+		wsChanged = true
+	} else if dsKey := strings.TrimSpace(r.FormValue("web_deepseek_key")); dsKey != "" {
+		ws.DeepSeekKey = dsKey
+		wsChanged = true
+	}
+
 	if err := a.store.SaveAISettings(ctx, next); err != nil {
 		redirectWithNotice(w, r, aiSettingsPath, "保存全局模型设置失败："+err.Error())
 		return
@@ -229,6 +328,15 @@ func (a *App) handleSaveAISettings(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.SaveAIReviewSettings(ctx, rev); err != nil {
 		redirectWithNotice(w, r, aiSettingsPath, "保存 AI 初审设置失败："+err.Error())
 		return
+	}
+	if wsChanged {
+		if err := a.store.SaveWebSearchSettings(ctx, ws); err != nil {
+			redirectWithNotice(w, r, aiSettingsPath, "保存联网搜索设置失败："+err.Error())
+			return
+		}
+		if a.artistAliases != nil {
+			a.artistAliases.Interrupt()
+		}
 	}
 	if a.sharedAILimiter != nil {
 		a.sharedAILimiter.SetRate(next.RequestsPerMinute)
@@ -306,4 +414,27 @@ func (a *App) handleAISettingsTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	redirectWithNotice(w, r, aiSettingsPath, strings.Join(parts, "；"))
+}
+
+func (a *App) handleAISettingsWebSearchTest(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	ctx := r.Context()
+	ws, err := a.store.WebSearchSettings(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	aliasSt, _ := a.store.ArtistAliasSettings(ctx)
+	aiSt, _ := a.store.AISettings(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	summary, testErr := a.webSearchRegistry().TestConnection(callCtx, ws, aliasSt, aiSt)
+	if testErr != nil {
+		redirectWithNotice(w, r, aiSettingsPath, "联网搜索测试失败："+testErr.Error())
+		return
+	}
+	redirectWithNotice(w, r, aiSettingsPath, "联网搜索测试成功："+summary)
 }

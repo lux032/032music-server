@@ -369,6 +369,7 @@ func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
 		{"acquisition_settings", "id", []string{"jackett_url", "jackett_api_key", "jackett_indexer", "qb_url", "qb_username", "qb_password", "qb_category"}},
 		{"artist_image_settings", "id", []string{"fanart_api_key"}},
 		{"artist_alias_settings", "id", []string{"deepseek_key"}},
+		{"web_search_settings", "id", []string{"tavily_keys_json", "deepseek_key"}},
 	} {
 		source, e := tableColumns(ctx, tx, "prerestore", item.table)
 		if e != nil {
@@ -389,6 +390,8 @@ func preserveCredentials(ctx context.Context, tx *sql.Tx) error {
 			query := "UPDATE " + item.table + " SET " + c + "=''"
 			if item.table == "acquisition_settings" && c == "jackett_indexer" {
 				query = "UPDATE acquisition_settings SET jackett_indexer='jpopsuki'"
+			} else if item.table == "web_search_settings" && c == "tavily_keys_json" {
+				query = "UPDATE web_search_settings SET tavily_keys_json='[]'"
 			}
 			if source[c] {
 				query = "UPDATE " + item.table + " SET " + c + "=" + preservedValueSQL(item.table, item.key, c)
@@ -477,6 +480,9 @@ func preservedValueSQL(table, key, column string) string {
 	sub := "(SELECT p." + column + " FROM prerestore." + table + " p WHERE p." + key + "=" + table + "." + key + ")"
 	if table == "metadata_source_settings" && column == "api_key" {
 		return sub
+	}
+	if table == "web_search_settings" && column == "tavily_keys_json" {
+		return "coalesce(" + sub + ",'[]')"
 	}
 	return "coalesce(" + sub + ",'')"
 }

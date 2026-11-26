@@ -404,8 +404,27 @@ func artistImageModeLabel(mode string) string {
 		return "联网 AI 兜底"
 	case "rescan_all":
 		return "全库强制重扫"
+	case "audit_all":
+		return "全量 AI 审查与替换"
+	case "audit_force":
+		return "全量强制重审"
 	default:
 		return "仅已匹配身份"
+	}
+}
+
+func artistImageIssueLabel(issue string) string {
+	switch strings.ToLower(strings.TrimSpace(issue)) {
+	case "garbage":
+		return "非头像垃圾图"
+	case "album_cover":
+		return "专辑封面"
+	case "low_quality":
+		return "画质/构图欠佳"
+	case "wrong_subject":
+		return "疑似非本人"
+	default:
+		return "待人工复核"
 	}
 }
 
@@ -1054,6 +1073,12 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		data.ImageBackfill.Settings = &imgSt
 	} else {
 		a.logger.Error("matches artist image settings", "error", stErr)
+	}
+	data.ImageBackfill.WebSearchReady, data.ImageBackfill.WebSearchSummary, _, _, _ = a.webSearchStatusSummary(r.Context())
+	if actions, actErr := a.store.RecentArtistImageAuditActions(r.Context(), 30); actErr == nil {
+		data.ImageBackfill.RecentAuditActions = actions
+	} else {
+		a.logger.Error("matches artist image audit actions", "error", actErr)
 	}
 	const artistImageCandidateLimit = 30
 	if cands, candErr := a.store.PendingArtistImageCandidates(r.Context(), artistImageCandidateLimit); candErr == nil {

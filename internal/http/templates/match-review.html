@@ -173,7 +173,7 @@
           </header>
           <div class="progress match-progress"><span data-run-field="progressBar" style="width:{{percentDone .Processed .Total}}%"></span></div>
           <div class="match-active-meta">
-            <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}</p>
+            <p class="run-counts" data-run-field="counts">处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}}{{if gt .Kept 0}} · 已保留 {{.Kept}}{{end}}{{if gt .Replaced 0}} · 已替换 {{.Replaced}}{{end}}{{if gt .Cleared 0}} · 已清理 {{.Cleared}}{{end}} · 无地址 {{.NoURL}} · 跳过 {{.Skipped}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}</p>
             <small class="muted" data-run-field="current">{{if .Current}}当前：{{.Current}}{{end}}</small>
           </div>
           <small class="muted run-wait match-active-wait" data-run-field="wait" aria-live="off" data-wait-source="{{.WaitSource}}" data-waiting-until="{{.WaitingUntil}}" data-wait-total-ms="{{.WaitTotalMS}}" data-run-status="{{.Status}}" data-pause-reason="{{.PauseReason}}">{{if .WaitingUntil}}{{if runAutoResumes .Status .PauseReason}}限流 {{.WaitSource}} · 将于 {{clockOf .WaitingUntil}} 自动继续（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{else}}限流 {{.WaitSource}} · 等待至 {{clockOf .WaitingUntil}}（累计等待 {{waitTotalLabel .WaitTotalMS}}）{{end}}{{end}}</small>
@@ -548,11 +548,52 @@
       <div class="match-avatar-grid">
         {{range .ImageBackfill.PendingCandidates}}
         <article class="match-avatar-card">
+          {{if eq .Kind "audit_review"}}
           <div class="artist-image-candidate-summary">
-            <img class="artist-image-candidate-preview" src="/admin/matches/images/candidates/{{.ID}}/preview" alt="{{.ArtistName}}的候选头像" loading="lazy">
+            <img class="artist-image-candidate-preview" src="{{if .CurrentImageURL}}{{.CurrentImageURL}}{{else}}/admin/matches/images/candidates/{{.ID}}/preview{{end}}" alt="{{.ArtistName}}的当前头像" loading="lazy">
             <div class="match-avatar-meta">
-              <strong>{{.ArtistName}}</strong>
-              <small class="muted">{{.Source}} · {{.Confidence}}{{if and (gt .Width 0) (gt .Height 0)}} · {{.Width}}×{{.Height}}{{end}}</small>
+              <strong><a href="/admin/artists/{{.ArtistID}}">{{.ArtistName}}</a></strong>
+              <small class="muted">AI 审查疑点 · {{artistImageIssueLabel .IssueType}}{{if gt .ConfidenceScore 0}} · 置信度 {{.ConfidenceScore}}%{{end}}{{if and (gt .Width 0) (gt .Height 0)}} · {{.Width}}×{{.Height}}{{end}}</small>
+            </div>
+          </div>
+          {{if .Reason}}<p class="match-avatar-reason">{{.Reason}}</p>{{end}}
+          <div class="match-avatar-actions">
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/keep">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <button class="secondary-button compact-button" data-pending-text="保存中…">保留原图</button>
+            </form>
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/search">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <button class="primary-button compact-button" data-pending-text="搜图中…">联网找新图</button>
+            </form>
+            <form method="post" action="/admin/matches/images/candidates/{{.ID}}/clear">
+              <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+              <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
+              <button class="secondary-button compact-button" data-pending-text="清空中…">清空头像</button>
+            </form>
+          </div>
+          {{else}}
+          <div class="artist-image-candidate-summary">
+            {{if .CurrentImageURL}}
+            <div class="match-avatar-compare">
+              <figure class="match-avatar-compare-item">
+                <img class="artist-image-candidate-preview" src="{{.CurrentImageURL}}" alt="{{.ArtistName}}的当前旧头像" loading="lazy">
+                <figcaption>当前旧图</figcaption>
+              </figure>
+              <span class="match-avatar-compare-arrow" aria-hidden="true">→</span>
+              <figure class="match-avatar-compare-item">
+                <img class="artist-image-candidate-preview" src="/admin/matches/images/candidates/{{.ID}}/preview" alt="{{.ArtistName}}的新候选头像" loading="lazy">
+                <figcaption>新候选图</figcaption>
+              </figure>
+            </div>
+            {{else}}
+            <img class="artist-image-candidate-preview" src="/admin/matches/images/candidates/{{.ID}}/preview" alt="{{.ArtistName}}的候选头像" loading="lazy">
+            {{end}}
+            <div class="match-avatar-meta">
+              <strong><a href="/admin/artists/{{.ArtistID}}">{{.ArtistName}}</a></strong>
+              <small class="muted">{{.Source}} · {{.Confidence}}{{if gt .ConfidenceScore 0}}（{{.ConfidenceScore}}%）{{end}}{{if .IssueType}} · {{artistImageIssueLabel .IssueType}}{{end}}{{if and (gt .Width 0) (gt .Height 0)}} · {{.Width}}×{{.Height}}{{end}}</small>
             </div>
           </div>
           {{if .Reason}}<p class="match-avatar-reason">{{.Reason}}</p>{{end}}
@@ -561,7 +602,7 @@
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/approve">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
               <input type="hidden" name="returnTo" value="{{$.TabReturnTo "avatars"}}" data-match-return-to="avatars">
-              <button class="primary-button compact-button" data-pending-text="采纳中…">采纳并缓存</button>
+              <button class="primary-button compact-button" data-pending-text="采纳中…">{{if .CurrentImageURL}}采纳替换{{else}}采纳并缓存{{end}}</button>
             </form>
             <form method="post" action="/admin/matches/images/candidates/{{.ID}}/reject">
               <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
@@ -569,6 +610,7 @@
               <button class="secondary-button compact-button" data-pending-text="处理中…">忽略</button>
             </form>
           </div>
+          {{end}}
         </article>
         {{end}}
       </div>
@@ -719,12 +761,33 @@
               <option value="matched">仅已匹配身份（按设置使用图源）</option>
               <option value="web_fallback">全库补全（启用联网 AI 兜底）</option>
               <option value="rescan_all">全库强制重扫（忽略负缓存冷却）</option>
+              <option value="audit_all">全量补全 + 历史头像 AI 审查与自动替换</option>
+              <option value="audit_force">全量强制重审全部历史头像（忽略已审记录）</option>
             </select>
             <button class="secondary-button compact-button" data-pending-text="启动中…">启动艺术家头像补全</button>
           </form>
           {{end}}
           {{with .ImageBackfill.Last}}
-          <p class="muted run-last match-last-run">最近补全：#{{.ID}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}} · 无地址 {{.NoURL}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+          <p class="muted run-last match-last-run">最近补全：#{{.ID}}{{if .Mode}}（{{artistImageModeLabel .Mode}}）{{end}} · {{runStatusLabel .Status}} · 处理 {{.Processed}} / {{.Total}} · 已缓存 {{.Cached}}{{if gt .Kept 0}} · 已保留 {{.Kept}}{{end}}{{if gt .Replaced 0}} · 已替换 {{.Replaced}}{{end}}{{if gt .Cleared 0}} · 已清理 {{.Cleared}}{{end}} · 无地址 {{.NoURL}} · 失败 {{.Failed}}{{if gt .Candidate 0}} · 送审 {{.Candidate}}{{end}}{{if .ErrorMessage}} · {{.ErrorMessage}}{{end}}</p>
+          {{end}}
+          {{if .ImageBackfill.RecentAuditActions}}
+          <details class="run-history disclosure match-details">
+            <summary>AI 最近自动替换 / 清理记录（{{len .ImageBackfill.RecentAuditActions}} 条，可一键撤销）</summary>
+            <ul class="ai-applied-list">
+              {{range .ImageBackfill.RecentAuditActions}}
+              <li>
+                <span class="ai-decision-chip tone-auto">{{if eq .Action "cleared"}}已清理{{else}}已替换{{end}}</span>
+                <a href="/admin/artists/{{.ArtistID}}"><strong>{{.ArtistName}}</strong></a>
+                <small class="muted">{{artistImageIssueLabel .IssueType}} · 置信度 {{.Confidence}}%{{if .Reason}} · {{.Reason}}{{end}}</small>
+                <form method="post" action="/admin/matches/images/audit-actions/{{.ID}}/revert" class="match-revert-form">
+                  <input type="hidden" name="csrfToken" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="returnTo" value="{{$.TabReturnTo "tasks"}}" data-match-return-to="tasks">
+                  <button type="submit" class="secondary-button compact-button" data-pending-text="撤销中…">撤销</button>
+                </form>
+              </li>
+              {{end}}
+            </ul>
+          </details>
           {{end}}
           <footer class="match-pipeline-footer">
             {{if .ImageBackfill.Settings}}
@@ -806,7 +869,9 @@
               <label>视觉质检模型<input type="text" name="vision_model" value="{{.ImageBackfill.Settings.VisionModel}}" placeholder="需支持 image_url"></label>
               <label>单轮联网上限（0=不限）<input type="number" name="max_web_requests_per_run" min="0" value="{{.ImageBackfill.Settings.MaxWebRequestsPerRun}}"></label>
               <label>负缓存冷却天数<input type="number" name="negative_cache_days" min="1" value="{{.ImageBackfill.Settings.NegativeCacheDays}}"></label>
+              <label>AI 审查高置信自动替换阈值（50–100）<input type="number" name="audit_auto_confidence" min="50" max="100" value="{{.ImageBackfill.Settings.AuditAutoConfidence}}"></label>
             </div>
+            <p class="field-hint">当前全局联网搜索服务：<strong>{{.ImageBackfill.WebSearchSummary}}</strong>（前往 <a href="/admin/settings/ai">AI 设置中心</a> 配置 Tavily 多 Key 轮询或 DeepSeek 密钥）。</p>
             {{if .ImageBackfill.Settings.FanartAPIKey}}
             <label class="ai-inline-check"><input type="checkbox" name="clear_fanart_api_key" value="1"> 清除已保存的 Fanart.tv Key</label>
             {{end}}

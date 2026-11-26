@@ -6,16 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/lux032/032music-server/internal/aiclient"
 	"github.com/lux032/032music-server/internal/artistaliases"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 const (
@@ -31,6 +30,7 @@ type Options struct {
 	Limiter           *aiclient.Limiter
 	NewChat           aiclient.ChatFactory
 	NewWeb            func(storage.ArtistAliasSettings, storage.AISettings) (artistaliases.Web, error)
+	WebRegistry       *websearch.Registry
 	OnWorkConfirmed   func(context.Context, int64)
 	OnArtistConfirmed func(context.Context, int64)
 }
@@ -71,29 +71,20 @@ func New(store *storage.Store, logger *slog.Logger, opts Options) *Service {
 	if opts.NewChat == nil {
 		opts.NewChat = aiclient.DefaultChatFactory
 	}
+	if opts.WebRegistry == nil {
+		opts.WebRegistry = websearch.NewRegistry()
+	}
 	if opts.NewWeb == nil {
-		opts.NewWeb = defaultWebFactory
+		reg := opts.WebRegistry
+		opts.NewWeb = func(alias storage.ArtistAliasSettings, ai storage.AISettings) (artistaliases.Web, error) {
+			ws, _ := store.WebSearchSettings(context.Background())
+			return reg.Client(ws, alias, ai)
+		}
 	}
 	if _, err := store.RecoverAIReviewRuns(context.Background()); err != nil {
 		logger.Error("recover ai review runs", "error", err)
 	}
 	return &Service{store: store, logger: logger, opts: opts}
-}
-
-func defaultWebFactory(alias storage.ArtistAliasSettings, ai storage.AISettings) (artistaliases.Web, error) {
-	key := strings.TrimSpace(alias.DeepSeekKey)
-	u, _ := url.Parse(ai.BaseURL)
-	if key == "" && u != nil && u.Hostname() == "api.deepseek.com" && u.Scheme == "https" {
-		key = ai.APIKey
-	}
-	if key == "" {
-		return nil, errors.New("未配置 DeepSeek 联网 API Key")
-	}
-	client, err := tagging.NewChatClient("https://api.deepseek.com", key, ai.ProxyURL, 30*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	return &artistaliases.DeepSeekWeb{HTTP: client.HTTP, Key: key, BaseURL: "https://api.deepseek.com"}, nil
 }
 
 // EvaluateInline runs AI review synchronously right before an enrichment/matching

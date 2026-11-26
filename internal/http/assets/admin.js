@@ -387,8 +387,11 @@
       return `处理 ${run.processed} / ${run.total} · 匹配 ${run.matched} · 审核 ${run.review} · 无结果 ${run.noResult} · 跳过 ${run.skipped} · 失败 ${run.failed}`;
     }
     if (kind === 'artistImage') {
+      const keptPart = run.kept > 0 ? ` · 已保留 ${run.kept}` : '';
+      const replacedPart = run.replaced > 0 ? ` · 已替换 ${run.replaced}` : '';
+      const clearedPart = run.cleared > 0 ? ` · 已清理 ${run.cleared}` : '';
       const candPart = run.candidate > 0 ? ` · 送审 ${run.candidate}` : '';
-      return `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached} · 无地址 ${run.noUrl} · 跳过 ${run.skipped} · 失败 ${run.failed}${candPart}`;
+      return `处理 ${run.processed} / ${run.total} · 已缓存 ${run.cached}${keptPart}${replacedPart}${clearedPart} · 无地址 ${run.noUrl} · 跳过 ${run.skipped} · 失败 ${run.failed}${candPart}`;
     }
     if (kind === 'artistBio') {
       return `处理 ${run.processed} / ${run.total} · 已补全 ${run.filled} · 无简介 ${run.missing} · 跳过 ${run.skipped} · 失败 ${run.failed}`;

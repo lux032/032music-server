@@ -17,7 +17,10 @@
       <form class="ai-tagging-test" method="post" action="/admin/settings/ai/test">
         <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
         <button class="secondary-button"{{if not .Configured}} disabled{{end}}>测试连接与模型</button>
-
+      </form>
+      <form id="web-search-test-form" class="ai-tagging-test" method="post" action="/admin/settings/ai/web-search/test">
+        <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+        <button class="secondary-button"{{if not .WebSearchReady}} disabled{{end}}>测试联网搜索</button>
       </form>
         <button form="ai-settings-form" class="primary-button">保存全部 AI 设置</button>
       </div>
@@ -88,7 +91,7 @@
           <header class="card-head"><h2 class="card-title">AI 初审与分级自治</h2></header>
           <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_enabled" {{if .Review.Enabled}}checked{{end}}><span>开启 AI 初审（支持对新入库待审项自动预审，以及在审核页一键清理积压数据）</span></label>
           <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_inline" {{if .Review.InlineEnabled}}checked{{end}}><span>自动增强 / 艺术家匹配进入人工审核前先交由 AI 初审（仅处理未确定项，不覆写已有人工意图与抑制记录）</span></label>
-          <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_web" {{if .Review.WebSearchEnabled}}checked{{end}}><span>第一轮信息不足且不确定时允许联网补证（复用 <a href="/admin/artist-aliases">中文别名补全</a> 的 DeepSeek 联网密钥{{if .DeepSeekWebReady}}，当前已就绪{{else}}，当前尚未配置联网密钥{{end}}）</span></label>
+          <label class="switch-row ai-inline-check"><input type="checkbox" name="ai_review_web" {{if .Review.WebSearchEnabled}}checked{{end}}><span>第一轮信息不足且不确定时允许联网补证（使用下方统一联网搜索服务：{{.WebSearchSummary}}）</span></label>
           <label>审核专用模型覆盖（可选）
             <input name="ai_review_model" value="{{.Review.Model}}" placeholder="留空则优先使用上方的复核模型，再回退日常主模型" spellcheck="false">
           </label>
@@ -137,6 +140,54 @@
             </label>
           </div>
           <p class="result-count">安全铁律：AI 永远不会自动写入“永久拒绝/抑制记录”。任何 AI 自动落库的条目都可在审核页一键撤销退回待审。</p>
+        </section>
+
+        <section class="card form-stack" style="grid-column:1 / -1;">
+          <header class="card-head">
+            <h2 class="card-title">联网搜索服务（Tavily 多 Key 轮询 / DeepSeek）</h2>
+            <span class="result-count">当前状态：{{.WebSearchSummary}}</span>
+          </header>
+          <p class="result-count">统一为头像补全与存量审查、歌手简介联网概括、歌手中文别名补全以及 AI 审核联网补证提供搜索与网页正文提取；Tavily 支持配置多把 Key 自动 Round-Robin 轮询并在限流、额度耗尽或失效时自动切往下一把健康 Key。</p>
+          <div class="form-grid">
+            <label>搜索提供商策略
+              <select name="web_search_provider">
+                <option value="tavily_then_deepseek" {{if eq .WebSearchProvider "tavily_then_deepseek"}}selected{{end}}>Tavily 优先，不可用时自动回退 DeepSeek</option>
+                <option value="tavily" {{if eq .WebSearchProvider "tavily"}}selected{{end}}>仅使用 Tavily（多 Key 轮询）</option>
+                <option value="deepseek" {{if eq .WebSearchProvider "deepseek"}}selected{{end}}>仅使用 DeepSeek 联网</option>
+              </select>
+            </label>
+            <label>Tavily Key 保存方式
+              <select name="tavily_keys_mode">
+                <option value="append" selected>追加到现有 Key 池（自动去重）</option>
+                <option value="replace">用下方列表整批替换现有 Key 池</option>
+              </select>
+            </label>
+          </div>
+          <label>Tavily API Keys（每行一把，留空保持现有 {{.TavilyKeyCount}} 把 Key 不变；页面绝不回显明文）
+            <textarea name="tavily_keys" rows="4" placeholder="tvly-xxxxxxxxxxxxxxxx&#10;tvly-yyyyyyyyyyyyyyyy" spellcheck="false" autocomplete="off"></textarea>
+          </label>
+          {{if gt .TavilyKeyCount 0}}
+          <label class="ai-inline-check"><input type="checkbox" name="clear_tavily_keys"> 清除已保存的全部 Tavily Keys（共 {{.TavilyKeyCount}} 把）</label>
+          {{if .TavilyKeyStatuses}}
+          <div class="data-table-wrap"><table class="data-table">
+            <thead><tr><th>#</th><th>密钥掩码</th><th>实时状态</th><th>最近状态码 / 冷却截止</th></tr></thead>
+            <tbody>
+              {{range .TavilyKeyStatuses}}
+              <tr>
+                <td>{{.Index}}</td>
+                <td><code>{{.Mask}}</code></td>
+                <td>{{tavilyKeyStateLabel .State}}</td>
+                <td>{{if gt .LastStatus 0}}HTTP {{.LastStatus}}{{else}}—{{end}}{{if .CooldownUntil}} · 冷却至 {{.CooldownUntil}}{{end}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table></div>
+          {{end}}
+          {{end}}
+          <label>DeepSeek 联网 API Key（可选，作为 DeepSeek 模式或 Tavily 兜底；留空保持不变）
+            <input type="password" name="web_deepseek_key" value="" placeholder="{{if .DeepSeekKeySet}}已设置（留空保持不变）{{else}}未设置（如仅用 Tavily 可留空）{{end}}" autocomplete="new-password" spellcheck="false">
+          </label>
+          {{if .DeepSeekKeySet}}<label class="ai-inline-check"><input type="checkbox" name="clear_web_deepseek_key"> 清除已保存的 DeepSeek 联网 API Key</label>{{end}}
         </section>
     </form>
 

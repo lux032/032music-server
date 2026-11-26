@@ -508,6 +508,7 @@ func TestArtistCustomImagePreferredAndProtected(t *testing.T) {
 		t.Fatal(err)
 	}
 	plainURL := fmt.Sprintf("/api/v1/artists/%d/image", artistID)
+	cacheURL := plainURL + "?v=h"
 	// Seed the automatic cache first (Last.fm/MusicBrainz path).
 	if err := f.store.SaveArtistImage(f.ctx, ArtistImageInput{ArtistID: artistID, Source: "lastfm", RemoteURL: "https://img", Hash: "h", MIMEType: "image/jpeg", CachePath: t.TempDir() + "/cache.jpg", ByteSize: 10}); err != nil {
 		t.Fatal(err)
@@ -516,8 +517,8 @@ func TestArtistCustomImagePreferredAndProtected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.ImageURL != plainURL || detail.HasCustomImage {
-		t.Fatalf("cache image URL = %q custom=%v, want %q", detail.ImageURL, detail.HasCustomImage, plainURL)
+	if detail.ImageURL != cacheURL || detail.HasCustomImage {
+		t.Fatalf("cache image URL = %q custom=%v, want %q", detail.ImageURL, detail.HasCustomImage, cacheURL)
 	}
 
 	if _, err := f.store.SaveCustomArtistImage(f.ctx, artistID, f.customImage("artist.png")); err != nil {
@@ -589,8 +590,9 @@ func TestArtistCustomImagePreferredAndProtected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.ImageURL != plainURL || detail.HasCustomImage {
-		t.Fatalf("after reset image = %q custom=%v, want %q", detail.ImageURL, detail.HasCustomImage, plainURL)
+	wantRefreshedCacheURL := plainURL + "?v=h2"
+	if detail.ImageURL != wantRefreshedCacheURL || detail.HasCustomImage {
+		t.Fatalf("after reset image = %q custom=%v, want %q", detail.ImageURL, detail.HasCustomImage, wantRefreshedCacheURL)
 	}
 }
 
@@ -686,7 +688,7 @@ func TestArtistMergeInheritsCustomImage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantURL := fmt.Sprintf("/api/v1/artists/%d/image", targetID)
+		wantURL := fmt.Sprintf("/api/v1/artists/%d/image?v=h", targetID)
 		if detail.ImageURL != wantURL || detail.HasCustomImage {
 			t.Fatalf("after reset image = %q custom=%v, want own cache %q", detail.ImageURL, detail.HasCustomImage, wantURL)
 		}

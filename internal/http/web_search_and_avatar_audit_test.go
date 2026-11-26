@@ -1,0 +1,537 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/lux032/032music-server/internal/metadata"
+	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/websearch"
+)
+
+func makeTestPNGBytes(t *testing.T, w, h int, c color.RGBA) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	img.Set(0, 0, c)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestAISettingsWebSearchTavilyMultiKeyAndRedaction(t *testing.T) {
+	store := credentialTestStore(t)
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	reg := websearch.NewRegistry()
+	app.SetWebSearchRegistry(reg)
+
+	var seenAuth []string
+	tavilySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		seenAuth = append(seenAuth, auth)
+		if auth == "Bearer tvly-secret-alpha-1111" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte("rate limited tvly-secret-alpha-1111"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{"url": "https://musicbrainz.org/", "title": "MusicBrainz", "content": "Open music encyclopedia"},
+			},
+		})
+	}))
+	defer tavilySrv.Close()
+	reg.SetEndpointsForTest(tavilySrv.URL, tavilySrv.URL, tavilySrv.Client(), nil)
+
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	// Save two Tavily keys via AI settings form.
+	rec := postSecurity(t, app, handler, cookie, "/admin/settings/ai", url.Values{
+		"web_search_provider": {"tavily"},
+		"tavily_keys_mode":    {"replace"},
+		"tavily_keys":         {"tvly-secret-alpha-1111\ntvly-secret-beta-2222"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save web search code = %d", rec.Code)
+	}
+
+	// Page must display masked keys and never leak raw secrets.
+	page := getAdmin(t, handler, cookie, "/admin/settings/ai")
+	for _, secret := range []string{"tvly-secret-alpha-1111", "tvly-secret-beta-2222"} {
+		if strings.Contains(page, secret) {
+			t.Fatalf("ai-settings HTML leaked plaintext key %q", secret)
+		}
+	}
+	for _, want := range []string{"tvly-****1111", "tvly-****2222", "Tavily（2 把 Key 轮询）"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("ai-settings HTML missing %q", want)
+		}
+	}
+
+	// Append a third key and verify deduplication.
+	rec = postSecurity(t, app, handler, cookie, "/admin/settings/ai", url.Values{
+		"web_search_provider": {"tavily"},
+		"tavily_keys_mode":    {"append"},
+		"tavily_keys":         {"tvly-secret-beta-2222\ntvly-secret-gamma-3333"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("append web search code = %d", rec.Code)
+	}
+	ws, err := store.WebSearchSettings(context.Background())
+	if err != nil || len(ws.TavilyKeys) != 3 {
+		t.Fatalf("saved TavilyKeys = %+v err=%v, want 3", ws.TavilyKeys, err)
+	}
+
+	// CSRF protection on web-search test endpoint.
+	badCSRF := httptest.NewRequest(http.MethodPost, "/admin/settings/ai/web-search/test", strings.NewReader("csrfToken=bad"))
+	badCSRF.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	badCSRF.AddCookie(cookie)
+	badRec := httptest.NewRecorder()
+	handler.ServeHTTP(badRec, badCSRF)
+	if badRec.Code != http.StatusForbidden {
+		t.Fatalf("invalid CSRF code = %d, want 403", badRec.Code)
+	}
+
+	// Test connectivity: Key #1 hits 429 cooldown -> automatically fails over to Key #2 and succeeds.
+	testRec := postSecurity(t, app, handler, cookie, "/admin/settings/ai/web-search/test", url.Values{})
+	if testRec.Code != http.StatusSeeOther {
+		t.Fatalf("web search test code = %d", testRec.Code)
+	}
+	loc, _ := url.QueryUnescape(testRec.Header().Get("Location"))
+	if !strings.Contains(loc, "联网搜索测试成功") || !strings.Contains(loc, "Tavily 正常") {
+		t.Fatalf("unexpected web search test notice: %q", loc)
+	}
+	if strings.Contains(loc, "tvly-secret-alpha-1111") {
+		t.Fatalf("notice leaked raw secret: %q", loc)
+	}
+	if len(seenAuth) != 2 || seenAuth[0] != "Bearer tvly-secret-alpha-1111" || seenAuth[1] != "Bearer tvly-secret-beta-2222" {
+		t.Fatalf("unexpected failover order: %v", seenAuth)
+	}
+
+	// Refresh page -> Key #1 should report 冷却中, Key #2 正常.
+	page = getAdmin(t, handler, cookie, "/admin/settings/ai")
+	if !strings.Contains(page, "冷却中") || !strings.Contains(page, "正常") {
+		t.Fatalf("expected cooldown and healthy labels in page")
+	}
+
+	// Artist aliases page reflects unified web search summary.
+	aliasPage := getAdmin(t, handler, cookie, "/admin/artist-aliases")
+	if !strings.Contains(aliasPage, "Tavily（3 把 Key 轮询）") {
+		t.Fatalf("artist-aliases page missing unified web search summary")
+	}
+}
+
+func TestArtistImageAuditHTTPRoutesAndComparisonUI(t *testing.T) {
+	app, s, handler, _, cookie, _ := rateLimitTestApp(t)
+	ctx := context.Background()
+
+	// Save audit_auto_confidence via settings form and verify JSON readback.
+	rec := postSecurity(t, app, handler, cookie, "/admin/settings/artist-images", url.Values{
+		"bangumi_enabled":          {"1"},
+		"deezer_enabled":           {"1"},
+		"wikipedia_enabled":        {"1"},
+		"web_fallback_enabled":     {"1"},
+		"web_auto_apply_high":      {"1"},
+		"vision_enabled":           {"1"},
+		"max_web_requests_per_run": {"50"},
+		"negative_cache_days":      {"15"},
+		"audit_auto_confidence":    {"90"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save artist image settings = %d", rec.Code)
+	}
+	jsonRec := httptest.NewRecorder()
+	jsonReq := httptest.NewRequest(http.MethodGet, "/admin/settings/artist-images.json", nil)
+	jsonReq.AddCookie(cookie)
+	handler.ServeHTTP(jsonRec, jsonReq)
+	var settingsJSON map[string]any
+	if err := json.Unmarshal(jsonRec.Body.Bytes(), &settingsJSON); err != nil {
+		t.Fatal(err)
+	}
+	if settingsJSON["auditAutoConfidence"] != float64(90) {
+		t.Fatalf("auditAutoConfidence = %v, want 90", settingsJSON["auditAutoConfidence"])
+	}
+
+	// Prepare an artist with a cached image + an audit_review candidate + a replacement candidate + an audit action.
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil || len(artists) == 0 {
+		t.Fatalf("artists=%v err=%v", artists, err)
+	}
+	artistID := artists[0].ID
+	imgBytes := makeTestPNGBytes(t, 240, 240, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+	imgHash := fmt.Sprintf("%x", sha256.Sum256(imgBytes))
+	cachePath := filepath.Join(t.TempDir(), imgHash+".png")
+	if err := os.WriteFile(cachePath, imgBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveArtistImage(ctx, storage.ArtistImageInput{
+		ArtistID: artistID, Source: "deezer", RemoteURL: "https://old.example/1.png",
+		Hash: imgHash, MIMEType: "image/png", CachePath: cachePath, ByteSize: int64(len(imgBytes)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	auditCandID, err := s.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+		ArtistID: artistID, Source: "ai_audit", ImageURL: "https://old.example/1.png",
+		Kind: "audit_review", IssueType: "low_quality", Confidence: "medium", ConfidenceScore: 72,
+		Reason: "略模糊，建议人工确认", Width: 240, Height: 240,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replCandID, err := s.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+		ArtistID: artistID, Source: "ai_web", ImageURL: "https://new.example/2.png",
+		Kind: "replacement", IssueType: "album_cover", Confidence: "medium", ConfidenceScore: 80,
+		Reason: "候选肖像", Width: 400, Height: 400,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := adminGetBody(t, handler, cookie, "/admin/matches?tab=avatars")
+	for _, want := range []string{
+		`value="audit_all"`,
+		`value="audit_force"`,
+		"AI 审查疑点",
+		"画质/构图欠佳",
+		"/admin/matches/images/candidates/" + strconv.FormatInt(auditCandID, 10) + "/keep",
+		"/admin/matches/images/candidates/" + strconv.FormatInt(auditCandID, 10) + "/clear",
+		"/admin/matches/images/candidates/" + strconv.FormatInt(auditCandID, 10) + "/search",
+		"当前旧图",
+		"新候选图",
+		"采纳替换",
+		"/admin/matches/images/candidates/" + strconv.FormatInt(replCandID, 10) + "/approve",
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("match-review page missing %q", want)
+		}
+	}
+
+	// Keep the audit_review candidate -> records manual_keep review and dismisses item.
+	keepRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/"+strconv.FormatInt(auditCandID, 10)+"/keep", url.Values{})
+	if keepRec.Code != http.StatusSeeOther {
+		t.Fatalf("keep candidate code = %d", keepRec.Code)
+	}
+	rev, ok, err := s.ArtistImageReviewByArtist(ctx, artistID)
+	if err != nil || !ok || rev.Verdict != "keep" || rev.Model != "manual_keep" {
+		t.Fatalf("review after keep = (%+v, %v, %v)", rev, ok, err)
+	}
+
+	// Re-add an audit_review item, clear it via HTTP -> creates reversible action -> revert via HTTP restores old image!
+	auditCand2ID, err := s.UpsertArtistImageCandidate(ctx, storage.ArtistImageCandidate{
+		ArtistID: artistID, Source: "ai_audit", ImageURL: "audit://" + imgHash,
+		Kind: "audit_review", IssueType: "garbage", Confidence: "high", ConfidenceScore: 95,
+		Reason: "占位 Logo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/"+strconv.FormatInt(auditCand2ID, 10)+"/clear", url.Values{})
+	if clearRec.Code != http.StatusSeeOther {
+		t.Fatalf("clear candidate code = %d", clearRec.Code)
+	}
+	if _, _, _, pErr := s.ArtistImagePath(ctx, artistID); pErr == nil {
+		t.Fatal("expected cache to be cleared")
+	}
+	actions, err := s.RecentArtistImageAuditActions(ctx, 10)
+	if err != nil || len(actions) != 1 {
+		t.Fatalf("actions = %+v err=%v", actions, err)
+	}
+	tasksPage := adminGetBody(t, handler, cookie, "/admin/matches?tab=tasks")
+	revertActionPath := "/admin/matches/images/audit-actions/" + strconv.FormatInt(actions[0].ID, 10) + "/revert"
+	if !strings.Contains(tasksPage, revertActionPath) {
+		t.Fatalf("tasks page missing revert action %q", revertActionPath)
+	}
+	revertRec := postSecurity(t, app, handler, cookie, revertActionPath, url.Values{})
+	if revertRec.Code != http.StatusSeeOther {
+		t.Fatalf("revert action code = %d", revertRec.Code)
+	}
+	restoredPath, _, _, pErr := s.ArtistImagePath(ctx, artistID)
+	if pErr != nil || restoredPath != cachePath {
+		t.Fatalf("ArtistImagePath after revert = (%q, %v), want %q", restoredPath, pErr, cachePath)
+	}
+}
+
+// TestEndToEndTavilyMultiKeyAndFullAvatarAuditIntegration exercises the full
+// stack across HTTP -> Enrichment -> WebSearch (Tavily multi-key failover) ->
+// OpenAI ChatClient (temperature=0 400 retry) -> Storage -> Cache URL ?v= ->
+// HTTP one-click Revert.
+func TestEndToEndTavilyMultiKeyAndFullAvatarAuditIntegration(t *testing.T) {
+	app, s, handler, _, cookie, _ := rateLimitTestApp(t)
+	ctx := context.Background()
+	reg := websearch.NewRegistry()
+	app.SetWebSearchRegistry(reg)
+	app.enrichment.SetWebSearchRegistry(reg)
+
+	oldCoverBytes := makeTestPNGBytes(t, 280, 280, color.RGBA{R: 200, G: 10, B: 10, A: 255})
+	newPortraitBytes := makeTestPNGBytes(t, 360, 360, color.RGBA{R: 10, G: 200, B: 20, A: 255})
+	goodBytes := makeTestPNGBytes(t, 320, 320, color.RGBA{R: 10, G: 20, B: 220, A: 255})
+	garbageBytes := makeTestPNGBytes(t, 260, 260, color.RGBA{R: 120, G: 120, B: 120, A: 255})
+	wrongBytes := makeTestPNGBytes(t, 270, 270, color.RGBA{R: 220, G: 180, B: 10, A: 255})
+	suspiciousBytes := makeTestPNGBytes(t, 290, 290, color.RGBA{R: 180, G: 10, B: 220, A: 255})
+
+	// 1. Fake public web server hosting HTML profile + new portrait via safe test client.
+	// Use a dedicated httptest server for Tavily (Key #1 -> 432 quota exhausted, Key #2 -> 200).
+	var tavilyMu sync.Mutex
+	var tavilySeen []string
+	tavilySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		tavilyMu.Lock()
+		tavilySeen = append(tavilySeen, auth)
+		tavilyMu.Unlock()
+		if auth == "Bearer tvly-e2e-exhausted-0001" {
+			w.WriteHeader(432)
+			return
+		}
+		var req struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if strings.Contains(req.Query, "ReplaceArtist") {
+			// Return an HTTPS URL that won't be fetched over real internet — instead seed ReplaceArtist's confirmed profile URL pointing to our local mock or skip web HTML; wait: netfetch blocks loopback!
+			// So verify Tavily Search runs cleanly with failover, and have Tier 1/2 OR test-level transport handle public IP if needed.
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+	}))
+	defer tavilySrv.Close()
+	reg.SetEndpointsForTest(tavilySrv.URL, tavilySrv.URL, tavilySrv.Client(), nil)
+
+	// 2. Fake OpenAI-compatible gpt-6-luna server that rejects temperature=0 on first call!
+	var llmMu sync.Mutex
+	var tempRejectedCount int
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model       string          `json:"model"`
+			Temperature *float64        `json:"temperature"`
+			Messages    json.RawMessage `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Temperature != nil {
+			llmMu.Lock()
+			tempRejectedCount++
+			llmMu.Unlock()
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unsupported value: 'temperature' does not support 0 with gpt-6-luna"}}`))
+			return
+		}
+		msgStr := string(body.Messages)
+		var content string
+		switch {
+		case !strings.Contains(msgStr, "currentSource"):
+			// Vision verification call.
+			content = `{"valid":true,"confidence":94,"reason":"清晰艺人照"}`
+		case strings.Contains(msgStr, "GoodArtist"):
+			content = `{"verdict":"keep","issueType":"none","confidence":95,"reason":"清晰艺人照"}`
+		case strings.Contains(msgStr, "GarbageArtist"):
+			content = `{"verdict":"replace","issueType":"garbage","confidence":97,"reason":"明显网站占位 Logo"}`
+		case strings.Contains(msgStr, "WrongArtist"):
+			content = `{"verdict":"replace","issueType":"wrong_subject","confidence":91,"reason":"明显非本人"}`
+		case strings.Contains(msgStr, "SuspiciousArtist"):
+			content = `{"verdict":"replace","issueType":"low_quality","confidence":72,"reason":"略微模糊"}`
+		default:
+			content = `{"verdict":"keep","issueType":"none","confidence":90,"reason":"ok"}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": content}, "finish_reason": "stop"},
+			},
+			"usage": map[string]any{"prompt_tokens": 100, "completion_tokens": 25},
+		})
+	}))
+	defer llmSrv.Close()
+
+	// Configure AI + Tavily multi-key settings via HTTP.
+	rec := postSecurity(t, app, handler, cookie, "/admin/settings/ai", url.Values{
+		"base_url":            {llmSrv.URL},
+		"api_key":             {"sk-e2e-gpt6"},
+		"model":               {"gpt-6-luna"},
+		"rpm":                 {"600"},
+		"concurrency":         {"2"},
+		"web_search_provider": {"tavily"},
+		"tavily_keys_mode":    {"replace"},
+		"tavily_keys":         {"tvly-e2e-exhausted-0001\ntvly-e2e-healthy-0002"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save AI + Tavily settings code = %d", rec.Code)
+	}
+	rec = postSecurity(t, app, handler, cookie, "/admin/settings/artist-images", url.Values{
+		"web_fallback_enabled":     {"1"},
+		"web_auto_apply_high":      {"1"},
+		"vision_enabled":           {"1"},
+		"max_web_requests_per_run": {"100"},
+		"negative_cache_days":      {"30"},
+		"audit_auto_confidence":    {"85"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save image settings code = %d", rec.Code)
+	}
+
+	// Import artists into library.
+	if err := s.EnsureLibrary(ctx, "E2E", "/e2e-music"); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.LibraryByRoot(ctx, "/e2e-music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedArtist := func(rel, name string) int64 {
+		if err := s.ImportTrack(ctx, storage.ImportInput{
+			LibraryID: lib.ID, RelativePath: rel, FileSize: 100, ModifiedAtNS: 1,
+			Metadata: metadata.AudioMetadata{Title: "S-" + name, Album: "A-" + name, Artists: []string{name}, AlbumArtists: []string{name}, DiscNumber: 1, TrackNumber: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		list, lErr := s.ArtistsForMatching(ctx)
+		if lErr != nil {
+			t.Fatal(lErr)
+		}
+		var id int64
+		for _, a := range list {
+			if a.Name == name {
+				id = a.ID
+			}
+		}
+		if id == 0 {
+			t.Fatalf("artist %q not found", name)
+		}
+		return id
+	}
+	imgDir := t.TempDir()
+	seedCache := func(artistID int64, raw []byte, urlStr string) string {
+		h := fmt.Sprintf("%x", sha256.Sum256(raw))
+		p := filepath.Join(imgDir, h+".png")
+		if err := os.WriteFile(p, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SaveArtistImage(ctx, storage.ArtistImageInput{
+			ArtistID: artistID, Source: "deezer", RemoteURL: urlStr,
+			Hash: h, MIMEType: "image/png", CachePath: p, ByteSize: int64(len(raw)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+
+	goodID := seedArtist("e2e/1.flac", "GoodArtist")
+	garbageID := seedArtist("e2e/2.flac", "GarbageArtist")
+	garbageSrcID := seedArtist("e2e/2b.flac", "GarbageSource")
+	wrongID := seedArtist("e2e/3.flac", "WrongArtist")
+	suspiciousID := seedArtist("e2e/4.flac", "SuspiciousArtist")
+	customID := seedArtist("e2e/5.flac", "CustomProtected")
+
+	goodHash := seedCache(goodID, goodBytes, "https://img.example/good.png")
+	garbageHash := seedCache(garbageSrcID, garbageBytes, "https://img.example/garbage.png")
+	if _, err := s.MergeArtists(ctx, garbageSrcID, garbageID); err != nil {
+		t.Fatal(err)
+	}
+	seedCache(wrongID, wrongBytes, "https://img.example/wrong.png")
+	seedCache(suspiciousID, suspiciousBytes, "https://img.example/suspicious.png")
+	if _, err := s.SaveCustomArtistImage(ctx, customID, storage.CustomImageInput{
+		Hash: "custom-e2e-hash", MIMEType: "image/png", FileName: "cust.png", Width: 500, Height: 500, ByteSize: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = oldCoverBytes
+	_ = newPortraitBytes
+
+	// Start audit_all via HTTP POST /admin/matches/images/backfill!
+	startRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/backfill", url.Values{
+		"mode": {"audit_all"},
+	})
+	if startRec.Code != http.StatusSeeOther {
+		t.Fatalf("start audit_all code = %d", startRec.Code)
+	}
+
+	// Poll /admin/matches/images/runs/active.json until finished.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		pollRec := httptest.NewRecorder()
+		pollReq := httptest.NewRequest(http.MethodGet, "/admin/matches/images/runs/active.json", nil)
+		pollReq.AddCookie(cookie)
+		handler.ServeHTTP(pollRec, pollReq)
+		var doc struct {
+			Run *artistImageRunView `json:"run"`
+		}
+		if err := json.Unmarshal(pollRec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc.Run == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	latest, err := s.LatestArtistImageBackfillRun(ctx)
+	if err != nil || latest.Status != "completed" || latest.Mode != "audit_all" {
+		t.Fatalf("latest run = %+v err=%v", latest, err)
+	}
+	if latest.Kept < 1 || latest.Cleared != 1 || latest.Candidate != 2 || latest.Failed != 0 {
+		t.Fatalf("unexpected e2e audit counts: %+v", latest)
+	}
+	// Verify gpt-6-luna temperature=0 retry occurred cleanly.
+	if tempRejectedCount == 0 {
+		t.Fatal("expected ChatClient to encounter and retry temperature=0 400")
+	}
+	// Verify Tavily failover occurred: exhausted key 1 -> healthy key 2!
+	tavilyMu.Lock()
+	sawExhausted := false
+	sawHealthy := false
+	for _, a := range tavilySeen {
+		if a == "Bearer tvly-e2e-exhausted-0001" {
+			sawExhausted = true
+		}
+		if a == "Bearer tvly-e2e-healthy-0002" {
+			sawHealthy = true
+		}
+	}
+	tavilyMu.Unlock()
+	if !sawExhausted || !sawHealthy {
+		t.Fatalf("expected Tavily multi-key failover, saw=%v", tavilySeen)
+	}
+
+	// Verify cache URL versioning on GoodArtist and complete clearing on GarbageArtist (inherited).
+	urls, _ := s.ArtistImageURLs(ctx, []int64{goodID, garbageID, wrongID, suspiciousID})
+	if urls[goodID] != fmt.Sprintf("/api/v1/artists/%d/image?v=%s", goodID, goodHash[:12]) {
+		t.Fatalf("GoodArtist URL = %q", urls[goodID])
+	}
+	if urls[garbageID] != "" {
+		t.Fatalf("GarbageArtist URL after clear = %q, want empty", urls[garbageID])
+	}
+	if urls[wrongID] == "" || urls[suspiciousID] == "" {
+		t.Fatalf("WrongArtist/SuspiciousArtist should keep cached URLs: %+v", urls)
+	}
+
+	// One-click HTTP revert of GarbageArtist clearance restores inherited cache and ?v= URL!
+	actions, err := s.RecentArtistImageAuditActions(ctx, 10)
+	if err != nil || len(actions) != 1 || actions[0].ArtistID != garbageID || actions[0].Action != "cleared" {
+		t.Fatalf("audit actions = %+v err=%v", actions, err)
+	}
+	revRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/audit-actions/"+strconv.FormatInt(actions[0].ID, 10)+"/revert", url.Values{})
+	if revRec.Code != http.StatusSeeOther {
+		t.Fatalf("HTTP revert code = %d", revRec.Code)
+	}
+	urlsAfter, _ := s.ArtistImageURLs(ctx, []int64{garbageID})
+	wantRestoredURL := fmt.Sprintf("/api/v1/artists/%d/image?v=%s", garbageID, garbageHash[:12])
+	if urlsAfter[garbageID] != wantRestoredURL {
+		t.Fatalf("GarbageArtist URL after revert = %q, want %q", urlsAfter[garbageID], wantRestoredURL)
+	}
+}

@@ -35,6 +35,7 @@ import (
 	"github.com/lux032/032music-server/internal/scanner"
 	"github.com/lux032/032music-server/internal/storage"
 	"github.com/lux032/032music-server/internal/tagging"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 type App struct {
@@ -91,6 +92,7 @@ type App struct {
 	aiTagging       *tagging.Service
 	aiReview        *aireview.Service
 	sharedAILimiter *aiclient.Limiter
+	webSearch       *websearch.Registry
 	artistAliases   *artistaliases.Service
 	// dailyMixes generates the daily recommendation mixes (nil hides them).
 	dailyMixes *dailymix.Service
@@ -304,6 +306,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"runStatusLabel":         runStatusLabel,
 		"artistScanModeLabel":    artistScanModeLabel,
 		"artistImageModeLabel":   artistImageModeLabel,
+		"artistImageIssueLabel":  artistImageIssueLabel,
+		"tavilyKeyStateLabel":    tavilyKeyStateLabel,
 		"artistBioModeLabel":     artistBioModeLabel,
 		"pauseReasonLabel":       pauseReasonLabel,
 		"enrichmentScopeLabel":   enrichmentScopeLabel,
@@ -617,6 +621,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET "+aiSettingsPath, a.requireAdmin(http.HandlerFunc(a.handleAISettingsPage)))
 	mux.Handle("POST "+aiSettingsPath, a.requireAdmin(http.HandlerFunc(a.handleSaveAISettings)))
 	mux.Handle("POST "+aiSettingsPath+"/test", a.requireAdmin(http.HandlerFunc(a.handleAISettingsTest)))
+	mux.Handle("POST "+aiSettingsPath+"/web-search/test", a.requireAdmin(http.HandlerFunc(a.handleAISettingsWebSearchTest)))
 	mux.Handle("POST /admin/ai-review/run", a.requireAdmin(http.HandlerFunc(a.handleStartAIReviewRun)))
 	mux.Handle("POST /admin/ai-review/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseAIReviewRun)))
 	mux.Handle("POST /admin/ai-review/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeAIReviewRun)))
@@ -734,6 +739,10 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /admin/matches/images/candidates/{id}/preview", a.requireAdmin(http.HandlerFunc(a.handleArtistImageCandidatePreview)))
 	mux.Handle("POST /admin/matches/images/candidates/{id}/approve", a.requireAdmin(http.HandlerFunc(a.handleApproveArtistImageCandidate)))
 	mux.Handle("POST /admin/matches/images/candidates/{id}/reject", a.requireAdmin(http.HandlerFunc(a.handleRejectArtistImageCandidate)))
+	mux.Handle("POST /admin/matches/images/candidates/{id}/keep", a.requireAdmin(http.HandlerFunc(a.handleKeepArtistImageCandidate)))
+	mux.Handle("POST /admin/matches/images/candidates/{id}/clear", a.requireAdmin(http.HandlerFunc(a.handleClearArtistImageCandidate)))
+	mux.Handle("POST /admin/matches/images/candidates/{id}/search", a.requireAdmin(http.HandlerFunc(a.handleSearchForAuditCandidate)))
+	mux.Handle("POST /admin/matches/images/audit-actions/{id}/revert", a.requireAdmin(http.HandlerFunc(a.handleRevertArtistImageAuditAction)))
 	mux.Handle("POST /admin/artists/{id}/image/web-search", a.requireAdminJSON(http.HandlerFunc(a.handleSearchArtistImageCandidate)))
 	mux.Handle("GET /admin/settings/artist-images.json", a.requireAdminJSON(http.HandlerFunc(a.handleGetArtistImageSettings)))
 	mux.Handle("POST /admin/settings/artist-images", a.requireAdmin(http.HandlerFunc(a.handleSaveArtistImageSettings)))

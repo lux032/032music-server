@@ -20,6 +20,7 @@ type artistAliasPageData struct {
 	Notice               string
 	Settings             storage.ArtistAliasSettings
 	KeySet, AIConfigured bool
+	WebSearchSummary     string
 	Detail               string
 	Eligible             int
 	Stats                storage.ArtistAliasStats
@@ -37,16 +38,14 @@ func (a *App) handleArtistAliasPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, _ := a.sessions.get(r)
-	data := artistAliasPageData{Chrome: a.chromeFor(ctx, session, "artist-aliases"), Notice: r.URL.Query().Get("notice"), Settings: st, KeySet: st.DeepSeekKey != "", Eligible: 0}
+	wsReady, wsSummary, _, _, _ := a.webSearchStatusSummary(ctx)
+	data := artistAliasPageData{Chrome: a.chromeFor(ctx, session, "artist-aliases"), Notice: r.URL.Query().Get("notice"), Settings: st, KeySet: wsReady, WebSearchSummary: wsSummary, Eligible: 0}
 	ai, e := a.store.AISettings(ctx)
 	if e != nil {
 		a.renderAdminFeatureError(w, "artist aliases", e)
 		return
 	}
 	data.AIConfigured = ai.Configured()
-	if ai.BaseURL == "https://api.deepseek.com" || ai.BaseURL == "https://api.deepseek.com/v1" {
-		data.KeySet = data.KeySet || ai.APIKey != ""
-	}
 	if a.artistAliases != nil {
 		data.Detail = a.artistAliases.Detail()
 		list, e := a.artistAliases.Eligible(ctx, false)
@@ -128,16 +127,25 @@ func (a *App) handleArtistAliasAction(w http.ResponseWriter, r *http.Request) {
 	switch r.PathValue("action") {
 	case "settings":
 		st.Enabled = r.FormValue("enabled") == "on"
+		dsChanged := false
 		if key := strings.TrimSpace(r.FormValue("deepseek_key")); key != "" {
 			st.DeepSeekKey = key
+			dsChanged = true
 		}
 		if r.FormValue("clear_key") == "on" {
 			st.DeepSeekKey = ""
+			dsChanged = true
 		}
 		st.SearchLimit, _ = strconv.Atoi(r.FormValue("search_limit"))
 		st.FetchLimit, _ = strconv.Atoi(r.FormValue("fetch_limit"))
 		st.ModelLimit, _ = strconv.Atoi(r.FormValue("model_limit"))
 		st.RPM, _ = strconv.Atoi(r.FormValue("rpm"))
+		if dsChanged {
+			if ws, wsErr := a.store.WebSearchSettings(r.Context()); wsErr == nil {
+				ws.DeepSeekKey = st.DeepSeekKey
+				_ = a.store.SaveWebSearchSettings(r.Context(), ws)
+			}
+		}
 	case "pause":
 		st.Paused = true
 		notice = "已暂停，调用次数和队列已保留"

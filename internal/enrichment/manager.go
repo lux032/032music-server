@@ -55,6 +55,7 @@ type Manager struct {
 	inlineAI               func(context.Context, string, int64) bool
 	aiLimiter              *aiclient.Limiter
 	aiChatFactory          aiclient.ChatFactory
+	webSearch              *websearch.Registry
 	bioWebFactory          func(storage.ArtistAliasSettings, storage.AISettings) (websearch.Client, error)
 	posterMu               sync.Mutex
 	posterBackfilling      bool
@@ -140,7 +141,7 @@ type MatchResult struct {
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
-	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: bangumiEndpoints(sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_BANGUMI_BASE_URL", "https://api.bgm.tv")), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiPace: BangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}}
+	manager := &Manager{now: time.Now, blockedUntil: map[string]time.Time{}, autoResumeTimers: map[string]*autoResumeEntry{}, baseCtx: baseCtx, store: store, logger: logger, client: &http.Client{Timeout: 20 * time.Second}, phaseEndpoints: bangumiEndpoints(sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_BANGUMI_BASE_URL", "https://api.bgm.tv")), musicBrainzBase: sourcegate.BaseURLFromEnv(logger, "MUSIC_SERVER_MUSICBRAINZ_BASE_URL", "https://musicbrainz.org/ws/2"), bangumiPace: BangumiIntervalFromEnv(logger), imageDirectory: filepath.Join(dataDirectory, "artist-images"), sleep: sleepContext, posterFailed: map[string]time.Time{}, webSearch: websearch.NewRegistry()}
 	manager.gate = sourcegate.New(sourcegate.Options{Intervals: map[string]time.Duration{"musicbrainz": mbIntervalFromEnv(logger), "bangumi": manager.bangumiPace}, Now: func() time.Time { return manager.clockNow() }, Sleep: func(c context.Context, d time.Duration) error { return manager.sleep(c, d) }})
 
 	if _, err := store.RecoverDurableEnrichmentRuns(context.Background()); err != nil {

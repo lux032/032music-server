@@ -1,5 +1,6 @@
-// Package websearch provides a provider-agnostic web search and page-fetch
-// contract shared by artist alias completion and AI biography synthesis.
+// Package websearch provides a unified, provider-agnostic web search and
+// page-fetch layer shared by artist avatar discovery/audit, AI biography
+// synthesis, Chinese artist alias completion, and AI review verification.
 package websearch
 
 import (
@@ -34,18 +35,24 @@ type Client interface {
 
 // WebError omits response bodies, URLs, and credentials from error strings.
 type WebError struct {
-	Status    int
-	Operation string
+	Provider   string
+	Status     int
+	Operation  string
+	RetryAfter time.Duration
 }
 
 func (e *WebError) Error() string {
+	provider := strings.TrimSpace(e.Provider)
+	if provider == "" {
+		provider = "联网服务"
+	}
 	label := "联网请求"
 	if e.Operation == "search" {
 		label = "网页搜索"
 	} else if e.Operation == "fetch" {
 		label = "网页读取"
 	}
-	return fmt.Sprintf("DeepSeek %s失败（HTTP %d）", label, e.Status)
+	return fmt.Sprintf("%s %s失败（HTTP %d）", provider, label, e.Status)
 }
 
 // DeepSeekClient calls DeepSeek's /v1/tools/search and /v1/tools/fetch endpoints.
@@ -59,19 +66,22 @@ type DeepSeekClient struct {
 // alias DeepSeek key or falling back to the global AI key when BaseURL points
 // to the official api.deepseek.com endpoint.
 func NewDeepSeekClient(aliasSettings storage.ArtistAliasSettings, aiSettings storage.AISettings) (Client, error) {
-	key := strings.TrimSpace(aliasSettings.DeepSeekKey)
-	u, _ := url.Parse(strings.TrimSpace(aiSettings.BaseURL))
-	if key == "" && u != nil && u.Hostname() == "api.deepseek.com" && u.Scheme == "https" {
-		key = strings.TrimSpace(aiSettings.APIKey)
-	}
+	return newDeepSeekClientWithBase(storage.WebSearchSettings{}, aliasSettings, aiSettings, "https://api.deepseek.com")
+}
+
+func newDeepSeekClientWithBase(ws storage.WebSearchSettings, aliasSettings storage.ArtistAliasSettings, aiSettings storage.AISettings, baseURL string) (*DeepSeekClient, error) {
+	key := ws.EffectiveDeepSeekKey(aliasSettings, aiSettings)
 	if key == "" {
 		return nil, errors.New("未配置 DeepSeek 联网 API Key")
 	}
-	c, err := tagging.NewChatClient("https://api.deepseek.com", key, aiSettings.ProxyURL, 30*time.Second)
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = "https://api.deepseek.com"
+	}
+	c, err := tagging.NewChatClient(baseURL, key, aiSettings.ProxyURL, 30*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	return &DeepSeekClient{HTTP: c.HTTP, Key: key, BaseURL: "https://api.deepseek.com"}, nil
+	return &DeepSeekClient{HTTP: c.HTTP, Key: key, BaseURL: strings.TrimRight(baseURL, "/")}, nil
 }
 
 func (c *DeepSeekClient) call(ctx context.Context, path string, body any, out any) error {
@@ -85,7 +95,11 @@ func (c *DeepSeekClient) call(ctx context.Context, path string, body any, out an
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.Key)
-	client := *c.HTTP
+	httpClient := http.DefaultClient
+	if c.HTTP != nil {
+		httpClient = c.HTTP
+	}
+	client := *httpClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
@@ -100,7 +114,7 @@ func (c *DeepSeekClient) call(ctx context.Context, path string, body any, out an
 		if strings.HasSuffix(path, "/fetch") {
 			operation = "fetch"
 		}
-		return &WebError{Status: resp.StatusCode, Operation: operation}
+		return &WebError{Provider: "DeepSeek", Status: resp.StatusCode, Operation: operation}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20+1))
 	if err != nil || len(data) > 2<<20 {
@@ -121,6 +135,9 @@ func (c *DeepSeekClient) Search(ctx context.Context, query string) ([]SearchResu
 }
 
 func (c *DeepSeekClient) Fetch(ctx context.Context, pageURL string) (string, error) {
+	if !SafePageURL(pageURL) {
+		return "", errors.New("目标网页地址不安全或无效")
+	}
 	var v struct {
 		Content string `json:"content"`
 	}

@@ -40,14 +40,14 @@ type ArtistImageBackfillItem struct {
 }
 
 type ArtistImageBackfillRun struct {
-	ID                                        int64
-	Status, Mode                              string
-	Total, Processed                          int
-	Cached, Candidate, NoURL, Skipped, Failed int
-	Current, ErrorMessage                     string
-	PauseReason, WaitSource, WaitingUntil     string
-	WaitTotalMS, BudgetBaselineMS             int64
-	AutoResumeCount                           int
+	ID                                                                 int64
+	Status, Mode                                                       string
+	Total, Processed                                                   int
+	Cached, Kept, Replaced, Cleared, Candidate, NoURL, Skipped, Failed int
+	Current, ErrorMessage                                              string
+	PauseReason, WaitSource, WaitingUntil                              string
+	WaitTotalMS, BudgetBaselineMS                                      int64
+	AutoResumeCount                                                    int
 }
 
 // MaxArtistImageBackfillAutoResumeRounds 与身份匹配 run 一致：限流自动恢复
@@ -202,6 +202,12 @@ func (s *Store) CompleteArtistImageBackfillItem(ctx context.Context, c ArtistIma
 	switch outcome {
 	case "cached":
 		outcomeCol = "cached_items"
+	case "kept":
+		outcomeCol = "kept_items"
+	case "replaced":
+		outcomeCol = "replaced_items"
+	case "cleared":
+		outcomeCol = "cleared_items"
 	case "candidate":
 		outcomeCol = "candidate_items"
 	case "no_url":
@@ -365,7 +371,7 @@ func (s *Store) RecoverArtistImageBackfillRuns(ctx context.Context) (int64, erro
 
 func (s *Store) DurableArtistImageBackfillRun(ctx context.Context, id int64) (ArtistImageBackfillRun, error) {
 	var r ArtistImageBackfillRun
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,mode,total_items,processed_items,cached_items,candidate_items,no_url_items,skipped_items,failed_items,COALESCE(current_artist,''),COALESCE(error_message,''),pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_image_backfill_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Mode, &r.Total, &r.Processed, &r.Cached, &r.Candidate, &r.NoURL, &r.Skipped, &r.Failed, &r.Current, &r.ErrorMessage, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,mode,total_items,processed_items,cached_items,kept_items,replaced_items,cleared_items,candidate_items,no_url_items,skipped_items,failed_items,COALESCE(current_artist,''),COALESCE(error_message,''),pause_reason,wait_source,COALESCE(waiting_until,''),wait_total_ms,budget_baseline_ms,auto_resume_count FROM artist_image_backfill_runs WHERE id=?`, id).Scan(&r.ID, &r.Status, &r.Mode, &r.Total, &r.Processed, &r.Cached, &r.Kept, &r.Replaced, &r.Cleared, &r.Candidate, &r.NoURL, &r.Skipped, &r.Failed, &r.Current, &r.ErrorMessage, &r.PauseReason, &r.WaitSource, &r.WaitingUntil, &r.WaitTotalMS, &r.BudgetBaselineMS, &r.AutoResumeCount)
 	return r, err
 }
 
@@ -518,8 +524,11 @@ func (s *Store) ArtistImageBackfillRunsAwaitingAutoResume(ctx context.Context) (
 // 同口径；无缓存行为空串）。磁盘文件存在性由调用方 os.Stat 判定——“缓存
 // 行在、文件丢”视作缺失。
 type ArtistImageBackfillCacheRow struct {
-	Candidate ArtistImageBackfillCandidate
-	CachePath string
+	Candidate        ArtistImageBackfillCandidate
+	CachePath        string
+	ContentHash      string
+	ReviewedKeepHash string
+	MissingCooldown  bool
 }
 
 // ArtistImageBackfillCacheScan 一次查询返回全部 D50 候选与其有效缓存路径，

@@ -11,8 +11,8 @@ import (
 	"github.com/lux032/032music-server/internal/storage"
 )
 
-// 已匹配艺术家头像补全（B+2）的页面视图与管理路由。复用匹配任务 run-card
-// 标记与 admin.js 轮询约定（data-run-kind="artistImage"）。
+// 已匹配艺术家头像补全（B+2）与全量历史头像 AI 审查的页面视图与管理路由。
+// 复用匹配任务 run-card 标记与 admin.js 轮询约定（data-run-kind="artistImage"）。
 
 type artistImageRunView struct {
 	ID           int64  `json:"id"`
@@ -21,6 +21,9 @@ type artistImageRunView struct {
 	Total        int    `json:"total"`
 	Processed    int    `json:"processed"`
 	Cached       int    `json:"cached"`
+	Kept         int    `json:"kept"`
+	Replaced     int    `json:"replaced"`
+	Cleared      int    `json:"cleared"`
 	Candidate    int    `json:"candidate"`
 	NoURL        int    `json:"noUrl"`
 	Skipped      int    `json:"skipped"`
@@ -35,19 +38,30 @@ type artistImageRunView struct {
 }
 
 func artistImageRunDTO(r storage.ArtistImageBackfillRun) artistImageRunView {
-	return artistImageRunView{ID: r.ID, Status: r.Status, Mode: r.Mode, Total: r.Total, Processed: r.Processed, Cached: r.Cached, Candidate: r.Candidate, NoURL: r.NoURL, Skipped: r.Skipped, Failed: r.Failed, Current: r.Current, ErrorMessage: r.ErrorMessage, PauseReason: r.PauseReason, WaitSource: r.WaitSource, WaitingUntil: r.WaitingUntil, WaitTotalMS: r.WaitTotalMS, Resumable: r.Status == "paused"}
+	return artistImageRunView{
+		ID: r.ID, Status: r.Status, Mode: r.Mode,
+		Total: r.Total, Processed: r.Processed,
+		Cached: r.Cached, Kept: r.Kept, Replaced: r.Replaced, Cleared: r.Cleared,
+		Candidate: r.Candidate, NoURL: r.NoURL, Skipped: r.Skipped, Failed: r.Failed,
+		Current: r.Current, ErrorMessage: r.ErrorMessage,
+		PauseReason: r.PauseReason, WaitSource: r.WaitSource, WaitingUntil: r.WaitingUntil,
+		WaitTotalMS: r.WaitTotalMS, Resumable: r.Status == "paused",
+	}
 }
 
-// artistImageBackfillView 是 /admin/matches 页“已匹配艺术家头像补全”区块
-// 的数据：统计（只读 DB+磁盘）与活动/最近任务。
+// artistImageBackfillView 是 /admin/matches 页“艺术家头像补全与 AI 审查”区块
+// 的数据：统计（只读 DB+磁盘）、活动/最近任务、待审候选与可撤销替换记录。
 type artistImageBackfillView struct {
-	Cached, Total     int
-	Missing           int
-	PendingCount      int
-	PendingCandidates []storage.ArtistImageCandidate
-	Settings          *storage.ArtistImageSettings
-	Active            *artistImageRunView
-	Last              *artistImageRunView
+	Cached, Total      int
+	Missing            int
+	PendingCount       int
+	PendingCandidates  []storage.ArtistImageCandidate
+	RecentAuditActions []storage.ArtistImageAuditAction
+	WebSearchReady     bool
+	WebSearchSummary   string
+	Settings           *storage.ArtistImageSettings
+	Active             *artistImageRunView
+	Last               *artistImageRunView
 }
 
 func (a *App) artistImageRunError(w http.ResponseWriter, err error) {
@@ -61,8 +75,7 @@ func (a *App) artistImageRunError(w http.ResponseWriter, err error) {
 	}
 }
 
-// handleStartArtistImageBackfill 启动一轮已匹配艺术家头像补全。已有活动或
-// 暂停任务、没有候选时都以 notice 反馈，不报错页。
+// handleStartArtistImageBackfill 启动一轮头像补全或全量 AI 审查替换任务。
 func (a *App) handleStartArtistImageBackfill(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -78,7 +91,7 @@ func (a *App) handleStartArtistImageBackfill(w http.ResponseWriter, r *http.Requ
 		message := "启动补全失败，请稍后重试"
 		switch {
 		case errors.Is(err, enrichment.ErrNoArtistImageBackfillCandidates):
-			message = "没有需要补全头像的艺术家"
+			message = "没有需要补全或审查头像的艺术家"
 		case errors.Is(err, storage.ErrArtistImageBackfillState) || errors.Is(err, enrichment.ErrRunNotActive):
 			message = "已有活动或暂停中的补全任务，请查看任务并手动继续"
 			if run, e := a.store.UnfinishedArtistImageBackfillRun(r.Context()); e == nil && storage.ArtistImageBackfillAutoResumeEligible(run) {
@@ -91,8 +104,13 @@ func (a *App) handleStartArtistImageBackfill(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	message := "艺术家头像补全任务已启动"
-	if mode == "matched" {
-		message = "已匹配" + message
+	switch mode {
+	case "matched":
+		message = "已匹配艺术家头像补全任务已启动"
+	case "audit_all":
+		message = "全量补全与历史头像 AI 审查任务已启动"
+	case "audit_force":
+		message = "全量历史头像强制重审任务已启动"
 	}
 	redirectWithNotice(w, r, returnTo, message)
 }
@@ -241,6 +259,103 @@ func (a *App) handleRejectArtistImageCandidate(w http.ResponseWriter, r *http.Re
 	redirectWithNotice(w, r, safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches"), "已忽略该候选头像")
 }
 
+func (a *App) handleKeepArtistImageCandidate(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	if err := a.store.KeepArtistImageCandidate(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "待审项不存在", http.StatusNotFound)
+			return
+		}
+		a.logger.Error("keep artist image candidate", "candidateId", id, "error", err)
+		http.Error(w, "保存保留决定失败", http.StatusInternalServerError)
+		return
+	}
+	redirectWithNotice(w, r, returnTo, "已确认保留当前头像，后续普通全量审查将跳过")
+}
+
+func (a *App) handleClearArtistImageCandidate(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	if err := a.store.ClearArtistImageCandidate(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "待审项不存在", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, storage.ErrArtistImageBackfillState) {
+			redirectWithNotice(w, r, returnTo, "该艺人已有自定义头像，未执行清空")
+			return
+		}
+		a.logger.Error("clear artist image candidate", "candidateId", id, "error", err)
+		http.Error(w, "清空头像失败", http.StatusInternalServerError)
+		return
+	}
+	redirectWithNotice(w, r, returnTo, "已清空该艺人缓存头像（可在任务页撤销恢复）")
+}
+
+func (a *App) handleSearchForAuditCandidate(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
+	if a.enrichment == nil {
+		redirectWithNotice(w, r, returnTo, "任务服务不可用")
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	cand, err := a.store.ArtistImageCandidateByID(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "待审项不存在", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		a.logger.Error("load audit candidate for search", "candidateId", id, "error", err)
+		http.Error(w, "读取待审项失败", http.StatusInternalServerError)
+		return
+	}
+	found, ok, searchErr := a.enrichment.SearchArtistImageCandidateNow(r.Context(), cand.ArtistID)
+	if searchErr != nil {
+		redirectWithNotice(w, r, returnTo, "联网找新图失败："+enrichment.RedactSourceError(searchErr).Error())
+		return
+	}
+	if !ok || found.ID == 0 {
+		redirectWithNotice(w, r, returnTo, "联网未找到更合适的候选头像")
+		return
+	}
+	redirectWithNotice(w, r, returnTo, "已联网搜到新候选头像，请在列表顶部对比并采纳")
+}
+
+func (a *App) handleRevertArtistImageAuditAction(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := parseInt64(r.PathValue("id"))
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=tasks")
+	if err := a.store.RevertArtistImageAuditAction(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			redirectWithNotice(w, r, returnTo, "未找到该条头像处理记录")
+			return
+		}
+		if errors.Is(err, storage.ErrArtistImageBackfillState) {
+			redirectWithNotice(w, r, returnTo, "无法撤销：该记录已撤销，或艺人已合并/已上传自定义头像")
+			return
+		}
+		redirectWithNotice(w, r, returnTo, "撤销失败："+err.Error())
+		return
+	}
+	redirectWithNotice(w, r, returnTo, "已撤销该次 AI 头像变更并恢复原头像")
+}
+
 func (a *App) handleSearchArtistImageCandidate(w http.ResponseWriter, r *http.Request) {
 	if !a.validCSRF(r) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -284,6 +399,7 @@ func (a *App) handleGetArtistImageSettings(w http.ResponseWriter, r *http.Reques
 		"aiModel":              st.AIModel,
 		"maxWebRequestsPerRun": st.MaxWebRequestsPerRun,
 		"negativeCacheDays":    st.NegativeCacheDays,
+		"auditAutoConfidence":  st.AuditAutoConfidence,
 	})
 }
 
@@ -320,6 +436,9 @@ func (a *App) handleSaveArtistImageSettings(w http.ResponseWriter, r *http.Reque
 	}
 	if n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("negative_cache_days"))); err == nil && n >= 1 {
 		cur.NegativeCacheDays = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("audit_auto_confidence"))); err == nil && n >= 50 && n <= 100 {
+		cur.AuditAutoConfidence = n
 	}
 	if err = a.store.SaveArtistImageSettings(r.Context(), cur); err != nil {
 		a.logger.Error("save artist image settings", "error", err)

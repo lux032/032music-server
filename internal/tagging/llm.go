@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lux032/032music-server/internal/storage"
@@ -50,9 +51,26 @@ func (e *LLMError) Error() string {
 
 // ChatClient 是 OpenAI 兼容的 Chat Completions 客户端。
 type ChatClient struct {
-	BaseURL string
-	APIKey  string
-	HTTP    *http.Client
+	BaseURL  string
+	APIKey   string
+	HTTP     *http.Client
+	mu       sync.Mutex
+	omitTemp map[string]bool
+}
+
+func (c *ChatClient) shouldOmitTemperature(model string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.omitTemp[strings.TrimSpace(model)]
+}
+
+func (c *ChatClient) markOmitTemperature(model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.omitTemp == nil {
+		c.omitTemp = map[string]bool{}
+	}
+	c.omitTemp[strings.TrimSpace(model)] = true
 }
 
 // NewChatClient 创建客户端。proxyURL 为空时使用环境变量中的代理（HTTP(S)_PROXY）。
@@ -113,8 +131,22 @@ type chatMessage struct {
 	Content string `json:"content"`
 }
 
-// Complete 调用 /chat/completions。temperature 固定为 0。
+// Complete 调用 /chat/completions。默认发送 temperature=0；若模型因不支持
+// temperature 返回 HTTP 400，则自动省略 temperature 重试一次并记住该偏好。
 func (c *ChatClient) Complete(ctx context.Context, req ChatRequest) (ChatResult, error) {
+	omitTemp := c.shouldOmitTemperature(req.Model)
+	res, err := c.completeOnce(ctx, req, omitTemp)
+	if err != nil && !omitTemp {
+		var le *LLMError
+		if errors.As(err, &le) && le.Status == http.StatusBadRequest && strings.Contains(strings.ToLower(le.Message), "temperature") {
+			c.markOmitTemperature(req.Model)
+			return c.completeOnce(ctx, req, true)
+		}
+	}
+	return res, err
+}
+
+func (c *ChatClient) completeOnce(ctx context.Context, req ChatRequest, omitTemp bool) (ChatResult, error) {
 	var messages any = []chatMessage{{Role: "system", Content: req.System}, {Role: "user", Content: req.User}}
 	if len(req.Images) > 0 {
 		parts := make([]map[string]any, 0, 1+len(req.Images))
@@ -141,9 +173,11 @@ func (c *ChatClient) Complete(ctx context.Context, req ChatRequest) (ChatResult,
 		}
 	}
 	body := map[string]any{
-		"model":       req.Model,
-		"messages":    messages,
-		"temperature": 0,
+		"model":    req.Model,
+		"messages": messages,
+	}
+	if !omitTemp {
+		body["temperature"] = 0
 	}
 	switch req.Format {
 	case "json_object":

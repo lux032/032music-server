@@ -129,6 +129,15 @@ func (m *Manager) SetAILimiter(l *aiclient.Limiter) {
 	m.aiLimiter = l
 }
 
+// SetWebSearchRegistry installs the shared process-wide web search registry so
+// avatar audit, biography synthesis, alias completion, and AI review share
+// Tavily key rotation and cooldown state.
+func (m *Manager) SetWebSearchRegistry(r *websearch.Registry) {
+	if r != nil {
+		m.webSearch = r
+	}
+}
+
 // SetAIChatFactory overrides the AI chat client constructor (primarily for tests).
 func (m *Manager) SetAIChatFactory(fn aiclient.ChatFactory) {
 	m.aiChatFactory = fn
@@ -351,7 +360,11 @@ func (m *Manager) newBiographyWebClient(aliasSt storage.ArtistAliasSettings, aiS
 	if m.bioWebFactory != nil {
 		return m.bioWebFactory(aliasSt, aiSt)
 	}
-	return websearch.NewDeepSeekClient(aliasSt, aiSt)
+	ws, _ := m.store.WebSearchSettings(context.Background())
+	if m.webSearch != nil {
+		return m.webSearch.Client(ws, aliasSt, aiSt)
+	}
+	return websearch.NewRegistry().Client(ws, aliasSt, aiSt)
 }
 
 func (m *Manager) translateArtistBiography(

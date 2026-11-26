@@ -50,7 +50,15 @@ func asRateLimited(err error) *RateLimitError {
 	}
 	var webErr *websearch.WebError
 	if errors.As(err, &webErr) && webErr.Status == http.StatusTooManyRequests {
-		return &RateLimitError{Source: "deepseek", StatusCode: http.StatusTooManyRequests, RetryAfter: defaultRateLimitBackoff}
+		source := strings.ToLower(strings.TrimSpace(webErr.Provider))
+		if source == "" {
+			source = "websearch"
+		}
+		ra := webErr.RetryAfter
+		if ra <= 0 {
+			ra = defaultRateLimitBackoff
+		}
+		return &RateLimitError{Source: source, StatusCode: http.StatusTooManyRequests, RetryAfter: ra}
 	}
 	return nil
 }

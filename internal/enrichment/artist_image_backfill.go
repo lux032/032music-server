@@ -75,18 +75,32 @@ func (m *Manager) scanArtistImageBackfillForMode(ctx context.Context, mode strin
 			}
 		}
 	}
+	auditMode := storage.IsArtistImageAuditMode(mode)
+	auditForce := storage.NormalizeArtistImageBackfillMode(mode) == "audit_force"
 	for _, row := range rows {
 		total++
+		hasFile := false
 		if row.CachePath != "" {
 			if cachedFiles != nil && filepath.Clean(filepath.Dir(row.CachePath)) == cleanImgDir {
 				if _, ok := cachedFiles[filepath.Base(row.CachePath)]; ok {
-					cached++
-					continue
+					hasFile = true
 				}
 			} else if _, statErr := os.Stat(row.CachePath); statErr == nil {
-				cached++
-				continue
+				hasFile = true
 			}
+		}
+		if hasFile {
+			cached++
+			if auditMode {
+				if !auditForce && row.ContentHash != "" && row.ContentHash == row.ReviewedKeepHash {
+					continue
+				}
+				missing = append(missing, row.Candidate)
+			}
+			continue
+		}
+		if auditMode && !auditForce && row.MissingCooldown {
+			continue
 		}
 		missing = append(missing, row.Candidate)
 	}
@@ -355,7 +369,10 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 		return "failed", err.Error(), nil
 	}
 	if valid {
-		return "skipped", "已有有效头像", nil
+		if !storage.IsArtistImageAuditMode(runMode) {
+			return "skipped", "已有有效头像", nil
+		}
+		return m.processAuditedArtistImageItem(ctx, checkpoint, item.ArtistID, runMode == "audit_force")
 	}
 
 	// Tier 1: 已确认身份的库存 URL 与 MusicBrainz/Last.fm 刷新
@@ -430,6 +447,88 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 	return m.processComprehensiveArtistImageFallback(ctx, checkpoint, item.ArtistID, runMode, tier1TransientErr)
 }
 
+// processAuditedArtistImageItem executes Phase 1 (multimodal audit of existing
+// cached avatar) and, on high-confidence invalid verdict, Phase 2 (Tier 1-3
+// re-acquisition + VLM verification + replacement or 1.A clearance).
+func (m *Manager) processAuditedArtistImageItem(ctx context.Context, checkpoint storage.ArtistImageBackfillCheckpoint, artistID int64, force bool) (outcome, errText string, rate *RateLimitError) {
+	imgSettings, err := m.store.ArtistImageSettings(ctx)
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	eff, err := m.store.ArtistEffectiveImageCache(ctx, artistID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "skipped", "缓存状态已变化", nil
+	}
+	if err != nil {
+		return "failed", err.Error(), nil
+	}
+	if !force && eff.ContentHash != "" {
+		if rev, ok, rErr := m.store.ArtistImageReviewByArtist(ctx, artistID); rErr == nil && ok && rev.Verdict == "keep" && rev.ImageHash == eff.ContentHash {
+			return "skipped", "当前头像已审查通过", nil
+		}
+	}
+	if m.testImageBackfillHook != nil {
+		m.testImageBackfillHook(artistID)
+	}
+	audit, auditErr := m.auditExistingArtistAvatar(ctx, artistID, eff, imgSettings)
+	if auditErr != nil {
+		if r := asRateLimited(auditErr); r != nil {
+			return "", "", r
+		}
+		return "failed", RedactSourceError(auditErr).Error(), nil
+	}
+	if audit.Skipped {
+		return "skipped", audit.Reason, nil
+	}
+	if audit.Verdict == "keep" {
+		if saveErr := m.store.SaveArtistImageReview(ctx, storage.ArtistImageReview{
+			ArtistID:   artistID,
+			ImageHash:  eff.ContentHash,
+			Verdict:    "keep",
+			IssueType:  "none",
+			Confidence: audit.Confidence,
+			Reason:     audit.Reason,
+			Model:      audit.Model,
+		}, &checkpoint); saveErr != nil {
+			if errors.Is(saveErr, storage.ErrArtistImageBackfillState) {
+				return "skipped", "状态已变化，审查记录未写入", nil
+			}
+			return "failed", saveErr.Error(), nil
+		}
+		return "kept", "", nil
+	}
+
+	threshold := artistImageAuditThreshold(imgSettings)
+	if audit.Confidence < threshold {
+		// Medium/low confidence suspicion: keep existing image and queue
+		// audit_review without consuming web search quota.
+		id, candErr := m.store.UpsertArtistImageBackfillCandidate(ctx, checkpoint, storage.ArtistImageCandidate{
+			ArtistID:        artistID,
+			Source:          "ai_audit",
+			ImageURL:        auditReviewCandidateURL(eff),
+			Confidence:      confidenceLabelFromScore(audit.Confidence, threshold),
+			ConfidenceScore: audit.Confidence,
+			Kind:            "audit_review",
+			IssueType:       audit.IssueType,
+			Reason:          audit.Reason,
+			Width:           audit.Width,
+			Height:          audit.Height,
+		})
+		if errors.Is(candErr, storage.ErrArtistImageBackfillState) {
+			return "skipped", "任务或艺术家状态已变化", nil
+		}
+		if candErr != nil {
+			return "failed", candErr.Error(), nil
+		}
+		if id != 0 {
+			return "candidate", "", nil
+		}
+		return "skipped", "该疑点已审核", nil
+	}
+
+	return m.replaceAuditedArtistAvatar(ctx, checkpoint, artistID, eff, audit, imgSettings)
+}
+
 // processStructuredArtistImageFallback tries the enabled Tier 2 sources in
 // priority order. The caller supplies the write guard for its workflow.
 func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, artistID int64, anchor storage.ArtistBiographyAnchor, imgSettings storage.ArtistImageSettings, save func(image storage.ArtistImageInput, guardSource, guardExternalID string) error) (outcome, errText string, rate *RateLimitError, hadTransientErr bool) {
@@ -438,6 +537,7 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 		m.logger.Debug("artist image fallback source result", append(fields, details...)...)
 	}
 
+	exclusions, _ := m.store.ArtistImageRejections(ctx, artistID)
 	trySaveStructured := func(srcName, guardSource, guardExternalID, imgURL string, lookupErr error) (bool, string, string, *RateLimitError) {
 		if lookupErr != nil {
 			if rateErr := asRateLimited(lookupErr); rateErr != nil {
@@ -450,6 +550,10 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 		}
 		if imgURL == "" {
 			logSourceResult(srcName, "no_match")
+			return false, "", "", nil
+		}
+		if exclusions.URLs[imgURL] {
+			logSourceResult(srcName, "rejected_url")
 			return false, "", "", nil
 		}
 		if !validStructuredArtistImageURL(imgURL) {
@@ -472,6 +576,10 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 			return false, "", "", nil
 		}
 		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if exclusions.Hashes[hash] {
+			logSourceResult(srcName, "rejected_hash")
+			return false, "", "", nil
+		}
 		cachePath, wErr := writeCacheFile(m.imageDirectory, hash+ext, data)
 		if wErr != nil {
 			logSourceResult(srcName, "cache_write_failed")
@@ -562,7 +670,7 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 	log := m.logger.With("artistId", artistID, "artist", anchor.Name)
 
 	// Tier 3 + 4: Web search + HTML og:image/JSON-LD + LLM selection (+ optional VLM)
-	webAllowed := runMode == "web_fallback" || imgSettings.WebFallbackEnabled
+	webAllowed := runMode == "web_fallback" || storage.IsArtistImageAuditMode(runMode) || imgSettings.WebFallbackEnabled
 	tierReached := "structured"
 	if webAllowed {
 		if ready, cfgErr := m.canRunArtistImageWebFallback(ctx, imgSettings); !ready {
