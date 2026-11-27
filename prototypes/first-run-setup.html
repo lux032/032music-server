@@ -1,0 +1,2964 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="032 Music Server 首次启动初始化引导交互原型（先配数据源与 AI，最后确认目录启动首次扫描）">
+  <title>首次启动初始化引导（交互原型） · 032 Music Server</title>
+  <style>
+    @font-face {
+      font-family: "Inter";
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+      src: url("../internal/http/assets/inter-latin.woff2") format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: "Inter";
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+      src: url("../internal/http/assets/inter-latin-ext.woff2") format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f9;
+      --bg-soft: #f0f0f4;
+      --bg-panel: #ffffff;
+      --surface: #ffffff;
+      --surface-hover: #eaeaf0;
+      --surface-sunken: #e6e6ec;
+      --fill: #e8e8ee;
+      --fill-hover: #dcdce5;
+      --line: #e2e2e9;
+      --line-strong: #cfcfd9;
+      --text: #111113;
+      --text-secondary: #4c4c57;
+      --muted: #646470;
+      --text-on-accent: #ffffff;
+      --text-on-danger: #ffffff;
+      --accent: #5b47e0;
+      --accent-hover: #4a36d0;
+      --accent-active: #3d2db0;
+      --accent-soft: rgba(91, 71, 224, 0.09);
+      --accent-soft-strong: rgba(91, 71, 224, 0.16);
+      --accent-line: rgba(91, 71, 224, 0.36);
+      --accent-strong-text: #4a36d0;
+      --danger: #c42b44;
+      --danger-soft: rgba(196, 43, 68, 0.09);
+      --danger-line: rgba(196, 43, 68, 0.34);
+      --success: #16794c;
+      --success-soft: rgba(22, 121, 76, 0.10);
+      --success-line: rgba(22, 121, 76, 0.34);
+      --warning: #9a5b00;
+      --warning-soft: rgba(154, 91, 0, 0.10);
+      --warning-line: rgba(154, 91, 0, 0.34);
+      --shadow-pop: 0 16px 40px rgba(17, 17, 19, 0.14);
+
+      --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --fs-xs: 0.76rem;
+      --fs-sm: 0.85rem;
+      --fs-md: 0.9375rem;
+      --fs-lg: 1.06rem;
+      --fs-title: clamp(1.5rem, 2.2vw, 1.85rem);
+      --r-sm: 6px;
+      --r-row: 8px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --r-pill: 999px;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f0f13;
+      --bg-soft: #131319;
+      --bg-panel: #15151b;
+      --surface: #15151b;
+      --surface-hover: #1f1f27;
+      --surface-sunken: #1b1b22;
+      --fill: #1f1f27;
+      --fill-hover: #282833;
+      --line: #24242d;
+      --line-strong: #353542;
+      --text: #f3f2f7;
+      --text-secondary: #a9a7b6;
+      --muted: #8a889b;
+      --text-on-accent: #120d2e;
+      --text-on-danger: #2a0710;
+      --accent: #8d7dff;
+      --accent-hover: #a194ff;
+      --accent-active: #b6abff;
+      --accent-soft: rgba(141, 125, 255, 0.14);
+      --accent-soft-strong: rgba(141, 125, 255, 0.24);
+      --accent-line: rgba(141, 125, 255, 0.48);
+      --accent-strong-text: #b4aaff;
+      --danger: #ff7a85;
+      --danger-soft: rgba(255, 122, 133, 0.13);
+      --danger-line: rgba(255, 122, 133, 0.38);
+      --success: #5fd38d;
+      --success-soft: rgba(95, 211, 141, 0.13);
+      --success-line: rgba(95, 211, 141, 0.38);
+      --warning: #f2b84b;
+      --warning-soft: rgba(242, 184, 75, 0.13);
+      --warning-line: rgba(242, 184, 75, 0.38);
+      --shadow-pop: 0 18px 44px rgba(0, 0, 0, 0.62);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    ::selection { background: var(--accent-soft-strong); color: var(--text); }
+    html { background: var(--bg); scrollbar-color: var(--line-strong) transparent; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: var(--fs-md);
+      line-height: 1.55;
+      font-synthesis: none;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, h4, p { margin: 0; }
+    a { color: var(--accent-strong-text); text-decoration: none; text-underline-offset: 3px; }
+    a:hover { text-decoration: underline; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    input, textarea { caret-color: var(--accent); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.82em;
+      padding: 0.12em 0.4em;
+      border-radius: var(--r-sm);
+      background: var(--fill);
+      color: var(--text);
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .icon {
+      width: 16px; height: 16px; flex: none;
+      fill: none; stroke: currentColor; stroke-width: 1.85;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+    .icon-sm { width: 14px; height: 14px; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes step-in {
+      from { opacity: 0.72; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .is-spinning { animation: spin 0.85s linear infinite; }
+    .step-panel.is-entering { animation: step-in 0.22s var(--ease); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .is-spinning, .step-panel.is-entering { animation: none; }
+      * { transition-duration: 0.01ms !important; }
+    }
+
+    /* ---- Prototype Controls Bar ---- */
+    .proto-bar-wrap {
+      border-bottom: 1px dashed var(--line-strong);
+      background: var(--bg-soft);
+    }
+    .proto-bar {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 8px clamp(16px, 3vw, 32px);
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+    }
+    .proto-bar-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .proto-sep { width: 1px; height: 16px; background: var(--line-strong); }
+    .proto-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 2px;
+      border-radius: var(--r-pill);
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+    .proto-btn {
+      border: 0;
+      border-radius: var(--r-pill);
+      padding: 4px 10px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 0.74rem;
+      font-weight: 600;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease);
+    }
+    .proto-btn:hover { color: var(--text); }
+    .proto-btn.active { background: var(--accent-soft); color: var(--accent-strong-text); }
+    .proto-spacer { flex: 1; }
+    .proto-action {
+      border: 0;
+      border-radius: var(--r-pill);
+      padding: 4px 10px;
+      background: var(--fill);
+      color: var(--text);
+      font-size: 0.74rem;
+      font-weight: 600;
+    }
+    .proto-action:hover { background: var(--fill-hover); }
+
+    /* ---- Focused Top Header ---- */
+    .setup-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--bg);
+      border-bottom: 1px solid var(--line);
+    }
+    .setup-header-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      min-height: 60px;
+      padding: 10px clamp(16px, 3vw, 32px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      min-width: 0;
+    }
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--r-sm);
+      object-fit: cover;
+      flex: none;
+    }
+    .brand-word {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+    }
+    .brand-sub {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    .brand-divider {
+      width: 1px;
+      height: 18px;
+      background: var(--line-strong);
+      margin: 0 2px;
+    }
+    .brand-context {
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ---- Buttons (One Violet Rule + Filled Control Rule) ---- */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 0;
+      border-radius: var(--r-pill);
+      padding: 0.56rem 1.05rem;
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      line-height: 1.2;
+      white-space: nowrap;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease), transform 0.1s var(--ease), opacity 0.14s var(--ease);
+    }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: var(--text-on-accent); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-primary:active:not(:disabled) { background: var(--accent-active); }
+    .btn-secondary { background: var(--fill); color: var(--text); }
+    .btn-secondary:hover:not(:disabled) { background: var(--fill-hover); }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover:not(:disabled) { background: var(--fill); color: var(--text); }
+    .btn-compact { padding: 0.42rem 0.82rem; font-size: var(--fs-xs); }
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border: 0;
+      border-radius: var(--r-pill);
+      background: transparent;
+      color: var(--text-secondary);
+      display: inline-grid;
+      place-items: center;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease);
+    }
+    .icon-btn:hover { background: var(--fill); color: var(--text); }
+
+    /* ---- Main Two-Column Setup Shell ---- */
+    .setup-shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px clamp(16px, 3vw, 32px) 64px;
+      display: grid;
+      grid-template-columns: 256px minmax(0, 1fr);
+      gap: 32px;
+      align-items: start;
+    }
+
+    /* ---- Left Step Rail ---- */
+    .step-rail {
+      position: sticky;
+      top: 84px;
+      display: grid;
+      gap: 18px;
+    }
+    .step-nav {
+      display: grid;
+      gap: 4px;
+    }
+    .step-item {
+      width: 100%;
+      border: 0;
+      border-radius: var(--r-row);
+      padding: 10px 12px;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease);
+    }
+    .step-item:hover { background: var(--fill); color: var(--text); }
+    .step-item.is-active { background: var(--fill); color: var(--text); }
+    .step-badge {
+      width: 24px;
+      height: 24px;
+      border-radius: var(--r-pill);
+      background: var(--surface-sunken);
+      color: var(--muted);
+      font-size: 0.74rem;
+      font-weight: 700;
+      display: inline-grid;
+      place-items: center;
+      font-variant-numeric: tabular-nums;
+      margin-top: 1px;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease);
+    }
+    .step-item.is-active .step-badge { background: var(--accent); color: var(--text-on-accent); }
+    .step-item.is-done .step-badge { background: var(--success-soft); color: var(--success); }
+    .step-item.is-active.is-done .step-badge { background: var(--accent); color: var(--text-on-accent); }
+    .step-item.is-skipped .step-badge { background: var(--fill-hover); color: var(--muted); }
+    .step-copy { min-width: 0; display: grid; gap: 2px; }
+    .step-name { font-size: var(--fs-sm); font-weight: 600; line-height: 1.3; color: inherit; }
+    .step-item.is-active .step-name { font-weight: 700; }
+    .step-sub {
+      font-size: var(--fs-xs);
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .step-item.is-done .step-sub { color: var(--success); }
+
+    .rail-summary {
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 10px;
+    }
+    .rail-progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+    .progress-track {
+      height: 5px;
+      border-radius: var(--r-pill);
+      background: var(--surface-sunken);
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.25s var(--ease);
+    }
+    .progress-fill.is-success { background: var(--success); }
+    .rail-scan-hold {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+      padding: 8px 10px;
+      border-radius: var(--r-row);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+    }
+    .rail-scan-hold .icon { color: var(--muted); }
+    .rail-note { font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; }
+
+    /* ---- Right Content Stage ---- */
+    .setup-stage {
+      min-width: 0;
+      max-width: 780px;
+      display: grid;
+      gap: 18px;
+    }
+    .step-panel {
+      display: grid;
+      gap: 20px;
+    }
+    .step-header {
+      display: grid;
+      gap: 6px;
+    }
+    .step-header h1 {
+      font-size: var(--fs-title);
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+    }
+    .step-header p {
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+      max-width: 68ch;
+    }
+
+    /* ---- Contextual Global Env Alerts (Only when abnormal) ---- */
+    .env-alert-stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    /* ---- Quiet Flat Panels (Zero Shadow, No Nested Cards) ---- */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      overflow: hidden;
+    }
+    .panel-section {
+      padding: 20px 22px;
+      display: grid;
+      gap: 14px;
+    }
+    .panel-section + .panel-section {
+      border-top: 1px solid var(--line);
+    }
+    .section-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+    }
+    .section-head-copy {
+      display: grid;
+      gap: 4px;
+      flex: 1 1 240px;
+      min-width: 0;
+    }
+    .section-head h2 {
+      font-size: 1.02rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .section-head p {
+      font-size: var(--fs-xs);
+      color: var(--muted);
+      max-width: 64ch;
+    }
+
+    /* ---- Badges / Pills ---- */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: var(--r-pill);
+      font-size: 0.72rem;
+      font-weight: 600;
+      line-height: 1.5;
+      background: var(--fill);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .badge-success { background: var(--success-soft); color: var(--success); border: 1px solid var(--success-line); }
+    .badge-warning { background: var(--warning-soft); color: var(--warning); border: 1px solid var(--warning-line); }
+    .badge-danger { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-line); }
+    .badge-accent { background: var(--accent-soft); color: var(--accent-strong-text); border: 1px solid var(--accent-line); }
+
+    /* ---- Notices (Full Border + Tint, Never One-Sided Bar) ---- */
+    .notice {
+      padding: 12px 14px;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--bg-soft);
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+    }
+    .notice .icon { margin-top: 2px; }
+    .notice-body { display: grid; gap: 3px; min-width: 0; flex: 1; }
+    .notice-body strong { color: var(--text); font-weight: 600; font-size: var(--fs-sm); }
+    .notice-warning { background: var(--warning-soft); border-color: var(--warning-line); color: var(--text); }
+    .notice-warning .icon { color: var(--warning); }
+    .notice-danger { background: var(--danger-soft); border-color: var(--danger-line); color: var(--text); }
+    .notice-danger .icon { color: var(--danger); }
+    .notice-success { background: var(--success-soft); border-color: var(--success-line); color: var(--text); }
+    .notice-success .icon { color: var(--success); }
+
+    /* ---- Preflight / Directory Check Rows (Step 5) ---- */
+    .check-row {
+      padding: 18px 22px;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: start;
+    }
+    .check-row + .check-row { border-top: 1px solid var(--line); }
+    .check-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: var(--r-row);
+      background: var(--fill);
+      color: var(--text-secondary);
+      display: grid;
+      place-items: center;
+      margin-top: 1px;
+    }
+    .check-icon.is-ok { background: var(--success-soft); color: var(--success); }
+    .check-icon.is-err { background: var(--danger-soft); color: var(--danger); }
+    .check-main { display: grid; gap: 6px; min-width: 0; }
+    .check-title { font-size: var(--fs-md); font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .check-desc { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
+    .check-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+
+    /* ---- Pipeline Preview Chain (Step 5) ---- */
+    .pipeline-chain {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: var(--r-md);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+    }
+    .pipeline-node {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: var(--r-pill);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      color: var(--text);
+    }
+    .pipeline-node.is-primary {
+      border-color: var(--accent-line);
+      background: var(--accent-soft);
+      color: var(--accent-strong-text);
+    }
+    .pipeline-arrow { color: var(--muted); flex: none; }
+
+    /* ---- Form Controls (Filled Control Rule) ---- */
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 16px;
+    }
+    .field-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .field-full { grid-column: 1 / -1; }
+    .field {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      min-width: 0;
+    }
+    .field-label {
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .req-tag { color: var(--danger); font-weight: 600; }
+    .field-hint { font-size: var(--fs-xs); color: var(--muted); line-height: 1.45; }
+    .field-error { font-size: var(--fs-xs); color: var(--danger); font-weight: 500; }
+    .input, .select, .textarea {
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: var(--r-md);
+      background: var(--fill);
+      color: var(--text);
+      padding: 0.56rem 0.78rem;
+      font-size: var(--fs-sm);
+      transition: background 0.14s var(--ease), border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+    }
+    .textarea {
+      min-height: 84px;
+      resize: vertical;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+    .input::placeholder, .textarea::placeholder { color: var(--muted); opacity: 0.9; }
+    .input:hover:not(:focus), .select:hover:not(:focus), .textarea:hover:not(:focus) { background: var(--fill-hover); }
+    .input:focus, .select:focus, .textarea:focus {
+      background: var(--surface);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+      outline: none;
+    }
+    .input.is-invalid {
+      border-color: var(--danger);
+      background: var(--surface);
+      box-shadow: 0 0 0 3px var(--danger-soft);
+    }
+    .input-secret-wrap { position: relative; display: flex; align-items: center; }
+    .input-secret-wrap .input { padding-right: 40px; }
+    .secret-toggle {
+      position: absolute;
+      right: 4px;
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: var(--r-sm);
+      background: transparent;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+    }
+    .secret-toggle:hover { color: var(--text); background: var(--surface-hover); }
+
+    /* ---- Toggle Switch ---- */
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+    .switch input {
+      appearance: none;
+      width: 38px;
+      height: 22px;
+      margin: 0;
+      border-radius: var(--r-pill);
+      background: var(--fill-hover);
+      position: relative;
+      cursor: pointer;
+      flex: none;
+      transition: background 0.16s var(--ease);
+    }
+    .switch input::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--surface);
+      transition: transform 0.16s var(--ease);
+    }
+    .switch input:checked { background: var(--accent); }
+    .switch input:checked::after { transform: translateX(16px); }
+    .switch input:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .check-inline {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: var(--fs-sm);
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .check-inline input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin: 3px 0 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+      flex: none;
+    }
+    .check-inline small { display: block; font-size: var(--fs-xs); color: var(--muted); }
+
+    /* ---- Provider Preset Chips ---- */
+    .chip-row { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .chip {
+      height: 33px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: var(--r-pill);
+      background: var(--fill);
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease);
+    }
+    .chip:hover { background: var(--fill-hover); color: var(--text); }
+    .chip.is-selected { background: var(--accent); color: var(--text-on-accent); }
+
+    /* ---- Disclosure / Collapsible Advanced ---- */
+    .disclosure { border-top: 1px solid var(--line); padding-top: 12px; }
+    .disclosure summary {
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      color: var(--text-secondary);
+      padding: 4px 0;
+      user-select: none;
+    }
+    .disclosure summary::-webkit-details-marker { display: none; }
+    .disclosure summary:hover { color: var(--text); }
+    .disclosure summary .chevron { transition: transform 0.16s var(--ease); }
+    .disclosure[open] summary .chevron { transform: rotate(180deg); }
+    .disclosure-body { padding-top: 14px; display: grid; gap: 14px; }
+
+    /* ---- Inline Test Bar ---- */
+    .test-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; padding-top: 4px; }
+    .test-result {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    .test-result.is-ok { color: var(--success); font-weight: 600; }
+    .test-result.is-err { color: var(--danger); font-weight: 600; }
+
+    /* ---- Step 3: Capability Presets & Feature Rows ---- */
+    .prereq-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .prereq-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 11px;
+      border-radius: var(--r-pill);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+    }
+    .prereq-pill.is-ready { border-color: var(--success-line); background: var(--success-soft); color: var(--text); }
+    .prereq-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .prereq-pill.is-ready .prereq-dot { background: var(--success); }
+    .prereq-pill button {
+      border: 0;
+      background: transparent;
+      padding: 0 0 0 4px;
+      color: var(--accent-strong-text);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+    }
+    .prereq-pill button:hover { text-decoration: underline; }
+
+    .preset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .preset-btn {
+      border: 1px solid var(--line);
+      border-radius: var(--r-md);
+      background: var(--surface);
+      padding: 12px 14px;
+      text-align: left;
+      display: grid;
+      gap: 4px;
+      align-content: start;
+      transition: border-color 0.14s var(--ease), background 0.14s var(--ease);
+    }
+    .preset-btn:hover { border-color: var(--line-strong); background: var(--bg-soft); }
+    .preset-btn.is-selected { border-color: var(--accent); background: var(--accent-soft); }
+    .preset-btn strong { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+    .preset-btn span { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.45; }
+
+    .feature-group-title {
+      padding: 11px 22px 9px;
+      font-size: var(--fs-xs);
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--bg-soft);
+      border-bottom: 1px solid var(--line);
+    }
+    .feature-row {
+      padding: 15px 22px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px 18px;
+      align-items: start;
+      transition: opacity 0.14s var(--ease);
+    }
+    .feature-row + .feature-row { border-top: 1px solid var(--line); }
+    .feature-row.is-locked { opacity: 0.62; }
+    .feature-info { display: grid; gap: 4px; min-width: 0; }
+    .feature-title {
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    .feature-desc { font-size: var(--fs-xs); color: var(--text-secondary); max-width: 62ch; }
+    .feature-sub-controls {
+      margin-top: 8px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--line);
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+    }
+    .inline-link-btn {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: var(--accent-strong-text);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+    }
+    .inline-link-btn:hover { text-decoration: underline; }
+
+    /* ---- Step 4: OAuth Box ---- */
+    .oauth-flow {
+      padding: 12px 14px;
+      border-radius: var(--r-md);
+      border: 1px solid var(--accent-line);
+      background: var(--accent-soft);
+      display: grid;
+      gap: 10px;
+      font-size: var(--fs-xs);
+    }
+    .oauth-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+
+    /* ---- Step 5: Summary Rows ---- */
+    .summary-row {
+      padding: 14px 22px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 16px;
+      align-items: center;
+    }
+    .summary-row + .summary-row { border-top: 1px solid var(--line); }
+    .summary-meta { display: grid; gap: 3px; min-width: 0; }
+    .summary-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .summary-head strong { font-size: var(--fs-sm); font-weight: 700; }
+    .summary-detail { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+    /* ---- Step Footer ---- */
+    .step-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding-top: 4px;
+    }
+    .step-footer-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Post-Skip / Post-Launch Dashboard Preview ---- */
+    .preview-shell {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 28px clamp(16px, 3vw, 32px) 64px;
+      display: grid;
+      gap: 18px;
+    }
+    .resume-banner {
+      padding: 14px 18px;
+      border-radius: var(--r-lg);
+      border: 1px solid var(--accent-line);
+      background: var(--accent-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .resume-banner-copy { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+    .resume-banner-copy .icon { color: var(--accent-strong-text); margin-top: 2px; }
+    .resume-banner-copy strong { display: block; font-size: var(--fs-sm); color: var(--text); }
+    .resume-banner-copy span { display: block; font-size: var(--fs-xs); color: var(--text-secondary); }
+    .resume-banner-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    .mock-dashboard-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .mock-dashboard-head h1 { font-size: var(--fs-title); font-weight: 800; letter-spacing: -0.025em; }
+    .mock-dashboard-head p { font-size: var(--fs-sm); color: var(--muted); margin-top: 4px; }
+    .mock-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .mock-kpi {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: 16px 18px;
+      display: grid;
+      gap: 6px;
+    }
+    .mock-kpi span { font-size: var(--fs-xs); color: var(--muted); font-weight: 500; }
+    .mock-kpi strong { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+    .scan-stats {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: var(--fs-xs);
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---- Toast ---- */
+    .toast-region {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 40;
+      display: grid;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-item {
+      pointer-events: auto;
+      padding: 10px 14px;
+      border-radius: var(--r-md);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      box-shadow: var(--shadow-pop);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toast-item .icon { color: var(--success); }
+
+    /* ---- Responsive <= 900px ---- */
+    @media (max-width: 900px) {
+      .setup-shell {
+        grid-template-columns: 1fr;
+        gap: 18px;
+        padding-top: 18px;
+      }
+      .step-rail { position: static; gap: 10px; }
+      .step-nav {
+        display: flex;
+        overflow-x: auto;
+        gap: 6px;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+      }
+      .step-nav::-webkit-scrollbar { display: none; }
+      .step-item {
+        width: auto;
+        flex: none;
+        padding: 7px 11px;
+        grid-template-columns: 22px auto;
+        gap: 7px;
+        align-items: center;
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .step-item.is-active { border-color: var(--accent); background: var(--accent-soft); }
+      .step-sub, .rail-summary { display: none; }
+      .brand-divider, .brand-context { display: none; }
+      .field-grid, .field-grid.cols-3, .preset-grid { grid-template-columns: 1fr; }
+      .mock-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .panel-section, .check-row, .feature-row, .summary-row { padding-left: 16px; padding-right: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+    <symbol id="i-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+  </svg>
+
+  <!-- Prototype Simulation Toolbar -->
+  <div class="proto-bar-wrap" role="region" aria-label="原型交互模拟控制栏">
+    <div class="proto-bar">
+      <span class="proto-bar-label">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sliders"></use></svg>
+        交互原型（Option A · 演示数据，不连真实服务端）
+      </span>
+      <span class="proto-sep" aria-hidden="true"></span>
+      <span>环境场景</span>
+      <div class="proto-group" role="group" aria-label="模拟环境状态">
+        <button type="button" class="proto-btn active" data-env-scenario="normal">标准全新部署</button>
+        <button type="button" class="proto-btn" data-env-scenario="issues">NAS 目录异常 + 反代告警</button>
+      </div>
+      <span>视图</span>
+      <div class="proto-group" role="group" aria-label="原型视图模式">
+        <button type="button" class="proto-btn active" data-view-mode="wizard">初始化向导</button>
+        <button type="button" class="proto-btn" data-view-mode="skipped">跳过后控制台提示</button>
+      </div>
+      <span class="proto-spacer"></span>
+      <button type="button" class="proto-action" id="proto-fill-demo">一键填入演示配置</button>
+      <button type="button" class="proto-action" id="proto-reset-demo">重置空白</button>
+    </div>
+  </div>
+
+  <!-- Focused Setup Header -->
+  <header class="setup-header">
+    <div class="setup-header-inner">
+      <div class="brand">
+        <img class="brand-icon" src="../internal/http/assets/icon-96.png" alt="032 Music Server" width="28" height="28">
+        <span class="brand-word">032 <span class="brand-sub">MUSIC</span></span>
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-context" id="header-context">首次启动初始化</span>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="icon-btn" id="theme-toggle" title="切换深浅主题" aria-label="切换深浅主题">
+          <svg class="icon" id="theme-icon" aria-hidden="true"><use href="#i-moon"></use></svg>
+        </button>
+        <button type="button" class="btn btn-ghost btn-compact" id="skip-all-btn">
+          暂不配置，直接扫描入库
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main 5-Step Wizard Workspace -->
+  <main id="wizard-view" class="setup-shell">
+    <!-- Left Step Rail -->
+    <aside class="step-rail" aria-label="初始化步骤">
+      <nav class="step-nav" id="step-nav">
+        <button type="button" class="step-item is-active" data-goto-step="1" aria-current="step">
+          <span class="step-badge" data-step-badge="1">1</span>
+          <span class="step-copy">
+            <span class="step-name">元数据与图源</span>
+            <span class="step-sub" data-step-sub="1">MusicBrainz · Bangumi</span>
+          </span>
+        </button>
+        <button type="button" class="step-item" data-goto-step="2">
+          <span class="step-badge" data-step-badge="2">2</span>
+          <span class="step-copy">
+            <span class="step-name">LLM 与联网搜索</span>
+            <span class="step-sub" data-step-sub="2">大模型与 Tavily 密钥</span>
+          </span>
+        </button>
+        <button type="button" class="step-item" data-goto-step="3">
+          <span class="step-badge" data-step-badge="3">3</span>
+          <span class="step-copy">
+            <span class="step-name">自动化能力</span>
+            <span class="step-sub" data-step-sub="3">按需开启后台任务</span>
+          </span>
+        </button>
+        <button type="button" class="step-item" data-goto-step="4">
+          <span class="step-badge" data-step-badge="4">4</span>
+          <span class="step-copy">
+            <span class="step-name">同步与资源获取</span>
+            <span class="step-sub" data-step-sub="4">Scrobble · Jackett（可选）</span>
+          </span>
+        </button>
+        <button type="button" class="step-item" data-goto-step="5">
+          <span class="step-badge" data-step-badge="5">5</span>
+          <span class="step-copy">
+            <span class="step-name">曲库与启动扫描</span>
+            <span class="step-sub" data-step-sub="5">确认目录并开始入库</span>
+          </span>
+        </button>
+      </nav>
+
+      <div class="rail-summary">
+        <div class="rail-progress-head">
+          <span>配置进度</span>
+          <span class="tabular" id="rail-progress-text">0 / 4 步已保存</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="rail-progress-bar" style="width: 10%"></div></div>
+        <div class="rail-scan-hold">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-pause"></use></svg>
+          <span>首次扫描已暂缓，第 5 步确认后启动</span>
+        </div>
+        <p class="rail-note">每步保存时即时写入数据库，可随时点击左侧步骤修改；跳过将直接解除暂缓并开始扫描。</p>
+      </div>
+    </aside>
+
+    <!-- Right Active Step Stage -->
+    <div class="setup-stage">
+      <!-- Contextual Deployment Alerts (hidden when environment is healthy) -->
+      <div class="env-alert-stack" id="global-env-alerts" hidden></div>
+
+      <!-- ==================== STEP 1: METADATA & ARTWORK ==================== -->
+      <section class="step-panel" data-step-panel="1" aria-labelledby="step1-title">
+        <header class="step-header">
+          <h1 id="step1-title">元数据与图源</h1>
+          <p>欢迎使用 032 Music Server。先配好外部数据源与大模型，最后一步再统一启动首次曲库扫描，让新入库专辑、歌手与作品一次性走完增强流程。音频源文件始终只读，未填项随时可跳过。</p>
+        </header>
+
+        <div class="panel">
+          <!-- MusicBrainz -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>MusicBrainz <span class="badge badge-accent">推荐 · 歌手身份核心</span></h2>
+                <p>提供稳定 MBID、别名、国家与 Wikipedia 关联入口；后续「发现新音乐」也依赖 Release Group 身份。</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="mb-enabled" checked>
+                <span>启用</span>
+              </label>
+            </div>
+
+            <div class="field-grid" id="mb-fields">
+              <label class="field field-full">
+                <span class="field-label">
+                  <span>联系邮箱或项目地址 <span class="req-tag">启用时必填</span></span>
+                </span>
+                <input class="input" id="mb-contact" type="text" placeholder="例如 you@example.com 或 https://github.com/yourname" spellcheck="false">
+                <span class="field-hint">MusicBrainz 与 Wikimedia 强制要求在请求 User-Agent 中包含可联系地址，仅用于标识客户端，不会对外公开。</span>
+                <span class="field-error" id="mb-contact-error" hidden>启用 MusicBrainz 时必须填写联系邮箱或网址。</span>
+              </label>
+              <label class="check-inline field-full">
+                <input type="checkbox" id="mb-auto" checked>
+                <span>参与首次扫描后的自动身份匹配<small>高置信度结果自动确认，存在歧义时进入「艺术家与身份审核」待审队列。</small></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Bangumi -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>Bangumi <span class="badge badge-accent">推荐 · ACG 作品核心</span></h2>
+                <p>免 API Key。用于对齐动画与游戏作品名称、播出年份与官方海报，并作为声优/作曲家头像的首选结构化图源。</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="bgm-enabled" checked>
+                <span>启用</span>
+              </label>
+            </div>
+            <div id="bgm-fields">
+              <label class="check-inline">
+                <input type="checkbox" id="bgm-auto" checked>
+                <span>首次扫描完成后自动对齐作品<small>高置信度自动绑定，其余保留为候选供人工或 AI 初审确认。</small></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Last.fm -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>Last.fm <span class="badge">可选</span></h2>
+                <p>补充多语言歌手简介、风格标签与跨源 MBID 验证。填好后第 4 步接入 Last.fm Scrobble 时可直接复用。</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="lastfm-enabled">
+                <span>启用</span>
+              </label>
+            </div>
+            <div class="field-grid" id="lastfm-fields" hidden>
+              <label class="field field-full">
+                <span class="field-label"><span>Last.fm API Key</span></span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="lastfm-key" type="password" placeholder="在 last.fm/api/account/create 获取 32 位 API Key" autocomplete="new-password" spellcheck="false">
+                  <button type="button" class="secret-toggle" data-toggle-secret="lastfm-key" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Biography language & Advanced Artwork -->
+          <div class="panel-section">
+            <div class="field-grid">
+              <label class="field">
+                <span class="field-label"><span>歌手简介目标语言</span></span>
+                <select class="select" id="bio-lang">
+                  <option value="zh-Hans" selected>简体中文（zh-Hans）</option>
+                  <option value="zh-Hant">繁體中文（zh-Hant）</option>
+                  <option value="ja">日本語（ja）</option>
+                  <option value="en">English（en）</option>
+                </select>
+                <span class="field-hint">Wikipedia 抓取及 AI 翻译入库的目标语言。</span>
+              </label>
+              <div class="field" style="align-content: center;">
+                <label class="check-inline" style="margin-top: 18px;">
+                  <input type="checkbox" id="wiki-enabled" checked>
+                  <span>启用 Wikipedia 简介词条<small>通过已确认 MBID 查找 Wikidata 全语种词条。</small></span>
+                </label>
+              </div>
+            </div>
+
+            <details class="disclosure">
+              <summary>
+                <svg class="icon icon-sm chevron" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                更多图源与缓存设置（Fanart.tv API Key、结构化头像源、缓存天数）
+              </summary>
+              <div class="disclosure-body">
+                <div class="field-grid">
+                  <label class="field">
+                    <span class="field-label"><span>Fanart.tv v3 API Key（可选）</span></span>
+                    <div class="input-secret-wrap">
+                      <input class="input" id="fanart-key" type="password" placeholder="个人 Project / Personal API Key" autocomplete="new-password" spellcheck="false">
+                      <button type="button" class="secret-toggle" data-toggle-secret="fanart-key" aria-label="显示或隐藏密钥">
+                        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                      </button>
+                    </div>
+                    <span class="field-hint">填写后自动启用 Fanart.tv 作为补充高清艺人图源（对应头像设置弹窗）。</span>
+                  </label>
+                  <label class="field">
+                    <span class="field-label"><span>元数据缓存天数</span></span>
+                    <input class="input tabular" id="meta-cache-days" type="number" min="1" max="3650" value="30">
+                    <span class="field-hint">本地 HTTP 缓存有效期，默认 30 天。</span>
+                  </label>
+                </div>
+                <div class="chip-row" aria-label="默认开启的免密钥结构化图源">
+                  <label class="check-inline"><input type="checkbox" id="img-bgm" checked><span>Bangumi Persons</span></label>
+                  <label class="check-inline"><input type="checkbox" id="img-deezer" checked><span>Deezer Public API</span></label>
+                  <label class="check-inline"><input type="checkbox" id="img-wiki" checked><span>Wikipedia pageimages</span></label>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <footer class="step-footer">
+          <span class="field-hint">预计耗时 1–3 分钟 · 全部可选</span>
+          <div class="step-footer-right">
+            <button type="button" class="btn btn-ghost" data-step-skip="1">跳过此步</button>
+            <button type="button" class="btn btn-primary" data-step-save="1">
+              保存并继续
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            </button>
+          </div>
+        </footer>
+      </section>
+
+      <!-- ==================== STEP 2: LLM & WEB SEARCH ==================== -->
+      <section class="step-panel" data-step-panel="2" aria-labelledby="step2-title" hidden>
+        <header class="step-header">
+          <h1 id="step2-title">LLM 大模型与联网搜索</h1>
+          <p>配置全局共享的 OpenAI 兼容模型接口与联网搜索密钥。曲目打标、歌词翻译、AI 初审、中文别名补全、每日推荐与头像联网选图均共用此处配置。</p>
+        </header>
+
+        <div class="panel">
+          <!-- LLM Section -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>OpenAI 兼容模型服务</h2>
+                <p>先选服务商自动填入接口地址与推荐模型示例，再填写 API Key 并现场测试连通性。</p>
+              </div>
+              <span class="badge" id="llm-status-badge">未配置</span>
+            </div>
+
+            <div class="chip-row" id="llm-presets" role="group" aria-label="模型服务商快速预设">
+              <button type="button" class="chip is-selected" data-preset="gemini">Google Gemini</button>
+              <button type="button" class="chip" data-preset="deepseek">DeepSeek</button>
+              <button type="button" class="chip" data-preset="openai">OpenAI</button>
+              <button type="button" class="chip" data-preset="qwen">通义千问</button>
+              <button type="button" class="chip" data-preset="openrouter">OpenRouter</button>
+              <button type="button" class="chip" data-preset="ollama">Ollama（本地）</button>
+              <button type="button" class="chip" data-preset="custom">自定义</button>
+            </div>
+
+            <div class="field-grid">
+              <label class="field field-full">
+                <span class="field-label"><span>接口地址（Base URL）</span></span>
+                <input class="input" id="llm-base-url" type="url" value="https://generativelanguage.googleapis.com/v1beta/openai" placeholder="https://api.openai.com/v1" spellcheck="false">
+              </label>
+
+              <label class="field field-full">
+                <span class="field-label">
+                  <span>API Key</span>
+                  <span class="field-hint" id="llm-key-hint">仅存于本地数据库，保存后不回显明文</span>
+                </span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="llm-api-key" type="password" placeholder="输入模型服务商 API Key" autocomplete="new-password" spellcheck="false">
+                  <button type="button" class="secret-toggle" data-toggle-secret="llm-api-key" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+
+              <label class="field">
+                <span class="field-label"><span>日常主模型</span></span>
+                <input class="input" id="llm-model" type="text" placeholder="例如 gemini-2.5-flash-lite" spellcheck="false">
+                <span class="field-hint">用于全库 AI 打标、每日推荐起名与高频任务。</span>
+              </label>
+
+              <label class="field">
+                <span class="field-label"><span>强推理 / 复核模型（可选）</span></span>
+                <input class="input" id="llm-review-model" type="text" placeholder="例如 gemini-2.5-flash" spellcheck="false">
+                <span class="field-hint">AI 初审助手与低置信复核优先使用；留空复用主模型。</span>
+              </label>
+            </div>
+
+            <div class="test-bar">
+              <button type="button" class="btn btn-secondary btn-compact" id="test-llm-btn">测试模型连接</button>
+              <span class="test-result" id="test-llm-result" role="status" aria-live="polite">填写接口、Key 与主模型后可现场验证（消耗极少量 token）。</span>
+            </div>
+
+            <details class="disclosure">
+              <summary>
+                <svg class="icon icon-sm chevron" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                高级模型参数（后备模型、代理、RPM 限流、思考强度、视觉质检模型）
+              </summary>
+              <div class="disclosure-body">
+                <div class="field-grid">
+                  <label class="field">
+                    <span class="field-label"><span>后备模型（可选）</span></span>
+                    <input class="input" id="llm-fallback" type="text" placeholder="主模型限流或超时时自动回退" spellcheck="false">
+                  </label>
+                  <label class="field">
+                    <span class="field-label"><span>代理地址（可选）</span></span>
+                    <input class="input" id="llm-proxy" type="text" placeholder="http://192.168.1.2:7890（留空沿用容器环境变量）" spellcheck="false">
+                  </label>
+                </div>
+                <div class="field-grid cols-3">
+                  <label class="field">
+                    <span class="field-label"><span>每分钟请求上限（RPM）</span></span>
+                    <input class="input tabular" id="llm-rpm" type="number" min="1" max="10000" value="60">
+                  </label>
+                  <label class="field">
+                    <span class="field-label"><span>最大并发数</span></span>
+                    <input class="input tabular" id="llm-concurrency" type="number" min="1" max="16" value="4">
+                  </label>
+                  <label class="field">
+                    <span class="field-label"><span>思考强度</span></span>
+                    <select class="select" id="llm-reasoning">
+                      <option value="">不发送（模型默认）</option>
+                      <option value="none" selected>none（关闭思考，省费）</option>
+                      <option value="minimal">minimal</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                    </select>
+                  </label>
+                </div>
+                <label class="field">
+                  <span class="field-label"><span>头像 VLM 视觉质检模型（可选）</span></span>
+                  <input class="input" id="llm-vision-model" type="text" placeholder="需支持 image_url，如 gemini-2.5-flash" spellcheck="false">
+                  <span class="field-hint">用于检查候选艺人头像清晰度与人物一致性；留空不启用视觉质检。</span>
+                </label>
+              </div>
+            </details>
+          </div>
+
+          <!-- Unified Web Search Section -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>统一联网搜索 <span class="badge" id="ws-status-badge">未配置</span></h2>
+                <p>为头像联网找图、中文别名补全、简介联网概括与 AI 初审补证提供网页检索与正文提取。</p>
+              </div>
+            </div>
+
+            <div class="notice notice-success" id="ws-deepseek-reuse-hint" hidden>
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
+              <div class="notice-body">
+                <strong>已自动复用上方 DeepSeek 官方 API Key</strong>
+                <span>当前联网搜索已可用。你仍可在下方追加 Tavily API Keys，启用「Tavily 优先 + DeepSeek 兜底」策略以提升稳定性。</span>
+              </div>
+            </div>
+
+            <div class="field-grid">
+              <label class="field field-full">
+                <span class="field-label"><span>搜索路由策略</span></span>
+                <select class="select" id="ws-provider">
+                  <option value="tavily_then_deepseek" selected>Tavily 优先，不可用时自动回退 DeepSeek</option>
+                  <option value="tavily">仅使用 Tavily（多 Key 轮询）</option>
+                  <option value="deepseek">仅使用 DeepSeek 联网</option>
+                </select>
+              </label>
+
+              <label class="field field-full">
+                <span class="field-label">
+                  <span>Tavily API Keys（支持多把轮询）</span>
+                  <span class="field-hint tabular" id="tavily-count-label">已识别 0 把 Key</span>
+                </span>
+                <textarea class="textarea" id="ws-tavily-keys" rows="3" placeholder="每行粘贴一把 Key，例如：&#10;tvly-xxxxxxxxxxxxxxxx&#10;tvly-yyyyyyyyyyyyyyyy" spellcheck="false"></textarea>
+                <span class="field-hint">多把 Key 将自动 Round-Robin 轮询，单把触发限流或额度耗尽时自动切往下一把健康 Key。</span>
+              </label>
+
+              <label class="field field-full">
+                <span class="field-label"><span>DeepSeek 联网 API Key（可选兜底）</span></span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="ws-deepseek-key" type="password" placeholder="如仅使用 Tavily 或上方已填 DeepSeek 官方 Key，此处可留空" autocomplete="new-password" spellcheck="false">
+                  <button type="button" class="secret-toggle" data-toggle-secret="ws-deepseek-key" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+            </div>
+
+            <div class="test-bar">
+              <button type="button" class="btn btn-secondary btn-compact" id="test-ws-btn">测试联网搜索</button>
+              <span class="test-result" id="test-ws-result" role="status" aria-live="polite">填入 Tavily 或 DeepSeek 密钥后可验证检索路由。</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="step-footer">
+          <button type="button" class="btn btn-secondary" data-step-prev="2">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+            上一步
+          </button>
+          <div class="step-footer-right">
+            <button type="button" class="btn btn-ghost" data-step-skip="2">跳过此步</button>
+            <button type="button" class="btn btn-primary" data-step-save="2">
+              保存并继续
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            </button>
+          </div>
+        </footer>
+      </section>
+
+      <!-- ==================== STEP 3: AUTOMATION & AI CAPABILITIES ==================== -->
+      <section class="step-panel" data-step-panel="3" aria-labelledby="step3-title" hidden>
+        <header class="step-header">
+          <h1 id="step3-title">按需开启自动化能力</h1>
+          <p>这些开关将决定首次扫描入库完成后自动串联哪些增强队列。所有可能消耗模型额度的后台任务默认保守关闭，由你主动决定。</p>
+        </header>
+
+        <div class="prereq-strip" id="prereq-strip" aria-label="前置条件就绪状态"></div>
+
+        <div class="preset-grid" id="capability-presets" role="group" aria-label="推荐预设组合">
+          <button type="button" class="preset-btn is-selected" data-cap-preset="minimal">
+            <strong>纯本地保守</strong>
+            <span>关闭全部 AI 后台队列，只用本地曲库与已选元数据，零模型额度消耗。</span>
+          </button>
+          <button type="button" class="preset-btn" data-cap-preset="acg">
+            <strong>ACG 推荐组合</strong>
+            <span>自动开启 AI 初审（建议模式）、歌词翻译、每日推荐与别名/简介增强；高开销打标仍留手动。</span>
+          </button>
+          <button type="button" class="preset-btn" data-cap-preset="full">
+            <strong>全自动拉满</strong>
+            <span>启用全部已满足前置条件的能力，AI 初审开启分级自治，并开启全库 AI 打标与头像兜底。</span>
+          </button>
+        </div>
+
+        <div class="panel">
+          <div class="feature-group-title">审核与元数据智能增强</div>
+
+          <div class="feature-row" data-feature-row="ai-review">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>AI 初审助手</span>
+                <span class="badge" data-dep-badge="llm">需 LLM</span>
+              </div>
+              <div class="feature-desc">自动预审作品关联、艺术家身份匹配、复合署名拆分与系列合并建议。AI 永不自动写入永久拒绝，任何结果均可一键撤销。</div>
+              <div class="feature-sub-controls" id="sub-ai-review" hidden>
+                <label class="field" style="min-width: 210px;">
+                  <span class="field-label"><span>审核自治程度</span></span>
+                  <select class="select" id="feat-review-mode">
+                    <option value="recommend" selected>仅给建议（预勾选，人工点确认）</option>
+                    <option value="auto">分级自治（高置信自动确认，低置信留待审）</option>
+                  </select>
+                </label>
+                <label class="check-inline" style="margin-top: 16px;">
+                  <input type="checkbox" id="feat-review-web" checked>
+                  <span>信息不足时允许联网补证</span>
+                </label>
+              </div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-ai-review"><span>开启</span></label>
+          </div>
+
+          <div class="feature-row" data-feature-row="alias">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>歌手中文别名补全</span>
+                <span class="badge" data-dep-badge="llm_ws">需 LLM + 联网搜索</span>
+              </div>
+              <div class="feature-desc">首次扫描确认歌手外部身份后，自动补充有来源依据的简体中文搜索别名（便于用中文搜日文名歌手）。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-alias"><span>开启</span></label>
+          </div>
+
+          <div class="feature-row" data-feature-row="avatar-ai">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>头像联网兜底与新艺人自动 AI 质检</span>
+                <span class="badge" data-dep-badge="llm_ws">需 LLM + 联网搜索</span>
+              </div>
+              <div class="feature-desc">Bangumi / Deezer / Wikipedia 无图时自动联网找图并按置信度自动入库或进入「待审头像」。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-avatar-ai"><span>开启</span></label>
+          </div>
+
+          <div class="feature-row" data-feature-row="bio-ai">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>歌手简介 AI 自动翻译与联网概括</span>
+                <span class="badge" data-dep-badge="llm">需 LLM</span>
+              </div>
+              <div class="feature-desc">挑选信息最完整的 Wikipedia 语种词条自动译为目标语言；缺失词条且有联网搜索时自动概括。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-bio-ai"><span>开启</span></label>
+          </div>
+
+          <div class="feature-group-title">听歌体验、推荐与分析</div>
+
+          <div class="feature-row" data-feature-row="lyrics-trans">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>AI 歌词翻译</span>
+                <span class="badge" data-dep-badge="llm">需 LLM</span>
+                <span class="badge">按需触发 · 永久缓存</span>
+              </div>
+              <div class="feature-desc">仅在播放页手动点击「翻译」时调用模型逐行翻译并缓存，不会在后台批量消耗额度。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-lyrics-trans"><span>开启</span></label>
+          </div>
+
+          <div class="feature-row" data-feature-row="daily-mix">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>每日推荐歌单</span>
+                <span class="badge badge-success">本地即可运行</span>
+              </div>
+              <div class="feature-desc">每天 05:00 (UTC+8) 结合播放偏好、声学特征与标签生成主题歌单；配置了 LLM 时自动由模型起标题。</div>
+              <div class="feature-sub-controls" id="sub-daily-mix" hidden>
+                <label class="check-inline">
+                  <input type="checkbox" id="feat-mix-llm" checked>
+                  <span>使用模型挑选主题并起标题（未配 LLM 时自动回退模板标题）</span>
+                </label>
+              </div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-daily-mix"><span>开启</span></label>
+          </div>
+
+          <div class="feature-row" data-feature-row="ai-tagging">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>AI 曲库打标</span>
+                <span class="badge" data-dep-badge="llm">需 LLM</span>
+                <span class="badge badge-warning">全库批量 · 约 2,000 token/首</span>
+              </div>
+              <div class="feature-desc">为曲库每首歌提取固定词表的情绪与风格标签，显著提升每日推荐准确度。曲库较大时建议先核对 RPM 与服务商计费。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-ai-tagging"><span>开启</span></label>
+          </div>
+
+          <div class="feature-row" data-feature-row="acoustic">
+            <div class="feature-info">
+              <div class="feature-title">
+                <span>本地声学分析（Essentia）</span>
+                <span class="badge" data-dep-badge="analyzer">需 analyzer 容器</span>
+              </div>
+              <div class="feature-desc" id="feat-acoustic-desc">提取曲目能量、情绪、乐器与 1280 维声学向量用于相似推荐，纯本地计算，遇到实时转码与扫描自动让路。</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="feat-acoustic"><span>开启</span></label>
+          </div>
+        </div>
+
+        <footer class="step-footer">
+          <button type="button" class="btn btn-secondary" data-step-prev="3">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+            上一步
+          </button>
+          <div class="step-footer-right">
+            <button type="button" class="btn btn-ghost" data-step-skip="3">跳过此步</button>
+            <button type="button" class="btn btn-primary" data-step-save="3">
+              保存并继续
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            </button>
+          </div>
+        </footer>
+      </section>
+
+      <!-- ==================== STEP 4: SYNC & ACQUISITION (OPTIONAL) ==================== -->
+      <section class="step-panel" data-step-panel="4" aria-labelledby="step4-title" hidden>
+        <header class="step-header">
+          <h1 id="step4-title">同步与资源获取（可选）</h1>
+          <p>如果你平时使用 ListenBrainz / Last.fm 记录听歌历史，或配合 Jackett 与 qBittorrent 在「发现新音乐」中检索下载资源，可在这里一并配好；不需要可直接跳过。</p>
+        </header>
+
+        <div class="panel">
+          <!-- ListenBrainz -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>ListenBrainz 播放记录与红心 <span class="badge" id="lb-status-badge">未连接</span></h2>
+                <p>支持官方 ListenBrainz 或自建兼容服务，断网排队自动重试，附带文件内嵌 MBID。</p>
+              </div>
+              <label class="switch"><input type="checkbox" id="lb-enabled"><span>启用</span></label>
+            </div>
+            <div class="field-grid" id="lb-fields" hidden>
+              <label class="field">
+                <span class="field-label"><span>Server URL</span></span>
+                <input class="input" id="lb-url" type="url" value="https://api.listenbrainz.org" spellcheck="false">
+              </label>
+              <label class="field">
+                <span class="field-label"><span>User Token</span></span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="lb-token" type="password" placeholder="在 ListenBrainz 设置页复制 User Token" autocomplete="new-password" spellcheck="false">
+                  <button type="button" class="secret-toggle" data-toggle-secret="lb-token" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+              <div class="field-full chip-row">
+                <label class="check-inline"><input type="checkbox" id="lb-nowplaying" checked><span>同步“正在播放”状态</span></label>
+                <label class="check-inline"><input type="checkbox" id="lb-love" checked><span>同步单曲红心收藏</span></label>
+              </div>
+              <div class="test-bar field-full">
+                <button type="button" class="btn btn-secondary btn-compact" id="test-lb-btn">验证并连接账号</button>
+                <span class="test-result" id="test-lb-result" role="status" aria-live="polite">填入 User Token 后可立即验证账号。</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Last.fm Scrobble -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>Last.fm Scrobble 与红心 <span class="badge" id="lfm-scrobble-badge">未连接</span></h2>
+                <p>播放超过一半时自动上报播放记录，并支持单曲红心同步。</p>
+              </div>
+              <label class="switch"><input type="checkbox" id="lfm-scrobble-enabled"><span>启用</span></label>
+            </div>
+            <div class="field-grid" id="lfm-scrobble-fields" hidden>
+              <div class="notice notice-success field-full" id="lfm-key-reused" hidden>
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
+                <div class="notice-body">
+                  <strong>已自动复用第 1 步填写的 Last.fm API Key</strong>
+                  <span>只需补充 Shared Secret 并完成一次网页授权即可开始 Scrobble。</span>
+                </div>
+              </div>
+              <label class="field" id="lfm-scrobble-apikey-wrap">
+                <span class="field-label"><span>Last.fm API Key</span></span>
+                <input class="input" id="lfm-scrobble-key" type="password" placeholder="将自动同步到第 1 步 Last.fm 元数据设置" autocomplete="new-password" spellcheck="false">
+              </label>
+              <label class="field">
+                <span class="field-label"><span>Shared Secret</span></span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="lfm-secret" type="password" placeholder="与 API Key 一同在 Last.fm API 页获取" autocomplete="new-password" spellcheck="false">
+                  <button type="button" class="secret-toggle" data-toggle-secret="lfm-secret" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+              <div class="field-full chip-row">
+                <label class="check-inline"><input type="checkbox" id="lfm-nowplaying" checked><span>同步“正在播放”状态</span></label>
+                <label class="check-inline"><input type="checkbox" id="lfm-love" checked><span>同步单曲红心收藏</span></label>
+              </div>
+              <div class="field-full">
+                <div class="test-bar" id="lfm-connect-row">
+                  <button type="button" class="btn btn-secondary btn-compact" id="lfm-start-auth-btn">生成 Last.fm 授权链接</button>
+                  <span class="test-result" id="lfm-auth-status" role="status" aria-live="polite">授权需要跳转一次 Last.fm 页面允许访问，也可先保存密钥稍后在「数据来源与同步」完成授权。</span>
+                </div>
+                <div class="oauth-flow" id="lfm-oauth-box" hidden style="margin-top: 10px;">
+                  <span>① 点击“前往 Last.fm 授权”在新标签页允许访问；② 回到此处点“完成连接”（链接 1 小时内有效）。</span>
+                  <div class="oauth-actions">
+                    <a class="btn btn-secondary btn-compact" href="#lfm-auth-demo" id="lfm-open-auth-link">
+                      前往 Last.fm 授权
+                      <svg class="icon icon-sm" aria-hidden="true"><use href="#i-ext"></use></svg>
+                    </a>
+                    <button type="button" class="btn btn-primary btn-compact" id="lfm-complete-auth-btn">完成连接</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Acquisition: Jackett + qBittorrent -->
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>发现与资源获取（Jackett + qBittorrent） <span class="badge" id="acq-status-badge">未启用</span></h2>
+                <p>供「发现新音乐」页面通过 Jackett 检索资源并推送至 qBittorrent 下载做种；下载后经 MusicAutoTagger 整理入库。</p>
+              </div>
+              <label class="switch"><input type="checkbox" id="acq-enabled"><span>启用</span></label>
+            </div>
+
+            <div class="field-grid" id="acq-fields" hidden>
+              <label class="field">
+                <span class="field-label"><span>Jackett 地址</span></span>
+                <input class="input" id="acq-jackett-url" type="url" placeholder="http://jackett:9117" spellcheck="false">
+              </label>
+              <label class="field">
+                <span class="field-label"><span>Jackett Indexer</span></span>
+                <input class="input" id="acq-jackett-indexer" type="text" value="jpopsuki" placeholder="jpopsuki" spellcheck="false">
+              </label>
+              <label class="field field-full">
+                <span class="field-label"><span>Jackett API Key</span></span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="acq-jackett-key" type="password" placeholder="Jackett 面板右上角 API Key" autocomplete="new-password" spellcheck="false">
+                  <button type="button" class="secret-toggle" data-toggle-secret="acq-jackett-key" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+
+              <label class="field">
+                <span class="field-label"><span>qBittorrent 地址</span></span>
+                <input class="input" id="acq-qb-url" type="url" placeholder="http://qbittorrent:8080" spellcheck="false">
+              </label>
+              <label class="field">
+                <span class="field-label"><span>qBittorrent 分类（可选）</span></span>
+                <input class="input" id="acq-qb-cat" type="text" placeholder="例如 music-incoming（留空无分类）" spellcheck="false">
+              </label>
+              <label class="field">
+                <span class="field-label"><span>qBittorrent 用户名</span></span>
+                <input class="input" id="acq-qb-user" type="text" placeholder="admin" autocomplete="off">
+              </label>
+              <label class="field">
+                <span class="field-label"><span>qBittorrent 密码</span></span>
+                <div class="input-secret-wrap">
+                  <input class="input" id="acq-qb-pass" type="password" placeholder="Web UI 密码" autocomplete="new-password">
+                  <button type="button" class="secret-toggle" data-toggle-secret="acq-qb-pass" aria-label="显示或隐藏密钥">
+                    <svg class="icon icon-sm" aria-hidden="true"><use href="#i-eye"></use></svg>
+                  </button>
+                </div>
+              </label>
+
+              <div class="test-bar field-full">
+                <button type="button" class="btn btn-secondary btn-compact" id="test-jackett-btn">测试 Jackett</button>
+                <button type="button" class="btn btn-secondary btn-compact" id="test-qb-btn">测试 qBittorrent</button>
+                <span class="test-result" id="test-acq-result" role="status" aria-live="polite">可分别验证两项服务与目标分类。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="step-footer">
+          <button type="button" class="btn btn-secondary" data-step-prev="4">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+            上一步
+          </button>
+          <div class="step-footer-right">
+            <button type="button" class="btn btn-ghost" data-step-skip="4">跳过此步</button>
+            <button type="button" class="btn btn-primary" data-step-save="4">
+              保存并继续
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            </button>
+          </div>
+        </footer>
+      </section>
+
+      <!-- ==================== STEP 5: LIBRARY PREFLIGHT & LAUNCH FIRST SCAN ==================== -->
+      <section class="step-panel" data-step-panel="5" aria-labelledby="step5-title" hidden>
+        <header class="step-header">
+          <h1 id="step5-title">确认音乐目录并启动首次扫描</h1>
+          <p>数据源、模型与后台策略均已保存。核对音乐目录只读挂载无误后启动首次扫描——扫描结束将自动顺着已配好的完整流水线执行增强。</p>
+        </header>
+
+        <!-- Library Preflight + Watch Settings + Pipeline Preview -->
+        <div class="panel" aria-label="音乐目录预检与扫描启动设置">
+          <div class="check-row">
+            <div class="check-icon is-ok" id="dir-check-icon">
+              <svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg>
+            </div>
+            <div class="check-main">
+              <div class="check-title">
+                <span>音乐目录只读预检</span>
+                <code>/music</code>
+              </div>
+              <div class="check-desc" id="dir-check-desc">目录已挂载且可读，快速预检发现 86 个子目录（尚未导入数据库）。启动首次扫描只会读取标签，不会改写或移动任何源文件。</div>
+              <div class="check-actions">
+                <button type="button" class="btn btn-secondary btn-compact" id="recheck-dir-btn">
+                  <svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"></use></svg>
+                  重新检测目录
+                </button>
+                <span class="test-result" id="recheck-dir-status" role="status" aria-live="polite"></span>
+              </div>
+            </div>
+            <span class="badge badge-success" id="dir-check-badge">挂载正常</span>
+          </div>
+
+          <div class="panel-section">
+            <div class="field-grid">
+              <div class="field">
+                <span class="field-label"><span>自动入库监控</span></span>
+                <label class="switch" style="margin-top: 6px;">
+                  <input type="checkbox" id="watch-enabled" checked>
+                  <span>持续监控音乐目录，新增文件自动增量扫描</span>
+                </label>
+              </div>
+              <label class="field" id="watch-interval-wrap">
+                <span class="field-label"><span>目录轮询间隔</span></span>
+                <select class="select" id="watch-interval">
+                  <option value="30">每 30 秒</option>
+                  <option value="60" selected>每 1 分钟（默认）</option>
+                  <option value="300">每 5 分钟</option>
+                  <option value="900">每 15 分钟</option>
+                </select>
+              </label>
+            </div>
+            <div class="check-desc" style="display:flex;align-items:center;gap:6px;">
+              <svg class="icon icon-sm" aria-hidden="true" style="color:var(--success);"><use href="#i-db"></use></svg>
+              <span>SQLite 数据目录 <code>/data</code> 可写 · 每日 02:30 (UTC+8) 自动一致快照 · 缺失文件策略默认「仅隐藏不删除」。</span>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <div class="section-head">
+              <div class="section-head-copy">
+                <h2>首次扫描完成后将自动串联的流水线</h2>
+                <p>由于推迟到配置完毕再扫库，新入库曲目可直接触发以下已开启的增强阶段，无需二次回补。</p>
+              </div>
+            </div>
+            <div class="pipeline-chain" id="pipeline-chain" aria-label="入库后自动流水线"></div>
+            <label class="check-inline" id="auto-chain-wrap">
+              <input type="checkbox" id="launch-auto-chain" checked>
+              <span>扫描完成后自动执行上述增强与后台任务<small id="launch-auto-chain-hint">取消勾选则仅导入本地音频标签，稍后可随时在管理后台手动启动增强。</small></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Summary of Steps 1-4 -->
+        <div class="panel" id="summary-list" aria-label="前四步配置摘要"></div>
+
+        <footer class="step-footer">
+          <button type="button" class="btn btn-secondary" data-step-prev="5">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+            返回修改
+          </button>
+          <div class="step-footer-right">
+            <button type="button" class="btn btn-secondary" id="finish-no-scan-btn">仅保存配置，稍后手动扫描</button>
+            <button type="button" class="btn btn-primary" id="finish-start-scan-btn">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-play"></use></svg>
+              完成配置并启动首次扫描
+            </button>
+          </div>
+        </footer>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Post-Skip / Post-Launch Dashboard Preview -->
+  <main id="dashboard-preview" class="preview-shell" hidden>
+    <div class="resume-banner" id="resume-banner">
+      <div class="resume-banner-copy">
+        <svg class="icon" aria-hidden="true"><use href="#i-sparkle"></use></svg>
+        <div>
+          <strong id="resume-banner-title">初始化配置尚未完成（已完成 0 / 4 步）</strong>
+          <span id="resume-banner-desc">已解除扫描暂缓并开始导入本地标签；随时可以接着上次进度补配数据源与大模型。</span>
+        </div>
+      </div>
+      <div class="resume-banner-actions">
+        <button type="button" class="btn btn-primary btn-compact" id="resume-wizard-btn">继续初始化引导</button>
+        <button type="button" class="btn btn-ghost btn-compact" id="dismiss-banner-btn">不再提示</button>
+      </div>
+    </div>
+
+    <div class="notice notice-success" id="completed-banner" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>
+      <div class="notice-body">
+        <strong id="completed-banner-title">初始化已完成，首次曲库扫描已启动</strong>
+        <span id="completed-banner-desc">扫描结束后将自动触发已配置的元数据增强与后台流水线。后续可随时点击右上角「重新打开初始化向导」复查配置。</span>
+      </div>
+    </div>
+
+    <header class="mock-dashboard-head">
+      <div>
+        <h1>控制台总览（落地预览）</h1>
+        <p>Music · /music · 本地标签优先，源文件始终只读。</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn btn-secondary btn-compact" id="reopen-wizard-btn">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sliders"></use></svg>
+          重新打开初始化向导
+        </button>
+      </div>
+    </header>
+
+    <!-- Live Simulated First Scan Progress Panel -->
+    <div class="panel" id="mock-scan-panel">
+      <div class="panel-section">
+        <div class="section-head">
+          <div class="section-head-copy">
+            <h2 id="mock-scan-title">首次曲库扫描：进行中</h2>
+            <p id="mock-scan-sub">正在读取 <code>/music</code> 音频标签，完成后自动进入元数据增强阶段。</p>
+          </div>
+          <span class="badge badge-accent" id="mock-scan-badge">扫描中</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="mock-scan-bar" style="width: 18%"></div></div>
+        <div class="scan-stats">
+          <span id="mock-scan-counts">已扫描 230 首 · 16 张专辑 · 34 位歌手</span>
+          <span id="mock-scan-pct">18%</span>
+        </div>
+      </div>
+    </div>
+
+    <section class="mock-kpi-grid" aria-label="曲库统计预览">
+      <div class="mock-kpi"><span>专辑</span><strong id="kpi-albums">16</strong></div>
+      <div class="mock-kpi"><span>歌手与幕后</span><strong id="kpi-artists">34</strong></div>
+      <div class="mock-kpi"><span>歌曲</span><strong id="kpi-tracks">230</strong></div>
+      <div class="mock-kpi"><span>待串联流水线</span><strong id="kpi-pipeline">待配置</strong></div>
+    </section>
+
+    <div class="panel">
+      <div class="panel-section">
+        <div class="section-head">
+          <div class="section-head-copy">
+            <h2>首次扫描暂缓与升级兼容契约（原型注释）</h2>
+            <p>全新部署时，<code>setup_wizard_state</code> 初始为 <code>pending</code>，<code>main.go</code> 暂缓 <code>watcher.Start(ctx, true)</code>；当用户完成第 5 步或主动点击跳过时，写库标记状态并立即唤醒首次扫描与目录监控。老实例升级迁移若检测到已有配置或曲库记录，自动置为 <code>completed</code>，保持启动即扫不变。</p>
+          </div>
+          <span class="badge badge-accent">设计契约</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      const PRESETS = {
+        gemini: {
+          baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+          modelPlaceholder: "例如 gemini-2.5-flash-lite",
+          reviewPlaceholder: "例如 gemini-2.5-flash",
+          defaultModel: "gemini-2.5-flash-lite",
+          defaultReview: "gemini-2.5-flash",
+          keyOptional: false
+        },
+        deepseek: {
+          baseURL: "https://api.deepseek.com/v1",
+          modelPlaceholder: "例如 deepseek-chat",
+          reviewPlaceholder: "例如 deepseek-reasoner",
+          defaultModel: "deepseek-chat",
+          defaultReview: "deepseek-reasoner",
+          keyOptional: false
+        },
+        openai: {
+          baseURL: "https://api.openai.com/v1",
+          modelPlaceholder: "例如 gpt-4o-mini",
+          reviewPlaceholder: "例如 gpt-4o",
+          defaultModel: "gpt-4o-mini",
+          defaultReview: "gpt-4o",
+          keyOptional: false
+        },
+        qwen: {
+          baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          modelPlaceholder: "例如 qwen-turbo / qwen-plus",
+          reviewPlaceholder: "例如 qwen-max",
+          defaultModel: "qwen-plus",
+          defaultReview: "qwen-max",
+          keyOptional: false
+        },
+        openrouter: {
+          baseURL: "https://openrouter.ai/api/v1",
+          modelPlaceholder: "例如 google/gemini-2.5-flash-lite",
+          reviewPlaceholder: "例如 google/gemini-2.5-flash",
+          defaultModel: "google/gemini-2.5-flash-lite",
+          defaultReview: "google/gemini-2.5-flash",
+          keyOptional: false
+        },
+        ollama: {
+          baseURL: "http://127.0.0.1:11434/v1",
+          modelPlaceholder: "例如 qwen2.5:14b",
+          reviewPlaceholder: "留空复用主模型",
+          defaultModel: "qwen2.5:14b",
+          defaultReview: "",
+          keyOptional: true
+        },
+        custom: {
+          baseURL: "",
+          modelPlaceholder: "输入兼容接口的模型名称",
+          reviewPlaceholder: "可选，留空复用主模型",
+          defaultModel: "",
+          defaultReview: "",
+          keyOptional: false
+        }
+      };
+
+      const state = {
+        step: 1,
+        viewMode: "wizard", // wizard | skipped | completed
+        envScenario: "normal", // normal | issues
+        preset: "gemini",
+        capPreset: "minimal",
+        stepStatus: { 1: "pending", 2: "pending", 3: "pending", 4: "pending", 5: "pending" },
+        lbConnected: false,
+        lbUser: "",
+        lfmConnected: false,
+        lfmUser: "",
+        bannerDismissed: false,
+        scanStarted: false,
+        scanPct: 0,
+        scanTimer: null
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function toast(message) {
+        const region = $("toast-region");
+        const el = document.createElement("div");
+        el.className = "toast-item";
+        el.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg><span></span>';
+        el.querySelector("span").textContent = message;
+        region.appendChild(el);
+        setTimeout(() => el.remove(), 2600);
+      }
+
+      /* ---- Theme Toggle ---- */
+      function applyTheme(theme) {
+        document.documentElement.setAttribute("data-theme", theme);
+        $("theme-icon").querySelector("use").setAttribute("href", theme === "dark" ? "#i-sun" : "#i-moon");
+      }
+      $("theme-toggle").addEventListener("click", () => {
+        const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        applyTheme(next);
+      });
+
+      /* ---- Secret Show/Hide ---- */
+      document.querySelectorAll("[data-toggle-secret]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const input = $(btn.dataset.toggleSecret);
+          const show = input.type === "password";
+          input.type = show ? "text" : "password";
+          btn.querySelector("use").setAttribute("href", show ? "#i-eye-off" : "#i-eye");
+        });
+      });
+
+      /* ---- Derived Checks ---- */
+      function parseTavilyKeys() {
+        const raw = $("ws-tavily-keys").value || "";
+        return Array.from(new Set(raw.split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean)));
+      }
+
+      function isDeepSeekOfficialLLM() {
+        const url = ($("llm-base-url").value || "").trim().toLowerCase();
+        const key = ($("llm-api-key").value || "").trim();
+        return url.startsWith("https://api.deepseek.com") && key.length > 0;
+      }
+
+      function isLLMConfigured() {
+        const url = ($("llm-base-url").value || "").trim();
+        const model = ($("llm-model").value || "").trim();
+        const key = ($("llm-api-key").value || "").trim();
+        const isOllama = url.includes("127.0.0.1:11434") || url.includes("localhost:11434") || state.preset === "ollama";
+        return Boolean(url && model && (key || isOllama));
+      }
+
+      function isWebSearchConfigured() {
+        const prov = $("ws-provider").value;
+        const hasTavily = parseTavilyKeys().length > 0;
+        const hasDeepSeek = Boolean(($("ws-deepseek-key").value || "").trim()) || isDeepSeekOfficialLLM();
+        if (prov === "tavily") return hasTavily;
+        if (prov === "deepseek") return hasDeepSeek;
+        return hasTavily || hasDeepSeek;
+      }
+
+      function webSearchSummaryText() {
+        const prov = $("ws-provider").value;
+        const tavCount = parseTavilyKeys().length;
+        const hasDS = Boolean(($("ws-deepseek-key").value || "").trim()) || isDeepSeekOfficialLLM();
+        if (prov === "tavily") return tavCount ? `Tavily（${tavCount} 把 Key）` : "未配置";
+        if (prov === "deepseek") return hasDS ? "DeepSeek 联网" : "未配置";
+        if (tavCount && hasDS) return `Tavily（${tavCount} 把）+ DeepSeek 兜底`;
+        if (tavCount) return `Tavily（${tavCount} 把 Key）`;
+        if (hasDS) return "DeepSeek 联网";
+        return "未配置";
+      }
+
+      function isAnalyzerAvailable() {
+        return state.envScenario === "normal";
+      }
+
+      function enabledMetadataNames() {
+        const names = [];
+        if ($("mb-enabled").checked && ($("mb-contact").value || "").trim()) names.push("MusicBrainz");
+        if ($("bgm-enabled").checked) names.push("Bangumi");
+        if ($("lastfm-enabled").checked && ($("lastfm-key").value || "").trim()) names.push("Last.fm");
+        if (($("fanart-key").value || "").trim()) names.push("Fanart.tv");
+        return names;
+      }
+
+      function enabledFeaturesList() {
+        const list = [];
+        if ($("feat-ai-review").checked) {
+          list.push($("feat-review-mode").value === "auto" ? "AI 初审（分级自治）" : "AI 初审（仅给建议）");
+        }
+        if ($("feat-alias").checked) list.push("中文别名补全");
+        if ($("feat-avatar-ai").checked) list.push("头像联网兜底");
+        if ($("feat-bio-ai").checked) list.push("简介 AI 翻译");
+        if ($("feat-lyrics-trans").checked) list.push("AI 歌词翻译");
+        if ($("feat-daily-mix").checked) list.push("每日推荐");
+        if ($("feat-ai-tagging").checked) list.push("AI 曲库打标");
+        if ($("feat-acoustic").checked) list.push("本地声学分析");
+        return list;
+      }
+
+      /* ---- Env Scenario Rendering (Contextual top alerts + Step 5 directory preflight) ---- */
+      function renderEnvScenario() {
+        const alerts = $("global-env-alerts");
+        if (state.envScenario === "normal") {
+          alerts.hidden = true;
+          alerts.innerHTML = "";
+          $("dir-check-icon").className = "check-icon is-ok";
+          $("dir-check-desc").innerHTML = '目录已挂载且可读，快速预检发现 <strong>86 个专辑文件夹</strong>（尚未导入数据库）。启动首次扫描只会读取标签，不会改写或移动任何源文件。';
+          $("dir-check-badge").className = "badge badge-success";
+          $("dir-check-badge").textContent = "挂载正常";
+          $("finish-start-scan-btn").disabled = false;
+        } else {
+          alerts.hidden = false;
+          alerts.innerHTML = [
+            '<div class="notice notice-warning">',
+            '  <svg class="icon icon-sm" aria-hidden="true"><use href="#i-alert"></use></svg>',
+            '  <div class="notice-body">',
+            '    <strong>检测到 2 项部署安全提醒（不阻断当前配置）</strong>',
+            '    <span>① 反向代理 <code>172.18.0.2</code> 未加入 <code>MUSIC_SERVER_TRUSTED_PROXIES</code>；② <code>MUSIC_SERVER_MEDIA_TOKEN</code> 为本次启动临时生成，重启后外部播放器链接将失效。稍后可修改 <code>.env</code> 或在「账号与安全」固化。</span>',
+            '  </div>',
+            '</div>'
+          ].join("");
+          $("dir-check-icon").className = "check-icon is-err";
+          $("dir-check-desc").innerHTML = '目录 <code>/music</code> 当前未检测到可读音频文件，请确认宿主机挂载路径 <code>MUSIC_SERVER_MUSIC_PATH</code> 及容器非 root 用户的读权限；修复后点「重新检测目录」，也可先保存配置稍后扫描。';
+          $("dir-check-badge").className = "badge badge-danger";
+          $("dir-check-badge").textContent = "目录为空 / 不可读";
+          $("finish-start-scan-btn").disabled = true;
+        }
+        syncStep3Dependencies();
+        if (state.step === 5) renderStep5();
+      }
+
+      /* ---- Step 1 Live Toggles ---- */
+      function syncStep1Fields() {
+        $("mb-fields").hidden = !$("mb-enabled").checked;
+        $("bgm-fields").hidden = !$("bgm-enabled").checked;
+        $("lastfm-fields").hidden = !$("lastfm-enabled").checked;
+        if (!$("mb-enabled").checked) {
+          $("mb-contact").classList.remove("is-invalid");
+          $("mb-contact-error").hidden = true;
+        }
+        syncStep4LastFMReuse();
+      }
+      ["mb-enabled", "bgm-enabled", "lastfm-enabled"].forEach((id) => $(id).addEventListener("change", syncStep1Fields));
+      $("mb-contact").addEventListener("input", () => {
+        if ($("mb-contact").value.trim()) {
+          $("mb-contact").classList.remove("is-invalid");
+          $("mb-contact-error").hidden = true;
+        }
+      });
+      $("lastfm-key").addEventListener("input", syncStep4LastFMReuse);
+
+      /* ---- Step 2 Presets & Live Status ---- */
+      function syncStep2Status() {
+        const llmOK = isLLMConfigured();
+        $("llm-status-badge").className = llmOK ? "badge badge-success" : "badge";
+        $("llm-status-badge").textContent = llmOK ? `已填写 · ${$("llm-model").value.trim()}` : "未配置";
+
+        const tavKeys = parseTavilyKeys();
+        $("tavily-count-label").textContent = `已识别 ${tavKeys.length} 把 Key`;
+        $("ws-deepseek-reuse-hint").hidden = !isDeepSeekOfficialLLM();
+
+        const wsOK = isWebSearchConfigured();
+        $("ws-status-badge").className = wsOK ? "badge badge-success" : "badge";
+        $("ws-status-badge").textContent = wsOK ? webSearchSummaryText() : "未配置";
+        syncStep3Dependencies();
+      }
+
+      $("llm-presets").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-preset]");
+        if (!btn) return;
+        const key = btn.dataset.preset;
+        state.preset = key;
+        const p = PRESETS[key];
+        document.querySelectorAll("#llm-presets .chip").forEach((c) => c.classList.toggle("is-selected", c === btn));
+        $("llm-base-url").value = p.baseURL;
+        $("llm-model").placeholder = p.modelPlaceholder;
+        $("llm-review-model").placeholder = p.reviewPlaceholder;
+        if (p.defaultModel) $("llm-model").value = p.defaultModel;
+        if (p.defaultReview !== undefined) $("llm-review-model").value = p.defaultReview;
+        $("llm-key-hint").textContent = p.keyOptional
+          ? "本地 Ollama 通常无需真实密钥，留空或填 ollama 即可"
+          : "仅存于本地数据库，保存后不回显明文";
+        syncStep2Status();
+      });
+
+      ["llm-base-url", "llm-api-key", "llm-model", "llm-review-model", "ws-provider", "ws-tavily-keys", "ws-deepseek-key"].forEach((id) => {
+        $(id).addEventListener("input", syncStep2Status);
+        $(id).addEventListener("change", syncStep2Status);
+      });
+
+      function runSimulatedTest(btnEl, resultEl, validator, successText) {
+        const err = validator();
+        if (err) {
+          resultEl.className = "test-result is-err";
+          resultEl.textContent = err;
+          return;
+        }
+        btnEl.disabled = true;
+        resultEl.className = "test-result";
+        resultEl.innerHTML = '<svg class="icon icon-sm is-spinning" aria-hidden="true"><use href="#i-loader"></use></svg> 正在测试连接...';
+        setTimeout(() => {
+          btnEl.disabled = false;
+          resultEl.className = "test-result is-ok";
+          resultEl.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg> ' + successText();
+        }, 700);
+      }
+
+      $("test-llm-btn").addEventListener("click", () => {
+        runSimulatedTest(
+          $("test-llm-btn"),
+          $("test-llm-result"),
+          () => {
+            if (!isLLMConfigured()) return "请先填写接口地址、API Key 和日常主模型。";
+            if ($("llm-api-key").value.trim().toLowerCase().includes("bad")) return "鉴权失败（HTTP 401）：请检查 API Key 是否有效或是否有余额。";
+            return null;
+          },
+          () => {
+            const m = $("llm-model").value.trim();
+            const r = $("llm-review-model").value.trim();
+            return r
+              ? `${m} 正常（0.9s，输入 42 / 输出 18 token）；${r} 正常（1.4s）`
+              : `${m} 正常（0.9s，输入 42 / 输出 18 token）`;
+          }
+        );
+      });
+
+      $("test-ws-btn").addEventListener("click", () => {
+        runSimulatedTest(
+          $("test-ws-btn"),
+          $("test-ws-result"),
+          () => (isWebSearchConfigured() ? null : "请先填写 Tavily API Key 或 DeepSeek 联网密钥。"),
+          () => `检索正常（${webSearchSummaryText()} · 响应 0.6s · 返回 5 条结果）`
+        );
+      });
+
+      /* ---- Step 3: Dynamic Dependencies & Presets ---- */
+      function setFeatureLock(rowKey, checkboxId, locked, depText, jumpStep) {
+        const row = document.querySelector(`[data-feature-row="${rowKey}"]`);
+        const cb = $(checkboxId);
+        const badge = row.querySelector("[data-dep-badge]");
+        row.classList.toggle("is-locked", locked);
+        cb.disabled = locked;
+        if (locked) cb.checked = false;
+
+        let link = row.querySelector(".dep-jump-link");
+        if (locked) {
+          badge.className = "badge badge-warning";
+          badge.textContent = depText;
+          if (!link && jumpStep) {
+            link = document.createElement("button");
+            link.type = "button";
+            link.className = "inline-link-btn dep-jump-link";
+            link.textContent = "去配置 →";
+            link.addEventListener("click", () => goToStep(jumpStep));
+            row.querySelector(".feature-title").appendChild(link);
+          }
+        } else {
+          badge.className = "badge badge-success";
+          badge.textContent = "前置已就绪";
+          if (link) link.remove();
+        }
+      }
+
+      function syncStep3Dependencies() {
+        const llmOK = isLLMConfigured();
+        const wsOK = isWebSearchConfigured();
+        const analyzerOK = isAnalyzerAvailable();
+        const metaNames = enabledMetadataNames();
+
+        const strip = $("prereq-strip");
+        strip.innerHTML = "";
+        const items = [
+          { ready: metaNames.length > 0, label: metaNames.length ? `元数据：${metaNames.join(" + ")}` : "元数据：未启用", jump: 1 },
+          { ready: llmOK, label: llmOK ? `LLM：${$("llm-model").value.trim()}` : "LLM：未配置", jump: 2 },
+          { ready: wsOK, label: wsOK ? `联网搜索：${webSearchSummaryText()}` : "联网搜索：未配置", jump: 2 },
+          { ready: analyzerOK, label: analyzerOK ? "声学分析：Sidecar 在线" : "声学分析：未部署", jump: null }
+        ];
+        items.forEach((it) => {
+          const pill = document.createElement("span");
+          pill.className = "prereq-pill" + (it.ready ? " is-ready" : "");
+          pill.innerHTML = `<span class="prereq-dot" aria-hidden="true"></span><span>${it.label}</span>`;
+          if (!it.ready && it.jump) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = "去配置";
+            btn.addEventListener("click", () => goToStep(it.jump));
+            pill.appendChild(btn);
+          }
+          strip.appendChild(pill);
+        });
+
+        setFeatureLock("ai-review", "feat-ai-review", !llmOK, "需先配置 LLM", 2);
+        setFeatureLock("alias", "feat-alias", !(llmOK && wsOK), llmOK ? "需联网搜索" : "需 LLM + 联网搜索", 2);
+        setFeatureLock("avatar-ai", "feat-avatar-ai", !(llmOK && wsOK), llmOK ? "需联网搜索" : "需 LLM + 联网搜索", 2);
+        setFeatureLock("bio-ai", "feat-bio-ai", !llmOK, "需先配置 LLM", 2);
+        setFeatureLock("lyrics-trans", "feat-lyrics-trans", !llmOK, "需先配置 LLM", 2);
+        setFeatureLock("ai-tagging", "feat-ai-tagging", !llmOK, "需先配置 LLM", 2);
+        setFeatureLock("acoustic", "feat-acoustic", !analyzerOK, "未部署 Sidecar", null);
+
+        $("feat-acoustic-desc").textContent = analyzerOK
+          ? "提取曲目能量、情绪、乐器与 1280 维声学向量用于相似推荐，纯本地计算，遇到实时转码与扫描自动让路。"
+          : "当前未检测到 music-analyzer 服务；如需启用请在部署目录执行 docker compose --profile analysis up -d --build。";
+
+        $("feat-review-web").disabled = !wsOK;
+        if (!wsOK) $("feat-review-web").checked = false;
+        $("sub-ai-review").hidden = !$("feat-ai-review").checked;
+        $("sub-daily-mix").hidden = !$("feat-daily-mix").checked;
+      }
+
+      function applyCapabilityPreset(presetKey) {
+        state.capPreset = presetKey;
+        document.querySelectorAll("#capability-presets .preset-btn").forEach((b) => {
+          b.classList.toggle("is-selected", b.dataset.capPreset === presetKey);
+        });
+        const llmOK = isLLMConfigured();
+        const wsOK = isWebSearchConfigured();
+        const analyzerOK = isAnalyzerAvailable();
+
+        if (presetKey === "minimal") {
+          ["feat-ai-review", "feat-alias", "feat-avatar-ai", "feat-bio-ai", "feat-lyrics-trans", "feat-daily-mix", "feat-ai-tagging", "feat-acoustic"]
+            .forEach((id) => { $(id).checked = false; });
+        } else if (presetKey === "acg") {
+          $("feat-ai-review").checked = llmOK;
+          $("feat-review-mode").value = "recommend";
+          $("feat-review-web").checked = llmOK && wsOK;
+          $("feat-alias").checked = llmOK && wsOK;
+          $("feat-avatar-ai").checked = false;
+          $("feat-bio-ai").checked = llmOK;
+          $("feat-lyrics-trans").checked = llmOK;
+          $("feat-daily-mix").checked = true;
+          $("feat-mix-llm").checked = llmOK;
+          $("feat-ai-tagging").checked = false;
+          $("feat-acoustic").checked = analyzerOK;
+        } else if (presetKey === "full") {
+          $("feat-ai-review").checked = llmOK;
+          $("feat-review-mode").value = "auto";
+          $("feat-review-web").checked = llmOK && wsOK;
+          $("feat-alias").checked = llmOK && wsOK;
+          $("feat-avatar-ai").checked = llmOK && wsOK;
+          $("feat-bio-ai").checked = llmOK;
+          $("feat-lyrics-trans").checked = llmOK;
+          $("feat-daily-mix").checked = true;
+          $("feat-mix-llm").checked = llmOK;
+          $("feat-ai-tagging").checked = llmOK;
+          $("feat-acoustic").checked = analyzerOK;
+        }
+        syncStep3Dependencies();
+      }
+
+      $("capability-presets").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-cap-preset]");
+        if (!btn) return;
+        applyCapabilityPreset(btn.dataset.capPreset);
+      });
+
+      ["feat-ai-review", "feat-daily-mix"].forEach((id) => {
+        $(id).addEventListener("change", () => {
+          $("sub-ai-review").hidden = !$("feat-ai-review").checked;
+          $("sub-daily-mix").hidden = !$("feat-daily-mix").checked;
+        });
+      });
+
+      /* ---- Step 4: Sync & Acquisition ---- */
+      function syncStep4LastFMReuse() {
+        const step1Key = ($("lastfm-key").value || "").trim();
+        $("lfm-key-reused").hidden = !step1Key;
+        $("lfm-scrobble-apikey-wrap").hidden = Boolean(step1Key);
+      }
+      $("lfm-scrobble-key").addEventListener("input", () => {
+        const val = $("lfm-scrobble-key").value.trim();
+        if (val) {
+          $("lastfm-enabled").checked = true;
+          $("lastfm-key").value = val;
+          $("lastfm-fields").hidden = false;
+        }
+      });
+
+      $("lb-enabled").addEventListener("change", () => { $("lb-fields").hidden = !$("lb-enabled").checked; });
+      $("lfm-scrobble-enabled").addEventListener("change", () => {
+        $("lfm-scrobble-fields").hidden = !$("lfm-scrobble-enabled").checked;
+        syncStep4LastFMReuse();
+      });
+      $("acq-enabled").addEventListener("change", () => {
+        const on = $("acq-enabled").checked;
+        $("acq-fields").hidden = !on;
+        $("acq-status-badge").className = on ? "badge badge-accent" : "badge";
+        $("acq-status-badge").textContent = on ? "已启用" : "未启用";
+      });
+
+      $("test-lb-btn").addEventListener("click", () => {
+        runSimulatedTest(
+          $("test-lb-btn"),
+          $("test-lb-result"),
+          () => ($("lb-token").value.trim() ? null : "请先填写 ListenBrainz User Token。"),
+          () => {
+            state.lbConnected = true;
+            state.lbUser = "lux032";
+            $("lb-status-badge").className = "badge badge-success";
+            $("lb-status-badge").textContent = `已连接 · ${state.lbUser}`;
+            return `已验证并连接账号：${state.lbUser}`;
+          }
+        );
+      });
+
+      $("lfm-start-auth-btn").addEventListener("click", () => {
+        const hasKey = Boolean(($("lastfm-key").value || "").trim() || ($("lfm-scrobble-key").value || "").trim());
+        const hasSecret = Boolean(($("lfm-secret").value || "").trim());
+        if (!hasKey || !hasSecret) {
+          $("lfm-auth-status").className = "test-result is-err";
+          $("lfm-auth-status").textContent = "生成授权链接前需要填写 Last.fm API Key 与 Shared Secret。";
+          return;
+        }
+        $("lfm-auth-status").className = "test-result";
+        $("lfm-auth-status").textContent = "已生成临时授权令牌，请完成下方两步。";
+        $("lfm-oauth-box").hidden = false;
+      });
+
+      $("lfm-open-auth-link").addEventListener("click", (e) => {
+        e.preventDefault();
+        toast("原型演示：已在新窗口打开 Last.fm 授权确认页");
+      });
+
+      $("lfm-complete-auth-btn").addEventListener("click", () => {
+        state.lfmConnected = true;
+        state.lfmUser = "lux032_acg";
+        $("lfm-oauth-box").hidden = true;
+        $("lfm-scrobble-badge").className = "badge badge-success";
+        $("lfm-scrobble-badge").textContent = `已连接 · ${state.lfmUser}`;
+        $("lfm-auth-status").className = "test-result is-ok";
+        $("lfm-auth-status").textContent = `已完成授权并连接 Last.fm 账号：${state.lfmUser}`;
+        toast("Last.fm 账号连接成功");
+      });
+
+      $("test-jackett-btn").addEventListener("click", () => {
+        runSimulatedTest(
+          $("test-jackett-btn"),
+          $("test-acq-result"),
+          () => ($("acq-jackett-url").value.trim() && $("acq-jackett-key").value.trim() ? null : "请先填写 Jackett 地址与 API Key。"),
+          () => `Jackett 连接正常 · Indexer "${$("acq-jackett-indexer").value.trim() || "jpopsuki"}" 可检索`
+        );
+      });
+
+      $("test-qb-btn").addEventListener("click", () => {
+        runSimulatedTest(
+          $("test-qb-btn"),
+          $("test-acq-result"),
+          () => ($("acq-qb-url").value.trim() ? null : "请先填写 qBittorrent 地址。"),
+          () => `qBittorrent v4.6.7 登录成功${$("acq-qb-cat").value.trim() ? ` · 分类 "${$("acq-qb-cat").value.trim()}" 可用` : ""}`
+        );
+      });
+
+      /* ---- Step 5: Library Preflight, Pipeline Chain & Summary ---- */
+      $("watch-enabled").addEventListener("change", () => {
+        $("watch-interval").disabled = !$("watch-enabled").checked;
+      });
+
+      $("recheck-dir-btn").addEventListener("click", () => {
+        const btn = $("recheck-dir-btn");
+        const st = $("recheck-dir-status");
+        btn.disabled = true;
+        st.className = "test-result";
+        st.innerHTML = '<svg class="icon icon-sm is-spinning" aria-hidden="true"><use href="#i-loader"></use></svg> 正在预检挂载目录...';
+        setTimeout(() => {
+          btn.disabled = false;
+          if (state.envScenario === "normal") {
+            st.className = "test-result is-ok";
+            st.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg> 检测通过（/music 可读，86 个专辑目录）';
+          } else {
+            st.className = "test-result is-err";
+            st.textContent = "仍未读取到音频文件（可切换顶部原型场景为「标准全新部署」模拟修复）";
+          }
+        }, 550);
+      });
+
+      function renderStep5() {
+        const meta = enabledMetadataNames();
+        const llmOK = isLLMConfigured();
+        const wsOK = isWebSearchConfigured();
+        const feats = enabledFeaturesList();
+        const syncParts = [];
+        if ($("lb-enabled").checked && ($("lb-token").value.trim() || state.lbConnected)) {
+          syncParts.push(state.lbConnected ? `ListenBrainz（${state.lbUser}）` : "ListenBrainz（已填 Token）");
+        }
+        if ($("lfm-scrobble-enabled").checked && ($("lfm-secret").value.trim() || state.lfmConnected)) {
+          syncParts.push(state.lfmConnected ? `Last.fm（${state.lfmUser}）` : "Last.fm Scrobble（待网页授权）");
+        }
+        if ($("acq-enabled").checked) syncParts.push("资源获取（Jackett + qBittorrent）");
+
+        // Build visual pipeline chain
+        const chain = $("pipeline-chain");
+        chain.innerHTML = "";
+        const nodes = [{ label: "首次扫描导入本地标签", primary: true }];
+        const autoMeta = meta.filter((m) => m === "MusicBrainz" || m === "Bangumi");
+        if (autoMeta.length) nodes.push({ label: `${autoMeta.join(" / ")} 自动对齐` });
+        if ($("feat-ai-review").checked) {
+          nodes.push({ label: $("feat-review-mode").value === "auto" ? "AI 分级自治初审" : "AI 辅助预审" });
+        }
+        const postTasks = feats.filter((f) => !f.startsWith("AI 初审") && f !== "AI 歌词翻译");
+        if (postTasks.length) {
+          nodes.push({ label: postTasks.slice(0, 3).join(" · ") + (postTasks.length > 3 ? ` 等 ${postTasks.length} 项` : "") });
+        }
+        if (nodes.length === 1) {
+          nodes.push({ label: "仅本地曲库就绪（可随时补充增强源）" });
+        }
+        nodes.forEach((node, idx) => {
+          if (idx > 0) {
+            const arrow = document.createElement("span");
+            arrow.className = "pipeline-arrow";
+            arrow.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>';
+            chain.appendChild(arrow);
+          }
+          const span = document.createElement("span");
+          span.className = "pipeline-node" + (node.primary ? " is-primary" : "");
+          span.textContent = node.label;
+          chain.appendChild(span);
+        });
+
+        const hasChainWork = autoMeta.length > 0 || postTasks.length > 0 || $("feat-ai-review").checked;
+        $("auto-chain-wrap").hidden = !hasChainWork;
+
+        // Summary list for Steps 1-4
+        const rows = [
+          {
+            step: 1,
+            title: "元数据与图源",
+            badge: meta.length ? [`已启用 ${meta.length} 项`, "badge-success"] : ["已跳过", "badge"],
+            detail: meta.length ? `${meta.join(" · ")} · 简介语言 ${$("bio-lang").value}` : "暂未启用外部数据源，仅使用音频文件本地标签"
+          },
+          {
+            step: 2,
+            title: "LLM 与联网搜索",
+            badge: (llmOK || wsOK) ? ["已配置", "badge-success"] : ["已跳过", "badge"],
+            detail: [
+              llmOK ? `主模型 ${$("llm-model").value.trim()}${$("llm-review-model").value.trim() ? " / 复核 " + $("llm-review-model").value.trim() : ""}` : "未配置 LLM",
+              wsOK ? `联网搜索：${webSearchSummaryText()}` : "未配置联网搜索"
+            ].join(" · ")
+          },
+          {
+            step: 3,
+            title: "自动化能力",
+            badge: feats.length ? [`已开启 ${feats.length} 项`, "badge-success"] : ["保守关闭", "badge"],
+            detail: feats.length ? feats.join(" · ") : "所有后台 AI 与分析任务均保持关闭，零额度消耗"
+          },
+          {
+            step: 4,
+            title: "同步与资源获取",
+            badge: syncParts.length ? [`已配置 ${syncParts.length} 项`, "badge-success"] : ["已跳过", "badge"],
+            detail: syncParts.length ? syncParts.join(" · ") : "未配置 Scrobble 或 Jackett / qBittorrent"
+          }
+        ];
+
+        const container = $("summary-list");
+        container.innerHTML = "";
+        rows.forEach((r) => {
+          const div = document.createElement("div");
+          div.className = "summary-row";
+          div.innerHTML = `
+            <div class="summary-meta">
+              <div class="summary-head"><strong>${r.title}</strong><span class="badge ${r.badge[1]}">${r.badge[0]}</span></div>
+              <div class="summary-detail">${r.detail}</div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-compact">修改</button>
+          `;
+          div.querySelector("button").addEventListener("click", () => goToStep(r.step));
+          container.appendChild(div);
+        });
+      }
+
+      /* ---- Navigation & Step Rail Sync ---- */
+      function updateRail() {
+        let savedCount = 0;
+        for (let s = 1; s <= 4; s++) {
+          if (state.stepStatus[s] === "done") savedCount++;
+        }
+        document.querySelectorAll(".step-item").forEach((el) => {
+          const s = Number(el.dataset.gotoStep);
+          const status = state.stepStatus[s];
+          const active = s === state.step;
+          el.classList.toggle("is-active", active);
+          el.classList.toggle("is-done", status === "done");
+          el.classList.toggle("is-skipped", status === "skipped");
+          if (active) el.setAttribute("aria-current", "step");
+          else el.removeAttribute("aria-current");
+
+          const badge = el.querySelector("[data-step-badge]");
+          if (status === "done" && !active) {
+            badge.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>';
+          } else {
+            badge.textContent = String(s);
+          }
+        });
+
+        const meta = enabledMetadataNames();
+        document.querySelector('[data-step-sub="1"]').textContent = state.stepStatus[1] === "skipped"
+          ? "已跳过"
+          : (state.stepStatus[1] === "done" && meta.length ? `已选 ${meta.slice(0, 2).join(" · ")}${meta.length > 2 ? " 等" : ""}` : "MusicBrainz · Bangumi");
+        document.querySelector('[data-step-sub="2"]').textContent = state.stepStatus[2] === "skipped"
+          ? "已跳过"
+          : (isLLMConfigured() ? $("llm-model").value.trim() : "大模型与 Tavily 密钥");
+        const feats = enabledFeaturesList();
+        document.querySelector('[data-step-sub="3"]').textContent = state.stepStatus[3] === "skipped"
+          ? "已跳过"
+          : (feats.length ? `已开启 ${feats.length} 项能力` : "按需开启后台任务");
+        document.querySelector('[data-step-sub="4"]').textContent = state.stepStatus[4] === "skipped"
+          ? "已跳过"
+          : ((state.lbConnected || state.lfmConnected || $("acq-enabled").checked) ? "已配置集成" : "Scrobble · Jackett（可选）");
+        document.querySelector('[data-step-sub="5"]').textContent = state.envScenario === "normal"
+          ? "确认目录并开始入库"
+          : "目录需检查挂载";
+
+        const pct = state.step === 5 ? 100 : Math.max(10, Math.round((savedCount / 4) * 100));
+        $("rail-progress-text").textContent = `${savedCount} / 4 步已保存`;
+        $("rail-progress-bar").style.width = pct + "%";
+        $("rail-progress-bar").classList.toggle("is-success", state.step === 5);
+      }
+
+      function goToStep(n) {
+        state.step = n;
+        setViewMode("wizard");
+        document.querySelectorAll(".step-panel").forEach((panel) => {
+          const isTarget = Number(panel.dataset.stepPanel) === n;
+          panel.hidden = !isTarget;
+          panel.classList.remove("is-entering");
+          if (isTarget) {
+            void panel.offsetWidth;
+            panel.classList.add("is-entering");
+          }
+        });
+        if (n === 3) syncStep3Dependencies();
+        if (n === 4) syncStep4LastFMReuse();
+        if (n === 5) renderStep5();
+        updateRail();
+        const activeBtn = document.querySelector(`.step-item[data-goto-step="${n}"]`);
+        if (activeBtn && window.matchMedia("(max-width: 900px)").matches) {
+          activeBtn.scrollIntoView({ inline: "center", block: "nearest" });
+        }
+        window.scrollTo(0, 0);
+      }
+
+      document.querySelectorAll("[data-goto-step]").forEach((btn) => {
+        btn.addEventListener("click", () => goToStep(Number(btn.dataset.gotoStep)));
+      });
+      document.querySelectorAll("[data-step-prev]").forEach((btn) => {
+        btn.addEventListener("click", () => goToStep(Number(btn.dataset.stepPrev) - 1));
+      });
+      document.querySelectorAll("[data-step-skip]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const cur = Number(btn.dataset.stepSkip);
+          state.stepStatus[cur] = "skipped";
+          toast(`已跳过第 ${cur} 步，稍后可随时补配`);
+          goToStep(cur + 1);
+        });
+      });
+      document.querySelectorAll("[data-step-save]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const cur = Number(btn.dataset.stepSave);
+          if (cur === 1 && $("mb-enabled").checked && !$("mb-contact").value.trim()) {
+            $("mb-contact").classList.add("is-invalid");
+            $("mb-contact-error").hidden = false;
+            $("mb-contact").focus();
+            return;
+          }
+          state.stepStatus[cur] = "done";
+          toast(`第 ${cur} 步设置已保存`);
+          goToStep(cur + 1);
+        });
+      });
+
+      /* ---- Post-Launch Simulated First Scan in Dashboard Preview ---- */
+      function startDashboardScanSim(withChain) {
+        if (state.scanTimer) clearInterval(state.scanTimer);
+        state.scanStarted = true;
+        state.scanPct = 18;
+        const renderScan = () => {
+          const pct = Math.min(100, state.scanPct);
+          const tracks = Math.round(1284 * (pct / 100));
+          const albums = Math.round(86 * (pct / 100));
+          const artists = Math.round(142 * (pct / 100));
+          $("mock-scan-bar").style.width = pct + "%";
+          $("mock-scan-bar").classList.toggle("is-success", pct >= 100);
+          $("mock-scan-pct").textContent = pct >= 100 ? "已完成" : pct + "%";
+          $("mock-scan-counts").textContent = `已扫描 ${tracks.toLocaleString()} 首 · ${albums} 张专辑 · ${artists} 位歌手`;
+          $("kpi-albums").textContent = String(albums);
+          $("kpi-artists").textContent = String(artists);
+          $("kpi-tracks").textContent = tracks.toLocaleString();
+          if (pct >= 100) {
+            $("mock-scan-title").textContent = "首次曲库扫描：已完成";
+            $("mock-scan-badge").className = "badge badge-success";
+            $("mock-scan-badge").textContent = "已完成";
+            $("mock-scan-sub").textContent = withChain
+              ? "首次导入完成，已按配置自动触发元数据增强与选中的后台流水线。"
+              : "首次导入完成，当前仅使用本地音频标签。";
+            $("kpi-pipeline").textContent = withChain ? "自动运行中" : "仅本地标签";
+            clearInterval(state.scanTimer);
+            state.scanTimer = null;
+          } else {
+            $("mock-scan-title").textContent = "首次曲库扫描：进行中";
+            $("mock-scan-badge").className = "badge badge-accent";
+            $("mock-scan-badge").textContent = "扫描中";
+            $("mock-scan-sub").innerHTML = withChain
+              ? "正在读取 <code>/music</code> 音频标签，完成后将自动串联已配置的元数据与 AI 增强流水线。"
+              : "正在读取 <code>/music</code> 音频标签（已跳过初始化引导，仅导入本地标签）。";
+            $("kpi-pipeline").textContent = withChain ? "扫完后自动触发" : "未配置";
+          }
+        };
+        renderScan();
+        state.scanTimer = setInterval(() => {
+          state.scanPct = Math.min(100, state.scanPct + 14);
+          renderScan();
+        }, 1200);
+      }
+
+      /* ---- View Modes: Wizard vs Skipped / Completed Dashboard ---- */
+      function setViewMode(mode, opts) {
+        const o = opts || {};
+        state.viewMode = mode;
+        const isWizard = mode === "wizard";
+        $("wizard-view").hidden = !isWizard;
+        $("dashboard-preview").hidden = isWizard;
+        $("skip-all-btn").hidden = !isWizard;
+        $("header-context").textContent = isWizard ? "首次启动初始化" : "管理后台";
+
+        document.querySelectorAll("[data-view-mode]").forEach((b) => {
+          b.classList.toggle("active", b.dataset.viewMode === (isWizard ? "wizard" : "skipped"));
+        });
+
+        if (isWizard && state.scanTimer) {
+          clearInterval(state.scanTimer);
+          state.scanTimer = null;
+        }
+
+        if (!isWizard) {
+          let done = 0;
+          for (let s = 1; s <= 4; s++) if (state.stepStatus[s] === "done") done++;
+          const isCompleted = mode === "completed";
+          $("resume-banner").hidden = isCompleted || state.bannerDismissed;
+          $("completed-banner").hidden = !isCompleted;
+
+          if (!isCompleted) {
+            if (done >= 4) {
+              $("resume-banner-title").textContent = "初始化配置即将完成（还差最后一步确认）";
+              $("resume-banner-desc").textContent = "前 4 步配置已保存，随时可回到第 5 步核对目录并启动增强。";
+            } else {
+              const missing = [];
+              if (state.stepStatus[1] !== "done") missing.push("元数据来源");
+              if (state.stepStatus[2] !== "done") missing.push("大模型与联网搜索");
+              if (state.stepStatus[3] !== "done") missing.push("自动化能力");
+              if (state.stepStatus[4] !== "done") missing.push("同步与资源获取");
+              $("resume-banner-title").textContent = `初始化配置尚未完成（已保存 ${done} / 4 步）`;
+              $("resume-banner-desc").textContent = `已解除扫描暂缓并启动首次导入；${missing.join("、")}仍可随时回来补配。`;
+            }
+            $("mock-scan-panel").hidden = false;
+            startDashboardScanSim(false);
+          } else {
+            const startScan = o.startScan !== false;
+            $("mock-scan-panel").hidden = !startScan;
+            if (startScan) {
+              $("completed-banner-title").textContent = "初始化已完成，首次曲库扫描已启动";
+              $("completed-banner-desc").textContent = o.withChain
+                ? "配置已保存，正在执行首次曲库扫描；扫描完成后将自动串联元数据增强与已选后台任务。"
+                : "配置已保存，正在执行首次曲库扫描（已按选择仅导入本地标签，稍后可手动启动增强）。";
+              startDashboardScanSim(Boolean(o.withChain));
+            } else {
+              $("completed-banner-title").textContent = "初始化配置已保存（尚未扫描曲库）";
+              $("completed-banner-desc").textContent = "你可以在准备好音乐目录后，随时在控制台点击「增量扫描」导入曲库。";
+              $("kpi-albums").textContent = "0";
+              $("kpi-artists").textContent = "0";
+              $("kpi-tracks").textContent = "0";
+              $("kpi-pipeline").textContent = "等待首次扫描";
+            }
+          }
+        }
+      }
+
+      $("skip-all-btn").addEventListener("click", () => {
+        state.bannerDismissed = false;
+        setViewMode("skipped");
+        toast("已跳过引导并启动首次曲库扫描");
+      });
+      $("resume-wizard-btn").addEventListener("click", () => goToStep(state.step));
+      $("reopen-wizard-btn").addEventListener("click", () => goToStep(1));
+      $("dismiss-banner-btn").addEventListener("click", () => {
+        state.bannerDismissed = true;
+        $("resume-banner").hidden = true;
+        toast("已关闭提示条，仍可通过「重新打开初始化向导」进入");
+      });
+
+      $("finish-start-scan-btn").addEventListener("click", () => {
+        state.stepStatus[5] = "done";
+        const withChain = !$("auto-chain-wrap").hidden && $("launch-auto-chain").checked;
+        setViewMode("completed", { startScan: true, withChain });
+        toast("配置已保存，首次曲库扫描已启动");
+      });
+
+      $("finish-no-scan-btn").addEventListener("click", () => {
+        state.stepStatus[5] = "done";
+        setViewMode("completed", { startScan: false, withChain: false });
+        toast("配置已保存，可稍后在控制台手动扫描");
+      });
+
+      /* ---- Prototype Toolbar Actions ---- */
+      document.querySelectorAll("[data-env-scenario]").forEach((b) => {
+        b.addEventListener("click", () => {
+          state.envScenario = b.dataset.envScenario;
+          document.querySelectorAll("[data-env-scenario]").forEach((x) => x.classList.toggle("active", x === b));
+          renderEnvScenario();
+          updateRail();
+        });
+      });
+
+      document.querySelectorAll("[data-view-mode]").forEach((b) => {
+        b.addEventListener("click", () => {
+          if (b.dataset.viewMode === "wizard") {
+            goToStep(state.step);
+          } else {
+            state.bannerDismissed = false;
+            setViewMode("skipped");
+          }
+        });
+      });
+
+      $("proto-fill-demo").addEventListener("click", () => {
+        $("mb-enabled").checked = true;
+        $("mb-contact").value = "admin@032music.example";
+        $("bgm-enabled").checked = true;
+        $("lastfm-enabled").checked = true;
+        $("lastfm-key").value = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6";
+        $("fanart-key").value = "fnrt-demo-8842109c";
+        syncStep1Fields();
+
+        state.preset = "gemini";
+        document.querySelectorAll("#llm-presets .chip").forEach((c) => c.classList.toggle("is-selected", c.dataset.preset === "gemini"));
+        $("llm-base-url").value = PRESETS.gemini.baseURL;
+        $("llm-api-key").value = "AIzaSyDemoKeyForPrototypePreview032";
+        $("llm-model").value = "gemini-2.5-flash-lite";
+        $("llm-review-model").value = "gemini-2.5-flash";
+        $("ws-tavily-keys").value = "tvly-demo-primary-0001\ntvly-demo-backup-0002";
+        syncStep2Status();
+
+        applyCapabilityPreset("acg");
+
+        $("lb-enabled").checked = true;
+        $("lb-fields").hidden = false;
+        $("lb-token").value = "lb-demo-token-9f8e7d6c";
+        $("lfm-scrobble-enabled").checked = true;
+        $("lfm-scrobble-fields").hidden = false;
+        $("lfm-secret").value = "lastfm-shared-secret-demo";
+        syncStep4LastFMReuse();
+
+        state.stepStatus = { 1: "done", 2: "done", 3: "done", 4: "done", 5: "pending" };
+        updateRail();
+        if (state.step === 5) renderStep5();
+        toast("已填入演示配置，可直接切到第 5 步查看目录预检与自动流水线");
+      });
+
+      $("proto-reset-demo").addEventListener("click", () => {
+        $("mb-enabled").checked = true;
+        $("mb-contact").value = "";
+        $("bgm-enabled").checked = true;
+        $("lastfm-enabled").checked = false;
+        $("lastfm-key").value = "";
+        $("fanart-key").value = "";
+        syncStep1Fields();
+
+        $("llm-api-key").value = "";
+        $("llm-model").value = "";
+        $("llm-review-model").value = "";
+        $("ws-tavily-keys").value = "";
+        $("ws-deepseek-key").value = "";
+        syncStep2Status();
+        applyCapabilityPreset("minimal");
+
+        $("lb-enabled").checked = false;
+        $("lb-fields").hidden = true;
+        $("lb-token").value = "";
+        state.lbConnected = false;
+        $("lb-status-badge").className = "badge";
+        $("lb-status-badge").textContent = "未连接";
+
+        $("lfm-scrobble-enabled").checked = false;
+        $("lfm-scrobble-fields").hidden = true;
+        $("lfm-secret").value = "";
+        $("lfm-oauth-box").hidden = true;
+        state.lfmConnected = false;
+        $("lfm-scrobble-badge").className = "badge";
+        $("lfm-scrobble-badge").textContent = "未连接";
+
+        $("acq-enabled").checked = false;
+        $("acq-fields").hidden = true;
+        $("acq-status-badge").className = "badge";
+        $("acq-status-badge").textContent = "未启用";
+
+        state.stepStatus = { 1: "pending", 2: "pending", 3: "pending", 4: "pending", 5: "pending" };
+        goToStep(1);
+        toast("已重置为空白初始状态");
+      });
+
+      /* ---- Initial Sync ---- */
+      renderEnvScenario();
+      syncStep1Fields();
+      syncStep2Status();
+      updateRail();
+    })();
+  </script>
+</body>
+</html>

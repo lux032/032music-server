@@ -68,6 +68,7 @@ func credentialTestStoreAt(t *testing.T) (*storage.Store, string) {
 
 func newCredentialTestApp(t *testing.T, cfg config.Config, store *storage.Store) *App {
 	t.Helper()
+	_ = store.MarkSetupWizardCompleted(context.Background())
 	app, err := NewApp(cfg, store, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
 	if err != nil {
 		t.Fatal(err)

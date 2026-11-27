@@ -13,8 +13,30 @@
         <h1>控制台总览</h1>
         <p class="result-count path">{{.LibraryName}} · {{.MusicDirectory}} · 本地标签优先，源文件始终只读。</p>
       </div>
-      <div class="service-state"><span class="status-dot"></span> 服务正常 · SQLite {{.DatabaseStatus}} · {{.Version}} · 已运行 {{.Uptime}}</div>
+      <div class="console-header-right">
+        <a class="secondary-button compact-button" href="/admin/setup" data-no-pjax>初始化向导</a>
+        <div class="service-state"><span class="status-dot"></span> 服务正常 · SQLite {{.DatabaseStatus}} · {{.Version}} · 已运行 {{.Uptime}}</div>
+      </div>
     </header>
+
+    {{if .SetupWizard.ShowResumeBanner}}
+    <section class="setup-resume-banner" role="region" aria-label="初始化配置提醒" data-setup-resume-banner>
+      <div class="setup-resume-copy">
+        <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-sparkle"></use></svg>
+        <div>
+          <strong>初始化配置尚未完成（已保存 {{.SetupWizard.CompletedSteps}} / 4 步）</strong>
+          <span>{{if .SetupWizard.MissingLabels}}{{.SetupWizard.MissingLabels}}尚未完成检查，{{end}}可随时接着上次进度继续配置。</span>
+        </div>
+      </div>
+      <div class="setup-resume-actions">
+        <a class="primary-button compact-button" href="/admin/setup" data-no-pjax>继续初始化引导</a>
+        <form method="post" action="/admin/setup/banner/dismiss" data-no-pjax>
+          <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+          <button type="submit" class="secondary-button compact-button">不再提示</button>
+        </form>
+      </div>
+    </section>
+    {{end}}
 
     {{if .Notice}}<div class="toast" role="status">{{.Notice}}</div>{{end}}
 

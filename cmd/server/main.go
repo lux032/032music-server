@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -224,6 +226,18 @@ func run() error {
 	dailyMixService.Start(rootCtx)
 	analysisService.Start(rootCtx)
 	loudnessService.Start(rootCtx)
+	// First-run setup wizard scan controller: defers initial startup scan and
+	// directory polling while setup_wizard_state is pending so users can
+	// configure metadata sources and AI before the first import runs.
+	watcher := scanner.NewWatcher(scannerManager, logger, cfg.WatchInterval)
+	app.SetLibraryWatcher(rootCtx, watcher)
+	scanCtrl := newFirstRunScanController(
+		func() { app.ApplyLibraryWatchSettings(rootCtx) },
+		func(startupScan bool) { watcher.Start(rootCtx, startupScan) },
+		logger,
+	)
+	app.SetFirstRunScanReleaser(scanCtrl.Release)
+
 	scannerManager.SetOnComplete(func() {
 		if err := db.CompleteReleaseGroupRebuild(rootCtx); err != nil {
 			logger.Error("complete RG identity", "error", err)
@@ -234,10 +248,14 @@ func run() error {
 		if err := db.ReconcileAlbumLoudness(rootCtx); err != nil {
 			logger.Error("reconcile album loudness", "error", err)
 		}
+		app.GCCustomImages(rootCtx)
 
+		if !scanCtrl.ShouldRunPostScanEnrich() {
+			logger.Info("first scan completed in local-only mode; skipping automatic post-scan enrichment for this run")
+			return
+		}
 		acquisitionService.Wake()
 		enrichmentManager.StartAuto(rootCtx)
-		app.GCCustomImages(rootCtx)
 		analysisService.Wake()
 		loudnessService.Wake()
 		taggingService.Wake()
@@ -260,14 +278,11 @@ func run() error {
 	if cfg.MediaTokenGenerated && app.CredentialSources().MediaToken == webhttp.CredentialSourceEnv {
 		logger.Warn("MUSIC_SERVER_MEDIA_TOKEN is not set: generated a random per-boot media token; media URLs change on every restart — set MUSIC_SERVER_MEDIA_TOKEN to a stable random value or set a media token on the admin security page")
 	}
-	// The watcher always runs so the admin page can enable/disable it at
-	// runtime (interval 0 = paused). It records a baseline fingerprint first
-	// and then runs the startup scan, so files added while that scan runs are
-	// not missed. SetLibraryWatcher applies admin-page overrides of the
-	// MUSIC_SERVER_WATCH_INTERVAL default before the watcher starts.
-	watcher := scanner.NewWatcher(scannerManager, logger, cfg.WatchInterval)
-	app.SetLibraryWatcher(rootCtx, watcher)
-	watcher.Start(rootCtx, true)
+	setupState, setupErr := db.SetupWizardState(rootCtx)
+	if setupErr != nil {
+		logger.Warn("load setup wizard state; proceeding with normal startup scan", "error", setupErr)
+	}
+	scanCtrl.InitAtStartup(setupErr == nil && setupState.IsPending())
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
@@ -445,4 +460,52 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 0
+}
+
+// firstRunScanController coordinates deferring the initial library watcher and
+// startup scan while first-run setup is pending, releasing them once when setup
+// finishes or is skipped, and optionally suppressing automatic post-scan
+// enrichment for that first local-only scan.
+type firstRunScanController struct {
+	applyWatch         func()
+	startWatcher       func(startupScan bool)
+	logger             *slog.Logger
+	releaseOnce        sync.Once
+	suppressNextEnrich atomic.Bool
+}
+
+func newFirstRunScanController(applyWatch func(), startWatcher func(startupScan bool), logger *slog.Logger) *firstRunScanController {
+	return &firstRunScanController{
+		applyWatch:   applyWatch,
+		startWatcher: startWatcher,
+		logger:       logger,
+	}
+}
+
+func (c *firstRunScanController) InitAtStartup(pending bool) {
+	if pending {
+		if c.logger != nil {
+			c.logger.Info("deferring initial library scan and watcher until first-run setup completes or is skipped")
+		}
+		return
+	}
+	c.Release(true, true)
+}
+
+func (c *firstRunScanController) Release(startScan bool, autoEnrich bool) {
+	c.releaseOnce.Do(func() {
+		if startScan && !autoEnrich {
+			c.suppressNextEnrich.Store(true)
+		}
+		if c.applyWatch != nil {
+			c.applyWatch()
+		}
+		if c.startWatcher != nil {
+			c.startWatcher(startScan)
+		}
+	})
+}
+
+func (c *firstRunScanController) ShouldRunPostScanEnrich() bool {
+	return !c.suppressNextEnrich.Swap(false)
 }

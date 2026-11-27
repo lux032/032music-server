@@ -4964,3 +4964,52 @@ h1, h2, h3, .browser-header h1, .admin-header h1, .library-header h1,
   .library-album-card .album-card-menu summary { opacity: 1; }
   .artist-discography .artist-grid-size-control { display: flex; }
 }
+
+.console-header-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.setup-resume-banner {
+  margin-bottom: 18px;
+  padding: 14px 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.setup-resume-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.setup-resume-copy .icon {
+  color: var(--accent-strong-text);
+  margin-top: 2px;
+  flex: none;
+}
+.setup-resume-copy strong {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.setup-resume-copy span {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.setup-resume-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.setup-resume-actions form {
+  margin: 0;
+}

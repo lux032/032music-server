@@ -16,10 +16,10 @@ import { updateTrackRowsUI } from './player-bar.js';
     document.addEventListener('click', (e) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
-      if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download')) return;
+      if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download') || link.hasAttribute('data-no-pjax')) return;
       let url;
       try { url = new URL(link.href, window.location.href); } catch (_) { return; }
-      if (url.origin !== window.location.origin || !url.pathname.startsWith('/admin') || url.pathname.startsWith('/admin/assets/')) return;
+      if (url.origin !== window.location.origin || !url.pathname.startsWith('/admin') || url.pathname.startsWith('/admin/assets/') || url.pathname === '/admin/setup') return;
       const current = new URL(window.location.href);
       if (url.pathname === current.pathname && url.search === current.search && url.hash) return;
       if (pendingForms.size && !window.confirm('更改仍在保存中。现在离开可能无法确认保存结果。是否仍要离开？')) { e.preventDefault(); return; }

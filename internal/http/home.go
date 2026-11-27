@@ -464,6 +464,10 @@ func (a *App) homeData(ctx context.Context, r *http.Request, csrfToken string) (
 }
 
 func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
+	if a.shouldRedirectToSetup(r.Context()) {
+		http.Redirect(w, r, setupWizardPath, http.StatusSeeOther)
+		return
+	}
 	session, _ := a.sessions.get(r)
 	ctx := r.Context()
 	data, err := a.homeData(ctx, r, session.CSRFToken)

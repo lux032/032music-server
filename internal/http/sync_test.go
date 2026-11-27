@@ -35,6 +35,9 @@ func setupTestApp(t *testing.T) (*App, *storage.Store, string) {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.MarkSetupWizardCompleted(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	token := "valid-test-token-at-least-24-chars"
 	cfg := config.Config{

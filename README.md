@@ -74,7 +74,7 @@ docker compose logs -f music-server     # 查看日志，Ctrl+C 退出
 
 浏览器访问 **`http://服务器IP:4533/admin`**（在本机就是 `http://localhost:4533/admin`），用户名为 `admin`，密码是 `.env` 中设置的密码。
 
-启动后会自动扫描曲库，扫描进度在「概览」页查看。曲库很大时首次扫描需要一些时间，扫描结束前页面上的歌曲可能不全。
+全新部署首次登录后会自动进入 **5 步初始化引导**（`/admin/setup`）：你可以先按需配好 MusicBrainz / Bangumi / Last.fm、LLM 大模型与联网搜索（Tavily / DeepSeek）、自动化开关以及可选的 Scrobble / Jackett / qBittorrent，最后在第 5 步确认音乐目录挂载无误后一键启动首次扫描（让首次入库直接走完元数据与 AI 增强链路）。所有步骤均支持跳过，后续也可随时在「控制台总览 → 初始化向导」重新打开。
 
 > **Linux / NAS 上出现 `permission denied`？** 容器以非 root 用户运行，需要对数据目录有写权限。解决方法见 [部署进阶 → 目录权限](docs/deployment.md#目录权限linux--nas)。
 

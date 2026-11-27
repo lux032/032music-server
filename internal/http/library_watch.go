@@ -40,6 +40,16 @@ func (a *App) SetLibraryWatcher(ctx context.Context, watcher *scanner.Watcher) {
 	a.applyLibraryWatchSettings(ctx)
 }
 
+// ApplyLibraryWatchSettings 重新将当前生效的自动入库设置应用到监控器。
+func (a *App) ApplyLibraryWatchSettings(ctx context.Context) {
+	a.applyLibraryWatchSettings(ctx)
+}
+
+// SetFirstRunScanReleaser 注册首次启动引导完成/跳过时用于释放暂缓扫描与监控器的回调。
+func (a *App) SetFirstRunScanReleaser(fn func(startScan, autoEnrich bool)) {
+	a.releaseFirstRunScan = fn
+}
+
 // effectiveLibraryWatch 返回生效的设置：管理页覆盖优先，否则取环境变量。
 func (a *App) effectiveLibraryWatch(ctx context.Context) (storage.LibraryWatchSettings, bool, error) {
 	saved, found, err := a.store.LibraryWatchSettings(ctx)

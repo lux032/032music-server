@@ -26,6 +26,15 @@
         ],
         "createdAt": "2026-11-25T08:05:12.367Z",
         "reason": "agent triage: external CSS tokens.css/base.css sets h1=--fs-title (1.75-2.15rem) vs body=--fs-md (0.9375rem), 1.87-2.29x ratio"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "/home/ubuntu/ds-workspace/032music-server/internal/http/templates/setup.html"
+        ],
+        "createdAt": "2026-11-27T04:51:00.367Z",
+        "reason": "Go html/template links stylesheets via {{assetTokensCSS}}/{{assetSetupCSS}} so static HTML check sees unstyled 16px h1/body; rendered page uses --fs-title (clamp(1.75rem,2.3vw,2.15rem)) vs --fs-md (0.9375rem)"
       }
     ]
   }

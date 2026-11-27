@@ -78,7 +78,8 @@ type App struct {
 	listenbrainz *listenbrainz.Service
 	// watcher is the optional library watcher (automatic incremental scans);
 	// nil hides its controls on the dashboard.
-	watcher *scanner.Watcher
+	watcher             *scanner.Watcher
+	releaseFirstRunScan func(startScan, autoEnrich bool)
 	// cast drives UPnP/Sonos renderers (nil disables /api/v1/cast).
 	cast      castRenderers
 	castState castState
@@ -252,6 +253,7 @@ type dashboardPageData struct {
 	DailyMixes     string
 	Translation    string
 	OnlineLyrics   string
+	SetupWizard    dashboardSetupView
 	Notice         string
 }
 
@@ -356,6 +358,8 @@ func NewApp(cfg config.Config, store *storage.Store, scannerManager *scanner.Man
 		"assetDiscoveryJS":           func() string { return assets.assetURL("discovery.js") },
 		"assetDiscoveryCSS":          func() string { return assets.assetURL("discovery.css") },
 		"assetHomeJS":                func() string { return assets.assetURL("home.js") },
+		"assetSetupCSS":              func() string { return assets.assetURL("setup.css") },
+		"assetSetupJS":               func() string { return assets.assetURL("setup.js") },
 		"assetThemeJS":               func() string { return assets.assetURL("theme.js") },
 		"assetFaviconICO":            func() string { return assets.assetURL("favicon.ico") },
 		"assetIcon192":               func() string { return assets.assetURL("icon-192.png") },
@@ -560,6 +564,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET "+totpLoginPath, a.handleTOTPLoginPage)
 	mux.HandleFunc("POST "+totpLoginPath, a.handleTOTPLogin)
 	mux.Handle("POST /admin/logout", a.requireAdmin(http.HandlerFunc(a.handleLogout)))
+	a.registerSetupRoutes(mux)
 	a.registerBackupRoutes(mux)
 	mux.Handle("GET /admin", a.requireAdmin(http.HandlerFunc(a.handleDashboard)))
 	mux.Handle("GET /admin/search", a.requireAdmin(http.HandlerFunc(a.handleSearchPage)))
@@ -1003,6 +1008,10 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if a.shouldRedirectToSetup(r.Context()) {
+		http.Redirect(w, r, setupWizardPath, http.StatusSeeOther)
+		return
+	}
 	session, _ := a.sessions.get(r)
 	stats, err := a.store.Statistics(r.Context())
 	if err != nil {
@@ -1053,6 +1062,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		DailyMixes:       a.dashboardDailyMixSummary(r.Context()),
 		Translation:      a.dashboardLyricsTranslationSummary(r.Context()),
 		OnlineLyrics:     a.dashboardOnlineLyricsSummary(r.Context()),
+		SetupWizard:      a.dashboardSetupView(r.Context()),
 		Notice:           r.URL.Query().Get("notice"),
 	})
 }
