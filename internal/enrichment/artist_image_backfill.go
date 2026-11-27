@@ -135,9 +135,6 @@ func (m *Manager) EnrichAutoConfirmedArtist(ctx context.Context, artistID int64)
 
 // cacheAutoMatchedArtistImage fills a missing avatar after the identity commits.
 func (m *Manager) cacheAutoMatchedArtistImage(ctx context.Context, artistID int64) {
-	if m.checkSourceCooldown("artist image") != nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	if err := m.cacheMissingMatchedArtistImage(ctx, artistID); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, storage.ErrArtistImageBackfillState) {
@@ -184,7 +181,7 @@ func (m *Manager) cacheMissingMatchedArtistImage(ctx context.Context, artistID i
 	saveFallback := func(image storage.ArtistImageInput, guardSource, guardExternalID string) error {
 		return m.store.SaveAutoMatchedArtistImage(ctx, image, guardSource, guardExternalID, "")
 	}
-	outcome, errText, rate, _ := m.processStructuredArtistImageFallback(ctx, artistID, anchor, settings, saveFallback)
+	outcome, errText, rate, _ := m.processStructuredArtistImageFallback(ctx, artistID, anchor, settings, false, saveFallback)
 	if rate != nil {
 		return rate
 	}
@@ -409,7 +406,11 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 		}
 		if dlErr := m.cacheArtistProfileImage(ctx, item.ArtistID, p.Source, p.RemoteURL, save); dlErr != nil {
 			if rateErr := asRateLimited(dlErr); rateErr != nil {
-				return "", "", rateErr
+				if runMode == "matched" {
+					return "", "", rateErr
+				}
+				tier1TransientErr = true
+				continue
 			}
 			if errors.Is(dlErr, storage.ErrArtistImageBackfillState) {
 				return "skipped", "状态已变化，写入被安全拒绝", nil
@@ -449,7 +450,11 @@ func (m *Manager) processArtistImageBackfillItem(ctx context.Context, checkpoint
 				}
 				if dlErr := m.cacheArtistProfileImage(ctx, item.ArtistID, p.Source, p.RemoteURL, save); dlErr != nil {
 					if rateErr := asRateLimited(dlErr); rateErr != nil {
-						return "", "", rateErr
+						if runMode == "matched" {
+							return "", "", rateErr
+						}
+						tier1TransientErr = true
+						continue
 					}
 					if errors.Is(dlErr, storage.ErrArtistImageBackfillState) {
 						return "skipped", "状态已变化，写入被安全拒绝", nil
@@ -553,7 +558,7 @@ func (m *Manager) processAuditedArtistImageItemOpt(ctx context.Context, checkpoi
 
 // processStructuredArtistImageFallback tries the enabled Tier 2 sources in
 // priority order. The caller supplies the write guard for its workflow.
-func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, artistID int64, anchor storage.ArtistBiographyAnchor, imgSettings storage.ArtistImageSettings, save func(image storage.ArtistImageInput, guardSource, guardExternalID string) error) (outcome, errText string, rate *RateLimitError, hadTransientErr bool) {
+func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, artistID int64, anchor storage.ArtistBiographyAnchor, imgSettings storage.ArtistImageSettings, blockOnImageHostRateLimit bool, save func(image storage.ArtistImageInput, guardSource, guardExternalID string) error) (outcome, errText string, rate *RateLimitError, hadTransientErr bool) {
 	logSourceResult := func(source, reason string, details ...any) {
 		fields := []any{"artistId", artistID, "artist", anchor.Name, "source", source, "reason", reason}
 		m.logger.Debug("artist image fallback source result", append(fields, details...)...)
@@ -585,8 +590,12 @@ func (m *Manager) processStructuredArtistImageFallback(ctx context.Context, arti
 		data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, imgURL, "artist image")
 		if dlErr != nil {
 			if rateErr := asRateLimited(dlErr); rateErr != nil {
-				logSourceResult(srcName, "rate_limited", "stage", "download")
-				return true, "", "", rateErr
+				logSourceResult(srcName, "rate_limited", "stage", "download", "hostKey", rateErr.Source)
+				if blockOnImageHostRateLimit {
+					return true, "", "", rateErr
+				}
+				hadTransientErr = true
+				return false, "", "", nil
 			}
 			hadTransientErr = true
 			logSourceResult(srcName, "download_failed")
@@ -682,7 +691,7 @@ func (m *Manager) processComprehensiveArtistImageFallback(ctx context.Context, c
 	save := func(image storage.ArtistImageInput, _, _ string) error {
 		return m.store.SaveArtistImageBackfillGuarded(ctx, image, &checkpoint)
 	}
-	outcome, errText, rate, hadTransientErr := m.processStructuredArtistImageFallback(ctx, artistID, anchor, imgSettings, save)
+	outcome, errText, rate, hadTransientErr := m.processStructuredArtistImageFallback(ctx, artistID, anchor, imgSettings, runMode == "matched", save)
 	if hadPriorTransientErr {
 		hadTransientErr = true
 	}

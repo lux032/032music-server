@@ -284,7 +284,21 @@ func (s *Store) TransitionArtistImageBackfillRun(ctx context.Context, id int64, 
 		if _, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_items SET status='pending',rate_limit_count=0,claim_token=claim_token+1 WHERE run_id=? AND status<>'completed'`, id); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET status='running',pause_reason='',budget_baseline_ms=wait_total_ms WHERE id=?`, id)
+		var waiting string
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(waiting_until,'') FROM artist_image_backfill_runs WHERE id=?`, id).Scan(&waiting); err != nil {
+			return err
+		}
+		clearWaiting := false
+		if waiting != "" {
+			if ts, parseErr := time.Parse(time.RFC3339Nano, waiting); parseErr != nil || !ts.After(time.Now()) {
+				clearWaiting = true
+			}
+		}
+		if clearWaiting {
+			_, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET status='running',pause_reason='',waiting_until=NULL,budget_baseline_ms=wait_total_ms WHERE id=?`, id)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET status='running',pause_reason='',budget_baseline_ms=wait_total_ms WHERE id=?`, id)
+		}
 	case "auto_resume":
 		// 自动恢复重新校验持久化状态：先落地的人工暂停/停止优先。
 		if status != "paused" {
@@ -309,7 +323,17 @@ func (s *Store) TransitionArtistImageBackfillRun(ctx context.Context, id int64, 
 		if _, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_items SET status='pending',rate_limit_count=0,claim_token=claim_token+1 WHERE run_id=? AND status<>'completed'`, id); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET status='running',pause_reason='',budget_baseline_ms=wait_total_ms,auto_resume_count=auto_resume_count+1 WHERE id=?`, id)
+		clearWaiting := false
+		if waiting != "" {
+			if ts, parseErr := time.Parse(time.RFC3339Nano, waiting); parseErr != nil || !ts.After(time.Now()) {
+				clearWaiting = true
+			}
+		}
+		if clearWaiting {
+			_, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET status='running',pause_reason='',waiting_until=NULL,budget_baseline_ms=wait_total_ms,auto_resume_count=auto_resume_count+1 WHERE id=?`, id)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE artist_image_backfill_runs SET status='running',pause_reason='',budget_baseline_ms=wait_total_ms,auto_resume_count=auto_resume_count+1 WHERE id=?`, id)
+		}
 	case "pause", "cancel", "fail":
 		if status != "running" && !(action == "cancel" && status == "paused") {
 			return ErrArtistImageBackfillState

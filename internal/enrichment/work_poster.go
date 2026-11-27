@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,14 +37,33 @@ func posterCacheKey(remoteURL string) (string, bool) {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(remoteURL))), true
 }
 
+// artistImageDownloadSource derives a host-scoped rate-limit/cooldown key for
+// artist image downloads so a throttled third-party image host (e.g. Wikimedia
+// Commons or a WAF-protected site) does not block unrelated image hosts.
+func artistImageDownloadSource(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "artist image"
+	}
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u.Hostname()), "."))
+	if host == "" {
+		return "artist image"
+	}
+	return "artist image:" + host
+}
+
 // downloadPublicImage fetches an untrusted remote image URL, refusing
 // private/loopback/link-local targets (including across redirects) to prevent
 // SSRF, and returns the body with its detected MIME type and file extension.
 func (m *Manager) downloadPublicImage(ctx context.Context, remoteURL, label string) ([]byte, string, string, error) {
-	if err := m.checkSourceCooldown(label); err != nil {
+	sourceKey := label
+	if label == "artist image" {
+		sourceKey = artistImageDownloadSource(remoteURL)
+	}
+	if err := m.checkSourceCooldown(sourceKey); err != nil {
 		return nil, "", "", err
 	}
-	img, err := netfetch.DownloadImage(ctx, m.client, nil, label, remoteURL, m.metadataUserAgent(ctx))
+	img, err := netfetch.DownloadImage(ctx, m.client, nil, sourceKey, remoteURL, m.metadataUserAgent(ctx))
 	var cd *sourcegate.CooldownError
 	if errors.As(err, &cd) {
 		status := 429
@@ -51,7 +71,7 @@ func (m *Manager) downloadPublicImage(ctx context.Context, remoteURL, label stri
 		if errors.As(err, &imageLimit) {
 			status = imageLimit.StatusCode
 		}
-		err = m.rateLimitedError(label, status, cd.RetryAfter)
+		err = m.rateLimitedError(sourceKey, status, cd.RetryAfter)
 	}
 	if err != nil {
 		err = fmt.Errorf("%s: %w", label, err)

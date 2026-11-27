@@ -291,6 +291,9 @@ func (m *Manager) discoverArtistImageFromWebWithExclusions(
 			if seenImg[img.URL] || exclusions.URLs[img.URL] {
 				continue
 			}
+			if m.checkSourceCooldown(artistImageDownloadSource(img.URL)) != nil {
+				continue
+			}
 			seenImg[img.URL] = true
 			flat = append(flat, webImageFlatCandidate{
 				ImageIndex:  len(flat),
@@ -343,10 +346,13 @@ func (m *Manager) discoverArtistImageFromWebWithExclusions(
 	picked := flat[*out.SelectedImageIndex]
 
 	// Download and locally inspect dimensions/aspect ratio and hash exclusions.
+	// Third-party web image 429/503 responses are treated as per-host blocks
+	// (already recorded in host cooldown) and skipped rather than stalling the
+	// entire batch run.
 	data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, picked.ImageURL, "artist image")
 	if dlErr != nil {
-		if asRateLimited(dlErr) != nil {
-			return zero, false, dlErr
+		if r := asRateLimited(dlErr); r != nil {
+			m.logger.Debug("web artist image host rate-limited; skipping candidate", "artistId", artistID, "hostKey", r.Source)
 		}
 		return zero, false, nil
 	}
@@ -653,7 +659,7 @@ func (m *Manager) replaceAuditedArtistAvatarOpt(
 		data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, imgURL, "artist image")
 		if dlErr != nil {
 			if r := asRateLimited(dlErr); r != nil {
-				return r
+				m.logger.Debug("replacement image host rate-limited; cascading to next source", "artistId", artistID, "source", srcName, "hostKey", r.Source)
 			}
 			return nil
 		}
@@ -1062,6 +1068,7 @@ func (m *Manager) acquireArtistAvatarWithAIGate(
 		return "cached", ""
 	}
 
+	blockOnImageHostRateLimit := opts.RunMode == "matched"
 	considerStructured := func(srcName, imgURL, pageURL, title string, isTier1Profile bool) (done bool, out, eText string, rErr *RateLimitError) {
 		imgURL = strings.TrimSpace(imgURL)
 		if imgURL == "" || triedURLs[imgURL] || exclusions.URLs[imgURL] {
@@ -1074,7 +1081,12 @@ func (m *Manager) acquireArtistAvatarWithAIGate(
 		data, mimeType, ext, dlErr := m.downloadPublicImage(ctx, imgURL, "artist image")
 		if dlErr != nil {
 			if r := asRateLimited(dlErr); r != nil {
-				return true, "", "", r
+				if blockOnImageHostRateLimit {
+					return true, "", "", r
+				}
+				hadTransientErr = true
+				m.logger.Debug("artist image host rate-limited; cascading to next source", "artistId", artistID, "source", srcName, "hostKey", r.Source)
+				return false, "", "", nil
 			}
 			hadTransientErr = true
 			return false, "", "", nil

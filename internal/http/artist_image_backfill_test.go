@@ -250,3 +250,73 @@ func TestMatchReviewArtistImageQueueCountsAllAndUsesProtectedPreviews(t *testing
 		t.Fatalf("reviewed preview status = %d", rec.Code)
 	}
 }
+
+func TestMatchReviewPageWaitSourceLabelsAndHistoricalStyle(t *testing.T) {
+	_, s, handler, _, cookie, _ := rateLimitTestApp(t)
+	ctx := context.Background()
+	artists, err := s.ArtistsForMatching(ctx)
+	if err != nil || len(artists) == 0 {
+		t.Fatalf("artists=%v err=%v", artists, err)
+	}
+	if err = s.UpsertExternalArtistProfile(ctx, artists[0].ID, storage.ExternalArtistProfile{Source: "lastfm", ExternalID: "lf-wait-1", DisplayName: "Artist"}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.CreateArtistImageBackfillRun(ctx, []storage.ArtistImageBackfillCandidate{{ID: artists[0].ID, Name: artists[0].Name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.ClaimArtistImageBackfillItem(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := storage.ArtistImageBackfillCheckpoint{RunID: run, ItemID: item.ID, ClaimToken: item.ClaimToken}
+
+	// 1. Active future wait with host-scoped key renders Chinese label and active alert style.
+	future := time.Now().Add(4 * time.Minute).UTC()
+	if err = s.RecordArtistImageBackfillWait(ctx, cp, "artist image:upload.wikimedia.org", future, 2*time.Minute, true); err != nil {
+		t.Fatal(err)
+	}
+	activeBody := adminGetBody(t, handler, cookie, "/admin/matches")
+	if !strings.Contains(activeBody, "限流 图片源（upload.wikimedia.org）") {
+		t.Fatalf("expected localized host wait label in active SSR body")
+	}
+	if strings.Contains(activeBody, "限流 artist image") {
+		t.Fatal("raw English '限流 artist image' must not leak into UI")
+	}
+	if strings.Contains(activeBody, "match-active-wait is-historical") {
+		t.Fatal("active future wait must not carry is-historical class")
+	}
+
+	// 2. Manual pause + expired wait renders subtle historical wait note with is-historical.
+	if err = s.TransitionArtistImageBackfillRun(ctx, run, "cancel", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	run2, err := s.CreateArtistImageBackfillRun(ctx, []storage.ArtistImageBackfillCandidate{{ID: artists[0].ID, Name: artists[0].Name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item2, err := s.ClaimArtistImageBackfillItem(ctx, run2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp2 := storage.ArtistImageBackfillCheckpoint{RunID: run2, ItemID: item2.ID, ClaimToken: item2.ClaimToken}
+	past := time.Now().Add(-3 * time.Minute).UTC()
+	if err = s.RecordArtistImageBackfillWait(ctx, cp2, "artist image", past, 10*time.Minute, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.TransitionArtistImageBackfillRun(ctx, run2, "pause", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	histBody := adminGetBody(t, handler, cookie, "/admin/matches")
+	for _, want := range []string{
+		"match-active-wait is-historical",
+		"历史限流（图片源）累计等待 10 分钟",
+	} {
+		if !strings.Contains(histBody, want) {
+			t.Fatalf("historical body missing %q", want)
+		}
+	}
+	if strings.Contains(histBody, "限流 artist image") {
+		t.Fatal("historical body must not leak raw English '限流 artist image'")
+	}
+}

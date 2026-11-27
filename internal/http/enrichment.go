@@ -1013,6 +1013,66 @@ func runAutoResumes(status, pauseReason string) bool {
 	return false
 }
 
+// waitSourceLabel 将内部限流来源键映射为可读中文标签（含按域名隔离的图片源）。
+func waitSourceLabel(source string) string {
+	s := strings.TrimSpace(source)
+	if s == "" {
+		return ""
+	}
+	if s == "artist image" {
+		return "图片源"
+	}
+	if strings.HasPrefix(s, "artist image:") {
+		if host := strings.TrimSpace(strings.TrimPrefix(s, "artist image:")); host != "" {
+			return "图片源（" + host + "）"
+		}
+		return "图片源"
+	}
+	switch s {
+	case "musicbrainz":
+		return "MusicBrainz"
+	case "lastfm":
+		return "Last.fm"
+	case "bangumi":
+		return "Bangumi"
+	case "deezer":
+		return "Deezer"
+	case "fanart":
+		return "Fanart.tv"
+	case "wikipedia":
+		return "Wikipedia"
+	case "wikidata":
+		return "Wikidata"
+	case "spotify":
+		return "Spotify"
+	case "ai":
+		return "AI 模型服务"
+	case "tavily":
+		return "Tavily 联网"
+	case "deepseek":
+		return "DeepSeek 联网"
+	case "websearch":
+		return "联网搜索"
+	case "work poster":
+		return "作品海报"
+	default:
+		return s
+	}
+}
+
+// waitUntilFuture 报告限流截止时间是否仍处于未来（活跃等待中）。
+func waitUntilFuture(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	ts, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return false
+	}
+	return ts.After(time.Now())
+}
+
 // waitTotalLabel 将累计限流等待毫秒数渲染为可读时长。
 func waitTotalLabel(ms int64) string {
 	if ms <= 0 {

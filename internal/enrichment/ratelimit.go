@@ -198,6 +198,12 @@ func (m *Manager) doSourceJSON(client *http.Client, req *http.Request, source st
 
 // sourceDisplayName renders a rate-limited source in Chinese run messages.
 func sourceDisplayName(source string) string {
+	if strings.HasPrefix(source, "artist image:") {
+		if host := strings.TrimSpace(strings.TrimPrefix(source, "artist image:")); host != "" {
+			return "图片源（" + host + "）"
+		}
+		return "歌手图片"
+	}
 	if strings.HasPrefix(source, "artist image") {
 		return "歌手图片"
 	}
@@ -353,6 +359,14 @@ func (m *Manager) blockSourceUntil(source string, until time.Time) {
 	defer m.cooldownMu.Unlock()
 	if m.blockedUntil == nil {
 		m.blockedUntil = map[string]time.Time{}
+	}
+	if len(m.blockedUntil) > 256 {
+		now := m.clockNow()
+		for k, exp := range m.blockedUntil {
+			if !exp.After(now) {
+				delete(m.blockedUntil, k)
+			}
+		}
 	}
 	if until.After(m.blockedUntil[source]) {
 		m.blockedUntil[source] = until

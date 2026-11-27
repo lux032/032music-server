@@ -644,3 +644,38 @@ func TestArtistImageCandidateApprovalIsAtomic(t *testing.T) {
 		t.Fatalf("candidate after successful approval = %+v, %v", review, err)
 	}
 }
+
+func TestArtistImageBackfillResumeClearsExpiredWaitingUntil(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.importArtistTrack(t, "wait/01.flac", "WaitArtist")
+	a := f.artistID(t, "WaitArtist")
+	runID, err := f.store.CreateArtistImageBackfillRun(f.ctx, []ArtistImageBackfillCandidate{{ID: a, Name: "WaitArtist"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := f.store.ClaimArtistImageBackfillItem(f.ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := ArtistImageBackfillCheckpoint{RunID: runID, ItemID: item.ID, ClaimToken: item.ClaimToken}
+	past := time.Now().Add(-2 * time.Minute).UTC()
+	if err = f.store.RecordArtistImageBackfillWait(f.ctx, cp, "artist image:upload.wikimedia.org", past, 2*time.Minute, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.TransitionArtistImageBackfillRun(f.ctx, runID, "pause", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.TransitionArtistImageBackfillRun(f.ctx, runID, "resume", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.store.DurableArtistImageBackfillRun(f.ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WaitingUntil != "" {
+		t.Fatalf("expired waiting_until should clear on resume, got %q", got.WaitingUntil)
+	}
+	if got.WaitTotalMS != int64((2*time.Minute)/time.Millisecond) || got.WaitSource != "artist image:upload.wikimedia.org" {
+		t.Fatalf("historical wait metadata must be preserved: %+v", got)
+	}
+}

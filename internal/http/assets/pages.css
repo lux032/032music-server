@@ -4105,6 +4105,12 @@ button.artist-more[hidden] { display: none; }
   background: color-mix(in oklab, var(--warning) 10%, transparent);
   color: var(--warning); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
 }
+.match-active-wait.is-historical:not(:empty),
+.run-wait.is-historical:not(:empty) {
+  padding: 0; background: transparent;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+}
 .match-active-note:empty, .match-active-wait:empty { display: none; }
 .match-active-note { margin: 0; font-size: var(--fs-xs); }
 
