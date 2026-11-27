@@ -555,31 +555,64 @@ func (a *App) handleBatchKeepArtistImageCandidates(w http.ResponseWriter, r *htt
 	}
 	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
 	ids := parseCandidateIDList(r)
-	processed, skipped := 0, 0
+	wantJSON := strings.Contains(r.Header.Get("Accept"), "application/json")
+	if len(ids) == 0 {
+		if wantJSON {
+			writeArtistJSON(w, map[string]any{"processed": 0, "skipped": 0, "alreadyHandled": 0, "failed": 0})
+			return
+		}
+		redirectWithNotice(w, r, returnTo, "未选中任何可保留的待审项")
+		return
+	}
+	processed, alreadyHandled, failed := 0, 0, 0
 	for _, id := range ids {
 		if a.enrichment != nil {
 			a.enrichment.RemoveArtistImageCandidateSearch(id)
 		}
 		if err := a.store.KeepArtistImageCandidate(r.Context(), id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				skipped++
+				alreadyHandled++
 				continue
 			}
 			a.logger.Error("batch keep artist image candidate", "candidateId", id, "error", err)
-			skipped++
+			failed++
 			continue
 		}
 		processed++
 	}
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeArtistJSON(w, map[string]any{"processed": processed, "skipped": skipped})
+	skipped := alreadyHandled + failed
+	if wantJSON {
+		writeArtistJSON(w, map[string]any{
+			"processed":      processed,
+			"skipped":        skipped,
+			"alreadyHandled": alreadyHandled,
+			"failed":         failed,
+		})
 		return
+	}
+	var reasons []string
+	if alreadyHandled > 0 {
+		reasons = append(reasons, fmt.Sprintf("已处理 %d 位", alreadyHandled))
+	}
+	if failed > 0 {
+		reasons = append(reasons, fmt.Sprintf("失败 %d 位", failed))
 	}
 	if processed == 0 {
-		redirectWithNotice(w, r, returnTo, "未选中可保留的待审项")
+		switch {
+		case failed > 0 && alreadyHandled == 0:
+			redirectWithNotice(w, r, returnTo, fmt.Sprintf("批量保留失败（%d 位），请稍后重试或查看日志", failed))
+		case alreadyHandled > 0 && failed == 0:
+			redirectWithNotice(w, r, returnTo, "选中项均已处理，无需重复保留")
+		default:
+			redirectWithNotice(w, r, returnTo, fmt.Sprintf("未保留任何头像（%s）", strings.Join(reasons, "，")))
+		}
 		return
 	}
-	redirectWithNotice(w, r, returnTo, fmt.Sprintf("已批量确认保留 %d 位艺术家原图，后续普通全量审查将跳过", processed))
+	msg := fmt.Sprintf("已批量确认保留 %d 位艺术家原图，后续普通全量审查将跳过", processed)
+	if len(reasons) > 0 {
+		msg = fmt.Sprintf("已批量确认保留 %d 位艺术家原图，其余未处理（%s）", processed, strings.Join(reasons, "，"))
+	}
+	redirectWithNotice(w, r, returnTo, msg)
 }
 
 func (a *App) handleBatchClearArtistImageCandidates(w http.ResponseWriter, r *http.Request) {
@@ -589,33 +622,72 @@ func (a *App) handleBatchClearArtistImageCandidates(w http.ResponseWriter, r *ht
 	}
 	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches?tab=avatars")
 	ids := parseCandidateIDList(r)
-	processed, skipped := 0, 0
+	wantJSON := strings.Contains(r.Header.Get("Accept"), "application/json")
+	if len(ids) == 0 {
+		if wantJSON {
+			writeArtistJSON(w, map[string]any{"processed": 0, "skipped": 0, "alreadyHandled": 0, "customProtected": 0, "failed": 0})
+			return
+		}
+		redirectWithNotice(w, r, returnTo, "未选中任何可清空的待审项")
+		return
+	}
+	processed, alreadyHandled, customProtected, failed := 0, 0, 0, 0
 	for _, id := range ids {
 		if a.enrichment != nil {
 			a.enrichment.RemoveArtistImageCandidateSearch(id)
 		}
 		if err := a.store.ClearArtistImageCandidate(r.Context(), id); err != nil {
-			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, storage.ErrArtistImageBackfillState) {
-				skipped++
+			if errors.Is(err, sql.ErrNoRows) {
+				alreadyHandled++
+				continue
+			}
+			if errors.Is(err, storage.ErrArtistImageBackfillState) {
+				customProtected++
 				continue
 			}
 			a.logger.Error("batch clear artist image candidate", "candidateId", id, "error", err)
-			skipped++
+			failed++
 			continue
 		}
 		processed++
 	}
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeArtistJSON(w, map[string]any{"processed": processed, "skipped": skipped})
+	skipped := alreadyHandled + customProtected + failed
+	if wantJSON {
+		writeArtistJSON(w, map[string]any{
+			"processed":       processed,
+			"skipped":         skipped,
+			"alreadyHandled":  alreadyHandled,
+			"customProtected": customProtected,
+			"failed":          failed,
+		})
 		return
 	}
+	var reasons []string
+	if alreadyHandled > 0 {
+		reasons = append(reasons, fmt.Sprintf("已处理 %d 位", alreadyHandled))
+	}
+	if customProtected > 0 {
+		reasons = append(reasons, fmt.Sprintf("自定义头像保护 %d 位", customProtected))
+	}
+	if failed > 0 {
+		reasons = append(reasons, fmt.Sprintf("失败 %d 位", failed))
+	}
 	if processed == 0 {
-		redirectWithNotice(w, r, returnTo, "未清空任何头像（可能已处理或存在自定义头像）")
+		switch {
+		case failed > 0 && alreadyHandled == 0 && customProtected == 0:
+			redirectWithNotice(w, r, returnTo, fmt.Sprintf("批量清空失败（%d 位），请稍后重试或查看日志", failed))
+		case customProtected > 0 && alreadyHandled == 0 && failed == 0:
+			redirectWithNotice(w, r, returnTo, "选中艺人均存在自定义头像，未执行清空")
+		case alreadyHandled > 0 && customProtected == 0 && failed == 0:
+			redirectWithNotice(w, r, returnTo, "选中项均已处理，未执行清空")
+		default:
+			redirectWithNotice(w, r, returnTo, fmt.Sprintf("未清空任何头像（%s）", strings.Join(reasons, "，")))
+		}
 		return
 	}
 	msg := fmt.Sprintf("已批量清空 %d 位艺术家缓存头像（可在任务页撤销恢复）", processed)
-	if skipped > 0 {
-		msg = fmt.Sprintf("已批量清空 %d 位艺术家缓存头像，跳过 %d 位（自定义头像或已处理）", processed, skipped)
+	if len(reasons) > 0 {
+		msg = fmt.Sprintf("已批量清空 %d 位艺术家缓存头像（可在任务页撤销恢复），其余未清空（%s）", processed, strings.Join(reasons, "，"))
 	}
 	redirectWithNotice(w, r, returnTo, msg)
 }

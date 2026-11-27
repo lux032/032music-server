@@ -748,16 +748,52 @@ func TestArtistImageSearchQueueAndBatchReviewHTTP(t *testing.T) {
 		t.Fatalf("dismiss resp = %d %s", disRec.Code, disRec.Body.String())
 	}
 
-	// 4. Batch keep c3 and batch clear c4 via form posts.
+	// 4. Empty candidateIds must report empty selection (never misleading "自定义头像").
+	noticeOf := func(rec *httptest.ResponseRecorder) string {
+		loc, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatalf("parse Location %q: %v", rec.Header().Get("Location"), err)
+		}
+		return loc.Query().Get("notice")
+	}
+	emptyClearRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-clear", url.Values{
+		"candidateIds": {""},
+	})
+	if emptyClearRec.Code != http.StatusSeeOther {
+		t.Fatalf("empty batch-clear code = %d", emptyClearRec.Code)
+	}
+	if n := noticeOf(emptyClearRec); !strings.Contains(n, "未选中任何可清空的待审项") || strings.Contains(n, "自定义头像") {
+		t.Fatalf("empty batch-clear notice = %q, want empty-selection message without custom-avatar hint", n)
+	}
+	emptyKeepRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-keep", url.Values{
+		"candidateIds": {""},
+	})
+	if emptyKeepRec.Code != http.StatusSeeOther {
+		t.Fatalf("empty batch-keep code = %d", emptyKeepRec.Code)
+	}
+	if n := noticeOf(emptyKeepRec); !strings.Contains(n, "未选中任何可保留的待审项") {
+		t.Fatalf("empty batch-keep notice = %q", n)
+	}
+
+	// 5. Batch keep c3 and batch clear c4 via form posts.
 	keepRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-keep", url.Values{
 		"candidateIds": {strconv.FormatInt(c3, 10)},
 	})
 	if keepRec.Code != http.StatusSeeOther {
 		t.Fatalf("batch-keep code = %d", keepRec.Code)
 	}
+	if n := noticeOf(keepRec); !strings.Contains(n, "已批量确认保留 1 位") {
+		t.Fatalf("batch-keep notice = %q", n)
+	}
 	rev3, ok3, err := s.ArtistImageReviewByArtist(ctx, a3)
 	if err != nil || !ok3 || rev3.Verdict != "keep" || rev3.ImageHash != "hashqueue003" {
 		t.Fatalf("BatchKeepArtist review = (%+v, %v, %v)", rev3, ok3, err)
+	}
+	repeatKeepRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-keep", url.Values{
+		"candidateIds": {strconv.FormatInt(c3, 10)},
+	})
+	if n := noticeOf(repeatKeepRec); !strings.Contains(n, "选中项均已处理") {
+		t.Fatalf("repeat batch-keep notice = %q", n)
 	}
 
 	clearRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-clear", url.Values{
@@ -766,12 +802,74 @@ func TestArtistImageSearchQueueAndBatchReviewHTTP(t *testing.T) {
 	if clearRec.Code != http.StatusSeeOther {
 		t.Fatalf("batch-clear code = %d", clearRec.Code)
 	}
+	if n := noticeOf(clearRec); !strings.Contains(n, "已批量清空 1 位") || strings.Contains(n, "自定义头像") {
+		t.Fatalf("batch-clear notice = %q", n)
+	}
 	if _, _, _, pErr := s.ArtistImagePath(ctx, a4); pErr == nil {
 		t.Fatal("expected BatchClearArtist cache to be cleared")
 	}
 	actions, err := s.RecentArtistImageAuditActions(ctx, 10)
 	if err != nil || len(actions) == 0 || actions[0].ArtistID != a4 {
 		t.Fatalf("expected undo snapshot for BatchClearArtist, got %+v err=%v", actions, err)
+	}
+	repeatClearRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-clear", url.Values{
+		"candidateIds": {strconv.FormatInt(c4, 10)},
+	})
+	if n := noticeOf(repeatClearRec); !strings.Contains(n, "选中项均已处理") || strings.Contains(n, "自定义头像") {
+		t.Fatalf("repeat batch-clear notice = %q, want already-handled without custom-avatar hint", n)
+	}
+
+	// 6. Concurrent custom avatar protection and mixed breakdown (form + JSON).
+	a5 := seed("b/5.flac", "CustomProtectedArtist", "hashqueue005")
+	c5 := addCard(a5, "not_found_auto", "")
+	if _, err := s.SaveCustomArtistImage(ctx, a5, storage.CustomImageInput{
+		Hash: "customhash005", MIMEType: "image/png", FileName: "custom5.png", Width: 300, Height: 300, ByteSize: 120,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	customOnlyRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-clear", url.Values{
+		"candidateIds": {strconv.FormatInt(c5, 10)},
+	})
+	if n := noticeOf(customOnlyRec); !strings.Contains(n, "选中艺人均存在自定义头像") {
+		t.Fatalf("custom-protected batch-clear notice = %q", n)
+	}
+
+	a6 := seed("b/6.flac", "MixedBatchClearArtist", "hashqueue006")
+	c6 := addCard(a6, "", "")
+	mixedClearRec := postSecurity(t, app, handler, cookie, "/admin/matches/images/candidates/batch-clear", url.Values{
+		"candidateIds": {fmt.Sprintf("%d,%d,%d", c6, c4, c5)},
+	})
+	if mixedClearRec.Code != http.StatusSeeOther {
+		t.Fatalf("mixed batch-clear code = %d", mixedClearRec.Code)
+	}
+	if n := noticeOf(mixedClearRec); !strings.Contains(n, "已批量清空 1 位") || !strings.Contains(n, "已处理 1 位") || !strings.Contains(n, "自定义头像保护 1 位") {
+		t.Fatalf("mixed batch-clear notice = %q", n)
+	}
+
+	// JSON breakdown on batch-clear with already-handled + custom-protected.
+	jsonBody, _ := json.Marshal(map[string]any{"candidateIds": []int64{c4, c5}})
+	jsonReq := httptest.NewRequest(http.MethodPost, "/admin/matches/images/candidates/batch-clear", strings.NewReader(string(jsonBody)))
+	jsonReq.Header.Set("Content-Type", "application/json")
+	jsonReq.Header.Set("Accept", "application/json")
+	jsonReq.Header.Set("X-CSRF-Token", sess.CSRFToken)
+	jsonReq.AddCookie(cookie)
+	jsonRec := httptest.NewRecorder()
+	handler.ServeHTTP(jsonRec, jsonReq)
+	if jsonRec.Code != http.StatusOK {
+		t.Fatalf("json batch-clear code = %d body=%s", jsonRec.Code, jsonRec.Body.String())
+	}
+	var clearJSON struct {
+		Processed       int `json:"processed"`
+		Skipped         int `json:"skipped"`
+		AlreadyHandled  int `json:"alreadyHandled"`
+		CustomProtected int `json:"customProtected"`
+		Failed          int `json:"failed"`
+	}
+	if err := json.Unmarshal(jsonRec.Body.Bytes(), &clearJSON); err != nil {
+		t.Fatal(err)
+	}
+	if clearJSON.Processed != 0 || clearJSON.Skipped != 2 || clearJSON.AlreadyHandled != 1 || clearJSON.CustomProtected != 1 || clearJSON.Failed != 0 {
+		t.Fatalf("json batch-clear = %+v", clearJSON)
 	}
 }
 

@@ -1231,6 +1231,7 @@ document.addEventListener('submit', async (event) => {
   let pollTimer = null;
   let pollController = null;
   let lastQueueSnapshot = null;
+  let lastSelectionKey = '';
 
   function workbench() {
     return document.querySelector('[data-avatar-workbench]');
@@ -1406,6 +1407,16 @@ document.addEventListener('submit', async (event) => {
         : '加入联网找图队列';
     }
 
+    const selList = Array.from(selectedIds);
+    const selValue = selList.join(',');
+    const selKey = selList.slice().sort().join(',');
+    const selectionChanged = selKey !== lastSelectionKey;
+    lastSelectionKey = selKey;
+
+    root.querySelectorAll('form[data-avatar-batch-form] input[name="candidateIds"]').forEach((input) => {
+      if (input instanceof HTMLInputElement) input.value = selValue;
+    });
+
     const batchKeepBtn = root.querySelector('[data-avatar-batch-keep]');
     if (batchKeepBtn) {
       batchKeepBtn.disabled = totalSelected === 0;
@@ -1413,13 +1424,18 @@ document.addEventListener('submit', async (event) => {
     }
     const batchClearBtn = root.querySelector('[data-avatar-batch-clear]');
     if (batchClearBtn) {
+      const baseLabel = totalSelected > 0 ? `批量清空头像 (${totalSelected})` : '批量清空头像';
       batchClearBtn.disabled = totalSelected === 0;
       batchClearBtn.setAttribute('data-inline-confirm', `确认清空 ${totalSelected} 位头像`);
-      if (batchClearBtn.getAttribute('data-confirm-armed') === '1') {
+      batchClearBtn.dataset.originalLabel = baseLabel;
+      const armed = batchClearBtn.getAttribute('data-confirm-armed') === '1';
+      if (armed && (totalSelected === 0 || selectionChanged)) {
         batchClearBtn.removeAttribute('data-confirm-armed');
         batchClearBtn.closest('form')?.querySelector('.match-inline-confirm-cancel')?.remove();
+        batchClearBtn.textContent = baseLabel;
+      } else if (!armed) {
+        batchClearBtn.textContent = baseLabel;
       }
-      batchClearBtn.textContent = totalSelected > 0 ? `批量清空头像 (${totalSelected})` : '批量清空头像';
     }
   }
 
@@ -1705,6 +1721,7 @@ document.addEventListener('submit', async (event) => {
     activeFilter = 'all';
     searchQuery = '';
     lastQueueSnapshot = null;
+    lastSelectionKey = '';
     const root = workbench();
     if (!root) return;
     const strip = root.querySelector('[data-avatar-queue-strip]');
@@ -1807,6 +1824,9 @@ document.addEventListener('submit', async (event) => {
     }
   });
 
+  // Capture phase so this runs before router.js's bubble-phase PJAX submit handler:
+  // single-card search forms enqueue via JSON without triggering a PJAX reload, and
+  // batch keep/clear forms populate candidateIds (or cancel if empty) before FormData is read.
   document.addEventListener('submit', async (e) => {
     const form = e.target;
     if (!(form instanceof HTMLFormElement)) return;
@@ -1816,6 +1836,7 @@ document.addEventListener('submit', async (event) => {
     // Intercept single-card "联网找新图 / 重新搜图" to enqueue without page reload
     if (form.hasAttribute('data-avatar-search-form')) {
       e.preventDefault();
+      e.stopPropagation();
       const cid = Number(form.getAttribute('data-avatar-search-form'));
       if (!cid) return;
       try {
@@ -1841,7 +1862,7 @@ document.addEventListener('submit', async (event) => {
         hidden.value = ids.join(',');
       }
     }
-  });
+  }, true);
 
   document.addEventListener('change', (e) => {
     const el = e.target;
