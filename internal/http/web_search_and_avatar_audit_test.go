@@ -781,10 +781,21 @@ func TestArtistImageAutoIngestSettingsConfirmAndE2EHTTP(t *testing.T) {
 	reg := websearch.NewRegistry()
 	app.SetWebSearchRegistry(reg)
 	manager.SetWebSearchRegistry(reg)
-	// Keep external metadata sources disabled so RefreshArtistBiographies stays
-	// completely offline during this HTTP E2E test.
+	// Keep external metadata & biography sources disabled so RefreshArtistBiographies
+	// stays completely offline (never dialing real musicbrainz.org) during this HTTP E2E test.
 	_ = s.SaveMetadataSourceSetting(ctx, storage.MetadataSourceSetting{Source: "musicbrainz", Enabled: false})
 	_ = s.SaveMetadataSourceSetting(ctx, storage.MetadataSourceSetting{Source: "lastfm", Enabled: false})
+	if err := s.SaveBiographySettings(ctx, storage.BiographySettings{
+		PreferredLanguages:   "zh,ja,en",
+		SourcePriority:       "wikipedia,lastfm",
+		WikipediaEnabled:     false,
+		EnglishFallback:      true,
+		CacheDays:            30,
+		AITranslateEnabled:   false,
+		AIWebFallbackEnabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// 1. Admin auth required on auto-queue.json.
 	unauthReq := httptest.NewRequest(http.MethodGet, "/admin/matches/images/auto-queue.json", nil)
