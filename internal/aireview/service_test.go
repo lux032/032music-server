@@ -391,13 +391,18 @@ func TestArtistConflictAndSeriesSuggestion(t *testing.T) {
 		},
 	})
 
-	// Artist candidate conflicting with another artist's MBID must be forced to uncertain.
+	// With default ArtistMergeMode="auto", a high-confidence (>=92) non-composite
+	// conflict candidate auto-merges into the existing canonical owner.
 	arRes, err := svc.EvaluateTarget(ctx, storage.AITargetArtistMatch, a2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if arRes.Applied || arRes.Action != storage.AIActionUncertain {
-		t.Fatalf("conflicting artist candidate must not auto-bind, got %+v", arRes)
+	if !arRes.Applied || arRes.Action != storage.AIActionAutoConfirm {
+		t.Fatalf("expected high-confidence conflicting artist candidate to auto-merge under default ArtistMergeMode=auto, got %+v", arRes)
+	}
+	detailA2, err := s.ArtistDetail(ctx, a2)
+	if err != nil || detailA2.MergedIntoID != a1 {
+		t.Fatalf("expected a2 merged into a1 (%d), got MergedIntoID=%d err=%v", a1, detailA2.MergedIntoID, err)
 	}
 
 	// Series suggestion defaults to recommend-only without merging.

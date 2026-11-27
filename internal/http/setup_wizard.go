@@ -865,6 +865,7 @@ func (a *App) handleSetupStep3(w http.ResponseWriter, r *http.Request) {
 	rev.TrackMode = mode
 	rev.WorkMode = mode
 	rev.ArtistMode = mode
+	rev.ArtistMergeMode = mode
 	rev.CreditMode = mode
 	rev.SeriesMode = mode
 	if err := a.store.SaveAIReviewSettings(ctx, rev); err != nil {

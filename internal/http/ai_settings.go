@@ -280,6 +280,9 @@ func (a *App) handleSaveAISettings(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("artist_mode")); v != "" {
 		rev.ArtistMode = v
 	}
+	if v := strings.TrimSpace(r.FormValue("artist_merge_mode")); v != "" {
+		rev.ArtistMergeMode = v
+	}
 	if v := strings.TrimSpace(r.FormValue("credit_mode")); v != "" {
 		rev.CreditMode = v
 	}

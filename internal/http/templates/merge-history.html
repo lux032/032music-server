@@ -22,10 +22,11 @@
       <header class="card-head"><h2 class="card-title">合并历史与回退</h2></header>
       {{if .Merges}}
       <div class="data-table-wrap"><table class="data-table">
-        <thead><tr><th scope="col">记录</th><th scope="col">源歌手</th><th scope="col">目标歌手</th><th scope="col">状态</th><th scope="col">时间</th><th scope="col">操作</th></tr></thead>
+        <thead><tr><th scope="col">记录</th><th scope="col">源歌手</th><th scope="col">目标歌手</th><th scope="col">来源</th><th scope="col">状态</th><th scope="col">时间</th><th scope="col">操作</th></tr></thead>
         <tbody>{{range .Merges}}
           <tr>
             <td>#{{.ID}}</td><td>{{.SourceName}}</td><td>{{.TargetName}}</td>
+            <td><span class="status-badge">{{if eq .TriggerSource "auto_match"}}自动匹配{{else if eq .TriggerSource "ai_review"}}AI 审核{{else if eq .TriggerSource "backfill"}}一键收敛{{else}}人工合并{{end}}</span></td>
             <td><span class="status-badge{{if eq .Status "merged"}} success{{end}}">{{if eq .Status "merged"}}已合并{{else if eq .Status "rolled_back"}}已回退{{else}}{{.Status}}{{end}}</span></td>
             <td>{{formatTime .CreatedAt}}</td>
             <td>

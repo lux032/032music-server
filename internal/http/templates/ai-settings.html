@@ -124,6 +124,13 @@
                 <option value="auto" {{if eq .Review.ArtistMode "auto"}}selected{{end}}>分级自治（≥90 分且无冲突自动绑定）</option>
               </select>
             </label>
+            <label>艺术家冲突合并
+              <select name="artist_merge_mode">
+                <option value="off" {{if eq .Review.ArtistMergeMode "off"}}selected{{end}}>关闭</option>
+                <option value="recommend" {{if eq .Review.ArtistMergeMode "recommend"}}selected{{end}}>仅给建议（页面高亮一键并入）</option>
+                <option value="auto" {{if eq .Review.ArtistMergeMode "auto"}}selected{{end}}>分级自治（≥92 分且非复合/未回滚自动合并）</option>
+              </select>
+            </label>
             <label>复合署名拆分
               <select name="credit_mode">
                 <option value="off" {{if eq .Review.CreditMode "off"}}selected{{end}}>关闭</option>

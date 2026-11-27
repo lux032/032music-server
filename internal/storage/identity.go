@@ -34,9 +34,18 @@ type ArtistCandidate struct {
 	Payload                                                                                      json.RawMessage
 }
 
+type StructuredArtistAlias struct {
+	Name    string `json:"name"`
+	Locale  string `json:"locale,omitempty"`
+	Primary bool   `json:"primary,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Ended   bool   `json:"ended,omitempty"`
+}
+
 type ExternalArtistProfile struct {
 	Source, ExternalID, DisplayName, SortName, PageURL, RemoteImageURL, Biography, Country, ArtistType, Disambiguation string
 	Aliases, Tags                                                                                                      []string
+	StructuredAliases                                                                                                  []StructuredArtistAlias
 	Raw                                                                                                                json.RawMessage
 	FetchedAt                                                                                                          string
 }
@@ -64,9 +73,23 @@ type ArtistDetail struct {
 	Biographies     []ArtistBiography
 }
 
+const (
+	MergeTriggerManual    = "manual"
+	MergeTriggerAutoMatch = "auto_match"
+	MergeTriggerAIReview  = "ai_review"
+	MergeTriggerBackfill  = "backfill"
+)
+
 type MergeOperation struct {
-	ID, SourceArtistID, TargetArtistID                      int64
-	Status, SourceName, TargetName, CreatedAt, RolledBackAt string
+	ID, SourceArtistID, TargetArtistID                                     int64
+	Status, SourceName, TargetName, TriggerSource, CreatedAt, RolledBackAt string
+}
+
+type ArtistBindResult struct {
+	Bound            bool
+	Merged           bool
+	TargetArtistID   int64
+	MergeOperationID int64
 }
 
 type ArtistMatchRun struct {
@@ -165,6 +188,25 @@ func (s *Store) ExternalProfileOwner(ctx context.Context, source, externalID str
 	var artistID int64
 	err := s.db.QueryRowContext(ctx, `SELECT artist_id FROM artist_external_profiles WHERE source=? AND external_id=?`, source, externalID).Scan(&artistID)
 	return artistID, err
+}
+
+// ExternalArtistProfileByID returns a locally cached external artist profile
+// and its owning artist ID when present, allowing TaggedMBID lookups to avoid
+// redundant remote MusicBrainz requests when the profile is already in SQLite.
+func (s *Store) ExternalArtistProfileByID(ctx context.Context, source, externalID string) (ExternalArtistProfile, int64, error) {
+	var p ExternalArtistProfile
+	var ownerID int64
+	var aliases, tags, raw string
+	err := s.db.QueryRowContext(ctx, `SELECT artist_id,source,external_id,display_name,COALESCE(sort_name,''),COALESCE(page_url,''),COALESCE(remote_image_url,''),COALESCE(biography,''),COALESCE(country,''),COALESCE(artist_type,''),COALESCE(disambiguation,''),aliases_json,tags_json,raw_json,fetched_at FROM artist_external_profiles WHERE source=? AND external_id=?`, source, externalID).
+		Scan(&ownerID, &p.Source, &p.ExternalID, &p.DisplayName, &p.SortName, &p.PageURL, &p.RemoteImageURL, &p.Biography, &p.Country, &p.ArtistType, &p.Disambiguation, &aliases, &tags, &raw, &p.FetchedAt)
+	if err != nil {
+		return ExternalArtistProfile{}, 0, err
+	}
+	_ = json.Unmarshal([]byte(aliases), &p.Aliases)
+	_ = json.Unmarshal([]byte(tags), &p.Tags)
+	p.Raw = json.RawMessage(raw)
+	p.StructuredAliases = parseStructuredAliasesFromRaw(p.Raw)
+	return p, ownerID, nil
 }
 
 func (s *Store) SaveMetadataSourceSetting(ctx context.Context, value MetadataSourceSetting) error {
@@ -359,7 +401,22 @@ func (s *Store) PendingArtistCandidates(ctx context.Context) (map[int64][]Artist
 }
 
 func (s *Store) UpsertExternalArtistProfile(ctx context.Context, artistID int64, p ExternalArtistProfile) error {
-	return upsertExternalArtistProfile(ctx, s.db, artistID, p)
+	return withBusyRetry(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err = upsertExternalArtistProfile(ctx, tx, artistID, p); err != nil {
+			return err
+		}
+		if p.Source == "musicbrainz" {
+			if _, err = applyCanonicalDisplayNameTx(ctx, tx, artistID); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func upsertExternalArtistProfile(ctx context.Context, executor interface {
@@ -371,7 +428,11 @@ func upsertExternalArtistProfile(ctx context.Context, executor interface {
 		p.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	if len(p.Raw) == 0 {
-		p.Raw = json.RawMessage(`{}`)
+		if len(p.StructuredAliases) > 0 {
+			p.Raw, _ = json.Marshal(map[string]any{"structuredAliases": p.StructuredAliases})
+		} else {
+			p.Raw = json.RawMessage(`{}`)
+		}
 	}
 	_, err := executor.ExecContext(ctx, `INSERT INTO artist_external_profiles(artist_id,source,external_id,display_name,sort_name,page_url,remote_image_url,image_checked_at,biography,country,artist_type,disambiguation,aliases_json,tags_json,raw_json,fetched_at) VALUES(?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?,?,?,?,?,?) ON CONFLICT(artist_id,source) DO UPDATE SET external_id=excluded.external_id,display_name=excluded.display_name,sort_name=excluded.sort_name,page_url=excluded.page_url,remote_image_url=excluded.remote_image_url,image_checked_at=excluded.image_checked_at,biography=excluded.biography,country=excluded.country,artist_type=excluded.artist_type,disambiguation=excluded.disambiguation,aliases_json=excluded.aliases_json,tags_json=excluded.tags_json,raw_json=excluded.raw_json,fetched_at=excluded.fetched_at`, artistID, p.Source, p.ExternalID, p.DisplayName, p.SortName, p.PageURL, p.RemoteImageURL, p.Biography, p.Country, p.ArtistType, p.Disambiguation, string(aliases), string(tags), string(p.Raw), p.FetchedAt)
 	return err
@@ -422,6 +483,11 @@ func (s *Store) confirmArtistCandidate(ctx context.Context, artistID, candidateI
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=?`, candidateID, artistID); err != nil {
 		return err
+	}
+	if p.Source == "musicbrainz" {
+		if _, err = applyCanonicalDisplayNameTx(ctx, tx, artistID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -744,6 +810,7 @@ func (s *Store) ArtistDetail(ctx context.Context, id int64) (ArtistDetail, error
 		_ = json.Unmarshal([]byte(aliases), &p.Aliases)
 		_ = json.Unmarshal([]byte(tags), &p.Tags)
 		p.Raw = json.RawMessage(raw)
+		p.StructuredAliases = parseStructuredAliasesFromRaw(p.Raw)
 		d.Profiles = append(d.Profiles, p)
 	}
 	profiles.Close()
@@ -792,9 +859,23 @@ func (s *Store) MergeArtists(ctx context.Context, sourceID, targetID int64) (int
 }
 
 func mergeArtistsTx(ctx context.Context, tx *sql.Tx, sourceID, targetID int64) (int64, error) {
+	return mergeArtistsWithTriggerTx(ctx, tx, sourceID, targetID, MergeTriggerManual)
+}
+
+func normalizeMergeTriggerSource(trigger string) string {
+	switch trigger {
+	case MergeTriggerAutoMatch, MergeTriggerAIReview, MergeTriggerBackfill:
+		return trigger
+	default:
+		return MergeTriggerManual
+	}
+}
+
+func mergeArtistsWithTriggerTx(ctx context.Context, tx *sql.Tx, sourceID, targetID int64, triggerSource string) (int64, error) {
 	if sourceID == targetID {
 		return 0, errors.New("source and target artist must differ")
 	}
+	triggerSource = normalizeMergeTriggerSource(triggerSource)
 	var err error
 	var sourceName, targetName string
 	var sourceMerged, targetMerged sql.NullInt64
@@ -812,7 +893,7 @@ func mergeArtistsTx(ctx context.Context, tx *sql.Tx, sourceID, targetID int64) (
 	if targetMerged.Valid {
 		return 0, errors.New("target artist is already merged")
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO artist_merge_operations(source_artist_id,target_artist_id,status,source_name,target_name) VALUES(?,?,'merged',?,?)`, sourceID, targetID, sourceName, targetName)
+	result, err := tx.ExecContext(ctx, `INSERT INTO artist_merge_operations(source_artist_id,target_artist_id,status,source_name,target_name,trigger_source) VALUES(?,?,'merged',?,?,?)`, sourceID, targetID, sourceName, targetName, triggerSource)
 	if err != nil {
 		return 0, err
 	}
@@ -940,54 +1021,67 @@ func mergeArtistsTx(ctx context.Context, tx *sql.Tx, sourceID, targetID int64) (
 	if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET correction_guard=? WHERE id=?`, guard, operationID); err != nil {
 		return 0, err
 	}
+	if _, err = applyCanonicalDisplayNameTx(ctx, tx, targetID); err != nil {
+		return 0, err
+	}
 	return operationID, nil
 }
 
 func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	return withBusyRetry(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, _, err = rollbackArtistMergeTx(ctx, tx, operationID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+}
+
+func rollbackArtistMergeTx(ctx context.Context, tx *sql.Tx, operationID int64) (int64, int64, error) {
+	var err error
 	var sourceID, targetID int64
 	var status string
 	var favoriteSetByMerge int
 	if err = tx.QueryRowContext(ctx, `SELECT source_artist_id,target_artist_id,status,favorite_set_by_merge FROM artist_merge_operations WHERE id=?`, operationID).Scan(&sourceID, &targetID, &status, &favoriteSetByMerge); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if status != "merged" {
-		return errors.New("merge operation is not active")
+		return 0, 0, errors.New("merge operation is not active")
 	}
 	var savedGuard string
 	if err = tx.QueryRowContext(ctx, `SELECT correction_guard FROM artist_merge_operations WHERE id=?`, operationID).Scan(&savedGuard); err != nil {
-		return err
+		return 0, 0, err
 	}
 	guard, guardErr := correctionRevisionGuard(ctx, tx)
 	if guardErr != nil {
-		return guardErr
+		return 0, 0, guardErr
 	}
 	if savedGuard != "" && guard != savedGuard {
-		return errors.New("合并后演唱者修正已变化，不能回退覆盖后续编辑")
+		return 0, 0, errors.New("合并后演唱者修正已变化，不能回退覆盖后续编辑")
 	}
 	if savedGuard == "" {
 		var corrections int
 		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM track_primary_artist_state`).Scan(&corrections); err != nil {
-			return err
+			return 0, 0, err
 		}
 		if corrections > 0 {
-			return errors.New("旧合并没有署名版本记录，请先核对人工修正，不能直接回退")
+			return 0, 0, errors.New("旧合并没有署名版本记录，请先核对人工修正，不能直接回退")
 		}
 	}
 	var merged sql.NullInt64
 	if err = tx.QueryRowContext(ctx, `SELECT merged_into_artist_id FROM artists WHERE id=?`, sourceID).Scan(&merged); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if !merged.Valid || merged.Int64 != targetID {
-		return errors.New("artist merge state has changed")
+		return 0, 0, errors.New("artist merge state has changed")
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT relation_type,owner_id,position,join_phrase,role,target_preexisted FROM artist_merge_relation_moves WHERE operation_id=? ORDER BY id`, operationID)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	type move struct {
 		kind       string
@@ -1001,7 +1095,7 @@ func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) erro
 		var v move
 		if err = rows.Scan(&v.kind, &v.owner, &v.position, &v.join, &v.role, &v.pre); err != nil {
 			rows.Close()
-			return err
+			return 0, 0, err
 		}
 		moves = append(moves, v)
 	}
@@ -1009,54 +1103,65 @@ func (s *Store) RollbackArtistMerge(ctx context.Context, operationID int64) erro
 	for _, v := range moves {
 		if v.kind == "album" {
 			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO album_artists(album_id,artist_id,position,join_phrase) VALUES(?,?,?,?)`, v.owner, sourceID, v.position, v.join); err != nil {
-				return err
+				return 0, 0, err
 			}
 			if v.pre == 0 {
 				_, err = tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id=? AND artist_id=? AND position=?`, v.owner, targetID, v.position)
 			}
 		} else {
 			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO track_artists(track_id,artist_id,position,join_phrase,role) VALUES(?,?,?,?,?)`, v.owner, sourceID, v.position, v.join, v.role); err != nil {
-				return err
+				return 0, 0, err
 			}
 			if v.pre == 0 {
 				_, err = tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id=? AND artist_id=? AND position=? AND role=?`, v.owner, targetID, v.position, v.role)
 			}
 		}
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM artist_names WHERE id IN (SELECT artist_name_id FROM artist_merge_created_aliases WHERE operation_id=?)`, operationID); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE artists SET merged_into_artist_id=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, sourceID); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if err = reapplyPrimaryArtistCorrections(ctx, tx); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if favoriteSetByMerge == 1 {
 		var successorID int64
 		err = tx.QueryRowContext(ctx, `SELECT mo.id FROM artist_merge_operations mo JOIN artists source ON source.id=mo.source_artist_id WHERE mo.target_artist_id=? AND mo.id<>? AND mo.status='merged' AND source.is_favorite=1 ORDER BY mo.id LIMIT 1`, targetID, operationID).Scan(&successorID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
+			return 0, 0, err
 		}
 		if successorID != 0 {
 			if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET favorite_set_by_merge=1 WHERE id=?`, successorID); err != nil {
-				return err
+				return 0, 0, err
 			}
 		} else if _, err = tx.ExecContext(ctx, `UPDATE artists SET is_favorite=0,favorited_at=NULL WHERE id=?`, targetID); err != nil {
-			return err
+			return 0, 0, err
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE artist_merge_operations SET status='rolled_back',rolled_back_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, operationID); err != nil {
-		return err
+		return 0, 0, err
 	}
-	return tx.Commit()
+	// Keep any AI review decision linked to this merge operation synchronized.
+	if _, err = tx.ExecContext(ctx, `UPDATE ai_review_decisions SET reverted=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE target_kind=? AND target_id=? AND applied=1 AND reverted=0 AND json_extract(applied_snapshot_json,'$.mergeOperationId')=?`, AITargetArtistMatch, sourceID, operationID); err != nil {
+		if !strings.Contains(err.Error(), "no such table") {
+			return 0, 0, err
+		}
+	}
+	// Restore source artist's merge-confirmed candidates back to 'candidate'
+	// when the source artist has no external profile of its own for that source.
+	if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status='candidate' WHERE artist_id=? AND status='confirmed' AND NOT EXISTS(SELECT 1 FROM artist_external_profiles p WHERE p.artist_id=artist_match_candidates.artist_id AND p.source=artist_match_candidates.source)`, sourceID); err != nil {
+		return 0, 0, err
+	}
+	return sourceID, targetID, nil
 }
 
 func (s *Store) MergeOperations(ctx context.Context) ([]MergeOperation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,source_artist_id,target_artist_id,status,source_name,target_name,created_at,COALESCE(rolled_back_at,'') FROM artist_merge_operations ORDER BY id DESC LIMIT 200`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,source_artist_id,target_artist_id,status,source_name,target_name,COALESCE(trigger_source,'manual'),created_at,COALESCE(rolled_back_at,'') FROM artist_merge_operations ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		return nil, err
 	}
@@ -1064,7 +1169,7 @@ func (s *Store) MergeOperations(ctx context.Context) ([]MergeOperation, error) {
 	var list []MergeOperation
 	for rows.Next() {
 		var v MergeOperation
-		if err = rows.Scan(&v.ID, &v.SourceArtistID, &v.TargetArtistID, &v.Status, &v.SourceName, &v.TargetName, &v.CreatedAt, &v.RolledBackAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.SourceArtistID, &v.TargetArtistID, &v.Status, &v.SourceName, &v.TargetName, &v.TriggerSource, &v.CreatedAt, &v.RolledBackAt); err != nil {
 			return nil, err
 		}
 		list = append(list, v)
@@ -1101,19 +1206,27 @@ func normalizeArtistName(value string) string {
 // may refresh only an existing identical profile. False means no binding was
 // performed (manual decision, identity conflict, or a deleted/merged artist).
 func (s *Store) AutoBindArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile) (bool, error) {
+	res, err := s.bindArtistCandidate(ctx, artistID, p, false, nil)
+	return res.Bound || res.Merged, err
+}
+
+// AutoBindOrMergeArtistCandidate commits either a direct profile binding or a
+// deterministic identity-conflict merge in one transaction and reports details.
+func (s *Store) AutoBindOrMergeArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile) (ArtistBindResult, error) {
 	return s.bindArtistCandidate(ctx, artistID, p, false, nil)
 }
 
 // RefreshArtistCandidate never creates an identity, even if it was reset while
 // a remote lookup was in flight. Manual rejection also prohibits refresh.
 func (s *Store) RefreshArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile) (bool, error) {
-	return s.bindArtistCandidate(ctx, artistID, p, true, nil)
+	res, err := s.bindArtistCandidate(ctx, artistID, p, true, nil)
+	return res.Bound, err
 }
 
-func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile, refreshOnly bool, checkpoint *ArtistRunCheckpoint) (bool, error) {
-	var bound bool
+func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile, refreshOnly bool, checkpoint *ArtistRunCheckpoint) (ArtistBindResult, error) {
+	var outcome ArtistBindResult
 	err := withBusyRetry(ctx, func() error {
-		bound = false
+		outcome = ArtistBindResult{}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -1138,8 +1251,8 @@ func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p Exter
 			return nil
 		}
 		var status string
-		var manualOnly int
-		err = tx.QueryRowContext(ctx, `SELECT status,requires_manual_review FROM artist_match_candidates WHERE artist_id=? AND source=? AND external_id=?`, artistID, p.Source, p.ExternalID).Scan(&status, &manualOnly)
+		var manualOnly, score int
+		err = tx.QueryRowContext(ctx, `SELECT status,requires_manual_review,score FROM artist_match_candidates WHERE artist_id=? AND source=? AND external_id=?`, artistID, p.Source, p.ExternalID).Scan(&status, &manualOnly, &score)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -1169,13 +1282,54 @@ func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p Exter
 		}
 		if err = artistIdentityOwnerCheck(ctx, tx, artistID, p.Source, p.ExternalID); err != nil {
 			var conflict *ArtistExternalIDConflictError
-			if errors.As(err, &conflict) {
+			if !errors.As(err, &conflict) {
+				return err
+			}
+			// Deterministic MBID conflict auto-merge: requires MusicBrainz source,
+			// high-confidence candidate (>=92), non-refresh, non-manual-review,
+			// non-composite on both sides, and no prior manual rollback for this pair.
+			if refreshOnly || status != "candidate" || manualOnly != 0 || score < 92 || p.Source != "musicbrainz" {
 				return nil
 			}
-			return err
+			targetID, targetErr := canonicalArtistID(ctx, tx, conflict.OwnerArtistID)
+			if targetErr != nil || targetID == artistID {
+				return targetErr
+			}
+			var targetName string
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(user_display_name,display_name) FROM artists WHERE id=?`, targetID).Scan(&targetName); err != nil {
+				return err
+			}
+			if targetComp, tcErr := isCompositeArtistTx(ctx, tx, targetID, targetName); tcErr != nil || targetComp {
+				return tcErr
+			}
+			if rolledBack, rbErr := hasRolledBackArtistMergePairTx(ctx, tx, artistID, targetID); rbErr != nil || rolledBack {
+				return rbErr
+			}
+			opID, mergeErr := mergeArtistsWithTriggerTx(ctx, tx, artistID, targetID, MergeTriggerAutoMatch)
+			if mergeErr != nil {
+				return mergeErr
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN external_id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND source=? AND status='candidate'`, p.ExternalID, artistID, p.Source); err != nil {
+				return err
+			}
+			if checkpoint != nil {
+				if _, err = tx.ExecContext(ctx, `UPDATE artist_match_run_items SET matched_fact=1 WHERE id=?`, checkpoint.ItemID); err != nil {
+					return err
+				}
+			}
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+			outcome = ArtistBindResult{Merged: true, TargetArtistID: targetID, MergeOperationID: opID}
+			return nil
 		}
 		if err = upsertExternalArtistProfile(ctx, tx, artistID, p); err != nil {
 			return err
+		}
+		if p.Source == "musicbrainz" {
+			if _, err = applyCanonicalDisplayNameTx(ctx, tx, artistID); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN external_id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND source=? AND status='candidate'`, p.ExternalID, artistID, p.Source); err != nil {
 			return err
@@ -1188,10 +1342,10 @@ func (s *Store) bindArtistCandidate(ctx context.Context, artistID int64, p Exter
 		if err = tx.Commit(); err != nil {
 			return err
 		}
-		bound = true
+		outcome = ArtistBindResult{Bound: true, TargetArtistID: artistID}
 		return nil
 	})
-	return bound, err
+	return outcome, err
 }
 
 func (s *Store) UpdateArtistMatchRunOutcomes(ctx context.Context, id int64, matched, review, noResult, skipped, failed int, current string) error {
@@ -1202,5 +1356,12 @@ func (s *Store) UpdateArtistMatchRunOutcomes(ctx context.Context, id int64, matc
 // AutoBindArtistRunCandidate commits identity and recoverable matched fact in
 // one transaction; item completion can follow after secondary sources finish.
 func (s *Store) AutoBindArtistRunCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile, c ArtistRunCheckpoint) (bool, error) {
+	res, err := s.bindArtistCandidate(ctx, artistID, p, false, &c)
+	return res.Bound || res.Merged, err
+}
+
+// AutoBindOrMergeArtistRunCandidate commits identity binding or deterministic
+// conflict auto-merge with durable run checkpointing in one transaction.
+func (s *Store) AutoBindOrMergeArtistRunCandidate(ctx context.Context, artistID int64, p ExternalArtistProfile, c ArtistRunCheckpoint) (ArtistBindResult, error) {
 	return s.bindArtistCandidate(ctx, artistID, p, false, &c)
 }

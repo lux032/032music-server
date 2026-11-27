@@ -135,11 +135,12 @@ func (e *ArtistMatchPartialError) Notice() string {
 }
 
 type MatchResult struct {
-	Outcome           string
-	SkipReason        string
-	AutoMatched       bool
-	InlineAIConfirmed bool
-	CandidateCount    int
+	Outcome            string
+	SkipReason         string
+	AutoMatched        bool
+	InlineAIConfirmed  bool
+	MergedIntoArtistID int64
+	CandidateCount     int
 }
 
 func New(baseCtx context.Context, store *storage.Store, logger *slog.Logger, dataDirectory string) *Manager {
@@ -604,29 +605,59 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 		return m.store.SaveArtistSourceCheck(ctx, artist, bySource[source], snapshot)
 	}
 
+	usedLocalMBProfile := false
+	mbDetailedFetched := false
 	if setting, ok := bySource["musicbrainz"]; ok {
 		if automatic && !checks["musicbrainz"].Eligible {
 		} else {
 			queriedSources++
 			var found []storage.ArtistCandidate
 			if artist.TaggedMBID != "" {
-				candidate, profile, e := m.musicBrainzLookup(ctx, artist.TaggedMBID, setting)
-				if e == nil {
+				// Fast-path: reuse locally cached MusicBrainz profile owned by ANOTHER
+				// artist for this TaggedMBID whenever its cached names/aliases already
+				// validate artist.Name, avoiding redundant MB HTTP requests and rate limits.
+				// Never intercept an artist refreshing its own profile.
+				if localProfile, localOwnerID, localErr := m.store.ExternalArtistProfileByID(ctx, "musicbrainz", artist.TaggedMBID); localErr == nil && localOwnerID != artistID && artistProfileNameMatches(artist.Name, localProfile) {
+					usedLocalMBProfile = true
+					mbDetailedFetched = true
 					successfulSources++
 					refreshedSources = append(refreshedSources, "musicbrainz")
-					candidate.ArtistID = artistID
-					candidate.Score = 100
-					candidate.Evidence = []string{"文件标签包含 MusicBrainz ID"}
-					if !artistProfileNameMatches(artist.Name, profile) {
-						unsafeTaggedIdentity = true
-						candidate.Score = 85
-						candidate.RequiresManualReview = true
-						candidate.Evidence = append(candidate.Evidence, "标签身份与歌手名称不一致，需要人工核对")
+					candidate := storage.ArtistCandidate{
+						ArtistID:       artistID,
+						Source:         "musicbrainz",
+						ExternalID:     localProfile.ExternalID,
+						DisplayName:    localProfile.DisplayName,
+						SortName:       localProfile.SortName,
+						Disambiguation: localProfile.Disambiguation,
+						Country:        localProfile.Country,
+						ArtistType:     localProfile.ArtistType,
+						MBID:           localProfile.ExternalID,
+						Score:          100,
+						Evidence:       []string{"文件标签包含 MusicBrainz ID", "复用本地已缓存 MusicBrainz 资料"},
+						Payload:        localProfile.Raw,
 					}
 					found = append(found, candidate)
-					mbProfiles[candidate.MBID] = profile
-				} else if asRateLimited(e) != nil {
-					return MatchResult{}, e
+					mbProfiles[candidate.MBID] = localProfile
+				} else {
+					candidate, profile, e := m.musicBrainzLookup(ctx, artist.TaggedMBID, setting)
+					if e == nil {
+						mbDetailedFetched = true
+						successfulSources++
+						refreshedSources = append(refreshedSources, "musicbrainz")
+						candidate.ArtistID = artistID
+						candidate.Score = 100
+						candidate.Evidence = []string{"文件标签包含 MusicBrainz ID"}
+						if !artistProfileNameMatches(artist.Name, profile) {
+							unsafeTaggedIdentity = true
+							candidate.Score = 85
+							candidate.RequiresManualReview = true
+							candidate.Evidence = append(candidate.Evidence, "标签身份与歌手名称不一致，需要人工核对")
+						}
+						found = append(found, candidate)
+						mbProfiles[candidate.MBID] = profile
+					} else if asRateLimited(e) != nil {
+						return MatchResult{}, e
+					}
 				}
 			} else {
 				found, mbProfiles, err = m.musicBrainzSearch(ctx, artist, setting)
@@ -648,7 +679,7 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 			candidates = append(candidates, found...)
 		}
 	}
-	if setting, ok := bySource["lastfm"]; ok {
+	if setting, ok := bySource["lastfm"]; ok && !usedLocalMBProfile {
 		if automatic && !checks["lastfm"].Eligible {
 		} else {
 			queriedSources++
@@ -724,7 +755,7 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 		var profile storage.ExternalArtistProfile
 		if best.Source == "musicbrainz" {
 			profile = mbProfiles[best.MBID]
-			if profile.RemoteImageURL == "" && !(automatic && !checks["musicbrainz"].Eligible) {
+			if !mbDetailedFetched && profile.RemoteImageURL == "" && !(automatic && !checks["musicbrainz"].Eligible) {
 				if setting, enabled := bySource["musicbrainz"]; enabled {
 					if _, detailed, lookupErr := m.musicBrainzLookup(ctx, best.MBID, setting); lookupErr == nil {
 						profile = detailed
@@ -737,21 +768,27 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 			profile = *lastProfile
 		}
 		if profile.Source != "" && profile.ExternalID == best.ExternalID {
-			var bound bool
+			var bindRes storage.ArtistBindResult
 			var bindErr error
 			if checkpoint != nil {
-				bound, bindErr = m.store.AutoBindArtistRunCandidate(ctx, artistID, profile, *checkpoint)
+				bindRes, bindErr = m.store.AutoBindOrMergeArtistRunCandidate(ctx, artistID, profile, *checkpoint)
 			} else {
-				bound, bindErr = m.store.AutoBindArtistCandidate(ctx, artistID, profile)
+				bindRes, bindErr = m.store.AutoBindOrMergeArtistCandidate(ctx, artistID, profile)
 			}
 			if bindErr != nil {
 				return MatchResult{AutoMatched: auto}, bindErr
 			}
-			if bound {
+			if bindRes.Bound || bindRes.Merged {
+				effectiveID := artistID
+				var mergedInto int64
+				if bindRes.Merged && bindRes.TargetArtistID > 0 {
+					effectiveID = bindRes.TargetArtistID
+					mergedInto = bindRes.TargetArtistID
+				}
 				// Independently corroborated sources bind through their own transaction.
 				// A secondary manual decision/conflict cannot roll back the primary;
 				// real storage errors still propagate with the persisted primary result.
-				if !auto && lastProfile != nil && best.Source == "musicbrainz" && lastProfile.ExternalID == best.MBID {
+				if !bindRes.Merged && !auto && lastProfile != nil && best.Source == "musicbrainz" && lastProfile.ExternalID == best.MBID {
 					for _, candidate := range candidates {
 						if candidate.Source == "lastfm" && candidate.ExternalID == lastProfile.ExternalID && candidate.Score >= 92 {
 							bindSecondary := func() (bool, error) {
@@ -768,24 +805,27 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 					}
 				}
 				if automatic {
-					return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, nil
+					return MatchResult{AutoMatched: true, MergedIntoArtistID: mergedInto, CandidateCount: len(candidates)}, nil
 				}
-				if err = m.CacheArtistImage(ctx, artistID); err != nil {
+				if err = m.CacheArtistImage(ctx, effectiveID); err != nil {
 					if asRateLimited(err) != nil {
 						// The confirmation is already persisted; report AutoMatched so
 						// interactive callers can say the match succeeded but the
 						// image/biography fetch was deferred by the rate limit.
-						return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
+						return MatchResult{AutoMatched: true, MergedIntoArtistID: mergedInto, CandidateCount: len(candidates)}, err
 					}
-					m.logger.Warn("cache artist image failed", "artistId", artistID, "error", err)
+					m.logger.Warn("cache artist image failed", "artistId", effectiveID, "error", err)
 				}
-				if err = m.RefreshArtistBiographies(ctx, artistID, false); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				if err = m.RefreshArtistBiographies(ctx, effectiveID, false); err != nil && !errors.Is(err, sql.ErrNoRows) {
 					if asRateLimited(err) != nil {
-						return MatchResult{AutoMatched: true, CandidateCount: len(candidates)}, err
+						return MatchResult{AutoMatched: true, MergedIntoArtistID: mergedInto, CandidateCount: len(candidates)}, err
 					}
-					m.logger.Warn("cache artist biographies failed", "artistId", artistID, "error", err)
+					m.logger.Warn("cache artist biographies failed", "artistId", effectiveID, "error", err)
 				}
 				auto = true
+				if mergedInto > 0 {
+					return MatchResult{AutoMatched: true, MergedIntoArtistID: mergedInto, CandidateCount: len(candidates)}, nil
+				}
 			}
 		}
 	}
@@ -803,13 +843,21 @@ func (m *Manager) matchArtistWithMode(ctx context.Context, artistID int64, autom
 	return MatchResult{AutoMatched: auto, InlineAIConfirmed: inlineConfirmed, CandidateCount: pendingCount}, nil
 }
 
+type mbAliasResponse struct {
+	Name    string `json:"name"`
+	Locale  string `json:"locale"`
+	Primary bool   `json:"primary"`
+	Type    string `json:"type"`
+	Ended   bool   `json:"ended"`
+}
+
 type mbSearchResponse struct {
 	Artists []struct {
 		ID, Name                      string
 		SortName                      string `json:"sort-name"`
 		Type, Country, Disambiguation string
 		Score                         int
-		Aliases                       []struct{ Name string }
+		Aliases                       []mbAliasResponse
 		Tags                          []struct{ Name string }
 	} `json:"artists"`
 }
@@ -817,12 +865,32 @@ type mbArtistResponse struct {
 	ID, Name                      string
 	SortName                      string `json:"sort-name"`
 	Type, Country, Disambiguation string
-	Aliases                       []struct{ Name string }
+	Aliases                       []mbAliasResponse
 	Tags                          []struct{ Name string }
 	Relations                     []struct {
 		Type string
 		URL  struct{ Resource string }
 	}
+}
+
+func unpackMBAliases(raw []mbAliasResponse) ([]string, []storage.StructuredArtistAlias) {
+	aliases := make([]string, 0, len(raw))
+	structured := make([]storage.StructuredArtistAlias, 0, len(raw))
+	for _, v := range raw {
+		name := strings.TrimSpace(v.Name)
+		if name == "" {
+			continue
+		}
+		aliases = append(aliases, name)
+		structured = append(structured, storage.StructuredArtistAlias{
+			Name:    name,
+			Locale:  strings.TrimSpace(v.Locale),
+			Primary: v.Primary,
+			Type:    strings.TrimSpace(v.Type),
+			Ended:   v.Ended,
+		})
+	}
+	return aliases, structured
 }
 
 func (m *Manager) musicBrainzSearch(ctx context.Context, artist storage.ArtistMatchInput, setting storage.MetadataSourceSetting) ([]storage.ArtistCandidate, map[string]storage.ExternalArtistProfile, error) {
@@ -845,17 +913,14 @@ func (m *Manager) musicBrainzSearchQuery(ctx context.Context, artist storage.Art
 		if score > 91 {
 			score = 85
 		}
-		aliases := make([]string, 0, len(value.Aliases))
-		for _, v := range value.Aliases {
-			aliases = append(aliases, v.Name)
-		}
+		aliases, structuredAliases := unpackMBAliases(value.Aliases)
 		tags := make([]string, 0, len(value.Tags))
 		for _, v := range value.Tags {
 			tags = append(tags, v.Name)
 		}
-		payload := profilePayload("https://musicbrainz.org/artist/"+value.ID, "", "", aliases, tags)
+		payload := profilePayloadFull("https://musicbrainz.org/artist/"+value.ID, "", "", aliases, tags, nil, structuredAliases)
 		result = append(result, storage.ArtistCandidate{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, Disambiguation: value.Disambiguation, Country: value.Country, ArtistType: value.Type, MBID: value.ID, Score: score, Evidence: []string{"MusicBrainz 搜索评分"}, Payload: payload})
-		profiles[value.ID] = storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, PageURL: "https://musicbrainz.org/artist/" + value.ID, Country: value.Country, ArtistType: value.Type, Disambiguation: value.Disambiguation, Aliases: aliases, Tags: tags, Raw: payload}
+		profiles[value.ID] = storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, PageURL: "https://musicbrainz.org/artist/" + value.ID, Country: value.Country, ArtistType: value.Type, Disambiguation: value.Disambiguation, Aliases: aliases, StructuredAliases: structuredAliases, Tags: tags, Raw: payload}
 	}
 	return result, profiles, nil
 }
@@ -870,10 +935,7 @@ func (m *Manager) musicBrainzLookupWithImageSources(ctx context.Context, mbid st
 	if err := m.mbRequest(ctx, endpoint, setting, &value); err != nil {
 		return storage.ArtistCandidate{}, storage.ExternalArtistProfile{}, err
 	}
-	aliases := make([]string, 0, len(value.Aliases))
-	for _, v := range value.Aliases {
-		aliases = append(aliases, v.Name)
-	}
+	aliases, structuredAliases := unpackMBAliases(value.Aliases)
 	tags := make([]string, 0, len(value.Tags))
 	for _, v := range value.Tags {
 		tags = append(tags, v.Name)
@@ -952,8 +1014,8 @@ func (m *Manager) musicBrainzLookupWithImageSources(ctx context.Context, mbid st
 			imageURL = wikiImg
 		}
 	}
-	payload := profilePayloadWithRelations("https://musicbrainz.org/artist/"+value.ID, imageURL, "", aliases, tags, deezerIDs)
-	profile := storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, PageURL: "https://musicbrainz.org/artist/" + value.ID, RemoteImageURL: imageURL, Country: value.Country, ArtistType: value.Type, Disambiguation: value.Disambiguation, Aliases: aliases, Tags: tags, Raw: payload}
+	payload := profilePayloadFull("https://musicbrainz.org/artist/"+value.ID, imageURL, "", aliases, tags, deezerIDs, structuredAliases)
+	profile := storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, PageURL: "https://musicbrainz.org/artist/" + value.ID, RemoteImageURL: imageURL, Country: value.Country, ArtistType: value.Type, Disambiguation: value.Disambiguation, Aliases: aliases, StructuredAliases: structuredAliases, Tags: tags, Raw: payload}
 	return storage.ArtistCandidate{Source: "musicbrainz", ExternalID: value.ID, DisplayName: value.Name, SortName: value.SortName, Disambiguation: value.Disambiguation, Country: value.Country, ArtistType: value.Type, MBID: value.ID, Payload: payload}, profile, nil
 }
 
@@ -1086,9 +1148,16 @@ func profilePayload(pageURL, imageURL, biography string, aliases, tags []string)
 }
 
 func profilePayloadWithRelations(pageURL, imageURL, biography string, aliases, tags, deezerIDs []string) json.RawMessage {
+	return profilePayloadFull(pageURL, imageURL, biography, aliases, tags, deezerIDs, nil)
+}
+
+func profilePayloadFull(pageURL, imageURL, biography string, aliases, tags, deezerIDs []string, structuredAliases []storage.StructuredArtistAlias) json.RawMessage {
 	value := map[string]any{"pageUrl": pageURL, "imageUrl": imageURL, "biography": biography, "aliases": aliases, "tags": tags}
 	if len(deezerIDs) > 0 {
 		value["deezerIds"] = deezerIDs
+	}
+	if len(structuredAliases) > 0 {
+		value["structuredAliases"] = structuredAliases
 	}
 	data, _ := json.Marshal(value)
 	return data
@@ -1683,16 +1752,7 @@ func (m *Manager) spotifyImage(ctx context.Context, artistURL string) (string, e
 	return strings.TrimSpace(response.ThumbnailURL), nil
 }
 func artistProfileNameMatches(name string, profile storage.ExternalArtistProfile) bool {
-	local := normalize(name)
-	if local == "" {
-		return false
-	}
-	for _, value := range append([]string{profile.DisplayName, profile.SortName}, profile.Aliases...) {
-		if normalize(value) == local {
-			return true
-		}
-	}
-	return false
+	return storage.ArtistProfileNameMatches(name, profile)
 }
 
 func normalize(value string) string {

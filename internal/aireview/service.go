@@ -22,6 +22,7 @@ const (
 	autoThresholdTrack       = 88
 	autoThresholdWork        = 90
 	autoThresholdArtist      = 90
+	autoThresholdArtistMerge = 92
 	autoThresholdCreditSplit = 92
 	autoThresholdSeries      = 92
 )
@@ -87,12 +88,24 @@ func New(store *storage.Store, logger *slog.Logger, opts Options) *Service {
 	return &Service{store: store, logger: logger, opts: opts}
 }
 
+func artistReviewActive(rev storage.AIReviewSettings) bool {
+	return rev.ModeForKind(storage.AITargetArtistMatch) != storage.AIReviewModeOff ||
+		rev.ModeForArtistMerge() != storage.AIReviewModeOff
+}
+
 // EvaluateInline runs AI review synchronously right before an enrichment/matching
 // item falls back to manual review. It returns true only when AI auto-applied
 // the decision so the caller can count the item as matched/succeeded.
 func (s *Service) EvaluateInline(ctx context.Context, kind string, targetID int64) bool {
 	rev, err := s.store.AIReviewSettings(ctx)
-	if err != nil || !rev.Enabled || !rev.InlineEnabled || rev.ModeForKind(kind) == storage.AIReviewModeOff {
+	if err != nil || !rev.Enabled || !rev.InlineEnabled {
+		return false
+	}
+	if kind == storage.AITargetArtistMatch {
+		if !artistReviewActive(rev) {
+			return false
+		}
+	} else if rev.ModeForKind(kind) == storage.AIReviewModeOff {
 		return false
 	}
 	res, err := s.EvaluateTarget(ctx, kind, targetID, false)
@@ -116,7 +129,11 @@ func (s *Service) EvaluateTarget(ctx context.Context, kind string, targetID int6
 		return EvalResult{}, err
 	}
 	mode := rev.ModeForKind(kind)
-	if mode == storage.AIReviewModeOff {
+	if kind == storage.AITargetArtistMatch {
+		if !artistReviewActive(rev) {
+			return EvalResult{Kind: kind, TargetID: targetID, Skipped: true}, nil
+		}
+	} else if mode == storage.AIReviewModeOff {
 		return EvalResult{Kind: kind, TargetID: targetID, Skipped: true}, nil
 	}
 	s.opts.Limiter.SetRate(ai.RequestsPerMinute)
@@ -649,11 +666,22 @@ func (s *Service) evalArtist(ctx context.Context, ai storage.AISettings, rev sto
 			}
 		}
 	}
+	mergeMode := rev.ModeForArtistMerge()
 	action := decisionActionFromSelect(out.Decision)
 	var selectedID int64
+	isConflictMerge := false
 	if selectedCand != nil {
 		selectedID = selectedCand.ID
-		if info.NeedsSplit || selectedCand.ConflictOwnerID != 0 || selectedCand.RequiresManualReview {
+		isConflictMerge = selectedCand.ConflictOwnerID != 0
+		if info.NeedsSplit || selectedCand.RequiresManualReview {
+			action = storage.AIActionUncertain
+		} else if isConflictMerge {
+			if mergeMode == storage.AIReviewModeOff {
+				action = storage.AIActionUncertain
+			} else if rolledBack, rbErr := s.store.HasRolledBackArtistMergePair(ctx, artistID, selectedCand.ConflictOwnerID); rbErr != nil || rolledBack {
+				action = storage.AIActionUncertain
+			}
+		} else if mode == storage.AIReviewModeOff {
 			action = storage.AIActionUncertain
 		}
 	} else if out.Decision == "select" {
@@ -662,23 +690,45 @@ func (s *Service) evalArtist(ctx context.Context, ai storage.AISettings, rev sto
 
 	applied := false
 	var snap json.RawMessage
-	if mode == storage.AIReviewModeAuto && action == storage.AIActionRecommendAccept && out.Confidence >= autoThresholdArtist && selectedCand != nil && !info.NeedsSplit && selectedCand.ConflictOwnerID == 0 && !selectedCand.RequiresManualReview {
-		if !webSearched || quoteGroundedInPages(out.Quote, pages) {
-			bound, sRaw, bindErr := s.store.ConfirmArtistCandidateByAI(ctx, artistID, selectedCand.ID)
-			if bindErr != nil {
-				s.logger.Warn("ai artist auto confirm failed", "artistId", artistID, "error", bindErr)
-			} else if bound {
-				applied = true
-				action = storage.AIActionAutoConfirm
-				snap = sRaw
-				if s.opts.OnArtistConfirmed != nil {
-					s.opts.OnArtistConfirmed(ctx, artistID)
+	if action == storage.AIActionRecommendAccept && selectedCand != nil && !info.NeedsSplit && !selectedCand.RequiresManualReview {
+		if !isConflictMerge && mode == storage.AIReviewModeAuto && out.Confidence >= autoThresholdArtist {
+			if !webSearched || quoteGroundedInPages(out.Quote, pages) {
+				bound, sRaw, bindErr := s.store.ConfirmArtistCandidateByAI(ctx, artistID, selectedCand.ID)
+				if bindErr != nil {
+					s.logger.Warn("ai artist auto confirm failed", "artistId", artistID, "error", bindErr)
+				} else if bound {
+					applied = true
+					action = storage.AIActionAutoConfirm
+					snap = sRaw
+					if s.opts.OnArtistConfirmed != nil {
+						s.opts.OnArtistConfirmed(ctx, artistID)
+					}
+				}
+			}
+		} else if isConflictMerge && mergeMode == storage.AIReviewModeAuto && out.Confidence >= autoThresholdArtistMerge {
+			if !webSearched || quoteGroundedInPages(out.Quote, pages) {
+				merged, sRaw, mergeErr := s.store.MergeArtistConflictByAI(ctx, artistID, selectedCand.ID, selectedCand.ConflictOwnerID)
+				if mergeErr != nil {
+					s.logger.Warn("ai artist conflict auto merge failed", "artistId", artistID, "targetArtistId", selectedCand.ConflictOwnerID, "error", mergeErr)
+				} else if merged {
+					applied = true
+					action = storage.AIActionAutoConfirm
+					snap = sRaw
+					if s.opts.OnArtistConfirmed != nil {
+						s.opts.OnArtistConfirmed(ctx, selectedCand.ConflictOwnerID)
+					}
 				}
 			}
 		}
 	}
 
-	payloadJSON, _ := json.Marshal(map[string]any{"candidateId": selectedID, "quote": out.Quote})
+	payloadMap := map[string]any{"candidateId": selectedID, "quote": out.Quote}
+	if isConflictMerge && selectedCand != nil && (action == storage.AIActionRecommendAccept || action == storage.AIActionAutoConfirm) {
+		payloadMap["conflictMerge"] = true
+		payloadMap["targetArtistId"] = selectedCand.ConflictOwnerID
+		payloadMap["targetArtistName"] = selectedCand.ConflictOwner
+	}
+	payloadJSON, _ := json.Marshal(payloadMap)
 	_, err = s.store.SaveAIReviewDecision(ctx, storage.AIReviewDecision{
 		TargetKind:          storage.AITargetArtistMatch,
 		TargetID:            artistID,

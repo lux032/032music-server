@@ -204,6 +204,9 @@ func (s *Store) MigrateUpTo(ctx context.Context, upTo int) error {
 	if err := s.cleanEmptyAlbumSubjectCandidates(ctx); err != nil {
 		return fmt.Errorf("clean empty album subject candidates: %w", err)
 	}
+	if _, err := s.ConvergeCanonicalArtistNames(ctx); err != nil {
+		return fmt.Errorf("converge canonical artist names: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx, `PRAGMA optimize`); err != nil {
 		return fmt.Errorf("optimize sqlite query planner: %w", err)
 	}

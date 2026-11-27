@@ -67,6 +67,11 @@ func (s *Store) ResetArtistIdentity(ctx context.Context, artistID int64, source,
 		if err != nil {
 			return err
 		}
+		if source == "musicbrainz" {
+			if _, err = restoreCanonicalDisplayNameTx(ctx, tx, artistID); err != nil {
+				return err
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE artists SET biography=NULL WHERE id=?`, artistID)
 		if err != nil {
 			return err

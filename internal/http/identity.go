@@ -114,7 +114,9 @@ type identityPageData struct {
 	Chrome
 	Section, Notice, ReturnTo              string
 	Settings                               []storage.MetadataSourceSetting
+	ArtistIdentitySettings                 storage.ArtistIdentitySettings
 	BiographySettings                      storage.BiographySettings
+	ConvergeableConflictCount              int
 	LastFMScrobble                         lastFMScrobbleView
 	ListenBrainz                           listenBrainzView
 	IdentityConflict                       *storage.ArtistIdentityConflict
@@ -278,6 +280,7 @@ func (a *App) handleMetadataSettings(w http.ResponseWriter, r *http.Request) {
 		settings[i].APIKey = ""
 	}
 	data.Settings = settings
+	data.ArtistIdentitySettings, _ = a.store.ArtistIdentitySettings(r.Context())
 	data.BiographySettings, _ = a.store.BiographySettings(r.Context())
 	data.LastFMScrobble = a.lastFMScrobbleView(r)
 	data.ListenBrainz = a.listenBrainzView(r)
@@ -306,6 +309,25 @@ func (a *App) handleSaveMetadataSettings(w http.ResponseWriter, r *http.Request)
 	}
 	scope := r.FormValue("scope")
 	existingLastFM, _ := a.store.MetadataSourceSetting(r.Context(), "lastfm")
+	if scope == "artist_identity" {
+		enabled := r.FormValue("canonical_native_name_enabled") != ""
+		if err := a.store.SaveArtistIdentitySettings(r.Context(), storage.ArtistIdentitySettings{
+			CanonicalNativeNameEnabled: enabled,
+		}); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		notice := "艺术家规范命名策略已保存（已关闭自动统一为 MusicBrainz 原文名）"
+		if enabled {
+			if converged, convErr := a.store.ConvergeCanonicalArtistNames(r.Context()); convErr == nil && converged > 0 {
+				notice = fmt.Sprintf("艺术家规范命名策略已保存，已同步将 %d 位存量已确认艺人统一为 MusicBrainz 原文名", converged)
+			} else {
+				notice = "艺术家规范命名策略已保存（已开启自动统一为 MusicBrainz 原文名）"
+			}
+		}
+		redirectWithNotice(w, r, "/admin/settings/metadata", notice)
+		return
+	}
 	if scope == "biography" {
 		biographySettings := storage.BiographySettings{
 			PreferredLanguages:   strings.TrimSpace(r.FormValue("biography_languages")),
@@ -1034,6 +1056,9 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 	if highCands, hErr := a.store.HighConfidencePendingCreditSplits(r.Context(), 92); hErr == nil {
 		data.CreditHighConfidenceCount = len(highCands)
 	}
+	if convCount, cErr := a.store.CountConvergeableArtistConflicts(r.Context()); cErr == nil {
+		data.ConvergeableConflictCount = convCount
+	}
 	for _, item := range identityPage.Items {
 		review := matchReviewItem{Artist: item.Artist, Candidates: item.Candidates, Conflicts: item.Conflicts, PageURLs: item.PageURLs}
 		if d, ok := artistAIMap[item.Artist.ID]; ok {
@@ -1129,6 +1154,30 @@ func (a *App) handleMatchReview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.render(w, 200, "match-review.html", data)
+}
+
+func (a *App) handleConvergeArtistConflicts(w http.ResponseWriter, r *http.Request) {
+	if !a.validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	returnTo := safeAdminReturnTo(r.FormValue("returnTo"), "/admin/matches")
+	res, err := a.store.ConvergeDeterministicArtistConflicts(r.Context())
+	if err != nil {
+		a.logger.Error("converge deterministic artist conflicts", "error", err)
+		redirectWithNotice(w, r, returnTo, "存量同 MBID 重复艺人收敛失败："+err.Error())
+		return
+	}
+	var notice string
+	switch {
+	case res.Merged > 0 && res.Failed > 0:
+		notice = fmt.Sprintf("已一键收敛 %d 位同 MBID 重复艺人（跳过 %d 位，失败 %d 位），可前往「合并历史」核对或一键回退", res.Merged, res.Skipped, res.Failed)
+	case res.Merged > 0:
+		notice = fmt.Sprintf("已一键收敛 %d 位同 MBID 重复艺人（跳过 %d 位），可前往「合并历史」核对或一键回退", res.Merged, res.Skipped)
+	default:
+		notice = "当前没有满足安全条件的可收敛同 MBID 重复艺人"
+	}
+	redirectWithNotice(w, r, returnTo, notice)
 }
 
 func redirectWithNotice(w http.ResponseWriter, r *http.Request, path, message string) {

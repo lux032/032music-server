@@ -43,6 +43,20 @@
             </span>
           </span>
         </div>
+        <div class="match-action-item">
+          <form method="post" action="/admin/matches/converge-conflicts">
+            <input type="hidden" name="csrfToken" value="{{.CSRFToken}}">
+            <input type="hidden" name="returnTo" value="{{.TabReturnTo .MatchTab}}" data-match-return-to>
+            <button type="submit" class="secondary-button" data-pending-text="收敛中…"{{if eq .ConvergeableConflictCount 0}} disabled{{end}}>一键收敛同 MBID 重复艺人 ({{.ConvergeableConflictCount}})</button>
+          </form>
+          <span class="match-hint-tip" tabindex="0" role="note" aria-label="一键收敛同 MBID 重复艺人说明" aria-describedby="tip-converge-conflicts">
+            <svg class="icon" aria-hidden="true"><use href="{{assetIconsSVG}}#icon-alert-circle"></use></svg>
+            <span class="match-hint-popover" id="tip-converge-conflicts" role="tooltip">
+              <strong>批量合并存量同 MBID 重复艺人</strong>
+              <span>基于本地高置信候选与文件标签 MBID（经名称核验、非复合署名且无历史撤销记录），一键合并库内已分裂的重复艺人；全部操作写入「合并历史」可随时撤销。</span>
+            </span>
+          </span>
+        </div>
         {{if and .AIConfigured .AIReviewEnabled (not .ActiveAIRun)}}
         <div class="match-action-item">
           <form method="post" action="/admin/ai-review/run">
@@ -297,9 +311,11 @@
           <aside class="match-ai-strip tone-{{.BadgeTone}}">
             <span class="ai-decision-chip tone-{{.BadgeTone}}">{{.ActionLabel}} · {{.Confidence}}%</span>
             <div class="match-ai-strip-body">
-              {{with $item.AIRecommendedCandidate}}
+              {{if and .ConflictMerge .TargetArtistName}}
+              <span class="ai-target-pointer">推荐合并至：<strong>《{{.TargetArtistName}}》</strong></span>
+              {{else}}{{with $item.AIRecommendedCandidate}}
               <span class="ai-target-pointer">{{if eq $item.AI.Action "recommend_accept"}}推荐：{{else}}关联候选：{{end}}<strong>{{.DisplayName}}</strong>（{{.Source}} · 评分 {{.Score}}{{if .Disambiguation}} · {{.Disambiguation}}{{end}}）</span>
-              {{end}}
+              {{end}}{{end}}
               <p class="match-ai-reason">{{.Reason}}{{if .WebSearched}} <span class="match-web-tag">已联网核验</span>{{end}}</p>
             </div>
           </aside>
@@ -347,7 +363,7 @@
                     <input type="hidden" name="expectedTarget" value="{{.TargetArtistID}}">
                     <input type="hidden" name="confirm" value="1">
                     <input type="hidden" name="returnTo" value="{{$.TabReturnTo "identity"}}" data-match-return-to="identity">
-                    <button type="submit" class="secondary-button compact-button" data-inline-confirm="确认并入对方" data-pending-text="合并中…">将 {{$item.Artist.Name}} 并入对方</button>
+                    <button type="submit" class="{{if $isRec}}primary-button{{else}}secondary-button{{end}} compact-button" data-inline-confirm="确认并入对方" data-pending-text="合并中…">将 {{$item.Artist.Name}} 并入对方{{if $isRec}}（AI 推荐）{{end}}</button>
                   </form>
                   <a class="conflict-detail-link" href="/admin/artists/{{$item.Artist.ID}}?view=profile&amp;identityConflict={{.CandidateID}}">去歌手页核对</a>
                 </div>

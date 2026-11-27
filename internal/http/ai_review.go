@@ -47,6 +47,9 @@ type aiDecisionView struct {
 	CreditIsComposite   bool
 	CreditParts         []string
 	CreditPartsCSV      string
+	ConflictMerge       bool
+	TargetArtistID      int64
+	TargetArtistName    string
 }
 
 func buildAIDecisionView(d storage.AIReviewDecision) *aiDecisionView {
@@ -78,11 +81,14 @@ func buildAIDecisionView(d storage.AIReviewDecision) *aiDecisionView {
 	}
 
 	var payload struct {
-		WorkSubjectIDs []int64          `json:"workSubjectIds"`
-		Roles          map[int64]string `json:"roles"`
-		SuggestedTitle string           `json:"suggestedTitle"`
-		IsComposite    bool             `json:"isComposite"`
-		Parts          []string         `json:"parts"`
+		WorkSubjectIDs   []int64          `json:"workSubjectIds"`
+		Roles            map[int64]string `json:"roles"`
+		SuggestedTitle   string           `json:"suggestedTitle"`
+		IsComposite      bool             `json:"isComposite"`
+		Parts            []string         `json:"parts"`
+		ConflictMerge    bool             `json:"conflictMerge"`
+		TargetArtistID   int64            `json:"targetArtistId"`
+		TargetArtistName string           `json:"targetArtistName"`
 	}
 	if len(d.Payload) > 0 && json.Unmarshal(d.Payload, &payload) == nil {
 		for _, id := range payload.WorkSubjectIDs {
@@ -95,6 +101,9 @@ func buildAIDecisionView(d storage.AIReviewDecision) *aiDecisionView {
 		v.CreditIsComposite = payload.IsComposite
 		v.CreditParts = payload.Parts
 		v.CreditPartsCSV = strings.Join(payload.Parts, " / ")
+		v.ConflictMerge = payload.ConflictMerge
+		v.TargetArtistID = payload.TargetArtistID
+		v.TargetArtistName = payload.TargetArtistName
 	}
 	return v
 }

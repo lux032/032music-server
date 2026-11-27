@@ -44,6 +44,7 @@ type AIReviewSettings struct {
 	TrackMode        string
 	WorkMode         string
 	ArtistMode       string
+	ArtistMergeMode  string
 	CreditMode       string
 	SeriesMode       string
 	UpdatedAt        string
@@ -51,13 +52,14 @@ type AIReviewSettings struct {
 
 func DefaultAIReviewSettings() AIReviewSettings {
 	return AIReviewSettings{
-		InlineEnabled: true,
-		AlbumMode:     AIReviewModeAuto,
-		TrackMode:     AIReviewModeAuto,
-		WorkMode:      AIReviewModeAuto,
-		ArtistMode:    AIReviewModeAuto,
-		CreditMode:    AIReviewModeRecommend,
-		SeriesMode:    AIReviewModeRecommend,
+		InlineEnabled:   true,
+		AlbumMode:       AIReviewModeAuto,
+		TrackMode:       AIReviewModeAuto,
+		WorkMode:        AIReviewModeAuto,
+		ArtistMode:      AIReviewModeAuto,
+		ArtistMergeMode: AIReviewModeAuto,
+		CreditMode:      AIReviewModeRecommend,
+		SeriesMode:      AIReviewModeRecommend,
 	}
 }
 
@@ -83,11 +85,21 @@ func (s AIReviewSettings) ModeForKind(kind string) string {
 	}
 }
 
+func (s AIReviewSettings) ModeForArtistMerge() string {
+	if !s.Enabled {
+		return AIReviewModeOff
+	}
+	if s.ArtistMergeMode == "" {
+		return AIReviewModeAuto
+	}
+	return s.ArtistMergeMode
+}
+
 func (s *Store) AIReviewSettings(ctx context.Context) (AIReviewSettings, error) {
 	v := DefaultAIReviewSettings()
 	var enabled, inline, web int
-	err := s.db.QueryRowContext(ctx, `SELECT enabled,inline_enabled,web_search_enabled,model,album_mode,track_mode,work_mode,artist_mode,credit_mode,series_mode,updated_at FROM ai_review_settings WHERE id=1`).
-		Scan(&enabled, &inline, &web, &v.Model, &v.AlbumMode, &v.TrackMode, &v.WorkMode, &v.ArtistMode, &v.CreditMode, &v.SeriesMode, &v.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT enabled,inline_enabled,web_search_enabled,model,album_mode,track_mode,work_mode,artist_mode,artist_merge_mode,credit_mode,series_mode,updated_at FROM ai_review_settings WHERE id=1`).
+		Scan(&enabled, &inline, &web, &v.Model, &v.AlbumMode, &v.TrackMode, &v.WorkMode, &v.ArtistMode, &v.ArtistMergeMode, &v.CreditMode, &v.SeriesMode, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -112,19 +124,23 @@ func validAIReviewMode(mode string, allowAuto bool) bool {
 }
 
 func (s *Store) SaveAIReviewSettings(ctx context.Context, v AIReviewSettings) error {
+	if strings.TrimSpace(v.ArtistMergeMode) == "" {
+		v.ArtistMergeMode = AIReviewModeAuto
+	}
 	if !validAIReviewMode(v.AlbumMode, true) || !validAIReviewMode(v.TrackMode, true) ||
 		!validAIReviewMode(v.WorkMode, true) || !validAIReviewMode(v.ArtistMode, true) ||
-		!validAIReviewMode(v.CreditMode, true) || !validAIReviewMode(v.SeriesMode, true) {
+		!validAIReviewMode(v.ArtistMergeMode, true) || !validAIReviewMode(v.CreditMode, true) ||
+		!validAIReviewMode(v.SeriesMode, true) {
 		return errors.New("无效的 AI 审核策略取值")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_review_settings(id,enabled,inline_enabled,web_search_enabled,model,album_mode,track_mode,work_mode,artist_mode,credit_mode,series_mode,updated_at)
-		VALUES(1,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_review_settings(id,enabled,inline_enabled,web_search_enabled,model,album_mode,track_mode,work_mode,artist_mode,artist_merge_mode,credit_mode,series_mode,updated_at)
+		VALUES(1,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,inline_enabled=excluded.inline_enabled,web_search_enabled=excluded.web_search_enabled,
 		model=excluded.model,album_mode=excluded.album_mode,track_mode=excluded.track_mode,work_mode=excluded.work_mode,
-		artist_mode=excluded.artist_mode,credit_mode=excluded.credit_mode,series_mode=excluded.series_mode,
+		artist_mode=excluded.artist_mode,artist_merge_mode=excluded.artist_merge_mode,credit_mode=excluded.credit_mode,series_mode=excluded.series_mode,
 		updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		boolInt(v.Enabled), boolInt(v.InlineEnabled), boolInt(v.WebSearchEnabled), strings.TrimSpace(v.Model),
-		v.AlbumMode, v.TrackMode, v.WorkMode, v.ArtistMode, v.CreditMode, v.SeriesMode)
+		v.AlbumMode, v.TrackMode, v.WorkMode, v.ArtistMode, v.ArtistMergeMode, v.CreditMode, v.SeriesMode)
 	return err
 }
 
@@ -750,10 +766,11 @@ func (s *Store) LoadWorkAIContext(ctx context.Context, workID int64) (WorkAICont
 
 type ArtistCandidateAIView struct {
 	ArtistCandidate
-	Aliases         []string `json:"aliases,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	ConflictOwnerID int64    `json:"conflictOwnerId,omitempty"`
-	ConflictOwner   string   `json:"conflictOwnerName,omitempty"`
+	Aliases              []string `json:"aliases,omitempty"`
+	Tags                 []string `json:"tags,omitempty"`
+	ConflictOwnerID      int64    `json:"conflictOwnerId,omitempty"`
+	ConflictOwner        string   `json:"conflictOwnerName,omitempty"`
+	ConflictOwnerAliases []string `json:"conflictOwnerAliases,omitempty"`
 }
 
 type ArtistAIContext struct {
@@ -830,13 +847,25 @@ func (s *Store) LoadArtistAIContext(ctx context.Context, artistID int64) (Artist
 		if conflict, err := s.ArtistIdentityConflict(ctx, artistID, cand.ID); err == nil {
 			cand.ConflictOwnerID = conflict.TargetArtistID
 			cand.ConflictOwner = conflict.TargetName
+			if ownerAlRows, oaErr := s.db.QueryContext(ctx, `SELECT value FROM artist_names WHERE artist_id=? UNION SELECT value FROM artist_search_aliases WHERE artist_id=? LIMIT 20`, conflict.TargetArtistID, conflict.TargetArtistID); oaErr == nil {
+				for ownerAlRows.Next() {
+					var alias string
+					if ownerAlRows.Scan(&alias) == nil && alias != "" {
+						cand.ConflictOwnerAliases = append(cand.ConflictOwnerAliases, alias)
+					}
+				}
+				ownerAlRows.Close()
+			}
 		}
 		c.Candidates = append(c.Candidates, cand)
 	}
 	if err = cRows.Err(); err != nil {
 		return c, err
 	}
-	c.Fingerprint = HashJSONFingerprint(c)
+	c.Fingerprint = HashJSONFingerprint(struct {
+		Version string          `json:"v"`
+		Context ArtistAIContext `json:"ctx"`
+	}{Version: "artist-ai-v2-conflict-merge", Context: c})
 	return c, nil
 }
 

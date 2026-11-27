@@ -730,6 +730,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /admin/settings/security/allowlist", a.requireAdmin(http.HandlerFunc(a.handleSecurityAllowAdd)))
 	mux.Handle("POST /admin/settings/security/allowlist/remove", a.requireAdmin(http.HandlerFunc(a.handleSecurityAllowRemove)))
 	mux.Handle("POST /admin/matches/run", a.requireAdmin(http.HandlerFunc(a.handleRunArtistMatching)))
+	mux.Handle("POST /admin/matches/converge-conflicts", a.requireAdmin(http.HandlerFunc(a.handleConvergeArtistConflicts)))
 	mux.Handle("POST /admin/matches/runs/{id}/cancel", a.requireAdmin(http.HandlerFunc(a.handleCancelArtistMatching)))
 	mux.Handle("POST /admin/matches/runs/{id}/pause", a.requireAdmin(http.HandlerFunc(a.handlePauseArtistRun)))
 	mux.Handle("POST /admin/matches/runs/{id}/resume", a.requireAdmin(http.HandlerFunc(a.handleResumeArtistRun)))

@@ -156,7 +156,11 @@ func (s *Service) ResumeRun(ctx context.Context, id int64) error {
 func (s *Service) collectTasks(ctx context.Context, scope string, rev storage.AIReviewSettings) ([]runTask, error) {
 	var tasks []runTask
 	addKind := func(kind string, loader func(context.Context) ([]int64, error), labelPrefix string) error {
-		if rev.ModeForKind(kind) == storage.AIReviewModeOff {
+		if kind == storage.AITargetArtistMatch {
+			if !artistReviewActive(rev) {
+				return nil
+			}
+		} else if rev.ModeForKind(kind) == storage.AIReviewModeOff {
 			return nil
 		}
 		ids, err := loader(ctx)

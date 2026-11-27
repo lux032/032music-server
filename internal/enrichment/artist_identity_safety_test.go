@@ -294,6 +294,16 @@ func TestMatchArtistOwnerConflictRemainsReview(t *testing.T) {
 			if err := s.UpsertExternalArtistProfile(ctx, owner.ID, storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: safetyMBID, DisplayName: "Other"}); err != nil {
 				t.Fatal(err)
 			}
+			// Simulate an admin previously rolling back a merge between this pair:
+			// deterministic auto-merge must respect rollback memory and leave the
+			// conflict in manual review.
+			opID, err := s.MergeArtists(ctx, artist, owner.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RollbackArtistMerge(ctx, opID); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	result, err := manager.MatchArtist(ctx, artist)
@@ -326,6 +336,15 @@ func TestMatchArtistOwnerConflictStillCallsInlineAI(t *testing.T) {
 	for _, owner := range artists {
 		if owner.ID != artist {
 			if err := s.UpsertExternalArtistProfile(ctx, owner.ID, storage.ExternalArtistProfile{Source: "musicbrainz", ExternalID: safetyMBID, DisplayName: "Other"}); err != nil {
+				t.Fatal(err)
+			}
+			// When deterministic auto-merge is suppressed (e.g. previously rolled back),
+			// matchArtist falls through to pending review and invokes inlineAI.
+			opID, err := s.MergeArtists(ctx, artist, owner.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RollbackArtistMerge(ctx, opID); err != nil {
 				t.Fatal(err)
 			}
 		}

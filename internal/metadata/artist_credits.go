@@ -212,6 +212,53 @@ func RawPrimaryArtistNamesForIdentity(raw map[string][]string, fallback []string
 	return nil, false
 }
 
+// RawAlbumArtistNamesForIdentity returns raw, non-deduplicated album artist
+// slots when the file tags prove exact positional alignment. It never falls
+// back to recording ARTIST tags.
+func RawAlbumArtistNamesForIdentity(raw map[string][]string, fallback []string, allowFallback bool) ([]string, bool) {
+	if groups := allTagValues(raw, "ALBUMARTISTS", "ALBUM_ARTISTS", "ALBUM ARTISTS"); len(groups) > 0 {
+		return agreedStrictRawGroups(groups, false)
+	}
+	groups := allTagValues(raw, "ALBUMARTIST", "ALBUM ARTIST", "TPE2", "TP2", "AART")
+	if len(groups) == 0 {
+		if !allowFallback || len(fallback) == 0 || HasTagKey(raw, "ARTIST", "TPE1", "TP1", "\xa9ART", "©ART", "ARTISTS") {
+			return nil, false
+		}
+		if len(fallback) == 1 && CompositeArtistCredit(fallback[0]) {
+			return nil, false
+		}
+		return strictRawSlots(fallback)
+	}
+	if len(groups) > 1 {
+		// Multiple distinct keys/namespaces: require all to agree strictly.
+		return agreedStrictRawGroups(groups, false)
+	}
+	values := groups[0]
+	if len(values) > 1 {
+		return strictRawSlots(splitRawSlots(values, false))
+	}
+	slots := splitRawSlots(values, true)
+	if len(slots) > 1 {
+		return strictRawSlots(slots)
+	}
+	if len(slots) == 1 {
+		ids := ArtistMusicBrainzIDs(raw, "MUSICBRAINZ_ALBUMARTISTID", "MUSICBRAINZ ALBUM ARTIST ID")
+		if len(ids) > 1 {
+			if recovered, ok := splitCreditWithMBIDCount(slots[0], len(ids)); ok {
+				return recovered, true
+			}
+			return nil, false
+		}
+		if len(ids) == 1 {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(slots[0]), "\ufeff"))
+			if trimmed != "" && !CompositeArtistCredit(trimmed) {
+				return []string{trimmed}, true
+			}
+		}
+	}
+	return nil, false
+}
+
 func agreedStrictRawGroups(groups [][]string, legacy bool) ([]string, bool) {
 	var agreed []string
 	for _, group := range groups {

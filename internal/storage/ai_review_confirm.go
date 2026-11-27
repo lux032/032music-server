@@ -39,6 +39,9 @@ type aiArtistConfirmSnapshot struct {
 	Source               string  `json:"source"`
 	ExternalID           string  `json:"externalId"`
 	RejectedCandidateIDs []int64 `json:"rejectedCandidateIds,omitempty"`
+	Merged               bool    `json:"merged,omitempty"`
+	MergeOperationID     int64   `json:"mergeOperationId,omitempty"`
+	TargetArtistID       int64   `json:"targetArtistId,omitempty"`
 }
 
 var (
@@ -488,6 +491,11 @@ func (s *Store) ConfirmArtistCandidateByAI(ctx context.Context, artistID, candid
 		if err = upsertExternalArtistProfile(ctx, tx, artistID, p); err != nil {
 			return err
 		}
+		if p.Source == "musicbrainz" {
+			if _, err = applyCanonicalDisplayNameTx(ctx, tx, artistID); err != nil {
+				return err
+			}
+		}
 
 		rejectedIDs, err := candidateSiblingIDsTx(ctx, tx, `SELECT id FROM artist_match_candidates WHERE artist_id=? AND id<>? AND status='candidate'`, artistID, candidateID)
 		if err != nil {
@@ -509,6 +517,66 @@ func (s *Store) ConfirmArtistCandidateByAI(ctx context.Context, artistID, candid
 		return nil
 	})
 	return bound, snap, err
+}
+
+// MergeArtistConflictByAI atomically merges artistID into expectedTargetID on
+// behalf of AI review when candidateID conflicts with expectedTargetID's bound
+// external identity, enforcing non-composite, non-manual-review, and rollback
+// suppression guardrails. It returns a rollback snapshot linked to the created
+// artist_merge_operations record.
+func (s *Store) MergeArtistConflictByAI(ctx context.Context, artistID, candidateID, expectedTargetID int64) (bool, json.RawMessage, error) {
+	var merged bool
+	var snap json.RawMessage
+	err := withBusyRetry(ctx, func() error {
+		merged = false
+		snap = nil
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		conflict, err := artistIdentityConflict(ctx, tx, artistID, candidateID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !conflict.CanMerge || expectedTargetID <= 0 || conflict.TargetArtistID != expectedTargetID {
+			return nil
+		}
+		if rolledBack, rbErr := hasRolledBackArtistMergePairTx(ctx, tx, artistID, conflict.TargetArtistID); rbErr != nil || rolledBack {
+			return rbErr
+		}
+
+		rejectedIDs, err := candidateSiblingIDsTx(ctx, tx, `SELECT id FROM artist_match_candidates WHERE artist_id=? AND id<>? AND status='candidate'`, artistID, candidateID)
+		if err != nil {
+			return err
+		}
+		opID, err := mergeArtistsWithTriggerTx(ctx, tx, artistID, conflict.TargetArtistID, MergeTriggerAIReview)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE artist_match_candidates SET status=CASE WHEN id=? THEN 'confirmed' ELSE 'rejected' END WHERE artist_id=? AND status='candidate'`, candidateID, artistID); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		merged = true
+		snap, _ = json.Marshal(aiArtistConfirmSnapshot{
+			CandidateID:          candidateID,
+			Source:               conflict.Source,
+			ExternalID:           conflict.ExternalID,
+			RejectedCandidateIDs: rejectedIDs,
+			Merged:               true,
+			MergeOperationID:     opID,
+			TargetArtistID:       conflict.TargetArtistID,
+		})
+		return nil
+	})
+	return merged, snap, err
 }
 
 func candidateSiblingIDsTx(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]int64, error) {
@@ -599,8 +667,26 @@ func (s *Store) RevertAIReviewDecision(ctx context.Context, decisionID int64) er
 		if err = json.Unmarshal(d.AppliedSnapshot, &snap); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM artist_external_profiles WHERE artist_id=? AND source=? AND external_id=?`, d.TargetID, snap.Source, snap.ExternalID); err != nil {
-			return err
+		if snap.Merged && snap.MergeOperationID > 0 {
+			var opStatus string
+			opErr := tx.QueryRowContext(ctx, `SELECT status FROM artist_merge_operations WHERE id=?`, snap.MergeOperationID).Scan(&opStatus)
+			if opErr != nil && !errors.Is(opErr, sql.ErrNoRows) {
+				return opErr
+			}
+			if opErr == nil && opStatus == "merged" {
+				if _, _, err = rollbackArtistMergeTx(ctx, tx, snap.MergeOperationID); err != nil {
+					return err
+				}
+			}
+		} else {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM artist_external_profiles WHERE artist_id=? AND source=? AND external_id=?`, d.TargetID, snap.Source, snap.ExternalID); err != nil {
+				return err
+			}
+			if snap.Source == "musicbrainz" {
+				if _, err = restoreCanonicalDisplayNameTx(ctx, tx, d.TargetID); err != nil {
+					return err
+				}
+			}
 		}
 		restoreIDs := append([]int64{snap.CandidateID}, snap.RejectedCandidateIDs...)
 		if err = restoreCandidateStatusTx(ctx, tx, "artist_match_candidates", restoreIDs); err != nil {

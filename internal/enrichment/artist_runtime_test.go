@@ -56,8 +56,8 @@ func TestArtistRuntimeRateLimitWaitAutoResume(t *testing.T) {
 	}
 	m.Wait()
 	state, err := m.store.DurableArtistRun(context.Background(), run)
-	// 第 6 次请求是绑定成功后 best-effort 简介补全的 MB 关系查询（分叉 1A）。
-	if err != nil || state.Status != "completed" || state.Matched != 1 || state.AutoResumeCount != 1 || calls != 6 || state.WaitTotalMS != 120000 || state.BudgetBaselineMS != 120000 {
+	// 第 5 次请求是绑定成功后 best-effort 简介补全的 MB 关系查询（去除了 TaggedMBID 重复二次查找）。
+	if err != nil || state.Status != "completed" || state.Matched != 1 || state.AutoResumeCount != 1 || calls != 5 || state.WaitTotalMS != 120000 || state.BudgetBaselineMS != 120000 {
 		t.Fatal(state, calls, err)
 	}
 	if _, err = m.store.ArtistExternalID(context.Background(), artist, "musicbrainz"); err != nil {
@@ -585,8 +585,8 @@ func TestArtistRuntimeAutoResumeTimerReplaced(t *testing.T) {
 	close(release)
 	m.Wait()
 	state, _ := m.store.DurableArtistRun(context.Background(), run)
-	// 第 6 次请求是绑定成功后 best-effort 简介补全的 MB 关系查询（分叉 1A）。
-	if state.Status != "completed" || state.AutoResumeCount != 1 || calls != 6 {
+	// 第 5 次请求是绑定成功后 best-effort 简介补全的 MB 关系查询（去除了 TaggedMBID 重复二次查找）。
+	if state.Status != "completed" || state.AutoResumeCount != 1 || calls != 5 {
 		t.Fatal(state, calls)
 	}
 }

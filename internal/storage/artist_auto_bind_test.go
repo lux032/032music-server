@@ -148,7 +148,16 @@ func TestAutoBindArtistCandidateExpectedRefusals(t *testing.T) {
 			owner, _ := result.LastInsertId()
 			switch refusal {
 			case "owner-conflict":
+				// A MusicBrainz owner conflict that was previously rolled back
+				// must stay refused rather than auto-merging again.
 				err = s.UpsertExternalArtistProfile(ctx, owner, ExternalArtistProfile{Source: "musicbrainz", ExternalID: "auto", DisplayName: "Owner"})
+				if err == nil {
+					var opID int64
+					opID, err = s.MergeArtists(ctx, artist, owner)
+					if err == nil {
+						err = s.RollbackArtistMerge(ctx, opID)
+					}
+				}
 			case "merged":
 				_, err = s.db.ExecContext(ctx, `UPDATE artists SET merged_into_artist_id=? WHERE id=?`, owner, artist)
 			case "composite":

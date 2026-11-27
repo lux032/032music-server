@@ -655,12 +655,19 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 		status   string
 	}
 	var identityRows []fileRoleIdentity
+	var identityChecksDDL string
+	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='table' AND name='audio_file_identity_checks'`).Scan(&identityChecksDDL)
+	supportsAlbumArtistIdentity := strings.Contains(identityChecksDDL, "'album_artist'")
+
 	roleCheckStatus := map[string]string{
 		"primary":  "verified",
 		"composer": "verified",
 		"lyricist": "verified",
 		"arranger": "verified",
 		"producer": "verified",
+	}
+	if supportsAlbumArtistIdentity {
+		roleCheckStatus["album_artist"] = "verified"
 	}
 	recordRoleIdentities := func(role string, roleIDs []int64, rawNames []string, rawProven bool, mbids []string, hasTag bool) error {
 		if !m.UnsafeIdentity && len(roleIDs) > 0 && rawProven && len(mbids) > 0 && len(rawNames) == len(mbids) {
@@ -693,6 +700,21 @@ func importTrackIntoAlbum(ctx context.Context, tx *sql.Tx, input ImportInput, al
 	primaryMBIDs := metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")
 	if err = recordRoleIdentities("primary", artistIDs, primaryRawNames, primaryProven, primaryMBIDs, metadata.HasTagKey(m.Raw, "MUSICBRAINZ_ARTISTID", "MUSICBRAINZ ARTIST ID")); err != nil {
 		return err
+	}
+	if supportsAlbumArtistIdentity {
+		albumArtistIDs, aErr := ensureArtistsCached(ctx, tx, m.AlbumArtists, batchArtists, trackArtists)
+		if aErr != nil {
+			return aErr
+		}
+		albumArtistIDs, _, aErr = expandActiveCreditSplitsTx(ctx, tx, albumArtistIDs)
+		if aErr != nil {
+			return aErr
+		}
+		albumRawNames, albumProven := metadata.RawAlbumArtistNamesForIdentity(m.Raw, m.AlbumArtists, allowFallback)
+		albumMBIDs := metadata.ArtistMusicBrainzIDs(m.Raw, "MUSICBRAINZ_ALBUMARTISTID", "MUSICBRAINZ ALBUM ARTIST ID")
+		if err = recordRoleIdentities("album_artist", albumArtistIDs, albumRawNames, albumProven, albumMBIDs, metadata.HasTagKey(m.Raw, "MUSICBRAINZ_ALBUMARTISTID", "MUSICBRAINZ ALBUM ARTIST ID")); err != nil {
+			return err
+		}
 	}
 	// Credits: lyricist, composer, arranger, producer (each as separate roles)
 	type creditEntry struct {

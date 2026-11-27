@@ -100,3 +100,74 @@ func TestAlbumArtistAndIdentityFeatMBIDRecovery(t *testing.T) {
 		t.Fatalf("VA AlbumArtistNames = %v, want [Various Artists]", got)
 	}
 }
+
+func TestRawAlbumArtistNamesForIdentity(t *testing.T) {
+	const (
+		id1 = "11111111-1111-4111-8111-111111111111"
+		id2 = "22222222-2222-4222-8222-222222222222"
+	)
+	for _, tc := range []struct {
+		name          string
+		raw           map[string][]string
+		fallback      []string
+		allowFallback bool
+		want          []string
+		wantOK        bool
+	}{
+		{
+			name:   "structured multi album artists",
+			raw:    map[string][]string{"ALBUMARTISTS": {"Yuki Kajiura", "FictionJunction"}, "MUSICBRAINZ_ALBUMARTISTID": {id1, id2}},
+			want:   []string{"Yuki Kajiura", "FictionJunction"},
+			wantOK: true,
+		},
+		{
+			name:   "single display album artist with mbid",
+			raw:    map[string][]string{"ALBUMARTIST": {"Yuki Kajiura"}, "MUSICBRAINZ_ALBUMARTISTID": {id1}},
+			want:   []string{"Yuki Kajiura"},
+			wantOK: true,
+		},
+		{
+			name:   "feat recovery with matching mbid count",
+			raw:    map[string][]string{"ALBUMARTIST": {"Aiobahn +81 feat. DEMONDICE"}, "MUSICBRAINZ_ALBUMARTISTID": {id1 + "; " + id2}},
+			want:   []string{"Aiobahn +81", "DEMONDICE"},
+			wantOK: true,
+		},
+		{
+			name:   "composite display with single mbid rejected",
+			raw:    map[string][]string{"ALBUMARTIST": {"A feat. B"}, "MUSICBRAINZ_ALBUMARTISTID": {id1}},
+			wantOK: false,
+		},
+		{
+			name:   "unsplit va with two mbids rejected",
+			raw:    map[string][]string{"ALBUMARTIST": {"Various Artists"}, "MUSICBRAINZ_ALBUMARTISTID": {id1 + "; " + id2}},
+			wantOK: false,
+		},
+		{
+			name:          "never falls back when recording artist exists",
+			raw:           map[string][]string{"ARTIST": {"Track Singer"}, "MUSICBRAINZ_ALBUMARTISTID": {id1}},
+			fallback:      []string{"Track Singer"},
+			allowFallback: true,
+			wantOK:        false,
+		},
+		{
+			name:          "synthetic fallback allowed when no artist tags exist",
+			raw:           map[string][]string{"MUSICBRAINZ_ALBUMARTISTID": {id1}},
+			fallback:      []string{"Yuki Kajiura"},
+			allowFallback: true,
+			want:          []string{"Yuki Kajiura"},
+			wantOK:        true,
+		},
+		{
+			name:   "conflicting albumartist keys rejected",
+			raw:    map[string][]string{"ALBUMARTIST": {"Yuki Kajiura"}, "TPE2": {"Other Artist"}, "MUSICBRAINZ_ALBUMARTISTID": {id1}},
+			wantOK: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := RawAlbumArtistNamesForIdentity(tc.raw, tc.fallback, tc.allowFallback)
+			if ok != tc.wantOK || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got (%v, %v), want (%v, %v)", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
