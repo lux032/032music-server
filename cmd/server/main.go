@@ -177,6 +177,14 @@ func run() error {
 	if aiSt, aiErr := db.AISettings(context.Background()); aiErr == nil && aiSt.RequestsPerMinute > 0 {
 		sharedAILimiter.SetRate(aiSt.RequestsPerMinute)
 	}
+	sharedWebSearch.SetRateWait(func(ctx context.Context, _ int) error {
+		return sharedAILimiter.Wait(ctx)
+	})
+	sharedWebSearch.SetUsageRecorder(func(ctx context.Context, model, purpose string, usage storage.AIUsage) {
+		if err := db.AddAIUsage(ctx, time.Now(), model, purpose, usage); err != nil {
+			logger.Error("record native web search usage", "error", err)
+		}
+	})
 	app.SetSharedAILimiter(sharedAILimiter)
 	enrichmentManager.SetAILimiter(sharedAILimiter)
 	aiReviewService := aireview.New(db, logger, aireview.Options{

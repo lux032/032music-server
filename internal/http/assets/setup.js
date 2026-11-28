@@ -177,6 +177,7 @@
     const hasDS = Boolean(($('ws-deepseek-key').value || '').trim()) ||
       (data.step2.deepSeekKeySet && !$('clear-deepseek-key').checked) ||
       isDeepSeekOfficialLLM();
+    if (prov === 'native_then_search') return isLLMConfigured() || hasTav || hasDS;
     if (prov === 'tavily') return hasTav;
     if (prov === 'deepseek') return hasDS;
     return hasTav || hasDS;
@@ -188,6 +189,16 @@
     const hasDS = Boolean(($('ws-deepseek-key').value || '').trim()) ||
       (data.step2.deepSeekKeySet && !$('clear-deepseek-key').checked) ||
       isDeepSeekOfficialLLM();
+    if (prov === 'native_then_search') {
+      if (isLLMConfigured()) {
+        if (tavCount && hasDS) return `模型原生优先 + Tavily（${tavCount} 把）/ DeepSeek 回退`;
+        if (tavCount) return `模型原生优先 + Tavily（${tavCount} 把）回退`;
+        if (hasDS) return '模型原生优先 + DeepSeek 回退';
+        return '模型原生优先（复用全局 AI）';
+      }
+      if (tavCount || hasDS) return '模型原生优先（仅回退可用）';
+      return '未配置';
+    }
     if (prov === 'tavily') return tavCount ? `Tavily（${tavCount} 把 Key）` : '未配置';
     if (prov === 'deepseek') return hasDS ? 'DeepSeek 联网' : '未配置';
     if (tavCount && hasDS) return `Tavily（${tavCount} 把）+ DeepSeek 兜底`;
@@ -947,9 +958,15 @@
     runInlineTest($('test-ws-btn'), $('test-ws-result'), '/admin/setup/test/web-search', {
       provider: $('ws-provider').value,
       tavilyKeys: $('ws-tavily-keys').value,
+      clearTavilyKeys: $('clear-tavily-keys').checked,
       deepSeekKey: $('ws-deepseek-key').value.trim(),
+      clearDeepSeekKey: $('clear-deepseek-key').checked,
       llmBaseUrl: $('llm-base-url').value.trim(),
-      llmApiKey: $('llm-api-key').value.trim()
+      llmApiKey: $('llm-api-key').value.trim(),
+      clearLlmKey: $('clear-llm-key').checked,
+      llmModel: $('llm-model').value.trim(),
+      llmProxyUrl: $('llm-proxy').value.trim(),
+      clearLlmProxy: $('clear-llm-proxy').checked
     });
   });
 

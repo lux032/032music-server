@@ -17,6 +17,7 @@ import (
 	"github.com/lux032/032music-server/internal/metadata"
 	"github.com/lux032/032music-server/internal/sourcegate"
 	"github.com/lux032/032music-server/internal/storage"
+	"github.com/lux032/032music-server/internal/websearch"
 )
 
 func TestSourceResponseLogIncludesLimitHeadersButNotURL(t *testing.T) {
@@ -455,6 +456,18 @@ func TestCachedJSONUserAgent(t *testing.T) {
 	}
 	if got := <-uas; !strings.Contains(got, defaultContactURL) {
 		t.Fatalf("fallback ua=%q", got)
+	}
+}
+
+func TestRateLimitWebSearchProviderDisplayNames(t *testing.T) {
+	if name, ok := RateLimitedSourceName(&websearch.WebError{Provider: "Tavily", Status: http.StatusTooManyRequests, Operation: "search"}); !ok || name != "Tavily 联网" {
+		t.Fatalf("Tavily RateLimitedSourceName = (%q, %v)", name, ok)
+	}
+	if name, ok := RateLimitedSourceName(&websearch.WebError{Provider: "Native", Status: http.StatusTooManyRequests, Operation: "search"}); !ok || name != "模型原生联网" {
+		t.Fatalf("Native RateLimitedSourceName = (%q, %v)", name, ok)
+	}
+	if name, ok := RateLimitedSourceName(&websearch.WebError{Provider: "DeepSeek", Status: http.StatusTooManyRequests, Operation: "search"}); !ok || name != "DeepSeek 联网" {
+		t.Fatalf("DeepSeek RateLimitedSourceName = (%q, %v)", name, ok)
 	}
 }
 

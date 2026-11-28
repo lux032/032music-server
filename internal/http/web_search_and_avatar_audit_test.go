@@ -139,6 +139,99 @@ func TestAISettingsWebSearchTavilyMultiKeyAndRedaction(t *testing.T) {
 	}
 }
 
+func TestAISettingsNativeWebSearchReuseAndProbe(t *testing.T) {
+	store := credentialTestStore(t)
+	app := newCredentialTestApp(t, credentialTestConfig(t), store)
+	reg := websearch.NewRegistry()
+	reg.SetUsageRecorder(func(ctx context.Context, model, purpose string, usage storage.AIUsage) {
+		_ = store.AddAIUsage(ctx, time.Now(), model, purpose, usage)
+	})
+	app.SetWebSearchRegistry(reg)
+
+	nativeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer sk-native-global-9999" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"output": []any{
+				map[string]any{
+					"type":   "web_search_call",
+					"status": "completed",
+					"action": map[string]any{
+						"type":    "search",
+						"sources": []any{"https://musicbrainz.org/?utm_source=openai"},
+					},
+				},
+				map[string]any{
+					"type": "message",
+					"content": []any{
+						map[string]any{
+							"type": "output_text",
+							"text": `{"results":[{"url":"https://musicbrainz.org/","title":"MusicBrainz","content":"Open music encyclopedia"}]}`,
+						},
+					},
+				},
+			},
+			"usage": map[string]any{
+				"input_tokens":  3200,
+				"output_tokens": 110,
+			},
+		})
+	}))
+	defer nativeSrv.Close()
+
+	handler := app.Handler()
+	cookie := mustLogin(t, handler, "admin", testAdminPassword)
+
+	// Configure ONLY global AI + native_then_search (no Tavily/DeepSeek keys).
+	rec := postSecurity(t, app, handler, cookie, "/admin/settings/ai", url.Values{
+		"base_url":            {nativeSrv.URL + "/v1"},
+		"api_key":             {"sk-native-global-9999"},
+		"model":               {"gpt-6-luna"},
+		"rpm":                 {"60"},
+		"concurrency":         {"4"},
+		"web_search_provider": {"native_then_search"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save native web search code = %d", rec.Code)
+	}
+
+	page := getAdmin(t, handler, cookie, "/admin/settings/ai")
+	if strings.Contains(page, "sk-native-global-9999") {
+		t.Fatal("ai-settings HTML leaked global API key")
+	}
+	if !strings.Contains(page, "模型原生优先（复用全局 AI）") {
+		t.Fatalf("ai-settings HTML missing native web search summary")
+	}
+	if strings.Contains(page, `<button class="secondary-button" disabled>测试联网搜索</button>`) {
+		t.Fatal("expected web search test button to be enabled when global AI is configured")
+	}
+
+	// Probe native web search endpoint.
+	testRec := postSecurity(t, app, handler, cookie, "/admin/settings/ai/web-search/test", url.Values{})
+	if testRec.Code != http.StatusSeeOther {
+		t.Fatalf("native web search test code = %d", testRec.Code)
+	}
+	loc, _ := url.QueryUnescape(testRec.Header().Get("Location"))
+	if !strings.Contains(loc, "联网搜索测试成功") || !strings.Contains(loc, "模型原生搜索正常（gpt-6-luna") {
+		t.Fatalf("unexpected native web search test notice: %q", loc)
+	}
+	if strings.Contains(loc, "sk-native-global-9999") {
+		t.Fatalf("notice leaked raw API key: %q", loc)
+	}
+
+	// Usage page should show the localized label for web_search_native.
+	pageAfter := getAdmin(t, handler, cookie, "/admin/settings/ai")
+	if !strings.Contains(pageAfter, "原生联网搜索") {
+		t.Fatal("expected ai-settings usage table to display 原生联网搜索")
+	}
+}
+
 func TestArtistImageAuditHTTPRoutesAndComparisonUI(t *testing.T) {
 	app, s, handler, _, cookie, _ := rateLimitTestApp(t)
 	ctx := context.Background()

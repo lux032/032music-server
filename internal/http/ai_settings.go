@@ -30,6 +30,7 @@ var aiPurposeLabels = map[string]string{
 	"artist_image_web":           "艺术家头像联网选图",
 	"artist_image_vision":        "艺术家头像视觉质检",
 	"artist_image_audit":         "艺术家头像存量 AI 审查",
+	"web_search_native":          "原生联网搜索",
 	"album_review":               "AI 审核 · 专辑关联",
 	"track_review":               "AI 审核 · 曲目关联",
 	"work_review":                "AI 审核 · 作品对齐",
@@ -84,6 +85,21 @@ func (a *App) webSearchStatusSummary(ctx context.Context) (ready bool, summary s
 	ready = ws.Configured(aliasSt, ai)
 	tavCount := len(ws.TavilyKeys)
 	switch storage.NormalizeWebSearchProvider(ws.Provider) {
+	case storage.WebSearchProviderNativeThenSearch:
+		switch {
+		case ai.Configured() && tavCount > 0 && deepSeekSet:
+			summary = fmt.Sprintf("模型原生优先（复用全局 AI）+ Tavily（%d 把 Key）/ DeepSeek 自动回退", tavCount)
+		case ai.Configured() && tavCount > 0:
+			summary = fmt.Sprintf("模型原生优先（复用全局 AI）+ Tavily（%d 把 Key）自动回退", tavCount)
+		case ai.Configured() && deepSeekSet:
+			summary = "模型原生优先（复用全局 AI）+ DeepSeek 自动回退"
+		case ai.Configured():
+			summary = "模型原生优先（复用全局 AI）"
+		case tavCount > 0 || deepSeekSet:
+			summary = "模型原生优先（全局 AI 未配置，当前仅回退引擎可用）"
+		default:
+			summary = "模型原生优先（请先配置全局 AI 模型服务）"
+		}
 	case storage.WebSearchProviderTavily:
 		if tavCount > 0 {
 			summary = fmt.Sprintf("Tavily（%d 把 Key 轮询）", tavCount)
@@ -341,6 +357,7 @@ func (a *App) handleSaveAISettings(w http.ResponseWriter, r *http.Request) {
 			a.artistAliases.Interrupt()
 		}
 	}
+	a.webSearchRegistry().ResetNativeCooldown()
 	if a.sharedAILimiter != nil {
 		a.sharedAILimiter.SetRate(next.RequestsPerMinute)
 	}
@@ -432,7 +449,7 @@ func (a *App) handleAISettingsWebSearchTest(w http.ResponseWriter, r *http.Reque
 	}
 	aliasSt, _ := a.store.ArtistAliasSettings(ctx)
 	aiSt, _ := a.store.AISettings(ctx)
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	summary, testErr := a.webSearchRegistry().TestConnection(callCtx, ws, aliasSt, aiSt)
 	if testErr != nil {

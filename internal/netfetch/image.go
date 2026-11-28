@@ -22,7 +22,10 @@ type Image struct {
 	MIME, Ext string
 }
 
-var ErrNotFound = errors.New("image not found")
+var (
+	ErrNotFound           = errors.New("image not found")
+	ErrBlockedDestination = errors.New("destination address is not public")
+)
 
 func rejectNonPublic(network, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
@@ -43,21 +46,36 @@ var nonPublicPrefixes = func() []netip.Prefix {
 func rejectIP(host string) error {
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
-		return errors.New("invalid image address")
+		return fmt.Errorf("%w: invalid address", ErrBlockedDestination)
 	}
 	for _, p := range nonPublicPrefixes {
 		if p.Contains(ip) {
-			return errors.New("image address is not public")
+			return fmt.Errorf("%w: address is not public", ErrBlockedDestination)
 		}
 	}
 	return nil
 }
 func NewPublicClient(timeout time.Duration) *http.Client {
+	c, _ := NewPublicClientWithProxy("", timeout)
+	return c
+}
+
+// NewPublicClientWithProxy constructs an SSRF-safe public HTTP client that
+// enforces non-public IP checks on direct dials while honoring an optional
+// administrator-configured proxy URL (falling back to HTTP(S)_PROXY env).
+func NewPublicClientWithProxy(proxyURL string, timeout time.Duration) (*http.Client, error) {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	// Direct connections check the actual destination IP. An explicitly configured
 	// proxy may itself be private; proxied requests rely on URL/DNS validation at
 	// the request and every redirect, and on the administrator's trusted proxy.
 	t.Proxy = http.ProxyFromEnvironment
+	if raw := proxyURL; raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h") {
+			return nil, errors.New("invalid proxy URL")
+		}
+		t.Proxy = http.ProxyURL(u)
+	}
 	direct := (&net.Dialer{Timeout: 30 * time.Second, Control: rejectNonPublic}).DialContext
 	proxy := (&net.Dialer{Timeout: 30 * time.Second}).DialContext
 	type proxyKey struct{}
@@ -67,7 +85,7 @@ func NewPublicClient(timeout time.Duration) *http.Client {
 		}
 		return direct(ctx, network, address)
 	}
-	return &http.Client{Timeout: timeout, Transport: &publicTransport{transport: t, proxyKey: proxyKey{}}}
+	return &http.Client{Timeout: timeout, Transport: &publicTransport{transport: t, proxyKey: proxyKey{}}}, nil
 }
 
 // Reuse the default image connection pool across callers with nil Transport.
@@ -97,12 +115,30 @@ type ImageRateLimitError struct {
 	StatusCode int
 }
 
-func ValidatePublicURL(ctx context.Context, raw string) error {
+// ValidateURLNotLiteralPrivate checks URL syntax (http/https, host present,
+// no embedded credentials) and rejects literal non-public IP addresses or
+// localhost hostnames without performing a DNS lookup.
+func ValidateURLNotLiteralPrivate(raw string) error {
 	u, e := url.Parse(raw)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
-		return errors.New("invalid image URL")
+		return fmt.Errorf("%w: invalid URL", ErrBlockedDestination)
 	}
-	if _, e = netip.ParseAddr(u.Hostname()); e == nil {
+	host := u.Hostname()
+	if host == "localhost" || host == "localhost." {
+		return fmt.Errorf("%w: localhost is not public", ErrBlockedDestination)
+	}
+	if _, e = netip.ParseAddr(host); e == nil {
+		return rejectIP(host)
+	}
+	return nil
+}
+
+func ValidatePublicURL(ctx context.Context, raw string) error {
+	if e := ValidateURLNotLiteralPrivate(raw); e != nil {
+		return e
+	}
+	u, _ := url.Parse(raw)
+	if _, e := netip.ParseAddr(u.Hostname()); e == nil {
 		return rejectIP(u.Hostname())
 	}
 	ips, e := net.DefaultResolver.LookupIPAddr(ctx, u.Hostname())

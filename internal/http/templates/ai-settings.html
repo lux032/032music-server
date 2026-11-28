@@ -151,13 +151,14 @@
 
         <section class="card form-stack" style="grid-column:1 / -1;">
           <header class="card-head">
-            <h2 class="card-title">联网搜索服务（Tavily 多 Key 轮询 / DeepSeek）</h2>
+            <h2 class="card-title">联网搜索服务（模型原生 / Tavily 多 Key 轮询 / DeepSeek）</h2>
             <span class="result-count">当前状态：{{.WebSearchSummary}}</span>
           </header>
-          <p class="result-count">统一为头像补全与存量审查、歌手简介联网概括、歌手中文别名补全以及 AI 审核联网补证提供搜索与网页正文提取；Tavily 支持配置多把 Key 自动 Round-Robin 轮询并在限流、额度耗尽或失效时自动切往下一把健康 Key。</p>
+          <p class="result-count">统一为头像补全与存量审查、歌手简介联网概括、歌手中文别名补全以及 AI 审核联网补证提供搜索与网页正文提取；选择「模型原生优先」时直接复用上方全局 AI 接口与模型走 OpenAI <code>/v1/responses</code>，不可用或无有效结果时自动回退 Tavily / DeepSeek。</p>
           <div class="form-grid">
             <label>搜索提供商策略
               <select name="web_search_provider">
+                <option value="native_then_search" {{if eq .WebSearchProvider "native_then_search"}}selected{{end}}>模型原生优先，不可用或无结果时自动回退 Tavily / DeepSeek</option>
                 <option value="tavily_then_deepseek" {{if eq .WebSearchProvider "tavily_then_deepseek"}}selected{{end}}>Tavily 优先，不可用时自动回退 DeepSeek</option>
                 <option value="tavily" {{if eq .WebSearchProvider "tavily"}}selected{{end}}>仅使用 Tavily（多 Key 轮询）</option>
                 <option value="deepseek" {{if eq .WebSearchProvider "deepseek"}}selected{{end}}>仅使用 DeepSeek 联网</option>

@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	WebSearchProviderNativeThenSearch   = "native_then_search"
 	WebSearchProviderTavily             = "tavily"
 	WebSearchProviderDeepSeek           = "deepseek"
 	WebSearchProviderTavilyThenDeepSeek = "tavily_then_deepseek"
@@ -28,6 +29,8 @@ type WebSearchSettings struct {
 
 func NormalizeWebSearchProvider(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case WebSearchProviderNativeThenSearch:
+		return WebSearchProviderNativeThenSearch
 	case WebSearchProviderTavily:
 		return WebSearchProviderTavily
 	case WebSearchProviderDeepSeek:
@@ -108,6 +111,8 @@ func (v WebSearchSettings) Configured(alias ArtistAliasSettings, ai AISettings) 
 	hasTavily := len(DedupeAPIKeys(v.TavilyKeys)) > 0
 	hasDeepSeek := v.EffectiveDeepSeekKey(alias, ai) != ""
 	switch NormalizeWebSearchProvider(v.Provider) {
+	case WebSearchProviderNativeThenSearch:
+		return ai.Configured() || hasTavily || hasDeepSeek
 	case WebSearchProviderTavily:
 		return hasTavily
 	case WebSearchProviderDeepSeek:

@@ -226,6 +226,10 @@ func sourceDisplayName(source string) string {
 		return "Fanart.tv"
 	case "ai":
 		return "AI 模型服务"
+	case "tavily":
+		return "Tavily 联网"
+	case "native":
+		return "模型原生联网"
 	case "deepseek":
 		return "DeepSeek 联网"
 	case "work poster":

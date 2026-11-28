@@ -847,3 +847,96 @@ func TestDashboardSetupBanner(t *testing.T) {
 		t.Fatalf("permanent /admin/setup button disappeared after dismiss")
 	}
 }
+
+func TestSetupWizardNativeWebSearchFlow(t *testing.T) {
+	ctx := context.Background()
+	nativeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer sk-wizard-native" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"output": []any{
+				map[string]any{
+					"type":   "web_search_call",
+					"status": "completed",
+					"action": map[string]any{"type": "search", "sources": []any{"https://musicbrainz.org/"}},
+				},
+				map[string]any{
+					"type": "message",
+					"content": []any{
+						map[string]any{"type": "output_text", "text": `{"results":[{"url":"https://musicbrainz.org/","title":"MusicBrainz","content":"Music encyclopedia"}]}`},
+					},
+				},
+			},
+		})
+	}))
+	defer nativeSrv.Close()
+
+	app, store, cookie, csrf := newFreshSetupApp(t, nil)
+	handler := app.Handler()
+
+	// 1. Inline test before saving Step 2 using unsaved llmBaseUrl/llmApiKey/llmModel.
+	rec := setupJSONReq(t, handler, http.MethodPost, "/admin/setup/test/web-search", map[string]any{
+		"provider":   "native_then_search",
+		"llmBaseUrl": nativeSrv.URL + "/v1",
+		"llmApiKey":  "sk-wizard-native",
+		"llmModel":   "gpt-6-luna",
+	}, cookie, csrf)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) || !strings.Contains(rec.Body.String(), "模型原生搜索正常") {
+		t.Fatalf("setup native web search inline test = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. Save Step 2 with ONLY global AI + native_then_search (zero Tavily/DeepSeek keys).
+	rec = setupJSONReq(t, handler, http.MethodPost, "/admin/setup/step/2", map[string]any{
+		"baseUrl":           nativeSrv.URL + "/v1",
+		"apiKey":            "sk-wizard-native",
+		"model":             "gpt-6-luna",
+		"rpm":               60,
+		"concurrency":       4,
+		"webSearchProvider": "native_then_search",
+	}, cookie, csrf)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"webSearchReady":true`) {
+		t.Fatalf("setup step 2 native save = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 3. Step 3 must unlock web-search-dependent automation features without Tavily/DeepSeek keys.
+	rec = setupJSONReq(t, handler, http.MethodPost, "/admin/setup/step/3", map[string]any{
+		"aiReviewEnabled":    true,
+		"aiReviewMode":       "recommend",
+		"aiReviewWeb":        true,
+		"aliasEnabled":       true,
+		"avatarWebAiEnabled": true,
+		"bioAiEnabled":       true,
+	}, cookie, csrf)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup step 3 save = %d %s", rec.Code, rec.Body.String())
+	}
+	rev, _ := store.AIReviewSettings(ctx)
+	aliasSt, _ := store.ArtistAliasSettings(ctx)
+	imgSt, _ := store.ArtistImageSettings(ctx)
+	bioSt, _ := store.BiographySettings(ctx)
+	if !rev.WebSearchEnabled || !aliasSt.Enabled || !imgSt.WebFallbackEnabled || !bioSt.AIWebFallbackEnabled {
+		t.Fatalf("expected all web-search features unlocked under native_then_search: rev=%+v alias=%+v img=%+v bio=%+v", rev, aliasSt, imgSt, bioSt)
+	}
+
+	// 4. Security guard: testing a changed draft llmBaseUrl with blank llmApiKey must NEVER leak the stored API key.
+	var draftLeaked bool
+	draftSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			draftLeaked = true
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer draftSrv.Close()
+
+	rec = setupJSONReq(t, handler, http.MethodPost, "/admin/setup/test/web-search", map[string]any{
+		"provider":   "native_then_search",
+		"llmBaseUrl": draftSrv.URL + "/v1",
+		"llmApiKey":  "",
+		"llmModel":   "gpt-6-luna",
+	}, cookie, csrf)
+	if rec.Code != http.StatusBadRequest || draftLeaked {
+		t.Fatalf("changed draft endpoint probe = %d %s (draftLeaked=%v)", rec.Code, rec.Body.String(), draftLeaked)
+	}
+}

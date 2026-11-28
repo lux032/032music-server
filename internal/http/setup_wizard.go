@@ -782,6 +782,7 @@ func (a *App) handleSetupStep2(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "save_failed", "保存联网搜索设置失败："+err.Error())
 		return
 	}
+	a.webSearchRegistry().ResetNativeCooldown()
 
 	st, err := a.store.SaveSetupWizardStep(ctx, 2, storage.SetupStepDone, 3)
 	if err != nil {
@@ -1296,11 +1297,17 @@ func (a *App) handleSetupTestWebSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Provider    string `json:"provider"`
-		TavilyKeys  string `json:"tavilyKeys"`
-		DeepSeekKey string `json:"deepSeekKey"`
-		LLMBaseURL  string `json:"llmBaseUrl"`
-		LLMAPIKey   string `json:"llmApiKey"`
+		Provider         string `json:"provider"`
+		TavilyKeys       string `json:"tavilyKeys"`
+		ClearTavilyKeys  bool   `json:"clearTavilyKeys"`
+		DeepSeekKey      string `json:"deepSeekKey"`
+		ClearDeepSeekKey bool   `json:"clearDeepSeekKey"`
+		LLMBaseURL       string `json:"llmBaseUrl"`
+		LLMAPIKey        string `json:"llmApiKey"`
+		ClearLLMKey      bool   `json:"clearLlmKey"`
+		LLMModel         string `json:"llmModel"`
+		LLMProxyURL      string `json:"llmProxyUrl"`
+		ClearLLMProxy    bool   `json:"clearLlmProxy"`
 	}
 	if !decodeSetupJSON(w, r, &body) {
 		return
@@ -1314,25 +1321,61 @@ func (a *App) handleSetupTestWebSearch(w http.ResponseWriter, r *http.Request) {
 	if p := strings.TrimSpace(body.Provider); p != "" {
 		ws.Provider = storage.NormalizeWebSearchProvider(p)
 	}
-	if raw := strings.TrimSpace(body.TavilyKeys); raw != "" {
+	if body.ClearTavilyKeys {
+		ws.TavilyKeys = nil
+	} else if raw := strings.TrimSpace(body.TavilyKeys); raw != "" {
 		ws.TavilyKeys = storage.DedupeAPIKeys(append(storage.ParseAPIKeyList(raw), ws.TavilyKeys...))
 	}
-	if ds := strings.TrimSpace(body.DeepSeekKey); ds != "" {
+	if body.ClearDeepSeekKey {
+		ws.DeepSeekKey = ""
+	} else if ds := strings.TrimSpace(body.DeepSeekKey); ds != "" {
 		ws.DeepSeekKey = ds
 	}
 	aliasSt, _ := a.store.ArtistAliasSettings(ctx)
+	if body.ClearDeepSeekKey {
+		aliasSt.DeepSeekKey = ""
+	}
 	aiSt, _ := a.store.AISettings(ctx)
+	savedBaseURL := strings.TrimRight(strings.TrimSpace(aiSt.BaseURL), "/")
+	baseURLChanged := false
 	if u := strings.TrimRight(strings.TrimSpace(body.LLMBaseURL), "/"); u != "" {
+		if err := tagging.ValidateBaseURL(u); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		if savedBaseURL != "" && !strings.EqualFold(u, savedBaseURL) {
+			baseURLChanged = true
+		}
 		aiSt.BaseURL = u
+	}
+	// Never send a stored API key to a changed unsaved endpoint during a draft probe.
+	if body.ClearLLMKey || (baseURLChanged && strings.TrimSpace(body.LLMAPIKey) == "") {
+		aiSt.APIKey = ""
 	}
 	if k := strings.TrimSpace(body.LLMAPIKey); k != "" {
 		aiSt.APIKey = k
 	}
+	if m := strings.TrimSpace(body.LLMModel); m != "" {
+		aiSt.Model = m
+	}
+	if body.ClearLLMProxy {
+		aiSt.ProxyURL = ""
+	} else if p := strings.TrimSpace(body.LLMProxyURL); p != "" {
+		if !validProxyURL(p) {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "代理地址无效：支持 http://、https://、socks5://")
+			return
+		}
+		aiSt.ProxyURL = p
+	}
 	if !ws.Configured(aliasSt, aiSt) {
-		writeAPIError(w, http.StatusBadRequest, "not_configured", "请先填写 Tavily API Key 或 DeepSeek 联网密钥")
+		if baseURLChanged && strings.TrimSpace(body.LLMAPIKey) == "" && ws.Provider == storage.WebSearchProviderNativeThenSearch {
+			writeAPIError(w, http.StatusBadRequest, "not_configured", "更换接口地址测试原生联网搜索时请同时填写对应的 API Key")
+			return
+		}
+		writeAPIError(w, http.StatusBadRequest, "not_configured", "请先配置全局 AI 模型服务（原生搜索模式），或填写 Tavily / DeepSeek 联网密钥")
 		return
 	}
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	summary, testErr := a.webSearchRegistry().TestConnection(callCtx, ws, aliasSt, aiSt)
 	if testErr != nil {

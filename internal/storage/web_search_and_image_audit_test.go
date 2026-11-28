@@ -107,6 +107,157 @@ func TestWebSearchSettingsAndBackupProtection(t *testing.T) {
 	}
 }
 
+func TestWebSearchNativeThenSearchProviderAndReadiness(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "ws-native.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := NormalizeWebSearchProvider(" NATIVE_THEN_SEARCH "); got != WebSearchProviderNativeThenSearch {
+		t.Fatalf("NormalizeWebSearchProvider = %q, want %q", got, WebSearchProviderNativeThenSearch)
+	}
+
+	if err := s.SaveWebSearchSettings(ctx, WebSearchSettings{
+		Provider: WebSearchProviderNativeThenSearch,
+	}); err != nil {
+		t.Fatalf("SaveWebSearchSettings(native_then_search): %v", err)
+	}
+	got, err := s.WebSearchSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Provider != WebSearchProviderNativeThenSearch {
+		t.Fatalf("loaded provider = %q, want %q", got.Provider, WebSearchProviderNativeThenSearch)
+	}
+
+	// Unconfigured global AI and no search keys -> not configured.
+	if got.Configured(ArtistAliasSettings{}, AISettings{}) {
+		t.Fatal("expected Configured=false when neither global AI nor search keys exist")
+	}
+	// Configured global AI alone -> ready without Tavily/DeepSeek keys.
+	readyAI := AISettings{BaseURL: "https://cli.example/v1", APIKey: "sk-test", Model: "gpt-6-luna"}
+	if !got.Configured(ArtistAliasSettings{}, readyAI) {
+		t.Fatal("expected Configured=true when global AI is configured under native_then_search")
+	}
+	// Fallback Tavily key also satisfies Configured even before global AI is set.
+	withFallback := WebSearchSettings{Provider: WebSearchProviderNativeThenSearch, TavilyKeys: []string{"tvly-fb-1"}}
+	if !withFallback.Configured(ArtistAliasSettings{}, AISettings{}) {
+		t.Fatal("expected Configured=true when fallback Tavily key exists under native_then_search")
+	}
+
+	// Verify ai_usage accepts web_search_native purpose after migration 096.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_usage(day,model,purpose,requests,prompt_tokens,completion_tokens) VALUES('2026-11-28','gpt-6-luna','web_search_native',1,8900,220)`); err != nil {
+		t.Fatalf("insert web_search_native ai_usage failed: %v", err)
+	}
+}
+
+func TestMigration096PopulatedUpgradeAndBackupProtection(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Seed a populated migration-095 DB, upgrade to 096, and verify legacy rows survive intact.
+	s, err := Open(filepath.Join(t.TempDir(), "upgrade096.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.MigrateUpTo(ctx, 95); err != nil {
+		t.Fatalf("MigrateUpTo(95): %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE web_search_settings SET provider='tavily', tavily_keys_json='["tvly-legacy-1","tvly-legacy-2"]', deepseek_key='ds-legacy-1' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_usage(day,model,purpose,requests,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens) VALUES('2026-11-27','gpt-6-luna','artist_image_audit',3,1200,300,400,50)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("upgrade 095->096 failed: %v", err)
+	}
+	ws, err := s.WebSearchSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Provider != WebSearchProviderTavily || !reflect.DeepEqual(ws.TavilyKeys, []string{"tvly-legacy-1", "tvly-legacy-2"}) || ws.DeepSeekKey != "ds-legacy-1" {
+		t.Fatalf("migrated web_search_settings = %+v", ws)
+	}
+	totals, err := s.AIUsageTotals(ctx, "")
+	if err != nil || len(totals) != 1 || totals[0].Purpose != "artist_image_audit" || totals[0].Usage.Requests != 3 || totals[0].Usage.CachedTokens != 400 || totals[0].Usage.ReasoningTokens != 50 {
+		t.Fatalf("migrated ai_usage = (%+v, %v)", totals, err)
+	}
+	// New provider and new usage purpose both succeed on upgraded schema.
+	ws.Provider = WebSearchProviderNativeThenSearch
+	if err := s.SaveWebSearchSettings(ctx, ws); err != nil {
+		t.Fatalf("SaveWebSearchSettings(native_then_search) after upgrade: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_usage(day,model,purpose,requests,prompt_tokens,completion_tokens) VALUES('2026-11-28','gpt-6-luna','web_search_native',2,9000,200)`); err != nil {
+		t.Fatalf("insert web_search_native after upgrade: %v", err)
+	}
+
+	// 2. Backup & restore round-trip with native_then_search protects live AI & fallback credentials.
+	bs, b := backupFixture(t, 0)
+	if err := bs.SaveAISettings(ctx, AISettings{
+		BaseURL: "https://old-ai.example/v1", APIKey: "sk-old-backup-ai", Model: "old-model",
+		RequestsPerMinute: 60, Concurrency: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bs.SaveWebSearchSettings(ctx, WebSearchSettings{
+		Provider: WebSearchProviderNativeThenSearch, TavilyKeys: []string{"tvly-old-backup"}, DeepSeekKey: "ds-old-backup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapName, err := b.Create(ctx, "manual", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bs.SaveAISettings(ctx, AISettings{
+		BaseURL: "https://live-ai.example/v1", APIKey: "sk-live-current-ai", Model: "gpt-6-luna",
+		RequestsPerMinute: 60, Concurrency: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bs.SaveWebSearchSettings(ctx, WebSearchSettings{
+		Provider: WebSearchProviderNativeThenSearch, TavilyKeys: []string{"tvly-live-current"}, DeepSeekKey: "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stage, _, err := b.Stage(ctx, filepath.Join(b.Directory, snapName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Arm(ctx, stage); err != nil {
+		t.Fatal(err)
+	}
+	bs.Close()
+	if restored, err := b.PrepareRestore(ctx); err != nil || !restored {
+		t.Fatalf("PrepareRestore = (%v, %v)", restored, err)
+	}
+	reopened, err := Open(b.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err := reopened.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.CompleteRestore(ctx, reopened); err != nil {
+		t.Fatal(err)
+	}
+	afterAI, _ := reopened.AISettings(ctx)
+	afterWS, _ := reopened.WebSearchSettings(ctx)
+	if afterAI.BaseURL != "https://live-ai.example/v1" || afterAI.APIKey != "sk-live-current-ai" {
+		t.Fatalf("restored ai_settings leaked backup credentials: %+v", afterAI)
+	}
+	if afterWS.Provider != WebSearchProviderNativeThenSearch || !reflect.DeepEqual(afterWS.TavilyKeys, []string{"tvly-live-current"}) || afterWS.DeepSeekKey != "" {
+		t.Fatalf("restored web_search_settings mismatch: %+v", afterWS)
+	}
+}
+
 func TestArtistImageAuditReplaceClearRevertAndCacheURLVersioning(t *testing.T) {
 	f := newBackfillFixture(t)
 	ctx := f.ctx

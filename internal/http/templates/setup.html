@@ -385,6 +385,7 @@
               <label class="field">
                 <span class="field-label"><span>搜索路由策略</span></span>
                 <select class="select" id="ws-provider">
+                  <option value="native_then_search">模型原生优先，不可用或无结果时自动回退 Tavily / DeepSeek</option>
                   <option value="tavily_then_deepseek">Tavily 优先，不可用时自动回退 DeepSeek</option>
                   <option value="tavily">仅使用 Tavily（多 Key 轮询）</option>
                   <option value="deepseek">仅使用 DeepSeek 联网</option>
@@ -423,7 +424,7 @@
 
             <div class="test-bar">
               <button type="button" class="btn btn-secondary btn-compact" id="test-ws-btn">测试联网搜索</button>
-              <span class="test-result" id="test-ws-result" role="status" aria-live="polite">填入 Tavily 或 DeepSeek 密钥后可验证检索路由。</span>
+              <span class="test-result" id="test-ws-result" role="status" aria-live="polite">配置全局 AI 并选「模型原生优先」，或填入 Tavily / DeepSeek 密钥后即可验证检索路由。</span>
             </div>
           </div>
         </div>
